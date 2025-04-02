@@ -19,8 +19,8 @@ ffmpeg-python==0.2.0
 # AI/ML
 openai-whisper==20231117
 transformers==4.35.2
-torch==2.1.1
-tensorflow==2.14.0
+torch==2.6.0
+tensorflow==2.19.0
 
 # Cloud Storage
 boto3==1.29.3
