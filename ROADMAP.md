@@ -30,10 +30,8 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - TensorFlow for custom AI models
 
 ### Cloud Infrastructure
-- AWS S3 for video storage
-- AWS MediaConvert for video transcoding
+- Hetzner for hosting
 - Docker for containerization
-- Kubernetes for orchestration
 
 ## Development Phases
 
@@ -41,6 +39,9 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - ✅ Project structure setup
 - ✅ Database models and migrations
 - ✅ Environment configuration
+- ✅ Authentication system with JWT
+- ✅ Role-based access control
+- ✅ Test infrastructure
 - 🏗️ FastAPI server implementation
 - Video capture system
 - Basic CRUD operations
@@ -67,29 +68,32 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - Analytics dashboard
 
 ### Phase 5: Deployment & Infrastructure 🌐
-1. **Development Environment**
+1. **Initial Deployment** (Current Focus)
    - ✅ Local development setup
-   - Docker containerization
-   - CI/CD pipeline
+   - 🏗️ Single server deployment on Hetzner
+     - AX41 Dedicated Server setup
+     - Docker containerization
+     - Service configuration
+   - Basic monitoring
 
-2. **Staging Environment**
-   - AWS infrastructure setup
-   - Monitoring and logging
-   - Performance testing
-   - Security configuration
+2. **Production Setup**
+   - SSL/TLS configuration
+   - Cloudflare Free CDN
+   - Backup system
+   - Monitoring tools
 
-3. **Production Environment**
-   - High-availability setup
-   - CDN configuration
-   - Backup systems
-   - Disaster recovery
+3. **Future Scaling** (Only when needed)
+   - Storage expansion
+   - Service separation
+   - Load balancing
+   - Performance optimization
 
 ### Phase 6: Optimization & Scale 📈
-- Performance optimization
-- Caching improvements
-- Auto-scaling configuration
-- Load balancing
-- Content delivery optimization
+- Resource usage optimization
+- Video compression improvements
+- Cache configuration
+- Performance monitoring
+- Scale based on metrics
 
 ## Current Progress
 
@@ -99,22 +103,46 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Core configuration
    - Database models
    - Dependencies installed
+   - Documentation structure
+
 2. Database Setup
    - PostgreSQL configured
    - Initial migrations
    - Base models created
+   - Test database management
+
+3. Authentication System
+   - JWT-based authentication
+   - Role-based access control (ADMIN, MP, STAFF)
+   - User management endpoints
+   - Password hashing with bcrypt
+   - Comprehensive test coverage
 
 ### In Progress 🏗️
 1. FastAPI Server
-   - Basic setup
-   - Route structure
-   - Authentication system
+   - ✅ Basic setup
+   - ✅ Route structure
+   - ✅ Authentication system
+   - 🏗️ Video clip endpoints
+   - 🏗️ Social media integration
+
+2. Testing Infrastructure
+   - ✅ Test database setup
+   - ✅ Authentication tests
+   - 🏗️ Video clip tests
+   - 🏗️ Social media tests
+
+3. Deployment Setup
+   - 🏗️ Hetzner server configuration
+   - 🏗️ Docker setup
+   - 🏗️ Service deployment
+   - 🏗️ Monitoring setup
 
 ### Next Steps 📋
-1. Complete FastAPI server implementation
-2. Begin video capture system
-3. Set up Docker containers
-4. Initialize frontend project
+1. Order and configure Hetzner AX41 server
+2. Set up Docker and core services
+3. Deploy application stack
+4. Configure monitoring and backups
 
 ## Technical Considerations
 

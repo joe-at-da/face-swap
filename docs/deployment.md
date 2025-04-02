@@ -2,135 +2,270 @@
 
 ## Hosting Architecture
 
-### Infrastructure Requirements
+### Infrastructure Overview
 
-1. **Application Components**:
-   - Backend API Server (FastAPI)
-   - Frontend Server (Next.js)
+1. **Single Server Setup** (Hetzner AX41)
+   - €69/month (~£59)
+   - 8 vCPU
+   - 32GB RAM
+   - 2x512GB NVMe SSDs (RAID 1)
+   - Unlimited traffic
+
+2. **Core Components**
+   All running on the same server:
+   - FastAPI Backend
    - PostgreSQL Database
    - Redis Cache
    - Celery Workers
-   - Video Storage (S3)
-   - Media Processing Server
+   - Video Storage
+   - Media Processing
 
-2. **Resource Considerations**:
-   - High storage capacity for video files
-   - Good network bandwidth for video streaming
-   - CPU optimization for video processing
-   - Memory for concurrent video operations
+3. **External Services**
+   - Cloudflare (Free tier)
+     - CDN
+     - SSL certificates
+     - DDoS protection
 
-### Recommended Hosting Setup
+## Deployment Steps
 
-1. **Backend Services** (AWS)
-   - API: ECS with Fargate
-   - Database: RDS PostgreSQL
-   - Cache: ElastiCache (Redis)
-   - Storage: S3 for video files
-   - CDN: CloudFront for video delivery
-   - Workers: ECS for Celery workers
+### 1. Server Setup
+```bash
+# Update system
+apt update && apt upgrade -y
 
-2. **Frontend** (Vercel)
-   - Next.js deployment on Vercel
-   - Automatic CI/CD
-   - Edge caching
+# Install Docker and Docker Compose
+apt install docker.io docker-compose -y
 
-3. **Media Processing**
-   - Dedicated EC2 instances or ECS tasks
-   - Auto-scaling based on processing queue
+# Install monitoring tools
+apt install htop nginx prometheus node-exporter -y
+```
 
-## Deployment Phases
+### 2. Docker Configuration
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - db
+      - redis
 
-### Phase 1: Development
-- Local development environment
-- Docker containers for services
-- S3 bucket for development
+  db:
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
 
-### Phase 2: Staging
-- AWS infrastructure setup
-- CI/CD pipeline configuration
-- Monitoring and logging setup
-- Load testing
+  redis:
+    image: redis:7
+    volumes:
+      - redis_data:/data
 
-### Phase 3: Production
-- High-availability configuration
-- Backup and disaster recovery
-- Performance optimization
-- Security hardening
+  celery:
+    build: .
+    command: celery -A app.worker worker --loglevel=info
+    volumes:
+      - ./data:/data
+    depends_on:
+      - redis
+      - db
 
-## Infrastructure as Code
+volumes:
+  postgres_data:
+  redis_data:
+```
 
-We'll use:
-- Terraform for AWS infrastructure
-- Docker Compose for local development
-- GitHub Actions for CI/CD
+### 3. Nginx Configuration
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
 
-## Estimated Costs (Monthly)
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 
-### Development/Staging
-- EC2 (t3.large): ~$70
-- RDS (db.t3.medium): ~$50
-- ElastiCache (cache.t3.micro): ~$30
-- S3 + CloudFront: ~$50
-- Total: ~$200
+    location /static {
+        alias /data/static;
+    }
 
-### Production (Initial)
-- ECS (2 nodes): ~$200
-- RDS (db.r5.large): ~$200
-- ElastiCache (cache.r5.large): ~$150
-- S3 + CloudFront: ~$100-500 (depends on usage)
-- Total: ~$650-1000
+    location /media {
+        alias /data/media;
+    }
+}
+```
 
-## Security Considerations
+### 4. Backup Strategy
+```bash
+# Daily database backup
+0 0 * * * pg_dump -U postgres app > /backup/db/app_$(date +%Y%m%d).sql
 
-1. **Network Security**
-   - VPC configuration
-   - Security groups
-   - WAF rules
+# Weekly system backup
+0 0 * * 0 tar -czf /backup/system/backup_$(date +%Y%m%d).tar.gz /data
+```
 
-2. **Data Security**
-   - Encryption at rest
-   - Encryption in transit
-   - Backup strategy
+### 5. Monitoring Setup
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
 
-3. **Access Control**
-   - IAM roles and policies
-   - API authentication
-   - Secrets management
+scrape_configs:
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
 
-## Monitoring and Maintenance
+  - job_name: 'app'
+    static_configs:
+      - targets: ['localhost:8000']
+```
 
-1. **Monitoring**
-   - CloudWatch metrics
-   - Application logs
-   - Performance metrics
-   - Error tracking
+## Resource Management
 
-2. **Maintenance**
-   - Database backups
-   - System updates
-   - Security patches
-   - Performance optimization
+### Storage Planning
+- Videos stored in `/data/media`
+- Database in `/data/postgres`
+- Regular cleanup of old files
+- Compression for video files
+
+### Memory Allocation
+- PostgreSQL: 8GB
+- Redis: 4GB
+- Application: 8GB
+- Video Processing: 8GB
+- System: 4GB
+
+### Backup Strategy
+1. **Database**
+   - Daily dumps
+   - Keep last 7 days
+   - Weekly archives
+
+2. **Media Files**
+   - Weekly incremental backups
+   - Monthly full backups
+   - Off-site storage
 
 ## Scaling Strategy
 
-1. **Horizontal Scaling**
-   - Auto-scaling groups for API servers
-   - Read replicas for database
-   - Multiple Celery workers
+### 1. Initial Phase
+- Monitor resource usage
+- Optimize configurations
+- Implement caching
 
-2. **Content Delivery**
-   - CDN for video delivery
-   - Edge caching
-   - Load balancing
+### 2. Storage Expansion
+When needed:
+- Add Hetzner Storage Box (1TB)
+- Move media files
+- Update paths
 
-## Disaster Recovery
+### 3. Performance Scaling
+If required:
+- Separate database
+- Add load balancer
+- Split services
 
-1. **Backup Strategy**
-   - Daily database backups
-   - S3 versioning
-   - Configuration backups
+## Security Setup
 
-2. **Recovery Plan**
-   - RTO/RPO definitions
-   - Failover procedures
-   - Data restoration process
+### 1. Basic Security
+```bash
+# UFW Firewall
+ufw allow ssh
+ufw allow http
+ufw allow https
+ufw enable
+
+# Fail2ban
+apt install fail2ban
+systemctl enable fail2ban
+```
+
+### 2. SSL Configuration
+```bash
+# Using Cloudflare SSL
+apt install certbot
+certbot certonly --dns-cloudflare
+```
+
+### 3. Database Security
+```bash
+# PostgreSQL configuration
+listen_addresses = 'localhost'
+ssl = on
+```
+
+## Maintenance Procedures
+
+### Daily Tasks
+- Check system logs
+- Monitor disk usage
+- Verify backups
+
+### Weekly Tasks
+- Review performance metrics
+- Clean old backups
+- Update system packages
+
+### Monthly Tasks
+- Full backup verification
+- Security updates
+- Performance optimization
+
+## Emergency Procedures
+
+### 1. Server Down
+```bash
+# Quick health check
+systemctl status docker
+journalctl -xe
+docker-compose logs
+
+# Restart services
+docker-compose down
+docker-compose up -d
+```
+
+### 2. Backup Restoration
+```bash
+# Database restore
+pg_restore -U postgres -d app latest_backup.sql
+
+# Media files restore
+tar -xzf backup.tar.gz -C /data/media
+```
+
+## Monitoring Dashboard
+
+Access monitoring at:
+- System: http://your-ip:9090
+- Application: http://your-ip:8000/metrics
+- Node: http://your-ip:9100/metrics
+
+## Cost Management
+
+### Monthly Costs
+- Server: €69 (~£59)
+- Bandwidth: Included
+- Backups: Local storage
+- CDN: Free (Cloudflare)
+
+### Optional Additions
+- Storage Box: €9.90/month (1TB)
+- Backup Box: €9.90/month (1TB)
+
+## Getting Started
+
+1. Order Hetzner AX41 server
+2. Follow setup steps above
+3. Deploy application
+4. Configure monitoring
+5. Set up backups
+6. Add Cloudflare
