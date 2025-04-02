@@ -62,6 +62,33 @@ alembic revision --autogenerate -m "Initial migration"
 alembic upgrade head
 ```
 
+## Development Server
+
+### Running the Server
+
+You can run the development server in two ways:
+
+1. Using the management script directly:
+   ```bash
+   # Normal mode
+   ./scripts/manage_server.sh
+
+   # Debug mode with increased logging
+   ./scripts/manage_server.sh debug
+   ```
+
+2. Using VSCode tasks (recommended):
+   - Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows/Linux)
+   - Type "Tasks: Run Task"
+   - Select either:
+     - "Start Server" for normal mode
+     - "Start Server (Debug)" for debug mode with increased logging
+
+The management script will automatically:
+- Kill any existing process running on port 8000
+- Start a new server instance on port 8000
+- Enable auto-reload for development
+
 ## Project Structure
 
 ```
