@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+import os
 
 class Settings(BaseSettings):
     # Database
@@ -36,8 +37,10 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     class Config:
-        env_file = ".env"
+        env_file = os.getenv("ENV_FILE", ".env")
 
 @lru_cache()
 def get_settings():
     return Settings()
+
+settings = get_settings()

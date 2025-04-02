@@ -6,9 +6,9 @@ import enum
 from backend.db.base_model import Base
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    MP = "mp"
-    STAFF = "staff"
+    ADMIN = "ADMIN"
+    MP = "MP"
+    STAFF = "STAFF"
 
 class ClipStatus(str, enum.Enum):
     DRAFT = "draft"

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import get_settings
-from backend.api.v1 import video
+from backend.api.v1.api import api_router
 
 settings = get_settings()
 
@@ -29,12 +29,13 @@ async def health_check():
     }
 
 # Include routers
-app.include_router(video.router, prefix="/api/v1/video", tags=["video"])
+app.include_router(api_router, prefix="/api/v1")
 
+# Make sure the app is properly configured for testing
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG
