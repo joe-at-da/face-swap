@@ -28,7 +28,7 @@ class VideoClip(Base):
     status = Column(String)  # draft, processing, ready, published
     s3_key = Column(String)
     transcription = Column(String)
-    metadata = Column(JSON)
+    clip_metadata = Column(JSON)
     owner_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -45,6 +45,6 @@ class SocialPost(Base):
     status = Column(String)  # pending, published, failed
     post_id = Column(String)  # ID from the social media platform
     posted_at = Column(DateTime)
-    metadata = Column(JSON)
+    post_metadata = Column(JSON)  # renamed from metadata to post_metadata
     
     clip = relationship("VideoClip", back_populates="social_posts")
