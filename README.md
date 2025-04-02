@@ -1,89 +1,62 @@
 # Parliament Video Clip Manager
 
-A comprehensive video clip management system for UK Members of Parliament to capture, edit, and share video clips from Parliament TV feeds.
+A powerful application for UK Members of Parliament to capture, edit, and share video clips from Parliament TV feeds. Features automated transcription, branding, and multi-platform sharing capabilities.
 
 ## Features
 
-- Video capture from Parliament TV feeds
-- Video editing and clip creation
-- Automated transcription and subtitling
-- Face recognition and speaker detection
-- Social media integration
-- AI-powered content analysis
-- Custom branding and watermarking
-- Multi-platform publishing
+- 📹 Video capture from Parliament TV feeds
+- ✂️ Easy clip editing and branding
+- 🎯 Face recognition and tagging
+- 🔊 Automated transcription and subtitling
+- 🚀 Multi-platform social media sharing
+- 🤖 AI-driven content analysis
 
-## Project Structure
+## Tech Stack
 
-```
-parliament-clips/
-├── backend/               # FastAPI backend
-│   ├── api/              # API endpoints
-│   ├── core/             # Core functionality
-│   ├── db/               # Database models
-│   ├── services/         # Business logic
-│   └── workers/          # Celery tasks
-├── frontend/             # Next.js frontend
-│   ├── components/       # React components
-│   ├── pages/           # Next.js pages
-│   └── public/          # Static assets
-├── scripts/             # Utility scripts
-└── tests/              # Test suites
-```
+- **Backend**: FastAPI, PostgreSQL, Redis, Celery
+- **Video Processing**: OpenCV, FFmpeg, MoviePy
+- **AI/ML**: TensorFlow, PyTorch, Whisper
+- **Frontend**: Next.js, TypeScript, Tailwind CSS
 
-## Getting Started
+## Quick Start
 
-1. Clone the repository:
-```bash
-git clone https://github.com/your-org/parliament-clips.git
-cd parliament-clips
-```
+1. **Prerequisites**
+   - Python 3.11+
+   - PostgreSQL 14
+   - Redis
+   - FFmpeg
 
-2. Set up Python virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
+2. **Installation**
+   ```bash
+   # Clone repository
+   git clone https://github.com/yourusername/the-mp.git
+   cd the-mp
 
-3. Configure environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
+   # Set up Python environment
+   python -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
 
-4. Start the development servers:
+   # Configure environment
+   cp .env.example .env
+   # Edit .env with your settings
+   ```
 
-Backend:
-```bash
-cd backend
-uvicorn main:app --reload
-```
+For detailed setup instructions, see our [Setup Guide](docs/setup_guide.md).
 
-Frontend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## Documentation
 
-## Development
+- [Setup Guide](docs/setup_guide.md) - Detailed installation and configuration instructions
+- [Technical Roadmap](ROADMAP.md) - Project roadmap and development phases
 
-- Follow the [ROADMAP.md](ROADMAP.md) for development priorities
-- Use feature branches and pull requests
-- Write tests for new features
-- Follow the project's coding standards
+## Development Status
 
-## Testing
-
-```bash
-pytest tests/
-```
-
-## Contributing
-
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+Currently in Phase 1 of development. See [ROADMAP.md](ROADMAP.md) for details.
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
