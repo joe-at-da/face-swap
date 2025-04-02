@@ -10,6 +10,9 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 - 🔊 Automated transcription and subtitling
 - 🚀 Multi-platform social media sharing
 - 🤖 AI-driven content analysis
+- 🔐 Role-based access control (ADMIN, MP, STAFF)
+- 🔑 JWT-based authentication
+- 🧪 Comprehensive test coverage
 
 ## Tech Stack
 
@@ -17,6 +20,8 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 - **Video Processing**: OpenCV, FFmpeg, MoviePy
 - **AI/ML**: TensorFlow, PyTorch, Whisper
 - **Frontend**: Next.js, TypeScript, Tailwind CSS
+- **Authentication**: JWT, bcrypt
+- **Testing**: pytest, TestClient
 
 ## Quick Start
 
@@ -40,14 +45,41 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
    # Configure environment
    cp .env.example .env
    # Edit .env with your settings
-   ```
 
-For detailed setup instructions, see our [Setup Guide](docs/setup_guide.md).
+   # Create databases
+   createdb parliament_clips
+   createdb parliament_clips_test  # for testing
+   ```
 
 ## Documentation
 
-- [Setup Guide](docs/setup_guide.md) - Detailed installation and configuration instructions
-- [Technical Roadmap](ROADMAP.md) - Project roadmap and development phases
+- [Setup Guide](docs/setup_guide.md) - Detailed installation and configuration
+- [Authentication](docs/authentication.md) - Auth system and user roles
+- [Technical Roadmap](ROADMAP.md) - Project roadmap and phases
+- [Deployment Guide](docs/deployment.md) - Production deployment
+
+## Development
+
+### Running the Server
+```bash
+# Start development server
+./scripts/manage_server.sh
+
+# Debug mode with increased logging
+./scripts/manage_server.sh debug
+```
+
+### Testing
+```bash
+# Run all tests
+pytest -v
+
+# Run specific test modules
+pytest tests/test_auth_endpoints.py -v
+
+# Run with coverage
+pytest --cov=backend tests/
+```
 
 ## Development Status
 

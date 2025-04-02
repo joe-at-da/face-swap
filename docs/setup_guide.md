@@ -109,9 +109,119 @@ the-mp/
 
 The project uses SQLAlchemy with the following models:
 
-1. `User`: Manages user accounts and authentication
-2. `VideoClip`: Stores video clip metadata and processing information
-3. `SocialPost`: Tracks social media sharing status and metadata
+### User
+```python
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String, nullable=False)
+    role = Column(Enum(UserRole), nullable=False, default=UserRole.STAFF)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime)
+```
+
+### VideoClip
+```python
+class VideoClip(Base):
+    __tablename__ = "video_clips"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(String)
+    source_url = Column(String, nullable=False)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    duration = Column(Integer, nullable=False)
+    status = Column(Enum(ClipStatus), nullable=False, default=ClipStatus.DRAFT)
+    s3_key = Column(String)
+    transcription = Column(String)
+    faces_detected = Column(JSON)
+    clip_metadata = Column(JSON, default={})
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+```
+
+### SocialPost
+```python
+class SocialPost(Base):
+    __tablename__ = "social_posts"
+    id = Column(Integer, primary_key=True, index=True)
+    clip_id = Column(Integer, ForeignKey("video_clips.id"), nullable=False)
+    platform = Column(Enum(SocialPlatform), nullable=False)
+    status = Column(Enum(PostStatus), nullable=False, default=PostStatus.PENDING)
+    post_id = Column(String)
+    posted_at = Column(DateTime)
+    post_url = Column(String)
+    engagement_metrics = Column(JSON, default={})
+    post_metadata = Column(JSON, default={})
+```
+
+## Testing
+
+### Setting Up Test Environment
+
+1. Create test database:
+```bash
+/opt/homebrew/opt/postgresql@14/bin/createdb parliament_clips_test
+```
+
+2. Configure test settings in `.env`:
+```env
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/parliament_clips_test
+```
+
+### Running Tests
+
+1. Run all tests:
+```bash
+pytest -v
+```
+
+2. Run specific test files:
+```bash
+# Auth tests
+pytest tests/test_auth_endpoints.py -v
+
+# Other test modules
+pytest tests/test_clips.py -v
+pytest tests/test_social.py -v
+```
+
+3. Run with coverage:
+```bash
+pytest --cov=backend tests/
+```
+
+### Test Database Management
+
+The test suite includes automatic database management:
+- Cleans up test database before each test
+- Creates fresh tables for each test
+- Handles test user creation and cleanup
+- Manages database connections properly
+
+### Writing Tests
+
+1. Use provided fixtures:
+```python
+def test_example(test_client, db, clean_db):
+    # test_client: FastAPI TestClient
+    # db: SQLAlchemy Session
+    # clean_db: Ensures fresh database
+    ...
+```
+
+2. Create test users:
+```python
+# Create admin user
+admin = create_test_admin(db)
+
+# Create MP user
+mp = create_test_mp(db)
+```
 
 ## Next Steps
 
@@ -134,3 +244,8 @@ After completing the setup:
    - Make sure database exists
    - Check if alembic.ini is properly configured
    - Verify models are properly imported in env.py
+
+## Additional Documentation
+
+- [Authentication System](authentication.md) - Detailed auth system documentation
+- [Deployment Guide](deployment.md) - Production deployment instructions
