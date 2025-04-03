@@ -1,14 +1,34 @@
 from pydantic_settings import BaseSettings
-from functools import lru_cache
-import os
+from pathlib import Path
 
 class Settings(BaseSettings):
+    # Base settings
+    PROJECT_NAME: str = "Parliament Video Clip Manager"
+    API_V1_STR: str = "/api/v1"
+    
+    # Authentication
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    
     # Database
     DATABASE_URL: str
-
+    TEST_DATABASE_URL: str = None
+    
+    # Video Settings
+    PARLIAMENT_TV_URL: str = "https://www.parliamentlive.tv/Event/Index"
+    TEMP_STORAGE_PATH: str = "/app/data/temp"
+    MEDIA_STORAGE_PATH: str = "/app/data/media"
+    MAX_CLIP_DURATION_MINUTES: int = 30
+    CLEANUP_AGE_HOURS: int = 24
+    
+    # Storage Limits
+    MAX_STORAGE_GB: int = 500  # Maximum storage limit in GB
+    TEMP_STORAGE_MAX_GB: int = 50  # Maximum temporary storage in GB
+    
     # Redis
     REDIS_URL: str
-
+    
     # AWS
     AWS_ACCESS_KEY_ID: str
     AWS_SECRET_ACCESS_KEY: str
@@ -25,11 +45,6 @@ class Settings(BaseSettings):
     # Parliament TV
     PARLIAMENT_TV_API_KEY: str
 
-    # Security
-    SECRET_KEY: str
-    ALGORITHM: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int
-
     # Development Settings
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
@@ -37,10 +52,6 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     class Config:
-        env_file = os.getenv("ENV_FILE", ".env")
+        env_file = Path(".env")
 
-@lru_cache()
-def get_settings():
-    return Settings()
-
-settings = get_settings()
+settings = Settings()
