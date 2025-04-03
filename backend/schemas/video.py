@@ -28,3 +28,10 @@ class VideoClipResponse(VideoClipBase):
 
     class Config:
         from_attributes = True
+
+class VideoClipStatus(BaseModel):
+    status: str
+    progress: Optional[float] = None
+
+    class Config:
+        from_attributes = True

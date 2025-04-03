@@ -20,5 +20,6 @@ class User(Base):
     is_active = Column(Boolean, default=True)
 
     # Relationships
-    capture_sessions = relationship("CaptureSession", back_populates="created_by_user")
+    capture_sessions = relationship("CaptureSession", back_populates="user")
     video_clips = relationship("VideoClip", back_populates="created_by_user")
+    social_posts = relationship("SocialPost", back_populates="created_by")

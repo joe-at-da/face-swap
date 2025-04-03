@@ -28,3 +28,4 @@ class VideoClip(Base):
     # Relationships
     user = relationship("User", back_populates="video_clips")
     capture_session = relationship("CaptureSession", back_populates="video_clips")
+    social_posts = relationship("SocialPost", back_populates="video_clip")

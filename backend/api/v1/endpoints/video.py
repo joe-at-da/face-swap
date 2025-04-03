@@ -9,7 +9,7 @@ from backend.core.security import has_permission
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.VideoClip])
+@router.get("/", response_model=List[schemas.VideoClipResponse])
 async def list_clips(
     skip: int = 0,
     limit: int = 100,
@@ -20,7 +20,7 @@ async def list_clips(
     clips = db.query(models.VideoClip).offset(skip).limit(limit).all()
     return clips
 
-@router.post("/", response_model=schemas.VideoClip, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=schemas.VideoClipResponse, status_code=status.HTTP_201_CREATED)
 async def create_clip(
     clip: schemas.VideoClipCreate,
     db: Session = Depends(get_db),
@@ -35,7 +35,7 @@ async def create_clip(
     db.refresh(db_clip)
     return db_clip
 
-@router.get("/{clip_id}", response_model=schemas.VideoClip)
+@router.get("/{clip_id}", response_model=schemas.VideoClipResponse)
 async def get_clip(
     clip_id: int,
     db: Session = Depends(get_db),
@@ -50,7 +50,7 @@ async def get_clip(
         )
     return clip
 
-@router.put("/{clip_id}", response_model=schemas.VideoClip)
+@router.put("/{clip_id}", response_model=schemas.VideoClipResponse)
 async def update_clip(
     clip_id: int,
     clip_update: schemas.VideoClipUpdate,
