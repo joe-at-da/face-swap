@@ -7,3 +7,4 @@ flake8==6.1.0
 httpx==0.25.1
 pytest-env==1.1.1
 debugpy==1.8.0
+sqlalchemy-utils==0.41.1
