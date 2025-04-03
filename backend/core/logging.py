@@ -22,7 +22,11 @@ def setup_logging(name: str, log_file: Optional[str] = None) -> logging.Logger:
         logging.Logger: Configured logger instance
     """
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO if settings.ENVIRONMENT == "production" else logging.DEBUG)
+    
+    # Set log level based on uvicorn's log level setting
+    # This will be debug when running ./scripts/manage_server.sh debug
+    log_level = logging.getLevelName(settings.LOG_LEVEL.upper())
+    logger.setLevel(log_level)
 
     # Create formatters
     detailed_formatter = logging.Formatter(

@@ -1,10 +1,13 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
+from typing import Optional
 
 class Settings(BaseSettings):
     # Base settings
     PROJECT_NAME: str = "Parliament Video Clip Manager"
     API_V1_STR: str = "/api/v1"
+    ENVIRONMENT: str = "development"
+    LOG_LEVEL: str = "info"  # Will be overridden by uvicorn's --log-level flag
     
     # Authentication
     SECRET_KEY: str
@@ -13,7 +16,7 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str
-    TEST_DATABASE_URL: str = None
+    TEST_DATABASE_URL: Optional[str] = None
     
     # Video Settings
     PARLIAMENT_TV_URL: str = "https://www.parliamentlive.tv/Event/Index"
@@ -47,7 +50,6 @@ class Settings(BaseSettings):
 
     # Development Settings
     DEBUG: bool = False
-    ENVIRONMENT: str = "development"
     ALLOWED_HOSTS: str = "localhost,127.0.0.1"
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
