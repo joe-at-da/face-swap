@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'parliament_clips'
+    static_configs:
+      - targets: ['app:8000']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
