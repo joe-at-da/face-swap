@@ -2,10 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including CMake
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     postgresql-client \
+    build-essential \
+    cmake \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -21,5 +24,8 @@ COPY . .
 
 # Create media directory
 RUN mkdir -p /app/media
+
+# Set Python path
+ENV PYTHONPATH=/app
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

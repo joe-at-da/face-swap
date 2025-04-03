@@ -12,6 +12,7 @@ services:
       - ./data/media:/app/media
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/parliament_clips
+      - TEST_DATABASE_URL=postgresql://postgres:postgres@db:5432/test_parliament_clips
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=development
       - SECRET_KEY=dev_secret_key
@@ -32,6 +33,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=parliament_clips
+      - POSTGRES_TEST_DB=test_parliament_clips
 
   redis:
     image: redis:7
@@ -49,6 +51,7 @@ services:
       - ./data/media:/app/media
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/parliament_clips
+      - TEST_DATABASE_URL=postgresql://postgres:postgres@db:5432/test_parliament_clips
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=development
     depends_on:
