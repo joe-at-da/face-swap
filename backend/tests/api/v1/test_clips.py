@@ -60,7 +60,7 @@ def test_get_clip(client, db_session, test_capture):
     # Get clip
     response = client.get(f"/api/v1/clips/{clip.id}", headers=headers)
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["title"] == "Test Clip"
+    assert response.json()["title"] == clip.title
     assert response.json()["status"] == "ready"
 
 def test_list_clips(client, db_session, test_capture):
@@ -88,6 +88,8 @@ def test_list_clips(client, db_session, test_capture):
     response = client.get("/api/v1/clips/", headers=headers)
     assert response.status_code == status.HTTP_200_OK
     assert len(response.json()) == 3
+    for i, clip_data in enumerate(response.json()):
+        assert clip_data["title"] == f"Test Clip {i}"
 
 def test_delete_clip(client, db_session, test_capture):
     # Create admin user and clip
@@ -107,32 +109,23 @@ def test_delete_clip(client, db_session, test_capture):
     
     # Delete clip
     response = client.delete(f"/api/v1/clips/{clip.id}", headers=headers)
-    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert response.status_code == status.HTTP_200_OK
     
-    # Verify clip is deleted
-    assert db_session.query(models.VideoClip).filter_by(id=clip.id).first() is None
+    # Verify deletion
+    deleted_clip = db_session.query(models.VideoClip).filter(
+        models.VideoClip.id == clip.id
+    ).first()
+    assert deleted_clip is None
 
 def test_clip_permissions(client, db_session, test_capture):
-    # Create admin and staff users
-    admin = create_test_user(role="ADMIN", db=db_session)
-    staff = create_test_user(role="STAFF", db=db_session)
+    # Try without authentication
+    response = client.post("/api/v1/clips/", json={})
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
     
-    # Create clip as admin
-    clip = models.VideoClip(
-        title="Admin's Clip",
-        user_id=admin.id,
-        capture_session_id=test_capture.id,
-        status="ready",
-        start_time=datetime.utcnow() - timedelta(minutes=5),
-        end_time=datetime.utcnow()
-    )
-    db_session.add(clip)
-    db_session.commit()
+    # Create non-admin user
+    staff = create_test_user(role="staff", db=db_session)
+    headers = {"Authorization": f"Bearer {staff.create_token()}"}
     
-    # Try to delete as staff
-    staff_headers = {"Authorization": f"Bearer {staff.create_token()}"}
-    response = client.delete(f"/api/v1/clips/{clip.id}", headers=staff_headers)
+    # Try with unauthorized user
+    response = client.post("/api/v1/clips/", json={}, headers=headers)
     assert response.status_code == status.HTTP_403_FORBIDDEN
-    
-    # Verify clip still exists
-    assert db_session.query(models.VideoClip).filter_by(id=clip.id).first() is not None

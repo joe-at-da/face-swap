@@ -92,7 +92,7 @@ def has_permission(user, allowed_roles: list) -> bool:
     if user.role not in allowed_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions"
+            detail=f"Not enough permissions. Required roles: {allowed_roles}"
         )
     
     return True

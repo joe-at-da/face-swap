@@ -26,6 +26,6 @@ class VideoClip(Base):
     end_time = Column(DateTime(timezone=True))    # When the clip ends in the original stream
     
     # Relationships
-    user = relationship("User", back_populates="video_clips")
+    created_by_user = relationship("User", back_populates="video_clips")
     capture_session = relationship("CaptureSession", back_populates="video_clips")
     social_posts = relationship("SocialPost", back_populates="video_clip")
