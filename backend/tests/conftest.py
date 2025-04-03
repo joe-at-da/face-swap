@@ -8,9 +8,10 @@ from sqlalchemy_utils import create_database, drop_database
 from backend.db.base import Base
 from backend.main import app
 from backend.api.deps import get_db
+from backend.core.config import settings
 
-# Get test database URL from environment
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql://postgres:postgres@db:5432/test_parliament_clips")
+# Get test database URL from environment or use default test URL
+TEST_DATABASE_URL = settings.TEST_DATABASE_URL or "postgresql://postgres:postgres@db:5432/test_parliament_clips"
 
 @pytest.fixture(scope="session")
 def engine():

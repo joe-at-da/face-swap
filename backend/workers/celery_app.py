@@ -1,17 +1,11 @@
 from celery import Celery
-from core.config import get_settings
-
-settings = get_settings()
+from backend.core.config import settings
 
 celery_app = Celery(
-    "parliament_clips",
+    "worker",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=[
-        "workers.video_tasks",
-        "workers.transcription_tasks",
-        "workers.social_tasks"
-    ]
+    include=["backend.services.tasks"]
 )
 
 # Optional configuration

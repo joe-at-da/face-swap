@@ -1,20 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.core.config import get_settings
+from backend.core.config import settings
 from backend.api.v1.api import api_router
 
-settings = get_settings()
-
 app = FastAPI(
-    title="Parliament Video Clip Manager",
+    title=settings.PROJECT_NAME,
     description="API for managing Parliament TV video clips",
     version="1.0.0"
 )
 
 # Configure CORS
+origins = settings.CORS_ORIGINS.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS.split(","),
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,7 +28,7 @@ async def health_check():
     }
 
 # Include routers
-app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # Make sure the app is properly configured for testing
 if __name__ == "__main__":
