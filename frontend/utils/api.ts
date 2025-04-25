@@ -2,14 +2,8 @@
  * API client for communicating with the backend
  */
 
-// Determine API URL dynamically based on the browser's location
-// This will be executed on the client side only
-let API_BASE_URL = '/api/v1';
-
-// Initialize with a default, but update it when the code runs in the browser
-if (typeof window !== 'undefined') {
-  API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
-}
+// Use the Next.js API proxy to avoid CORS issues
+const API_BASE_URL = '/api/proxy';
 
 class ApiClient {
   private token: string | null = null;

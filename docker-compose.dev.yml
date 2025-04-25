@@ -14,7 +14,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=development
       - SECRET_KEY=dev_secret_key
-      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000,http://0.0.0.0:3000
     depends_on:
       - db
       - redis

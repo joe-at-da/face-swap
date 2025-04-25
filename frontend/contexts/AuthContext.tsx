@@ -75,23 +75,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setIsLoading(true);
     
     try {
-      // Create form data for OAuth2 login
-      const formData = new URLSearchParams();
-      formData.append('username', email); // OAuth2 expects 'username' even though we're using email
-      formData.append('password', password);
-      
-      // Use the browser's location to determine the API URL
-      // This ensures we're using the same host that the browser is accessing
-      const apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-      
-      // Make the request with form data instead of JSON
-      const response = await fetch(`${apiBaseUrl}/api/v1/auth/login`, {
+      // Use the Next.js API proxy to avoid CORS issues
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/json',
         },
-        body: formData,
-        credentials: 'include', // Include cookies for CORS requests
+        body: JSON.stringify({ email, password }),
       });
       
       if (!response.ok) {
