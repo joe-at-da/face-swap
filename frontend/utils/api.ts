@@ -2,7 +2,7 @@
  * API client for communicating with the backend
  */
 
-// Use direct localhost URL for API requests
+// Use direct localhost URL for API requests when running locally
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 class ApiClient {

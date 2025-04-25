@@ -73,7 +73,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Login function
   const login = async (email: string, password: string) => {
     setIsLoading(true);
-    console.log('Attempting login with email:', email);
     
     try {
       // Create form data for OAuth2 login - this is the format expected by FastAPI's OAuth2PasswordRequestForm
@@ -81,32 +80,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       formData.append('username', email); // OAuth2 expects 'username' even though we're using email
       formData.append('password', password);
       
-      console.log('Form data created:', formData.toString());
-      
       // Use localhost when accessing from the browser
-      console.log('Sending request to http://localhost:8000/api/v1/auth/login');
       const response = await fetch('http://localhost:8000/api/v1/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: formData,
-        credentials: 'include', // Include cookies for cross-origin requests
       });
       
-      console.log('Login response status:', response.status);
-      
       if (!response.ok) {
-        console.error('Login failed with status:', response.status);
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        
-        try {
-          const errorData = JSON.parse(errorText);
-          throw new Error(errorData.detail || `Login failed: ${response.status}`);
-        } catch (e) {
-          throw new Error(`Login failed: ${response.status}`);
-        }
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Login failed: ${response.status}`);
       }
       
       const data = await response.json();
