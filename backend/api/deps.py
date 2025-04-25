@@ -37,7 +37,7 @@ def get_current_user(
             user = User(
                 id=0,  # Use 0 for test users
                 email="test@example.com",
-                role=payload.get("role", "USER"),
+                role=payload.get("role", "staff").lower(),
                 is_active=True
             )
             return user

@@ -4,11 +4,13 @@ from jose import jwt
 from backend.db import models
 from backend.core.config import settings
 
-def create_test_user(role: str = "USER", db = None) -> models.User:
+def create_test_user(role: str = "staff", db = None) -> models.User:
     """Create a test user with the given role."""
+    # Always ensure role is lowercase to match enum values
+    role = role.lower()
     suffix = str(uuid.uuid4())[:8]  # Use first 8 chars of UUID for uniqueness
     user = models.User(
-        email=f"test_{role.lower()}_{suffix}@example.com",
+        email=f"test_{role}_{suffix}@example.com",
         hashed_password="hashed_test_password",
         role=role,
         is_active=True

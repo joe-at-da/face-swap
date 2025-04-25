@@ -6,11 +6,12 @@ from backend.tests.utils.users import create_test_user
 
 def test_start_capture(client, db_session):
     # Create admin user
-    admin = create_test_user(role="ADMIN", db=db_session)
+    admin = create_test_user(role="admin", db=db_session)
     headers = {"Authorization": f"Bearer {admin.create_token()}"}
     
     # Start capture
     response = client.post("/api/v1/capture/start", headers=headers)
+    print(f"Start capture response: {response.json()}")
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["status"] == "started"
     assert "capture_id" in response.json()
@@ -18,7 +19,7 @@ def test_start_capture(client, db_session):
 
 def test_stop_capture(client, db_session):
     # Create admin user
-    admin = create_test_user(role="ADMIN", db=db_session)
+    admin = create_test_user(role="admin", db=db_session)
     headers = {"Authorization": f"Bearer {admin.create_token()}"}
     
     # Start capture first
@@ -32,7 +33,7 @@ def test_stop_capture(client, db_session):
 
 def test_get_capture_status(client, db_session):
     # Create admin user
-    admin = create_test_user(role="ADMIN", db=db_session)
+    admin = create_test_user(role="admin", db=db_session)
     headers = {"Authorization": f"Bearer {admin.create_token()}"}
     
     # Check status (no active capture)
@@ -40,8 +41,9 @@ def test_get_capture_status(client, db_session):
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["is_capturing"] is False
     
-    # Start capture
-    client.post("/api/v1/capture/start", headers=headers)
+    # Start capture and manually create an active capture session
+    response = client.post("/api/v1/capture/start", headers=headers)
+    assert response.status_code == status.HTTP_200_OK
     
     # Check status again
     response = client.get("/api/v1/capture/status", headers=headers)

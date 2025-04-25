@@ -27,9 +27,9 @@ async def create_clip(
     current_user: models.User = Depends(get_current_user)
 ):
     """Create a new video clip."""
-    has_permission(current_user, ["ADMIN", "MP"])
+    has_permission(current_user, ["admin", "mp"])
     
-    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id)
+    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status="processing")
     db.add(db_clip)
     db.commit()
     db.refresh(db_clip)
@@ -65,7 +65,7 @@ async def update_clip(
             detail="Video clip not found"
         )
     
-    if clip.user_id != current_user.id and current_user.role != "ADMIN":
+    if clip.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to modify this clip"
@@ -78,7 +78,7 @@ async def update_clip(
     db.refresh(clip)
     return clip
 
-@router.delete("/{clip_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{clip_id}", status_code=status.HTTP_200_OK)
 async def delete_clip(
     clip_id: int,
     db: Session = Depends(get_db),
@@ -92,7 +92,7 @@ async def delete_clip(
             detail="Video clip not found"
         )
     
-    if clip.user_id != current_user.id and current_user.role != "ADMIN":
+    if clip.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this clip"
@@ -100,7 +100,7 @@ async def delete_clip(
     
     db.delete(clip)
     db.commit()
-    return None
+    return {"status": "success", "message": "Clip deleted successfully"}
 
 @router.get("/{clip_id}/status", response_model=schemas.VideoClipStatus)
 async def get_clip_status(

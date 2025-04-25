@@ -18,7 +18,7 @@ def test_capture(db_session):
 
 def test_create_clip(client, db_session, test_capture):
     # Create admin user
-    admin = create_test_user(role="ADMIN", db=db_session)
+    admin = create_test_user(role="admin", db=db_session)
     test_capture.user_id = admin.id
     db_session.commit()
     
@@ -36,13 +36,13 @@ def test_create_clip(client, db_session, test_capture):
     
     # Create clip
     response = client.post("/api/v1/clips/", json=clip_data, headers=headers)
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["title"] == clip_data["title"]
     assert response.json()["status"] == "processing"
 
 def test_get_clip(client, db_session, test_capture):
     # Create admin user and clip
-    admin = create_test_user(role="ADMIN", db=db_session)
+    admin = create_test_user(role="admin", db=db_session)
     headers = {"Authorization": f"Bearer {admin.create_token()}"}
     
     clip = models.VideoClip(
@@ -65,8 +65,11 @@ def test_get_clip(client, db_session, test_capture):
 
 def test_list_clips(client, db_session, test_capture):
     # Create admin user and clips
-    admin = create_test_user(role="ADMIN", db=db_session)
-    headers = {"Authorization": f"Bearer {admin.create_token()}"}
+    admin = create_test_user(role="admin", db=db_session)
+    headers = {"Authorization": f"Bearer {admin.create_token()}"}    
+    
+    # Clear existing clips
+    db_session.query(models.VideoClip).delete()
     
     # Create multiple clips
     clips = []
@@ -93,7 +96,7 @@ def test_list_clips(client, db_session, test_capture):
 
 def test_delete_clip(client, db_session, test_capture):
     # Create admin user and clip
-    admin = create_test_user(role="ADMIN", db=db_session)
+    admin = create_test_user(role="admin", db=db_session)
     headers = {"Authorization": f"Bearer {admin.create_token()}"}
     
     clip = models.VideoClip(
@@ -127,5 +130,12 @@ def test_clip_permissions(client, db_session, test_capture):
     headers = {"Authorization": f"Bearer {staff.create_token()}"}
     
     # Try with unauthorized user
-    response = client.post("/api/v1/clips/", json={}, headers=headers)
+    clip_data = {
+        "title": "Test Clip",
+        "description": "Test Description",
+        "start_time": datetime.utcnow().isoformat(),
+        "end_time": (datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+        "capture_session_id": test_capture.id
+    }
+    response = client.post("/api/v1/clips/", json=clip_data, headers=headers)
     assert response.status_code == status.HTTP_403_FORBIDDEN

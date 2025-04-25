@@ -1,5 +1,6 @@
 import os
 import pytest
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -9,6 +10,7 @@ from backend.db.base import Base
 from backend.main import app
 from backend.api.deps import get_db
 from backend.core.config import settings
+from backend.services.tasks import video_tasks
 
 # Get test database URL from environment or use default test URL
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL or "postgresql://postgres:postgres@db:5432/test_parliament_clips"
@@ -47,6 +49,13 @@ def client(db_session):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
+    
+    # Mock video tasks
+    task_mock = MagicMock()
+    task_mock.delay.return_value.id = "mock-task-id"
+    
+    with patch.object(video_tasks, 'start_stream_capture', task_mock), \
+         patch.object(video_tasks, 'stop_stream_capture', task_mock):
+        with TestClient(app) as test_client:
+            yield test_client
     app.dependency_overrides.clear()
