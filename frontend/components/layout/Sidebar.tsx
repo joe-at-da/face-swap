@@ -90,10 +90,10 @@ const Sidebar: React.FC = () => {
   ];
 
   return (
-    <div className="h-full border-r w-64 fixed" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+    <div className="h-full border-r w-64 fixed bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 transition-colors duration-200">
       <div className="h-full flex flex-col overflow-y-auto">
         <div className="flex-1 flex flex-col pt-5 pb-4">
-          <div className="flex-1 px-2 space-y-1" style={{ backgroundColor: 'var(--card-bg)' }}>
+          <div className="flex-1 px-2 space-y-1">
             {navigationItems.map((item) => {
               const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
               
@@ -102,15 +102,11 @@ const Sidebar: React.FC = () => {
                   <span
                     className={`${
                       isActive
-                        ? 'text-primary'
-                        : 'text-secondary hover:text-primary'
-                    } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer`}
-                    style={{ 
-                      backgroundColor: isActive ? 'var(--hover-bg)' : 'transparent',
-                      color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)'
-                    }}
+                        ? 'text-primary dark:text-blue-400 bg-gray-100 dark:bg-gray-700'
+                        : 'text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                    } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
                   >
-                    <div className={`mr-3`} style={{ color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)' }}>
+                    <div className="mr-3">
                       {item.icon}
                     </div>
                     {item.name}
@@ -123,7 +119,7 @@ const Sidebar: React.FC = () => {
             {user?.role === UserRole.ADMIN && (
               <div className="pt-6">
                 <div className="px-3 mb-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Administration
                   </h3>
                 </div>
@@ -157,7 +153,7 @@ const Sidebar: React.FC = () => {
         </div>
         
         {/* Footer */}
-        <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+        <div className="flex-shrink-0 flex border-t border-gray-200 dark:border-gray-700 p-4">
           <div className="flex items-center">
             <div className="flex-shrink-0">
               <div className="h-8 w-8 rounded-full bg-primary text-white flex items-center justify-center">
@@ -165,8 +161,8 @@ const Sidebar: React.FC = () => {
               </div>
             </div>
             <div className="ml-3">
-              <p className="text-sm font-medium text-gray-700 truncate">{user?.name}</p>
-              <p className="text-xs font-medium text-gray-500 truncate capitalize">{user?.role}</p>
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">{user?.name}</p>
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate capitalize">{user?.role}</p>
             </div>
           </div>
         </div>
