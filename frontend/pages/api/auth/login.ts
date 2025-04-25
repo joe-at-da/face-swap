@@ -19,27 +19,59 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     formData.append('password', password);
 
     // Construct the backend URL
-    // When running in Docker, use the service name 'app'
-    const backendUrl = process.env.BACKEND_URL || 'http://app:8000';
+    // When running in Docker, we need to use the correct service name
+    // This is a critical part - we need to use the Docker service name when inside Docker
+    // and localhost when running locally
+    let backendUrl;
+    
+    // Check if we're running in a Docker container
+    if (process.env.NODE_ENV === 'production') {
+      // In production or Docker, use the service name
+      backendUrl = 'http://app:8000';
+    } else {
+      // In development outside Docker, use localhost
+      backendUrl = 'http://localhost:8000';
+    }
+    
+    console.log('Backend URL:', backendUrl);
     const url = `${backendUrl}/api/v1/auth/login`;
 
-    // Forward the request to the backend
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData,
-    });
+    console.log('Sending request to:', url);
+    
+    try {
+      // Forward the request to the backend
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData,
+      });
+      
+      console.log('Response status:', response.status);
+      
+      // Get the response data
+      const data = await response.json().catch(e => {
+        console.error('Error parsing JSON response:', e);
+        return { error: 'Invalid JSON response' };
+      });
+      
+      console.log('Response data:', data);
+      
+      // Set the response status code
+      res.status(response.status);
+      
+      // Send the response
+      return res.json(data);
+    } catch (error) {
+      console.error('Fetch error:', error);
+      return res.status(500).json({ 
+        error: 'Error connecting to backend service', 
+        details: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
 
-    // Get the response data
-    const data = await response.json().catch(() => ({}));
-
-    // Set the response status code
-    res.status(response.status);
-
-    // Send the response
-    res.json(data);
+    // This code won't be reached due to the return statement in the try block
   } catch (error) {
     console.error('Login proxy error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
