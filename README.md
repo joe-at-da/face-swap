@@ -109,11 +109,22 @@ If you prefer using Docker for local development:
 
 ```bash
 # From the project root
-docker-compose up -d
+docker-compose -f docker-compose.dev.yml up -d
 
 # View logs
-docker-compose logs -f
+docker-compose -f docker-compose.dev.yml logs -f
+
+# Stop services when done
+docker-compose -f docker-compose.dev.yml down
 ```
+
+This will start the following services:
+- Backend API (FastAPI)
+- Frontend (Next.js)
+- PostgreSQL database
+- Redis for caching and queues
+- Celery worker for background tasks
+- Prometheus and Grafana for monitoring
 
 ### Building for Production
 
