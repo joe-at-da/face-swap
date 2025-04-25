@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
-from backend.db.models.user import UserRole
+from backend.db.models.user import UserRole, User as UserModel
 from backend.schemas import video as schemas
 from backend.core.security import has_permission
 
@@ -15,7 +15,7 @@ async def list_clips(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """List video clips with pagination."""
     clips = db.query(models.VideoClip).offset(skip).limit(limit).all()
@@ -25,7 +25,7 @@ async def list_clips(
 async def create_clip(
     clip: schemas.VideoClipCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Create a new video clip."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
@@ -40,7 +40,7 @@ async def create_clip(
 async def get_clip(
     clip_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Get a specific video clip."""
     clip = db.query(models.VideoClip).filter(models.VideoClip.id == clip_id).first()
@@ -56,7 +56,7 @@ async def update_clip(
     clip_id: int,
     clip_update: schemas.VideoClipUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Update a video clip."""
     clip = db.query(models.VideoClip).filter(models.VideoClip.id == clip_id).first()
@@ -83,7 +83,7 @@ async def update_clip(
 async def delete_clip(
     clip_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Delete a video clip."""
     clip = db.query(models.VideoClip).filter(models.VideoClip.id == clip_id).first()
@@ -107,7 +107,7 @@ async def delete_clip(
 async def get_clip_status(
     clip_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Get the processing status of a video clip."""
     clip = db.query(models.VideoClip).filter(models.VideoClip.id == clip_id).first()

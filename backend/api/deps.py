@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.db.session import SessionLocal
-from backend.db.models.user import User, UserRole
+from backend.db.models.user import User as UserModel, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
@@ -21,7 +21,7 @@ def get_db() -> Generator:
 def get_current_user(
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
-) -> User:
+) -> UserModel:
     """Get current authenticated user."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -44,7 +44,7 @@ def get_current_user(
             else:
                 role = UserRole.STAFF
                 
-            user = User(
+            user = UserModel(
                 id=0,  # Use 0 for test users
                 email="test@example.com",
                 role=role,
@@ -62,7 +62,7 @@ def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if user is None:
         raise credentials_exception
 
@@ -77,7 +77,7 @@ def get_current_user(
 
 def get_current_user_with_roles(allowed_roles: list[UserRole]):
     """Get current user and verify they have one of the allowed roles."""
-    def _get_user_with_roles(current_user: User = Depends(get_current_user)) -> User:
+    def _get_user_with_roles(current_user: UserModel = Depends(get_current_user)) -> UserModel:
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
