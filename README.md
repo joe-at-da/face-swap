@@ -2,6 +2,8 @@
 
 A powerful application for UK Members of Parliament to capture, edit, and share video clips from Parliament TV feeds. Features automated transcription, branding, and multi-platform sharing capabilities.
 
+![Project Status](https://img.shields.io/badge/status-beta-blue) ![Version](https://img.shields.io/badge/version-0.9.0-green)
+
 ## Features
 
 - 📹 Video capture from Parliament TV feeds
@@ -30,8 +32,10 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
    - PostgreSQL 14
    - Redis
    - FFmpeg
+   - Node.js 18+
+   - npm 9+
 
-2. **Installation**
+2. **Backend Installation**
    ```bash
    # Clone repository
    git clone https://github.com/yourusername/the-mp.git
@@ -51,6 +55,19 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
    createdb parliament_clips_test  # for testing
    ```
 
+3. **Frontend Installation**
+   ```bash
+   # Navigate to frontend directory
+   cd frontend
+
+   # Install dependencies
+   npm install
+
+   # Configure environment
+   cp .env.example .env.local
+   # Edit .env.local with your settings
+   ```
+
 ## Documentation
 
 - [Setup Guide](docs/setup_guide.md) - Detailed installation and configuration
@@ -60,13 +77,29 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 ## Development
 
-### Running the Server
+### Running the Application
+
 ```bash
-# Start development server
+# Start backend server
 ./scripts/manage_server.sh
 
 # Debug mode with increased logging
 ./scripts/manage_server.sh debug
+
+# Start frontend development server (in a separate terminal)
+cd frontend
+npm run dev
+```
+
+### Building for Production
+
+```bash
+# Build backend Docker image
+docker build -t parliament-clips-backend -f Dockerfile.backend .
+
+# Build frontend
+cd frontend
+npm run build
 ```
 
 ### Testing
@@ -83,7 +116,7 @@ pytest --cov=backend tests/
 
 ## Development Status
 
-Currently in Phase 1 of development. See [ROADMAP.md](ROADMAP.md) for details.
+Currently in Beta phase with all core features implemented. Both backend and frontend components are complete and ready for deployment. See [ROADMAP.md](ROADMAP.md) for detailed progress and next steps.
 
 ## License
 
