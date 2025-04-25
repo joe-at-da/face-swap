@@ -104,7 +104,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Fetch user data with the token
       api.setAuthToken(access_token);
       try {
-        const userData = await api.get('/users/me');
+        const userData = await api.get('/auth/me');
         setUser(userData);
       } catch (error) {
         console.warn('Could not fetch user data:', error);
