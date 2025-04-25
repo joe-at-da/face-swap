@@ -1,8 +1,9 @@
 from fastapi import APIRouter
-from backend.api.v1.endpoints import auth, video, capture
+from backend.api.v1.endpoints import auth, video, capture, transcription
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
 api_router.include_router(video.router, prefix="/clips", tags=["clips"])
 api_router.include_router(capture.router, prefix="/capture", tags=["capture"])
+api_router.include_router(transcription.router, prefix="/transcriptions", tags=["transcriptions"])

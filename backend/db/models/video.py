@@ -29,3 +29,4 @@ class VideoClip(Base):
     created_by_user = relationship("User", back_populates="video_clips")
     capture_session = relationship("CaptureSession", back_populates="video_clips")
     social_posts = relationship("SocialPost", back_populates="video_clip")
+    transcription = relationship("Transcription", back_populates="video_clip", uselist=False)
