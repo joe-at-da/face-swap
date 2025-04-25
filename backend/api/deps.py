@@ -73,3 +73,15 @@ def get_current_user(
         )
 
     return user
+
+
+def get_current_user_with_roles(allowed_roles: list[UserRole]):
+    """Get current user and verify they have one of the allowed roles."""
+    def _get_user_with_roles(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not enough permissions"
+            )
+        return current_user
+    return _get_user_with_roles

@@ -45,9 +45,14 @@ class Settings(BaseSettings):
     # Social Media
     TWITTER_API_KEY: str
     TWITTER_API_SECRET: str
+    TWITTER_ACCESS_TOKEN: str = ""
+    TWITTER_ACCESS_TOKEN_SECRET: str = ""
     FACEBOOK_APP_ID: str
     FACEBOOK_APP_SECRET: str
+    FACEBOOK_ACCESS_TOKEN: str = ""
+    FACEBOOK_PAGE_ID: str = ""
     INSTAGRAM_ACCESS_TOKEN: str
+    INSTAGRAM_ACCOUNT_ID: str = ""
 
     # Parliament TV
     PARLIAMENT_TV_API_KEY: str
