@@ -80,9 +80,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       formData.append('username', email); // OAuth2 expects 'username' even though we're using email
       formData.append('password', password);
       
-      // When running in Docker, use the service name 'app' instead of localhost
-      const isDocker = process.env.DOCKER_ENV === 'true';
-      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || (isDocker ? 'http://app:8000' : 'http://localhost:8000');
+      // Use the browser's location to determine the API URL
+      // This ensures we're using the same host that the browser is accessing
+      const apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
       
       // Make the request with form data instead of JSON
       const response = await fetch(`${apiBaseUrl}/api/v1/auth/login`, {
@@ -91,6 +91,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: formData,
+        credentials: 'include', // Include cookies for CORS requests
       });
       
       if (!response.ok) {
@@ -107,8 +108,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Fetch user data with the token
       api.setAuthToken(access_token);
-      const userData = await api.get('/users/me');
-      setUser(userData);
+      try {
+        const userData = await api.get('/users/me');
+        setUser(userData);
+      } catch (error) {
+        console.warn('Could not fetch user data:', error);
+        // Continue anyway, we can try to fetch user data later
+      }
       
       // Redirect to dashboard
       router.push('/dashboard');

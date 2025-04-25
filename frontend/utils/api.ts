@@ -2,9 +2,14 @@
  * API client for communicating with the backend
  */
 
-// When running in Docker, use the service name 'app' instead of localhost
-const isDocker = process.env.DOCKER_ENV === 'true';
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || (isDocker ? 'http://app:8000' : 'http://localhost:8000')) + '/api/v1';
+// Determine API URL dynamically based on the browser's location
+// This will be executed on the client side only
+let API_BASE_URL = '/api/v1';
+
+// Initialize with a default, but update it when the code runs in the browser
+if (typeof window !== 'undefined') {
+  API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
+}
 
 class ApiClient {
   private token: string | null = null;
@@ -72,6 +77,7 @@ class ApiClient {
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: this.getHeaders(),
+      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -85,6 +91,7 @@ class ApiClient {
       method: 'POST',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
+      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -98,6 +105,7 @@ class ApiClient {
       method: 'PUT',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
+      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -111,6 +119,7 @@ class ApiClient {
       method: 'PATCH',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
+      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -123,6 +132,7 @@ class ApiClient {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
+      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
