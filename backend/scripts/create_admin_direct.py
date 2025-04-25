@@ -18,8 +18,7 @@ from backend.core.security import get_password_hash
 
 def create_admin_user(engine, email, password):
     """Create an admin user with the given email and password using direct SQL."""
-    # Generate a unique ID for the user
-    user_id = str(uuid.uuid4())
+    # We'll let the database generate the ID (auto-increment)
     hashed_password = get_password_hash(password)
     created_at = datetime.utcnow()
     
@@ -38,11 +37,10 @@ def create_admin_user(engine, email, password):
         # Insert new admin user
         conn.execute(
             text("""
-            INSERT INTO users (id, email, hashed_password, full_name, role, is_active, created_at, updated_at)
-            VALUES (:id, :email, :hashed_password, :full_name, :role, :is_active, :created_at, :created_at)
+            INSERT INTO users (email, hashed_password, full_name, role, is_active, created_at, updated_at)
+            VALUES (:email, :hashed_password, :full_name, :role, :is_active, :created_at, :created_at)
             """),
             {
-                "id": user_id,
                 "email": email,
                 "hashed_password": hashed_password,
                 "full_name": "Admin User",

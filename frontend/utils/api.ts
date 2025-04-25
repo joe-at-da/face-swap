@@ -2,8 +2,8 @@
  * API client for communicating with the backend
  */
 
-// Use the Next.js API proxy to avoid CORS issues
-const API_BASE_URL = '/api/proxy';
+// Use direct localhost URL for API requests
+const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 class ApiClient {
   private token: string | null = null;

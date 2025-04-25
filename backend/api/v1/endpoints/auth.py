@@ -26,18 +26,41 @@ async def login(
     """
     OAuth2 compatible token login, get an access token for future requests
     """
-    user = db.query(UserModel).filter(UserModel.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
+    print(f"Login attempt with username: {form_data.username}")
+    
+    try:
+        # Check if user exists
+        user = db.query(UserModel).filter(UserModel.email == form_data.username).first()
+        
+        if not user:
+            print(f"User not found: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        # Verify password
+        if not verify_password(form_data.password, user.hashed_password):
+            print(f"Invalid password for user: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        # Check if user is active
+        if not user.is_active:
+            print(f"User is inactive: {form_data.username}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Inactive user"
+            )
+            
+        print(f"Login successful for user: {form_data.username}")
+    except Exception as e:
+        print(f"Login error: {str(e)}")
+        raise
 
     # Update last login
     user.last_login = datetime.utcnow()
