@@ -24,8 +24,9 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 def create_access_token(
-    subject: int,
-    expires_delta: Optional[timedelta] = None
+    subject: str,
+    expires_delta: Optional[timedelta] = None,
+    role: str = None
 ) -> str:
     """Create JWT access token."""
     if expires_delta:
@@ -35,7 +36,13 @@ def create_access_token(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
     
+    # Include subject (email) and expiration in the token
     to_encode = {"exp": expire, "sub": str(subject)}
+    
+    # Add role information if provided
+    if role:
+        to_encode["role"] = role
+        
     encoded_jwt = jwt.encode(
         to_encode,
         settings.SECRET_KEY,

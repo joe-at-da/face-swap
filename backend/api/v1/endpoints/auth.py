@@ -67,9 +67,12 @@ async def login(
     db.commit()
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    # Create a JWT token with the user's email as the subject and role
     access_token = create_access_token(
-        data={"sub": user.email, "role": user.role.upper()},
-        expires_delta=access_token_expires
+        subject=user.email,
+        expires_delta=access_token_expires,
+        role=user.role.value.upper()  # Pass the role value as uppercase string
     )
     
     return {"access_token": access_token, "token_type": "bearer"}

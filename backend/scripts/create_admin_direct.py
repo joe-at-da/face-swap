@@ -44,7 +44,7 @@ def create_admin_user(engine, email, password):
                 "email": email,
                 "hashed_password": hashed_password,
                 "full_name": "Admin User",
-                "role": "admin",
+                "role": "ADMIN",  # Enum values must be uppercase
                 "is_active": True,
                 "created_at": created_at
             }

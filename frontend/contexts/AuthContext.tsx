@@ -4,9 +4,9 @@ import { api } from '../utils/api';
 
 // Define user roles based on the backend enum
 export enum UserRole {
-  ADMIN = 'admin',
-  MP = 'mp',
-  STAFF = 'staff',
+  ADMIN = 'ADMIN',
+  MP = 'MP',
+  STAFF = 'STAFF',
 }
 
 // Define user type
