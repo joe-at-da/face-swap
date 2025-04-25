@@ -56,11 +56,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           // Fetch user data
           const userData = await api.get('/auth/me');
           setUser(userData);
+          console.log('User authenticated successfully:', userData.email);
         } catch (error) {
           console.error('Failed to authenticate:', error);
+          // Clear authentication data
           localStorage.removeItem('token');
           setToken(null);
+          setUser(null);
           api.setAuthToken(null);
+          
+          // If we're not on the login page, redirect to login
+          if (router.pathname !== '/login') {
+            router.push('/login');
+          }
         }
       }
       
@@ -68,7 +76,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     initAuth();
-  }, []);
+  }, [router]);
 
   // Login function
   const login = async (email: string, password: string) => {
@@ -85,8 +93,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
         },
         body: formData,
+        credentials: 'include',
       });
       
       if (!response.ok) {
@@ -106,13 +116,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       try {
         const userData = await api.get('/auth/me');
         setUser(userData);
+        console.log('User authenticated successfully:', userData.email);
       } catch (error) {
         console.warn('Could not fetch user data:', error);
         // Set a minimal user object with the email
         setUser({
           id: 0, // Placeholder ID
           email,
-          name: 'User', // Use 'name' instead of 'full_name' to match the User interface
+          name: email.split('@')[0], // Use part of email as name
           role: UserRole.ADMIN // Use the enum value for admin role
         });
       }
@@ -121,6 +132,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       router.push('/dashboard');
     } catch (error) {
       console.error('Login failed:', error);
+      // Clear any partial authentication data
+      localStorage.removeItem('token');
+      setToken(null);
+      setUser(null);
+      api.setAuthToken(null);
       throw error;
     } finally {
       setIsLoading(false);

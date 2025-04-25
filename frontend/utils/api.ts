@@ -21,6 +21,7 @@ class ApiClient {
   private getHeaders(): HeadersInit {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
     };
 
     if (this.token) {
@@ -35,6 +36,15 @@ class ApiClient {
    */
   private async handleResponse(response: Response) {
     if (!response.ok) {
+      // Handle 401 Unauthorized - could be expired token
+      if (response.status === 401) {
+        // If we're not on the login page, we might need to refresh the token or redirect to login
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          // For now, just log the error - in a real app, you might want to refresh the token
+          console.warn('Authentication error: Token may be expired');
+        }
+      }
+      
       // Try to parse error response
       try {
         const errorData = await response.json();
@@ -68,12 +78,18 @@ class ApiClient {
       });
     }
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.getHeaders(),
+        credentials: 'include',
+      });
 
-    return this.handleResponse(response);
+      return this.handleResponse(response);
+    } catch (error) {
+      console.error(`Network error fetching ${endpoint}:`, error);
+      throw error;
+    }
   }
 
   /**
