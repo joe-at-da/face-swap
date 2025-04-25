@@ -2,15 +2,24 @@ from datetime import datetime, timedelta
 import uuid
 from jose import jwt
 from backend.db import models
+from backend.db.models.user import UserRole
 from backend.core.config import settings
 
 def create_test_user(role: str = "staff", db = None) -> models.User:
     """Create a test user with the given role."""
-    # Always ensure role is lowercase to match enum values
-    role = role.lower()
+    # Convert string role to UserRole enum
+    if isinstance(role, str):
+        # Handle both uppercase and lowercase role names
+        role = role.lower()
+        try:
+            role = UserRole(role)
+        except ValueError:
+            # Default to STAFF if invalid role
+            role = UserRole.STAFF
+    
     suffix = str(uuid.uuid4())[:8]  # Use first 8 chars of UUID for uniqueness
     user = models.User(
-        email=f"test_{role}_{suffix}@example.com",
+        email=f"test_{role.value}_{suffix}@example.com",
         hashed_password="hashed_test_password",
         role=role,
         is_active=True

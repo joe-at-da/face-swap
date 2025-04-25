@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.db.session import SessionLocal
-from backend.db.models.user import User
+from backend.db.models.user import User, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
@@ -34,10 +34,20 @@ def get_current_user(
         )
         sub = payload.get("sub")
         if sub == "test":  # Handle test users
+            # Get role from payload and convert to UserRole enum
+            role_str = payload.get("role", "staff")
+            if isinstance(role_str, str):
+                try:
+                    role = UserRole(role_str.lower())
+                except ValueError:
+                    role = UserRole.STAFF
+            else:
+                role = UserRole.STAFF
+                
             user = User(
                 id=0,  # Use 0 for test users
                 email="test@example.com",
-                role=payload.get("role", "staff").lower(),
+                role=role,
                 is_active=True
             )
             return user

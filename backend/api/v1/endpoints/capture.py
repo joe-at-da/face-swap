@@ -5,6 +5,7 @@ from typing import Dict
 from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission
 from backend.db import models
+from backend.db.models.user import UserRole
 from backend.services.tasks import video_tasks
 from backend.core.config import settings
 
@@ -16,7 +17,7 @@ async def start_capture(
     current_user: models.User = Depends(get_current_user)
 ):
     """Start capturing the Parliament TV stream."""
-    has_permission(current_user, ["admin", "mp"])
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
     
     # Check if capture is already running
     active_capture = db.query(models.CaptureSession).filter(
@@ -52,7 +53,7 @@ async def stop_capture(
     current_user: models.User = Depends(get_current_user)
 ):
     """Stop the current capture session."""
-    has_permission(current_user, ["admin", "mp"])
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
     
     # Get active capture session
     active_capture = db.query(models.CaptureSession).filter(

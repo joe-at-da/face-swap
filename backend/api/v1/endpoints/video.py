@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
+from backend.db.models.user import UserRole
 from backend.schemas import video as schemas
 from backend.core.security import has_permission
 
@@ -27,7 +28,7 @@ async def create_clip(
     current_user: models.User = Depends(get_current_user)
 ):
     """Create a new video clip."""
-    has_permission(current_user, ["admin", "mp"])
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
     
     db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status="processing")
     db.add(db_clip)
@@ -65,7 +66,7 @@ async def update_clip(
             detail="Video clip not found"
         )
     
-    if clip.user_id != current_user.id and current_user.role != "admin":
+    if clip.user_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to modify this clip"
@@ -92,7 +93,7 @@ async def delete_clip(
             detail="Video clip not found"
         )
     
-    if clip.user_id != current_user.id and current_user.role != "admin":
+    if clip.user_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this clip"

@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.db.models import User
-from backend.schemas.auth import TokenData, UserRole
+from backend.db.models.user import UserRole
+from backend.schemas.auth import TokenData
 from backend.db.session import get_db
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -89,10 +90,18 @@ def has_permission(user, allowed_roles: list) -> bool:
             detail="Authentication required"
         )
     
-    if user.role not in allowed_roles:
+    # Convert string roles to UserRole enum if needed
+    user_role = user.role
+    if isinstance(user_role, str):
+        try:
+            user_role = UserRole(user_role)
+        except ValueError:
+            pass
+    
+    if user_role not in allowed_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Not enough permissions. Required roles: {allowed_roles}"
+            detail=f"Not enough permissions. Required roles: {[role.value for role in allowed_roles]}"
         )
     
     return True
