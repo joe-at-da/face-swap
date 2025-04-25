@@ -6,9 +6,9 @@ import enum
 from backend.db.base_class import Base
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    MP = "mp"
-    STAFF = "staff"
+    ADMIN = "ADMIN"
+    MP = "MP"
+    STAFF = "STAFF"
 
 class User(Base):
     __tablename__ = "users"
