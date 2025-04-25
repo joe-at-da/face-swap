@@ -79,7 +79,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 ### Running the Application
 
-#### Method 1: Direct Run
+#### Method 1: Direct Run (Recommended)
 
 ```bash
 # Terminal 1: Start backend server
@@ -90,6 +90,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 # Terminal 2: Start frontend development server
 cd frontend
+npm install  # Ensure all dependencies are installed
 npm run dev
 ```
 
@@ -103,22 +104,53 @@ Once both servers are running:
    - Social Media: Create and schedule posts
    - Admin: Manage users and storage
 
-#### Method 2: Docker (Recommended)
+#### Troubleshooting Direct Run
 
-If you prefer using Docker for local development:
+If you encounter issues with the frontend:
 
-```bash
-# From the project root
-docker-compose -f docker-compose.dev.yml up -d
+1. Make sure all dependencies are installed:
+   ```bash
+   cd frontend
+   npm install
+   ```
 
-# View logs
-docker-compose -f docker-compose.dev.yml logs -f
+2. If you see Tailwind CSS errors, check that your PostCSS configuration is correct:
+   ```javascript
+   // frontend/postcss.config.js
+   module.exports = {
+     plugins: {
+       tailwindcss: {},
+       autoprefixer: {},
+     },
+   }
+   ```
 
-# Stop services when done
-docker-compose -f docker-compose.dev.yml down
-```
+3. Ensure your Tailwind configuration has the correct color definitions:
+   ```javascript
+   // frontend/tailwind.config.js
+   /** @type {import('tailwindcss').Config} */
+   module.exports = {
+     // ... other config
+     theme: {
+       extend: {
+         colors: {
+           primary: {
+             DEFAULT: "#0076C0", // Parliament blue
+             dark: "#005A8E",
+             light: "#3D9AD1",
+           },
+           // ... other colors
+         },
+       },
+     },
+   }
+   ```
 
-This will start the following services:
+#### Method 2: Docker Setup (In Progress)
+
+A Docker-based development environment is currently being configured. For now, please use the direct run method above.
+
+When completed, the Docker setup will include:
 - Backend API (FastAPI)
 - Frontend (Next.js)
 - PostgreSQL database
@@ -126,27 +158,7 @@ This will start the following services:
 - Celery worker for background tasks
 - Prometheus and Grafana for monitoring
 
-#### Troubleshooting
-
-**Tailwind CSS Configuration Issue**
-
-If you encounter an error related to Tailwind CSS configuration, ensure your `postcss.config.js` is properly configured for Tailwind CSS v4:
-
-```javascript
-// frontend/postcss.config.js
-module.exports = {
-  plugins: [
-    require('@tailwindcss/postcss'),
-    require('autoprefixer'),
-  ],
-}
-```
-
-You may need to install the PostCSS plugin for Tailwind CSS v4:
-
-```bash
-docker-compose -f docker-compose.dev.yml exec frontend npm install @tailwindcss/postcss
-```
+Check back for updated Docker instructions in future releases.
 
 ### Building for Production
 
