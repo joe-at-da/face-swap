@@ -1,14 +1,8 @@
 from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, JSON, Enum, Integer
 from sqlalchemy.orm import relationship
 from datetime import datetime
-import enum
-
+from backend.db.models.user import UserRole
 from backend.db.base_model import Base
-
-class UserRole(str, enum.Enum):
-    ADMIN = "ADMIN"
-    MP = "MP"
-    STAFF = "STAFF"
 
 class ClipStatus(str, enum.Enum):
     DRAFT = "draft"
