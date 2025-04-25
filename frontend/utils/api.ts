@@ -71,7 +71,6 @@ class ApiClient {
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: this.getHeaders(),
-      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -85,7 +84,6 @@ class ApiClient {
       method: 'POST',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
-      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -99,7 +97,6 @@ class ApiClient {
       method: 'PUT',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
-      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -113,7 +110,6 @@ class ApiClient {
       method: 'PATCH',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
-      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);
@@ -126,7 +122,6 @@ class ApiClient {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
-      credentials: 'include', // Include cookies for CORS requests
     });
 
     return this.handleResponse(response);

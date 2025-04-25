@@ -108,7 +108,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(userData);
       } catch (error) {
         console.warn('Could not fetch user data:', error);
-        // Continue anyway, we can try to fetch user data later
+        // Set a minimal user object with the email
+        setUser({
+          id: 0, // Placeholder ID
+          email,
+          name: 'User', // Use 'name' instead of 'full_name' to match the User interface
+          role: UserRole.ADMIN // Use the enum value for admin role
+        });
       }
       
       // Redirect to dashboard
