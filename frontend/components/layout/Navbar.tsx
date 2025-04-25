@@ -18,7 +18,7 @@ const Navbar: React.FC = () => {
   };
 
   return (
-    <nav className="shadow-sm card" style={{ backgroundColor: 'var(--card-bg)' }}>
+    <nav className="shadow-sm bg-white dark:bg-gray-800 transition-colors duration-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex">
@@ -31,7 +31,7 @@ const Navbar: React.FC = () => {
                     width={40}
                     height={40}
                   />
-                  <span className="ml-2 text-lg font-semibold text-primary hidden md:block">
+                  <span className="ml-2 text-lg font-semibold text-primary dark:text-blue-400 hidden md:block">
                     Parliament Video Clip Manager
                   </span>
                 </div>
@@ -40,32 +40,32 @@ const Navbar: React.FC = () => {
             
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
               <Link href="/dashboard">
-                <span className="border-transparent text-gray-500 hover:border-primary hover:text-primary inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Dashboard
                 </span>
               </Link>
               
               <Link href="/clips">
-                <span className="border-transparent text-gray-500 hover:border-primary hover:text-primary inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Video Clips
                 </span>
               </Link>
               
               <Link href="/capture">
-                <span className="border-transparent text-gray-500 hover:border-primary hover:text-primary inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Capture
                 </span>
               </Link>
               
               <Link href="/social">
-                <span className="border-transparent text-gray-500 hover:border-primary hover:text-primary inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Social Media
                 </span>
               </Link>
               
               {user?.role === UserRole.ADMIN && (
                 <Link href="/admin">
-                  <span className="border-transparent text-gray-500 hover:border-primary hover:text-primary inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                     Admin
                   </span>
                 </Link>
@@ -78,7 +78,7 @@ const Navbar: React.FC = () => {
               <div>
                 <button
                   type="button"
-                  className="bg-white flex text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+                  className="bg-white dark:bg-gray-700 flex text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary dark:focus:ring-blue-400"
                   id="user-menu-button"
                   aria-expanded="false"
                   aria-haspopup="true"
@@ -178,32 +178,32 @@ const Navbar: React.FC = () => {
         <div className="sm:hidden" id="mobile-menu">
           <div className="pt-2 pb-3 space-y-1">
             <Link href="/dashboard">
-              <span className="bg-white text-primary block pl-3 pr-4 py-2 border-l-4 border-primary text-base font-medium cursor-pointer">
+              <span className="bg-white dark:bg-gray-800 text-primary dark:text-blue-400 block pl-3 pr-4 py-2 border-l-4 border-primary dark:border-blue-400 text-base font-medium cursor-pointer">
                 Dashboard
               </span>
             </Link>
             
             <Link href="/clips">
-              <span className="border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
+              <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                 Video Clips
               </span>
             </Link>
             
             <Link href="/capture">
-              <span className="border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
+              <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                 Capture
               </span>
             </Link>
             
             <Link href="/social">
-              <span className="border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
+              <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                 Social Media
               </span>
             </Link>
             
             {user?.role === UserRole.ADMIN && (
               <Link href="/admin">
-                <span className="border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
+                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                   Admin
                 </span>
               </Link>
@@ -218,26 +218,26 @@ const Navbar: React.FC = () => {
                 </div>
               </div>
               <div className="ml-3">
-                <div className="text-base font-medium text-gray-800">{user?.name}</div>
-                <div className="text-sm font-medium text-gray-500">{user?.email}</div>
+                <div className="text-base font-medium text-gray-800 dark:text-gray-200">{user?.name}</div>
+                <div className="text-sm font-medium text-gray-500 dark:text-gray-400">{user?.email}</div>
               </div>
             </div>
             <div className="mt-3 space-y-1">
               <Link href="/profile">
-                <span className="block px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100 cursor-pointer">
+                <span className="block px-4 py-2 text-base font-medium text-gray-500 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
                   Your Profile
                 </span>
               </Link>
               
               <Link href="/settings">
-                <span className="block px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100 cursor-pointer">
+                <span className="block px-4 py-2 text-base font-medium text-gray-500 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">
                   Settings
                 </span>
               </Link>
               
               <button
                 onClick={logout}
-                className="block w-full text-left px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100"
+                className="block w-full text-left px-4 py-2 text-base font-medium text-gray-500 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
               >
                 Sign out
               </button>

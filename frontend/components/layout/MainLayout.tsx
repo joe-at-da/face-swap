@@ -3,6 +3,7 @@ import Head from 'next/head';
 import Navbar from './Navbar';
 import Sidebar from './Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import ThemeToggle from '../common/ThemeToggle';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -26,7 +27,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <div className="min-h-screen" style={{ backgroundColor: 'rgb(var(--background-rgb))' }}>
+      <div className="min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
         {isAuthenticated && <Navbar />}
         
         <div className="flex min-h-screen">
@@ -37,6 +38,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({
           )}
           
           <main className={`flex-1 ${isAuthenticated ? 'p-6' : 'p-0'}`}>
+            <div className="absolute top-4 right-4 z-50">
+              <ThemeToggle />
+            </div>
             {children}
           </main>
         </div>
