@@ -79,16 +79,40 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 ### Running the Application
 
+#### Method 1: Direct Run
+
 ```bash
-# Start backend server
+# Terminal 1: Start backend server
 ./scripts/manage_server.sh
 
-# Debug mode with increased logging
-./scripts/manage_server.sh debug
+# Debug mode with increased logging (optional)
+# ./scripts/manage_server.sh debug
 
-# Start frontend development server (in a separate terminal)
+# Terminal 2: Start frontend development server
 cd frontend
 npm run dev
+```
+
+Once both servers are running:
+1. Open your browser and navigate to http://localhost:3000
+2. Log in with your credentials
+3. Explore the application features:
+   - Dashboard: System statistics and quick actions
+   - Video Clips: Browse, create, edit clips
+   - Capture: Manage Parliament TV capture sessions
+   - Social Media: Create and schedule posts
+   - Admin: Manage users and storage
+
+#### Method 2: Docker (Recommended)
+
+If you prefer using Docker for local development:
+
+```bash
+# From the project root
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
 ```
 
 ### Building for Production
@@ -116,7 +140,26 @@ pytest --cov=backend tests/
 
 ## Development Status
 
-Currently in Beta phase with all core features implemented. Both backend and frontend components are complete and ready for deployment. See [ROADMAP.md](ROADMAP.md) for detailed progress and next steps.
+Currently in Beta phase with all core features implemented. Both backend and frontend components are complete and ready for deployment.
+
+### Next Steps
+
+1. **Testing & Quality Assurance**
+   - Frontend component tests with Jest
+   - API integration tests
+   - End-to-end testing with Cypress
+
+2. **Deployment to Hetzner AX41**
+   - CI/CD pipeline setup
+   - HTTPS configuration
+   - Automated backups
+
+3. **Monitoring & Remaining Features**
+   - Performance metrics with Prometheus/Grafana
+   - System settings and logs interfaces
+   - Advanced search capabilities
+
+See [ROADMAP.md](ROADMAP.md) for the complete development roadmap.
 
 ## License
 
