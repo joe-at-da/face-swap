@@ -2,7 +2,8 @@ from sqlalchemy import Boolean, Column, Integer, String, Enum
 from sqlalchemy.orm import relationship
 import enum
 
-from backend.db.base import Base
+# Import Base directly from base_class to avoid circular imports
+from backend.db.base_class import Base
 
 class UserRole(str, enum.Enum):
     ADMIN = "admin"

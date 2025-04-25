@@ -3,7 +3,8 @@ from sqlalchemy.orm import relationship
 import enum
 from datetime import datetime
 
-from backend.db.base import Base
+# Import Base directly from base_class to avoid circular imports
+from backend.db.base_class import Base
 
 class SocialPlatform(str, enum.Enum):
     TWITTER = "twitter"
