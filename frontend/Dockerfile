@@ -14,6 +14,9 @@ COPY . .
 # Build the application
 # RUN npm run build  # Uncomment for production build
 
+# Set environment variables
+ENV DOCKER_ENV=true
+
 # Expose port
 EXPOSE 3000
 

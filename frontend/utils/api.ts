@@ -2,7 +2,9 @@
  * API client for communicating with the backend
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+// When running in Docker, use the service name 'app' instead of localhost
+const isDocker = process.env.DOCKER_ENV === 'true';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || (isDocker ? 'http://app:8000' : 'http://localhost:8000')) + '/api/v1';
 
 class ApiClient {
   private token: string | null = null;

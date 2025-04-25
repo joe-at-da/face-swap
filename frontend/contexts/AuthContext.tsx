@@ -80,8 +80,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       formData.append('username', email); // OAuth2 expects 'username' even though we're using email
       formData.append('password', password);
       
+      // When running in Docker, use the service name 'app' instead of localhost
+      const isDocker = process.env.DOCKER_ENV === 'true';
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || (isDocker ? 'http://app:8000' : 'http://localhost:8000');
+      
       // Make the request with form data instead of JSON
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/auth/login`, {
+      const response = await fetch(`${apiBaseUrl}/api/v1/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
