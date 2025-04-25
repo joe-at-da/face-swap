@@ -75,14 +75,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setIsLoading(true);
     
     try {
-      const response = await api.post('/auth/login', { email, password });
-      const { access_token, user: userData } = response;
+      // Create form data for OAuth2 login
+      const formData = new URLSearchParams();
+      formData.append('username', email); // OAuth2 expects 'username' even though we're using email
+      formData.append('password', password);
       
-      // Store token and user data
+      // Make the request with form data instead of JSON
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Login failed: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const { access_token } = data;
+      
+      // Store token
       localStorage.setItem('token', access_token);
       setToken(access_token);
-      setUser(userData);
+      
+      // Fetch user data with the token
       api.setAuthToken(access_token);
+      const userData = await api.get('/users/me');
+      setUser(userData);
       
       // Redirect to dashboard
       router.push('/dashboard');
