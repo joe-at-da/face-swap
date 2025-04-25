@@ -10,10 +10,10 @@ app = FastAPI(
 )
 
 # Configure CORS for frontend access
-origins = settings.CORS_ORIGINS.split(",")
+origins = ["*"] if settings.ENVIRONMENT == "development" else settings.CORS_ORIGINS.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Use specific origins from settings
+    allow_origins=origins,  # Use specific origins from settings or allow all in development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
