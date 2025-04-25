@@ -57,7 +57,7 @@ def create_admin_user(engine, email, password):
 
 def main():
     # Default credentials
-    default_email = "admin@themp.app"
+    default_email = "admin@parliament.uk"
     default_password = "admin123"
     
     # Allow overriding via command line arguments
