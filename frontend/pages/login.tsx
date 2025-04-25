@@ -33,7 +33,7 @@ const Login: React.FC = () => {
         <meta name="description" content="Login to the Parliament Video Clip Manager" />
       </Head>
 
-      <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8" style={{ backgroundColor: 'rgb(var(--background-rgb))' }}>
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
           <div className="flex justify-center">
             <Image
@@ -43,16 +43,16 @@ const Login: React.FC = () => {
               height={80}
             />
           </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          <h2 className="mt-6 text-center text-3xl font-extrabold" style={{ color: 'var(--text-primary)' }}>
             Parliament Video Clip Manager
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="mt-2 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
             Sign in to your account
           </p>
         </div>
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+          <div className="py-8 px-4 shadow sm:rounded-lg sm:px-10 card" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
             {error && (
               <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative" role="alert">
                 <span className="block sm:inline">{error}</span>
@@ -61,7 +61,7 @@ const Login: React.FC = () => {
 
             <form className="space-y-6" onSubmit={handleSubmit}>
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="email" className="block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                   Email address
                 </label>
                 <div className="mt-1">
@@ -73,13 +73,13 @@ const Login: React.FC = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
+                    className="appearance-none block w-full px-3 py-2 rounded-md shadow-sm sm:text-sm input-field"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="password" className="block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                   Password
                 </label>
                 <div className="mt-1">
@@ -91,7 +91,7 @@ const Login: React.FC = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
+                    className="appearance-none block w-full px-3 py-2 rounded-md shadow-sm sm:text-sm input-field"
                   />
                 </div>
               </div>
@@ -102,9 +102,9 @@ const Login: React.FC = () => {
                     id="remember_me"
                     name="remember_me"
                     type="checkbox"
-                    className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                    className="h-4 w-4 text-primary focus:ring-primary rounded"
                   />
-                  <label htmlFor="remember_me" className="ml-2 block text-sm text-gray-900">
+                  <label htmlFor="remember_me" className="ml-2 block text-sm" style={{ color: 'var(--text-secondary)' }}>
                     Remember me
                   </label>
                 </div>
@@ -130,10 +130,10 @@ const Login: React.FC = () => {
             <div className="mt-6">
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-300" />
+                  <div className="w-full border-t" style={{ borderColor: 'var(--border-color)' }} />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-gray-500">Parliament Video Clip Manager</span>
+                  <span className="px-2 text-sm" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--text-secondary)' }}>Parliament Video Clip Manager</span>
                 </div>
               </div>
             </div>

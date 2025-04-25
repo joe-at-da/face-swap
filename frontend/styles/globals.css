@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* Default to dark mode */
 :root {
   /* Custom colors */
   --color-primary: #0076C0;
@@ -8,13 +9,16 @@
   --color-secondary: #6C0D10;
   --color-secondary-dark: #4E090C;
   --color-secondary-light: #8A3538;
-  --color-neutral: #333333;
-  --color-neutral-dark: #1A1A1A;
-  --color-neutral-light: #666666;
   
-  /* Base colors */
-  --foreground-rgb: 0, 0, 0;
-  --background-rgb: 255, 255, 255;
+  /* Dark mode colors by default */
+  --foreground-rgb: 255, 255, 255;
+  --background-rgb: 17, 24, 39; /* dark gray */
+  --background-secondary-rgb: 31, 41, 55; /* slightly lighter gray */
+  --text-primary: #ffffff;
+  --text-secondary: #d1d5db;
+  --border-color: #374151;
+  --card-bg: #1f2937;
+  --hover-bg: #374151;
 }
 
 body {
@@ -25,7 +29,7 @@ body {
 @layer components {
   .btn-primary {
     background-color: var(--color-primary);
-    color: white;
+    color: var(--text-primary);
   }
   .btn-primary:hover {
     background-color: var(--color-primary-dark);
@@ -33,32 +37,46 @@ body {
   
   .btn-secondary {
     background-color: var(--color-secondary);
-    color: white;
+    color: var(--text-primary);
   }
   .btn-secondary:hover {
     background-color: var(--color-secondary-dark);
   }
+  
+  /* Dark mode specific styles */
+  .card {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+  }
 }
 
 .card-shadow {
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
   transition: box-shadow 0.3s ease;
+  background-color: var(--card-bg);
 }
 
 .card-shadow:hover {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 }
 
 .input-field {
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-color);
   border-radius: 0.375rem;
   padding: 0.5rem;
+  background-color: rgba(var(--background-rgb), 0.8);
+  color: var(--text-primary);
 }
 
 .input-field:focus {
   outline: none;
   border-color: transparent;
   box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.input-field::placeholder {
+  color: var(--text-secondary);
 }
 
 .btn {
@@ -70,17 +88,34 @@ body {
 
 .btn-outline {
   background-color: transparent;
-  border: 1px solid currentColor;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 
 .page-container {
   margin: 0 auto;
   padding: 1rem 2rem;
+  background-color: rgb(var(--background-rgb));
 }
 
 .section-title {
   font-size: 1.5rem;
   font-weight: bold;
-  color: var(--color-neutral-dark);
+  color: var(--text-primary);
   margin-bottom: 1rem;
+}
+
+/* Table styles for dark mode */
+table {
+  border-color: var(--border-color);
+}
+
+table th {
+  background-color: var(--card-bg);
+  color: var(--text-primary);
+}
+
+table td {
+  border-color: var(--border-color);
+  color: var(--text-secondary);
 }

@@ -90,10 +90,10 @@ const Sidebar: React.FC = () => {
   ];
 
   return (
-    <div className="h-full bg-white border-r border-gray-200 w-64 fixed">
+    <div className="h-full border-r w-64 fixed" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
       <div className="h-full flex flex-col overflow-y-auto">
         <div className="flex-1 flex flex-col pt-5 pb-4">
-          <div className="flex-1 px-2 space-y-1 bg-white">
+          <div className="flex-1 px-2 space-y-1" style={{ backgroundColor: 'var(--card-bg)' }}>
             {navigationItems.map((item) => {
               const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
               
@@ -102,11 +102,15 @@ const Sidebar: React.FC = () => {
                   <span
                     className={`${
                       isActive
-                        ? 'bg-gray-100 text-primary'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-primary'
+                        ? 'text-primary'
+                        : 'text-secondary hover:text-primary'
                     } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer`}
+                    style={{ 
+                      backgroundColor: isActive ? 'var(--hover-bg)' : 'transparent',
+                      color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)'
+                    }}
                   >
-                    <div className={`${isActive ? 'text-primary' : 'text-gray-400 group-hover:text-primary'} mr-3`}>
+                    <div className={`mr-3`} style={{ color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)' }}>
                       {item.icon}
                     </div>
                     {item.name}
@@ -119,7 +123,7 @@ const Sidebar: React.FC = () => {
             {user?.role === UserRole.ADMIN && (
               <div className="pt-6">
                 <div className="px-3 mb-2">
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
                     Administration
                   </h3>
                 </div>
@@ -131,11 +135,15 @@ const Sidebar: React.FC = () => {
                       <span
                         className={`${
                           isActive
-                            ? 'bg-gray-100 text-primary'
-                            : 'text-gray-600 hover:bg-gray-50 hover:text-primary'
+                            ? 'text-primary'
+                            : 'text-secondary hover:text-primary'
                         } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer`}
+                        style={{ 
+                          backgroundColor: isActive ? 'var(--hover-bg)' : 'transparent',
+                          color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)'
+                        }}
                       >
-                        <div className={`${isActive ? 'text-primary' : 'text-gray-400 group-hover:text-primary'} mr-3`}>
+                        <div className="mr-3" style={{ color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)' }}>
                           {item.icon}
                         </div>
                         {item.name}

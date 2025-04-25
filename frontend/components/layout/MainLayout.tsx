@@ -26,7 +26,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen" style={{ backgroundColor: 'rgb(var(--background-rgb))' }}>
         {isAuthenticated && <Navbar />}
         
         <div className="flex min-h-screen">
