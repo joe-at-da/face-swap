@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # Storage Limits
     MAX_STORAGE_GB: int = 500  # Maximum storage limit in GB
     TEMP_STORAGE_MAX_GB: int = 50  # Maximum temporary storage in GB
+    MEDIA_STORAGE_QUOTA: int = 10 * 1024 * 1024 * 1024  # 10GB default
+    TEMP_STORAGE_QUOTA: int = 2 * 1024 * 1024 * 1024   # 2GB default
+    ARCHIVE_RETENTION_DAYS: int = 180  # How long to keep archived files
+    BACKUP_RETENTION_DAYS: int = 30   # How long to keep backups
     
     # Redis
     REDIS_URL: str
