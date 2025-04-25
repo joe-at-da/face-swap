@@ -72,7 +72,7 @@ async def login(
     access_token = create_access_token(
         subject=user.email,
         expires_delta=access_token_expires,
-        role=user.role.value.upper()  # Pass the role value as uppercase string
+        role=user.role.value  # Pass the role value as is (already lowercase)
     )
     
     return {"access_token": access_token, "token_type": "bearer"}

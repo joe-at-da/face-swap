@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.db.models import User
+from backend.db.models import User as UserModel
 from backend.db.models.user import UserRole
 from backend.schemas.auth import TokenData
 from backend.db.session import get_db
@@ -53,7 +53,7 @@ def create_access_token(
 async def get_current_user(
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
-) -> User:
+) -> UserModel:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -70,18 +70,18 @@ async def get_current_user(
     except jwt.JWTError:
         raise credentials_exception
     
-    user = db.query(User).filter(User.email == token_data.email).first()
+    user = db.query(UserModel).filter(UserModel.email == token_data.email).first()
     if user is None:
         raise credentials_exception
     
     return user
 
-def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+def get_current_active_user(current_user: UserModel = Depends(get_current_user)) -> UserModel:
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
-def verify_admin_user(current_user: User = Depends(get_current_active_user)) -> User:
+def verify_admin_user(current_user: UserModel = Depends(get_current_active_user)) -> UserModel:
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
