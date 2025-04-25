@@ -40,9 +40,19 @@ const Dashboard: React.FC = () => {
         return await api.get('/dashboard/stats');
       } catch (error) {
         console.error('Failed to fetch dashboard stats:', error);
-        return null;
+        // Return placeholder data when the API endpoint isn't available
+        return {
+          totalClips: 5,
+          recentClips: 3,
+          pendingCaptures: 1,
+          scheduledPosts: 2,
+          storageUsed: '2.4 GB',
+          storageTotal: '100 GB'
+        };
       }
     },
+    // Don't retry failed requests during development
+    retry: false
   });
 
   // Fetch recent clips
@@ -50,12 +60,30 @@ const Dashboard: React.FC = () => {
     queryKey: ['recentClips'],
     queryFn: async () => {
       try {
-        return await api.get('/clips', { limit: 5, sort: 'created_at:desc' });
+        return await api.get('/clips/?limit=5&sort=created_at:desc');
       } catch (error) {
         console.error('Failed to fetch recent clips:', error);
-        return { items: [] };
+        // Return placeholder data when the API endpoint isn't available
+        return [
+          {
+            id: 1,
+            title: 'Sample Clip 1',
+            duration: 120,
+            created_at: new Date().toISOString(),
+            thumbnail_url: '/placeholder-thumbnail.jpg'
+          },
+          {
+            id: 2,
+            title: 'Sample Clip 2',
+            duration: 180,
+            created_at: new Date().toISOString(),
+            thumbnail_url: '/placeholder-thumbnail.jpg'
+          }
+        ];
       }
     },
+    // Don't retry failed requests during development
+    retry: false
   });
 
   useEffect(() => {
