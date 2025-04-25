@@ -126,6 +126,28 @@ This will start the following services:
 - Celery worker for background tasks
 - Prometheus and Grafana for monitoring
 
+#### Troubleshooting
+
+**Tailwind CSS Configuration Issue**
+
+If you encounter an error related to Tailwind CSS configuration, ensure your `postcss.config.js` is properly configured for Tailwind CSS v4:
+
+```javascript
+// frontend/postcss.config.js
+module.exports = {
+  plugins: [
+    require('@tailwindcss/postcss'),
+    require('autoprefixer'),
+  ],
+}
+```
+
+You may need to install the PostCSS plugin for Tailwind CSS v4:
+
+```bash
+docker-compose -f docker-compose.dev.yml exec frontend npm install @tailwindcss/postcss
+```
+
 ### Building for Production
 
 ```bash
