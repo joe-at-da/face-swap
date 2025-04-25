@@ -54,6 +54,19 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(hour=1, minute=0, day_of_week=1),
         'kwargs': {'include_media': False},
     },
+    
+    # Check for scheduled social media posts every 5 minutes
+    'publish-scheduled-social-posts': {
+        'task': 'backend.services.tasks.social_tasks.publish_scheduled_posts',
+        'schedule': crontab(minute='*/5'),
+    },
+    
+    # Clean up old failed social media posts (run daily at 2:30 AM)
+    'cleanup-failed-social-posts': {
+        'task': 'backend.services.tasks.social_tasks.cleanup_failed_posts',
+        'schedule': crontab(hour=2, minute=30),
+        'args': (30,),  # max_age_days
+    },
 }
 
 # Start Celery worker
