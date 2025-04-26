@@ -9,10 +9,10 @@ from jose import jwt, JWTError
 from backend.api.deps import get_db
 from backend.core.security import has_permission, get_current_user, get_current_active_user
 from backend.db import models
-from backend.schemas.capture import CaptureCreate
 from backend.core.security import UserRole
-from backend.services.tasks import video_tasks
+from backend.services.video.capture import StreamCapture
 from backend.core.config import settings
+import threading
 
 router = APIRouter()
 
@@ -170,14 +170,25 @@ async def start_capture(
     # Start capture in background if not scheduled and not a draft
     scheduled_start = getattr(capture, 'scheduled_start', None)
     if not scheduled_start and not draft:
-        # Start the actual video capture process
-        task = video_tasks.start_stream_capture.delay()
-        print(f"DEBUG - Started Celery task for stream capture: {task.id}")
+        # Start the actual video capture process directly
+        def start_capture_thread():
+            try:
+                stream_capture = StreamCapture()
+                output_file = stream_capture.start_capture()
+                print(f"DEBUG - Started direct capture to file: {output_file}")
+                
+                # Store the output file path in the database
+                if hasattr(capture_session, 'file_path'):
+                    capture_session.file_path = output_file
+                    db.commit()
+            except Exception as e:
+                print(f"ERROR - Failed to start capture: {str(e)}")
         
-        # Update the capture session with the task ID
-        if hasattr(capture_session, 'task_id'):
-            capture_session.task_id = task.id
-            db.commit()
+        # Start capture in a separate thread
+        capture_thread = threading.Thread(target=start_capture_thread)
+        capture_thread.daemon = True
+        capture_thread.start()
+        print(f"DEBUG - Started capture thread")
     elif draft:
         print("DEBUG - Saving as draft, no capture started")
     
@@ -237,9 +248,13 @@ async def stop_capture(
     capture.end_time = datetime.utcnow()
     db.commit()
     
-    # Stop the actual video capture process
-    task = video_tasks.stop_stream_capture.delay()
-    print(f"DEBUG - Started Celery task to stop stream capture: {task.id}")
+    # Stop the actual video capture process directly
+    try:
+        stream_capture = StreamCapture()
+        stream_capture.stop_capture()
+        print(f"DEBUG - Stopped capture process directly")
+    except Exception as e:
+        print(f"ERROR - Failed to stop capture: {str(e)}")
     
     # Format response to match frontend expectations
     user = db.query(models.User).filter(models.User.id == capture.user_id).first()
