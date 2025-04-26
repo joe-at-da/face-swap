@@ -156,11 +156,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const { access_token } = data;
       
       // Store token
+      console.log('Storing access token in localStorage and state');
       localStorage.setItem('token', access_token);
       setToken(access_token);
       
-      // Fetch user data with the token
+      // Ensure token is set in API client
       api.setAuthToken(access_token);
+      
+      // Set a flag to indicate successful authentication
+      sessionStorage.setItem('authSuccess', 'true');
       try {
         console.log('Fetching user data...');
         const userData = await api.get('/auth/me');
@@ -177,10 +181,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         });
       }
       
-      // Set a flag to prevent redirect loops
+      // Set flags to prevent redirect loops
       sessionStorage.setItem('justLoggedIn', 'true');
-      // Redirect to dashboard
-      router.push('/dashboard');
+      sessionStorage.setItem('manualRedirect', 'true');
+      
+      // Small delay to ensure state is updated before redirect
+      setTimeout(() => {
+        console.log('Redirecting to dashboard after successful login');
+        router.push('/dashboard');
+      }, 100);
     } catch (error: any) {
       console.error('Login failed:', error.message || error);
       // Clear any partial authentication data
@@ -242,29 +251,57 @@ export const useAuth = () => {
 // Auth guard HOC
 export const withAuth = (Component: React.ComponentType, requiredRoles?: UserRole[]) => {
   const AuthGuard = (props: any) => {
-    const { isAuthenticated, isLoading, hasRole } = useAuth();
+    const { isAuthenticated, isLoading, hasRole, user, token } = useAuth();
     const router = useRouter();
+    const [authChecked, setAuthChecked] = useState(false);
 
     useEffect(() => {
-      if (!isLoading && !isAuthenticated) {
-        router.push('/login');
-      } else if (!isLoading && isAuthenticated && requiredRoles && !hasRole(requiredRoles)) {
-        router.push('/unauthorized');
+      console.log('withAuth effect running', { 
+        isLoading, 
+        isAuthenticated, 
+        path: router.pathname,
+        token: token ? 'Present' : 'None',
+        user: user ? 'Logged in' : 'Not logged in'
+      });
+
+      // Skip redirect if we're in the process of logging in or we've just logged in
+      const isLoggingIn = sessionStorage.getItem('loggingIn') === 'true';
+      const justLoggedIn = sessionStorage.getItem('justLoggedIn') === 'true';
+      
+      if (justLoggedIn) {
+        console.log('User just logged in, preventing redirect');
+        sessionStorage.removeItem('justLoggedIn');
+        setAuthChecked(true);
+        return;
       }
-    }, [isLoading, isAuthenticated, router]);
+
+      if (!isLoading) {
+        if (!isAuthenticated && !isLoggingIn) {
+          console.log('Not authenticated, redirecting to login');
+          router.push('/login');
+        } else if (isAuthenticated && requiredRoles && !hasRole(requiredRoles)) {
+          console.log('Unauthorized role, redirecting');
+          router.push('/unauthorized');
+        } else if (isAuthenticated) {
+          console.log('Authenticated, staying on current page');
+          setAuthChecked(true);
+        }
+      }
+    }, [isLoading, isAuthenticated, router, token, user]);
 
     if (isLoading) {
       return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
     }
 
-    if (!isAuthenticated) {
-      return null;
+    if (!authChecked && !isAuthenticated) {
+      return <div className="flex items-center justify-center min-h-screen">Checking authentication...</div>;
     }
 
     if (requiredRoles && !hasRole(requiredRoles)) {
       return null;
     }
 
+    // We're authenticated and authorized, render the component
     return <Component {...props} />;
   };
 

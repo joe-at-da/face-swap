@@ -16,12 +16,21 @@ function MyApp({ Component, pageProps }: AppProps) {
     },
   }));
 
+  // Check if the page has requested to skip the AuthProvider
+  const skipAuth = (pageProps as any).noAuth === true;
+  console.log('MyApp rendering, skipAuth:', skipAuth);
+
+  // Render with or without AuthProvider based on the flag
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AuthProvider>
+        {skipAuth ? (
           <Component {...pageProps} />
-        </AuthProvider>
+        ) : (
+          <AuthProvider>
+            <Component {...pageProps} />
+          </AuthProvider>
+        )}
       </ThemeProvider>
     </QueryClientProvider>
   );
