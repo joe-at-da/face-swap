@@ -9,53 +9,21 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS for frontend access
-# For development environment, we'll use a simpler CORS setup
+# Configure CORS for frontend access - simplified approach for development
+# In a development environment, we'll allow all origins for easier debugging
 
-# In development, we'll allow specific origins with credentials
-if settings.ENVIRONMENT == "development":
-    # Explicitly list all possible frontend origins for Docker networking
-    allow_origins = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://frontend:3000",
-        "http://host.docker.internal:3000"
-    ]
-    
-    # Add any additional origins from settings
-    if settings.CORS_ORIGINS:
-        for origin in settings.CORS_ORIGINS.split(","):
-            origin = origin.strip()
-            if origin and origin != "*" and origin not in allow_origins:
-                allow_origins.append(origin)
-    
-    print(f"CORS allowed origins (development): {allow_origins}")
-    
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["*"],
-        max_age=86400,  # 24 hours cache for preflight requests
-    )
-else:
-    # For production, we'll be more restrictive
-    origins = settings.CORS_ORIGINS.split(",") if settings.CORS_ORIGINS else []
-    allow_origins = [origin.strip() for origin in origins if origin.strip() and origin.strip() != "*"]
-    
-    print(f"CORS allowed origins (production): {allow_origins}")
-    
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept"],
-        expose_headers=["Content-Length"],
-        max_age=86400,  # 24 hours cache for preflight requests
-    )
+# For Docker development, we need to allow all frontend origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins in development
+    allow_credentials=False,  # Must be False when using wildcard origins
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=86400,  # 24 hours cache for preflight requests
+)
+
+print("CORS configured with wildcard origins for development")
 
 # Health check endpoint
 @app.get("/health")
