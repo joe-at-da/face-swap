@@ -144,6 +144,11 @@ class ApiClient {
     try {
       console.log(`Fetching ${url.toString()} with token:`, this.token ? 'Present' : 'None');
       
+      // Add special debug logging for capture endpoints
+      if (endpoint.includes('/capture')) {
+        console.log(`[CAPTURE DEBUG] Fetching capture endpoint: ${endpoint}`);
+      }
+      
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.getHeaders(),
@@ -151,9 +156,28 @@ class ApiClient {
       });
 
       console.log(`Response for ${endpoint}:`, response.status);
-      return this.handleResponse(response);
+      
+      // Add special debug logging for capture endpoints
+      if (endpoint.includes('/capture')) {
+        console.log(`[CAPTURE DEBUG] Response status for ${endpoint}: ${response.status}`);
+      }
+      
+      const result = await this.handleResponse(response);
+      
+      // Add special debug logging for capture endpoints
+      if (endpoint.includes('/capture')) {
+        console.log(`[CAPTURE DEBUG] Response data for ${endpoint}:`, result);
+      }
+      
+      return result;
     } catch (error) {
       console.error(`Network error fetching ${endpoint}:`, error);
+      
+      // Add special debug logging for capture endpoints
+      if (endpoint.includes('/capture')) {
+        console.error(`[CAPTURE DEBUG] Error fetching ${endpoint}:`, error);
+      }
+      
       throw error;
     }
   }
@@ -162,6 +186,14 @@ class ApiClient {
    * Make a POST request
    */
   async post(endpoint: string, data?: any) {
+    // Add special debug logging for capture endpoints
+    if (endpoint.includes('/capture')) {
+      console.log(`[CAPTURE DEBUG] POST request to ${endpoint}`, data ? 'with data' : 'without data');
+      if (data) {
+        console.log(`[CAPTURE DEBUG] POST data:`, data);
+      }
+    }
+    
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       headers: this.getHeaders(),
@@ -169,7 +201,19 @@ class ApiClient {
       credentials: 'same-origin',
     });
 
-    return this.handleResponse(response);
+    // Add special debug logging for capture endpoints
+    if (endpoint.includes('/capture')) {
+      console.log(`[CAPTURE DEBUG] POST response status for ${endpoint}: ${response.status}`);
+    }
+    
+    const result = await this.handleResponse(response);
+    
+    // Add special debug logging for capture endpoints
+    if (endpoint.includes('/capture')) {
+      console.log(`[CAPTURE DEBUG] POST response data for ${endpoint}:`, result);
+    }
+    
+    return result;
   }
 
   /**
