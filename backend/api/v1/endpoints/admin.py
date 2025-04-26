@@ -7,6 +7,7 @@ from backend.api import deps
 from backend.db.models.user import User, UserRole
 from backend.schemas.auth import UserCreate, UserUpdate, User as UserResponse
 from backend.schemas.admin import SystemStats
+from pydantic import BaseModel
 from backend.core.security import get_password_hash
 
 router = APIRouter()
@@ -67,6 +68,91 @@ async def get_system_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting system stats: {str(e)}"
         )
+
+
+class StorageSettings(BaseModel):
+    max_file_size: int
+    allowed_extensions: list[str]
+    auto_delete_days: int
+    storage_path: str
+
+
+class StorageStats(BaseModel):
+    total_space: int
+    used_space: int
+    free_space: int
+    file_count: int
+    average_file_size: int
+
+
+@router.get("/storage/stats", response_model=StorageStats)
+async def get_storage_stats(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Get storage statistics.
+    Only accessible to admin users.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    
+    # Return hardcoded storage stats for now
+    return {
+        "total_space": 1000000000000,  # 1 TB
+        "used_space": 250000000000,   # 250 GB
+        "free_space": 750000000000,  # 750 GB
+        "file_count": 1250,
+        "average_file_size": 200000000  # 200 MB
+    }
+
+
+@router.get("/storage/settings", response_model=StorageSettings)
+async def get_storage_settings(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Get storage settings.
+    Only accessible to admin users.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    
+    # Return hardcoded storage settings for now
+    return {
+        "max_file_size": 5000000000,  # 5 GB
+        "allowed_extensions": ["mp4", "mov", "avi", "mkv"],
+        "auto_delete_days": 30,
+        "storage_path": "/data/videos"
+    }
+
+
+@router.put("/storage/settings", response_model=StorageSettings)
+async def update_storage_settings(
+    settings: StorageSettings,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Update storage settings.
+    Only accessible to admin users.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    
+    # In a real implementation, we would update the settings in the database
+    # For now, just return the settings that were sent
+    return settings
 
 
 @router.get("/users", response_model=List[UserResponse])
