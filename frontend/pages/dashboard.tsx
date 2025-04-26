@@ -37,9 +37,14 @@ const Dashboard: React.FC = () => {
     queryKey: ['dashboardStats'],
     queryFn: async () => {
       try {
-        return await api.get('/dashboard/stats');
+        console.log('Fetching dashboard stats with token:', api.getToken() ? 'Present' : 'None');
+        const data = await api.get('/dashboard/stats');
+        console.log('Dashboard stats fetched successfully:', data);
+        return data;
       } catch (error) {
         console.error('Failed to fetch dashboard stats:', error);
+        // Prevent redirect to login page from this query
+        sessionStorage.setItem('suppressAuthRedirect', 'true');
         // Return placeholder data when the API endpoint isn't available
         return {
           totalClips: 5,
@@ -52,7 +57,9 @@ const Dashboard: React.FC = () => {
       }
     },
     // Don't retry failed requests during development
-    retry: false
+    retry: false,
+    // Prevent query from running until we have a token
+    enabled: !!api.getToken()
   });
 
   // Fetch recent clips
@@ -60,30 +67,39 @@ const Dashboard: React.FC = () => {
     queryKey: ['recentClips'],
     queryFn: async () => {
       try {
-        return await api.get('/clips/?limit=5&sort=created_at:desc');
+        console.log('Fetching recent clips with token:', api.getToken() ? 'Present' : 'None');
+        const data = await api.get('/clips/?limit=5&sort=created_at:desc');
+        console.log('Recent clips fetched successfully:', data);
+        return data;
       } catch (error) {
         console.error('Failed to fetch recent clips:', error);
+        // Prevent redirect to login page from this query
+        sessionStorage.setItem('suppressAuthRedirect', 'true');
         // Return placeholder data when the API endpoint isn't available
-        return [
-          {
-            id: 1,
-            title: 'Sample Clip 1',
-            duration: 120,
-            created_at: new Date().toISOString(),
-            thumbnail_url: '/placeholder-thumbnail.jpg'
-          },
-          {
-            id: 2,
-            title: 'Sample Clip 2',
-            duration: 180,
-            created_at: new Date().toISOString(),
-            thumbnail_url: '/placeholder-thumbnail.jpg'
-          }
-        ];
+        return {
+          items: [
+            {
+              id: 1,
+              title: 'Sample Clip 1',
+              duration: 120,
+              created_at: new Date().toISOString(),
+              thumbnail_url: '/placeholder-thumbnail.jpg'
+            },
+            {
+              id: 2,
+              title: 'Sample Clip 2',
+              duration: 180,
+              created_at: new Date().toISOString(),
+              thumbnail_url: '/placeholder-thumbnail.jpg'
+            }
+          ]
+        };
       }
     },
     // Don't retry failed requests during development
-    retry: false
+    retry: false,
+    // Prevent query from running until we have a token
+    enabled: !!api.getToken()
   });
 
   useEffect(() => {

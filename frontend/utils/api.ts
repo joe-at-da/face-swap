@@ -14,6 +14,13 @@ console.log('API Base URL:', API_BASE_URL);
 
 class ApiClient {
   private token: string | null = null;
+  
+  /**
+   * Get the current authentication token
+   */
+  getToken(): string | null {
+    return this.token;
+  }
 
   /**
    * Set the authentication token for API requests
@@ -56,8 +63,8 @@ class ApiClient {
           console.warn('Authentication error: Token may be expired');
           
           // Only clear token and redirect if we're not in the process of logging in
-          // This prevents redirect loops when logging in
-          if (!sessionStorage.getItem('loggingIn')) {
+          // and if we haven't suppressed auth redirects
+          if (!sessionStorage.getItem('loggingIn') && !sessionStorage.getItem('suppressAuthRedirect')) {
             console.log('Clearing token due to 401 error');
             // Clear token and redirect to login
             localStorage.removeItem('token');
@@ -66,6 +73,10 @@ class ApiClient {
             // Redirect to login page
             window.location.href = '/login';
             return null; // Return early
+          } else if (sessionStorage.getItem('suppressAuthRedirect')) {
+            console.log('Auth redirect suppressed for this request');
+            // Clear the flag after using it
+            sessionStorage.removeItem('suppressAuthRedirect');
           }
         }
       }
