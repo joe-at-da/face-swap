@@ -224,9 +224,18 @@ const DirectLogin: React.FC = () => {
   );
 };
 
+// Define the correct type for Next.js pages with noAuth prop
+interface PageWithNoAuthProps {
+  noAuth: boolean;
+}
+
 // This ensures the page is rendered without the global AuthProvider
-DirectLogin.getInitialProps = async () => {
-  return { noAuth: true };
-};
+export async function getStaticProps() {
+  return {
+    props: {
+      noAuth: true
+    }
+  };
+}
 
 export default DirectLogin;

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Image from 'next/image';
-import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/common/ThemeToggle';
 
@@ -11,25 +10,25 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
   const { theme } = useTheme();
   const router = useRouter();
   
   // Force dark mode class on body when component mounts
   useEffect(() => {
     // This ensures the body has the correct classes even if ThemeContext hasn't fully initialized
-    document.documentElement.classList.add('dark');
-    document.body.style.backgroundColor = '#111827';
-    document.body.style.color = '#ffffff';
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.body.style.backgroundColor = '#111827';
+      document.body.style.color = '#ffffff';
+    }
     
-    // Clean up function
-    return () => {
-      // Only remove if we're navigating away and theme is not dark
-      if (theme !== 'dark') {
-        document.documentElement.classList.remove('dark');
-      }
-    };
-  }, []);
+    // Check if user is already authenticated
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (token) {
+      console.log('User already has token, redirecting to direct-dashboard');
+      router.push('/direct-dashboard');
+    }
+  }, [theme, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,10 +36,52 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      await login(email, password);
-      // Redirect happens in the login function
+      // Create form data for OAuth2 login
+      const formData = new URLSearchParams();
+      formData.append('username', email); // OAuth2 expects 'username' even though we're using email
+      formData.append('password', password);
+      
+      console.log('Attempting direct login from login page');
+      
+      // Make the login request directly
+      const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: formData,
+        credentials: 'same-origin',
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorDetail = 'Unknown error';
+        
+        try {
+          // Try to parse as JSON
+          const errorData = JSON.parse(errorText);
+          errorDetail = errorData.detail || `Login failed: ${response.status}`;
+        } catch (parseError) {
+          // If not JSON, use the raw text
+          errorDetail = errorText || `Login failed: ${response.status}`;
+        }
+        
+        throw new Error(errorDetail);
+      }
+      
+      const data = await response.json();
+      console.log('Login successful, received token');
+      
+      // Store token in both localStorage and sessionStorage
+      localStorage.setItem('token', data.access_token);
+      sessionStorage.setItem('token', data.access_token);
+      
+      // Redirect to direct-dashboard which bypasses AuthContext
+      router.push('/direct-dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to login. Please check your credentials.');
+    } finally {
       setIsLoading(false);
     }
   };

@@ -46,7 +46,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       console.log('Initializing authentication state...');
-      const storedToken = localStorage.getItem('token');
+      
+      // Check if we're in the process of logging in or just logged in
+      const isLoggingIn = sessionStorage.getItem('loggingIn') === 'true';
+      const justLoggedIn = sessionStorage.getItem('justLoggedIn') === 'true';
+      
+      if (justLoggedIn) {
+        console.log('User just logged in, preventing redirect');
+        sessionStorage.removeItem('justLoggedIn');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Check for token in both localStorage and sessionStorage
+      const storedToken = localStorage.getItem('token') || sessionStorage.getItem('token');
       
       if (storedToken) {
         try {
@@ -60,30 +73,41 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setUser(userData);
           console.log('User authenticated successfully:', userData.email);
           
+          // Store authentication status in sessionStorage
+          sessionStorage.setItem('isAuthenticated', 'true');
+          
           // If we're on the login page and already authenticated, redirect to dashboard
           if (router.pathname === '/login') {
             console.log('Already authenticated, redirecting to dashboard');
+            // Set flag to prevent redirect loops
+            sessionStorage.setItem('redirecting', 'true');
             router.push('/dashboard');
           }
         } catch (error) {
           console.error('Failed to authenticate with stored token:', error);
           // Clear authentication data
           localStorage.removeItem('token');
+          sessionStorage.removeItem('token');
+          sessionStorage.removeItem('isAuthenticated');
           setToken(null);
           setUser(null);
           api.setAuthToken(null);
           
-          // If we're not on the login page, redirect to login
-          if (router.pathname !== '/login') {
+          // If we're not on the login page and not in the process of logging in, redirect to login
+          if (router.pathname !== '/login' && !isLoggingIn) {
             console.log('Authentication failed, redirecting to login');
+            // Set flag to prevent redirect loops
+            sessionStorage.setItem('redirecting', 'true');
             router.push('/login');
           }
         }
       } else {
         console.log('No stored token found');
-        // If we're not on the login page and there's no token, redirect to login
-        if (router.pathname !== '/login') {
+        // If we're not on the login page and not in the process of logging in, redirect to login
+        if (router.pathname !== '/login' && !isLoggingIn) {
           console.log('No authentication, redirecting to login');
+          // Set flag to prevent redirect loops
+          sessionStorage.setItem('redirecting', 'true');
           router.push('/login');
         }
       }
@@ -91,7 +115,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setIsLoading(false);
     };
 
-    initAuth();
+    // Only run initAuth if we're not currently redirecting
+    if (sessionStorage.getItem('redirecting') !== 'true') {
+      initAuth();
+    } else {
+      // Clear the redirecting flag after it's been used
+      sessionStorage.removeItem('redirecting');
+      setIsLoading(false);
+    }
   }, [router]);
 
   // Login function
@@ -108,13 +139,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       formData.append('username', email); // OAuth2 expects 'username' even though we're using email
       formData.append('password', password);
       
-      // Determine the correct API URL based on environment
-      // When running in Docker, we need to use the service name
-      let apiUrl = 'http://localhost:8000/api/v1/auth/login';
-      if (typeof window !== 'undefined') {
-        // Always use localhost when running in browser
-        apiUrl = 'http://localhost:8000/api/v1/auth/login';
-      }
+      // Always use localhost when running in browser
+      const apiUrl = 'http://localhost:8000/api/v1/auth/login';
       
       console.log('Using API URL:', apiUrl);
       
@@ -126,7 +152,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           'Accept': 'application/json',
         },
         body: formData,
-        // Don't use 'include' for credentials as it requires specific CORS setup
+        // Use same-origin for credentials
         credentials: 'same-origin',
       });
       
@@ -155,16 +181,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.log('Login successful, received token');
       const { access_token } = data;
       
-      // Store token
-      console.log('Storing access token in localStorage and state');
+      // Store token in both localStorage and sessionStorage for redundancy
+      console.log('Storing access token in localStorage, sessionStorage and state');
       localStorage.setItem('token', access_token);
+      sessionStorage.setItem('token', access_token);
       setToken(access_token);
       
       // Ensure token is set in API client
       api.setAuthToken(access_token);
       
-      // Set a flag to indicate successful authentication
+      // Set flags to indicate successful authentication
       sessionStorage.setItem('authSuccess', 'true');
+      sessionStorage.setItem('isAuthenticated', 'true');
       try {
         console.log('Fetching user data...');
         const userData = await api.get('/auth/me');
@@ -183,7 +211,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Set flags to prevent redirect loops
       sessionStorage.setItem('justLoggedIn', 'true');
-      sessionStorage.setItem('manualRedirect', 'true');
+      
+      // Clear the login flag
+      sessionStorage.removeItem('loggingIn');
       
       // Small delay to ensure state is updated before redirect
       setTimeout(() => {
@@ -207,10 +237,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Logout function
   const logout = () => {
+    // Clear all tokens and authentication state
     localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('isAuthenticated');
+    sessionStorage.removeItem('authSuccess');
+    sessionStorage.removeItem('justLoggedIn');
+    sessionStorage.removeItem('loggingIn');
+    sessionStorage.removeItem('redirecting');
+    
+    // Update state
     setToken(null);
     setUser(null);
     api.setAuthToken(null);
+    
+    // Redirect to login
     router.push('/login');
   };
 
