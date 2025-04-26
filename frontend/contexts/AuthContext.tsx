@@ -45,46 +45,72 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Check if user is authenticated on mount
   useEffect(() => {
     const initAuth = async () => {
-      console.log('Initializing authentication state...');
+      console.log('%c[AuthContext] Initializing authentication state...', 'color: blue; font-weight: bold');
+      console.log('[AuthContext] Current pathname:', router.pathname);
       
       // Check if we're in the process of logging in or just logged in
       const isLoggingIn = sessionStorage.getItem('loggingIn') === 'true';
       const justLoggedIn = sessionStorage.getItem('justLoggedIn') === 'true';
+      const isRedirecting = sessionStorage.getItem('redirecting') === 'true';
+      
+      console.log('[AuthContext] Auth flags:', { 
+        isLoggingIn, 
+        justLoggedIn, 
+        isRedirecting,
+        pathname: router.pathname
+      });
       
       if (justLoggedIn) {
-        console.log('User just logged in, preventing redirect');
+        console.log('%c[AuthContext] User just logged in, preventing redirect', 'color: green');
         sessionStorage.removeItem('justLoggedIn');
         setIsLoading(false);
         return;
       }
       
       // Check for token in both localStorage and sessionStorage
-      const storedToken = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const localStorageToken = localStorage.getItem('token');
+      const sessionStorageToken = sessionStorage.getItem('token');
+      const storedToken = localStorageToken || sessionStorageToken;
+      
+      console.log('[AuthContext] Token status:', { 
+        hasLocalStorageToken: !!localStorageToken, 
+        hasSessionStorageToken: !!sessionStorageToken,
+        tokenLength: storedToken ? storedToken.length : 0
+      });
       
       if (storedToken) {
         try {
-          console.log('Found stored token, attempting to validate...');
+          console.log('%c[AuthContext] Found stored token, attempting to validate...', 'color: blue');
           // Set token in state and API
           setToken(storedToken);
           api.setAuthToken(storedToken);
           
           // Fetch user data
-          const userData = await api.get('/auth/me');
-          setUser(userData);
-          console.log('User authenticated successfully:', userData.email);
+          console.log('[AuthContext] Fetching user data with token...');
+          console.log('[AuthContext] Token first 20 chars:', storedToken.substring(0, 20) + '...');
           
-          // Store authentication status in sessionStorage
-          sessionStorage.setItem('isAuthenticated', 'true');
-          
-          // If we're on the login page and already authenticated, redirect to dashboard
-          if (router.pathname === '/login') {
-            console.log('Already authenticated, redirecting to dashboard');
-            // Set flag to prevent redirect loops
-            sessionStorage.setItem('redirecting', 'true');
-            router.push('/dashboard');
+          try {
+            const userData = await api.get('/auth/me');
+            console.log('%c[AuthContext] User data fetched successfully:', 'color: green', userData);
+            setUser(userData);
+            console.log('%c[AuthContext] User authenticated successfully:', 'color: green', userData.email);
+            
+            // Store authentication status in sessionStorage
+            sessionStorage.setItem('isAuthenticated', 'true');
+            
+            // If we're on the login page and already authenticated, redirect to dashboard
+            if (router.pathname === '/login') {
+              console.log('%c[AuthContext] Already authenticated, redirecting to dashboard', 'color: purple');
+              // Set flag to prevent redirect loops
+              sessionStorage.setItem('redirecting', 'true');
+              router.push('/dashboard');
+            }
+          } catch (apiError) {
+            console.error('%c[AuthContext] API error when fetching user data:', 'color: red', apiError);
+            throw apiError; // Re-throw to be caught by the outer catch block
           }
         } catch (error) {
-          console.error('Failed to authenticate with stored token:', error);
+          console.error('%c[AuthContext] Failed to authenticate with stored token:', 'color: red', error);
           // Clear authentication data
           localStorage.removeItem('token');
           sessionStorage.removeItem('token');
@@ -95,17 +121,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           
           // If we're not on the login page and not in the process of logging in, redirect to login
           if (router.pathname !== '/login' && !isLoggingIn) {
-            console.log('Authentication failed, redirecting to login');
+            console.log('%c[AuthContext] Authentication failed, redirecting to login', 'color: orange');
             // Set flag to prevent redirect loops
             sessionStorage.setItem('redirecting', 'true');
             router.push('/login');
           }
         }
       } else {
-        console.log('No stored token found');
+        console.log('%c[AuthContext] No stored token found', 'color: orange');
         // If we're not on the login page and not in the process of logging in, redirect to login
         if (router.pathname !== '/login' && !isLoggingIn) {
-          console.log('No authentication, redirecting to login');
+          console.log('%c[AuthContext] No authentication, redirecting to login', 'color: orange');
           // Set flag to prevent redirect loops
           sessionStorage.setItem('redirecting', 'true');
           router.push('/login');
@@ -116,10 +142,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     // Only run initAuth if we're not currently redirecting
-    if (sessionStorage.getItem('redirecting') !== 'true') {
+    const isRedirecting = sessionStorage.getItem('redirecting') === 'true';
+    console.log('[AuthContext] Before initAuth check, isRedirecting:', isRedirecting);
+    
+    if (!isRedirecting) {
+      console.log('[AuthContext] Running initAuth...');
       initAuth();
     } else {
       // Clear the redirecting flag after it's been used
+      console.log('[AuthContext] Skipping initAuth due to redirecting flag');
       sessionStorage.removeItem('redirecting');
       setIsLoading(false);
     }
