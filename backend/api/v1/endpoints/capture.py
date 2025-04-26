@@ -264,3 +264,84 @@ async def get_capture_status(
         "capture_id": active_capture.id if active_capture else None,
         "start_time": active_capture.created_at if active_capture else None
     }
+
+@router.get("/{capture_id}", response_model=Dict)
+async def get_capture_by_id(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Get a specific capture session by ID."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Format response to match frontend expectations
+    user = db.query(models.User).filter(models.User.id == capture.user_id).first()
+    
+    # Build response with basic fields
+    response = {
+        "id": capture.id,
+        "status": capture.status,
+        "start_time": capture.created_at,
+        "created_by_id": user.id,
+        "created_by": {
+            "id": user.id,
+            "name": user.full_name,
+            "email": user.email
+        },
+        "created_at": capture.created_at,
+        "updated_at": capture.updated_at
+    }
+    
+    # Add additional fields if they exist
+    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration']:
+        if hasattr(capture, field):
+            response[field] = getattr(capture, field)
+        else:
+            response[field] = None
+    
+    if 'title' not in response or not response['title']:
+        response['title'] = f"Capture Session {capture.id}"
+    
+    return response
+
+@router.get("/{capture_id}/logs", response_model=Dict)
+async def get_capture_logs(
+    capture_id: int,
+    page: int = 1,
+    per_page: int = 20,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Get logs for a specific capture session."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # For now, return a placeholder response since we don't have actual logs
+    return {
+        "logs": [],
+        "total": 0,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": 0
+    }
