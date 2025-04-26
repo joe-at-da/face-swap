@@ -20,6 +20,7 @@ class ApiClient {
    */
   setAuthToken(token: string | null) {
     this.token = token;
+    console.log('API token set:', token ? 'Present' : 'None');
   }
 
   /**
@@ -42,6 +43,9 @@ class ApiClient {
    * Handle API response
    */
   private async handleResponse(response: Response) {
+    // Log all responses for debugging
+    console.log(`API response: ${response.status} for ${response.url}`);
+    
     if (!response.ok) {
       console.warn(`API error: ${response.status} for ${response.url}`);
       
@@ -51,13 +55,18 @@ class ApiClient {
         if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
           console.warn('Authentication error: Token may be expired');
           
-          // Clear token and redirect to login
-          localStorage.removeItem('token');
-          this.token = null;
-          
-          // Redirect to login page
-          window.location.href = '/login';
-          return null; // Return early
+          // Only clear token and redirect if we're not in the process of logging in
+          // This prevents redirect loops when logging in
+          if (!sessionStorage.getItem('loggingIn')) {
+            console.log('Clearing token due to 401 error');
+            // Clear token and redirect to login
+            localStorage.removeItem('token');
+            this.token = null;
+            
+            // Redirect to login page
+            window.location.href = '/login';
+            return null; // Return early
+          }
         }
       }
       

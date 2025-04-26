@@ -45,10 +45,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Check if user is authenticated on mount
   useEffect(() => {
     const initAuth = async () => {
+      console.log('Initializing authentication state...');
       const storedToken = localStorage.getItem('token');
       
       if (storedToken) {
         try {
+          console.log('Found stored token, attempting to validate...');
           // Set token in state and API
           setToken(storedToken);
           api.setAuthToken(storedToken);
@@ -57,8 +59,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const userData = await api.get('/auth/me');
           setUser(userData);
           console.log('User authenticated successfully:', userData.email);
+          
+          // If we're on the login page and already authenticated, redirect to dashboard
+          if (router.pathname === '/login') {
+            console.log('Already authenticated, redirecting to dashboard');
+            router.push('/dashboard');
+          }
         } catch (error) {
-          console.error('Failed to authenticate:', error);
+          console.error('Failed to authenticate with stored token:', error);
           // Clear authentication data
           localStorage.removeItem('token');
           setToken(null);
@@ -67,8 +75,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           
           // If we're not on the login page, redirect to login
           if (router.pathname !== '/login') {
+            console.log('Authentication failed, redirecting to login');
             router.push('/login');
           }
+        }
+      } else {
+        console.log('No stored token found');
+        // If we're not on the login page and there's no token, redirect to login
+        if (router.pathname !== '/login') {
+          console.log('No authentication, redirecting to login');
+          router.push('/login');
         }
       }
       
@@ -81,6 +97,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Login function
   const login = async (email: string, password: string) => {
     setIsLoading(true);
+    // Set a flag to indicate we're in the login process
+    sessionStorage.setItem('loggingIn', 'true');
     
     try {
       console.log('Attempting login for:', email);
@@ -159,6 +177,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         });
       }
       
+      // Set a flag to prevent redirect loops
+      sessionStorage.setItem('justLoggedIn', 'true');
       // Redirect to dashboard
       router.push('/dashboard');
     } catch (error: any) {
@@ -171,6 +191,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       throw error;
     } finally {
       setIsLoading(false);
+      // Clear the login flag
+      sessionStorage.removeItem('loggingIn');
     }
   };
 
