@@ -79,7 +79,146 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 ### Running the Application
 
-#### Method 1: Direct Run (Recommended)
+#### Method 1: Docker Setup (Recommended)
+
+```bash
+# Start all services with Docker Compose
+docker-compose -f docker-compose.dev.yml up -d
+
+# View logs
+docker-compose -f docker-compose.dev.yml logs -f
+
+# Stop all services
+docker-compose -f docker-compose.dev.yml down
+```
+
+Once both servers are running:
+1. Open your browser and navigate to http://localhost:3000
+2. Log in with your credentials
+3. Explore the application features:
+   - Dashboard: System statistics and quick actions
+   - Video Clips: Browse, create, edit clips
+   - Capture: Manage Parliament TV capture sessions
+   - Social Media: Create and schedule posts
+   - Admin: Manage users and storage
+
+### Troubleshooting Guide
+
+#### Docker Environment Troubleshooting
+
+1. **Restarting Services**
+   ```bash
+   # Restart a specific service
+   docker-compose -f docker-compose.dev.yml restart frontend
+   docker-compose -f docker-compose.dev.yml restart app
+   
+   # Restart all services
+   docker-compose -f docker-compose.dev.yml restart
+   ```
+
+2. **Rebuilding Services**
+   ```bash
+   # Rebuild and restart a specific service
+   docker-compose -f docker-compose.dev.yml up -d --build app
+   docker-compose -f docker-compose.dev.yml up -d --build frontend
+   ```
+
+3. **Viewing Logs**
+   ```bash
+   # View logs for all services
+   docker-compose -f docker-compose.dev.yml logs -f
+   
+   # View logs for a specific service
+   docker-compose -f docker-compose.dev.yml logs -f frontend
+   
+   # View last 50 lines of logs
+   docker-compose -f docker-compose.dev.yml logs --tail=50 frontend
+   ```
+
+4. **Running Commands Inside Containers**
+   ```bash
+   # Install a package in the frontend container
+   docker-compose -f docker-compose.dev.yml exec frontend npm install @tailwindcss/postcss --save
+   
+   # Run tests in the app container
+   docker-compose -f docker-compose.dev.yml run --rm app pytest backend/tests/api/v1/test_capture.py -v
+   ```
+
+5. **Authentication Issues**
+   - If you encounter redirect loops between login and dashboard:
+     - Check browser console for authentication errors
+     - Ensure the `isAuthenticated` flag is properly set in sessionStorage
+     - Clear browser storage (localStorage and sessionStorage) and try again
+   - If API endpoints return 401 errors:
+     - Verify your token is valid and not expired
+     - Check that the token is properly set in API requests
+
+#### Direct Run Troubleshooting
+
+1. **Frontend Issues**
+   - Make sure all dependencies are installed:
+     ```bash
+     cd frontend
+     npm install
+     ```
+   - If you see Tailwind CSS errors, check that your PostCSS configuration is correct:
+     ```javascript
+     // frontend/postcss.config.js
+     module.exports = {
+       plugins: {
+         tailwindcss: {},
+         autoprefixer: {},
+       },
+     }
+     ```
+   - Ensure your Tailwind configuration has the correct color definitions:
+     ```javascript
+     // frontend/tailwind.config.js
+     /** @type {import('tailwindcss').Config} */
+     module.exports = {
+       // ... other config
+       theme: {
+         extend: {
+           colors: {
+             primary: {
+               DEFAULT: "#0076C0", // Parliament blue
+               dark: "#005A8E",
+               light: "#3D9AD1",
+             },
+             // ... other colors
+           },
+         },
+       },
+     }
+     ```
+
+2. **Backend Issues**
+   - Restart the backend server:
+     ```bash
+     ./scripts/manage_server.sh
+     ```
+   - Run in debug mode for more verbose logging:
+     ```bash
+     ./scripts/manage_server.sh debug
+     ```
+   - Check database connection settings in `.env`
+
+### What's Running in Docker
+
+When you start the application with Docker Compose, the following services are available:
+
+- **Backend API (FastAPI)** - http://localhost:8000
+  - API Documentation: http://localhost:8000/docs
+- **Frontend (Next.js)** - http://localhost:3000
+- **PostgreSQL database** - (Internal to Docker network)
+- **Redis** for caching and message queues - (Internal to Docker network)
+- **Celery worker** for background tasks - (Internal to Docker network)
+- **Prometheus** for metrics collection - http://localhost:9090
+- **Grafana** for monitoring dashboards - http://localhost:3001
+
+#### Method 2: Direct Run
+
+If you prefer to run the services directly without Docker:
 
 ```bash
 # Terminal 1: Start backend server
@@ -94,71 +233,13 @@ npm install  # Ensure all dependencies are installed
 npm run dev
 ```
 
-Once both servers are running:
-1. Open your browser and navigate to http://localhost:3000
-2. Log in with your credentials
-3. Explore the application features:
-   - Dashboard: System statistics and quick actions
-   - Video Clips: Browse, create, edit clips
-   - Capture: Manage Parliament TV capture sessions
-   - Social Media: Create and schedule posts
-   - Admin: Manage users and storage
-
-#### Troubleshooting Direct Run
-
-If you encounter issues with the frontend:
-
-1. Make sure all dependencies are installed:
-   ```bash
-   cd frontend
-   npm install
-   ```
-
-2. If you see Tailwind CSS errors, check that your PostCSS configuration is correct:
-   ```javascript
-   // frontend/postcss.config.js
-   module.exports = {
-     plugins: {
-       tailwindcss: {},
-       autoprefixer: {},
-     },
-   }
-   ```
-
-3. Ensure your Tailwind configuration has the correct color definitions:
-   ```javascript
-   // frontend/tailwind.config.js
-   /** @type {import('tailwindcss').Config} */
-   module.exports = {
-     // ... other config
-     theme: {
-       extend: {
-         colors: {
-           primary: {
-             DEFAULT: "#0076C0", // Parliament blue
-             dark: "#005A8E",
-             light: "#3D9AD1",
-           },
-           // ... other colors
-         },
-       },
-     },
-   }
-   ```
-
-#### Method 2: Docker Setup (In Progress)
-
-A Docker-based development environment is currently being configured. For now, please use the direct run method above.
-
-When completed, the Docker setup will include:
+The Docker setup includes:
 - Backend API (FastAPI)
 - Frontend (Next.js)
 - PostgreSQL database
 - Redis for caching and queues
 - Celery worker for background tasks
 - Prometheus and Grafana for monitoring
-
-Check back for updated Docker instructions in future releases.
 
 ### Building for Production
 
@@ -185,7 +266,7 @@ pytest --cov=backend tests/
 
 ## Development Status
 
-Currently in Beta phase with all core features implemented. Both backend and frontend components are complete and ready for deployment.
+The Parliament Video Clip Manager has reached beta status with all core features implemented. Both backend and frontend components are complete and ready for deployment.
 
 ### Current Status (April 26, 2025)
 
@@ -202,33 +283,30 @@ Currently in Beta phase with all core features implemented. Both backend and fro
    - ✅ Capture session interface
    - ✅ Social media dashboard
    - ✅ Admin interface (users, storage)
-   - ⚠️ Some configuration issues with Tailwind CSS v4 (being resolved)
+   - ✅ Authentication and authorization flows
 
-### Known Issues
+### Project Roadmap
 
-1. **Frontend Tailwind CSS Configuration**
-   - The project uses Tailwind CSS v4 which requires special configuration
-   - Currently working on resolving PostCSS configuration issues
-   - Backend API is fully functional and can be tested via Swagger UI
+For detailed information about the project roadmap, including completed milestones, current work, and future plans, please see the [ROADMAP.md](ROADMAP.md) file.
 
-### Next Steps
+### Recent Achievements
 
-1. **Testing & Quality Assurance**
-   - Frontend component tests with Jest
-   - API integration tests
-   - End-to-end testing with Cypress
+1. **Authentication System**
+   - Resolved redirect loop issues between login and dashboard
+   - Implemented proper token storage and validation
+   - Added graceful handling of API errors
 
-2. **Deployment to Hetzner AX41**
-   - CI/CD pipeline setup
-   - HTTPS configuration
-   - Automated backups
+2. **Docker Environment**
+   - Completed Docker Compose setup for all services
+   - Configured monitoring with Prometheus and Grafana
+   - Added development convenience commands
 
-3. **Monitoring & Remaining Features**
-   - Performance metrics with Prometheus/Grafana
-   - System settings and logs interfaces
-   - Advanced search capabilities
+3. **Documentation**
+   - Comprehensive README with setup instructions
+   - Troubleshooting guide for common issues
+   - API documentation with Swagger UI
 
-See [ROADMAP.md](ROADMAP.md) for the complete development roadmap.
+See [ROADMAP.md](ROADMAP.md) for more detailed development plans.
 
 ## License
 
