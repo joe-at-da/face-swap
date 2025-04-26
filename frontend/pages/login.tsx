@@ -77,8 +77,8 @@ const Login: React.FC = () => {
       localStorage.setItem('token', data.access_token);
       sessionStorage.setItem('token', data.access_token);
       
-      // Redirect to direct-dashboard which bypasses AuthContext
-      router.push('/direct-dashboard');
+      // Redirect to regular dashboard on successful login
+      router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to login. Please check your credentials.');
     } finally {

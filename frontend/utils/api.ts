@@ -58,9 +58,22 @@ class ApiClient {
       
       // Handle 401 Unauthorized - could be expired token
       if (response.status === 401) {
+        // Check if this is a non-critical endpoint that shouldn't trigger logout
+        const url = new URL(response.url);
+        const isNonCriticalEndpoint = 
+          url.pathname.includes('/clips') || 
+          url.pathname.includes('/social-media');
+        
         // If we're not on the login page, we might need to refresh the token or redirect to login
         if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
           console.warn('Authentication error: Token may be expired');
+          
+          // For non-critical endpoints, don't clear token or redirect
+          if (isNonCriticalEndpoint) {
+            console.log('Non-critical endpoint 401 error, not clearing token');
+            // Just return null for this endpoint
+            return null;
+          }
           
           // Only clear token and redirect if we're not in the process of logging in
           // and if we haven't suppressed auth redirects
