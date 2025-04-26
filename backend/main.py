@@ -12,14 +12,10 @@ app = FastAPI(
 # Configure CORS for frontend access
 # When using credentials, we can't use wildcard origins
 origins = settings.CORS_ORIGINS.split(",") if settings.CORS_ORIGINS else ["http://localhost:3000"]
-# If wildcard is present, allow all origins
-if "*" in origins:
-    allow_origins = ["*"]
-    allow_credentials = False
-else:
-    # Otherwise, use the specific origins
-    allow_origins = origins
-    allow_credentials = True
+
+# For development, we want to support credentials with specific origins
+allow_origins = [origin.strip() for origin in origins if origin.strip() != "*"]
+allow_credentials = True
 
 app.add_middleware(
     CORSMiddleware,

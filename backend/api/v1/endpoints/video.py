@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.api.deps import get_db, get_current_user
+from backend.api.deps import get_db, get_current_user, get_current_user_optional
 from backend.db import models
 from backend.db.models.user import UserRole, User as UserModel
 from backend.schemas import video as schemas
@@ -14,11 +14,27 @@ router = APIRouter()
 async def list_clips(
     skip: int = 0,
     limit: int = 100,
+    status: Optional[str] = None,
+    sort: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)
+    current_user: Optional[UserModel] = Depends(get_current_user_optional)
 ):
-    """List video clips with pagination."""
-    clips = db.query(models.VideoClip).offset(skip).limit(limit).all()
+    """List video clips with pagination and optional filtering."""
+    query = db.query(models.VideoClip)
+    
+    # Apply status filter if provided
+    if status:
+        query = query.filter(models.VideoClip.status == status)
+    
+    # Apply sorting if provided
+    if sort:
+        sort_field, sort_order = sort.split(":") if ":" in sort else (sort, "asc")
+        order_by = getattr(models.VideoClip, sort_field)
+        if sort_order.lower() == "desc":
+            order_by = order_by.desc()
+        query = query.order_by(order_by)
+    
+    clips = query.offset(skip).limit(limit).all()
     return clips
 
 @router.post("/", response_model=schemas.VideoClipResponse, status_code=status.HTTP_201_CREATED)
@@ -107,7 +123,7 @@ async def delete_clip(
 async def get_clip_status(
     clip_id: int,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)
+    current_user: Optional[UserModel] = Depends(get_current_user_optional)
 ):
     """Get the processing status of a video clip."""
     clip = db.query(models.VideoClip).filter(models.VideoClip.id == clip_id).first()
