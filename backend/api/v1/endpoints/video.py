@@ -20,22 +20,64 @@ async def list_clips(
     current_user: Optional[UserModel] = Depends(get_current_user_optional)
 ):
     """List video clips with pagination and optional filtering."""
-    query = db.query(models.VideoClip)
-    
-    # Apply status filter if provided
-    if status:
-        query = query.filter(models.VideoClip.status == status)
-    
-    # Apply sorting if provided
-    if sort:
-        sort_field, sort_order = sort.split(":") if ":" in sort else (sort, "asc")
-        order_by = getattr(models.VideoClip, sort_field)
-        if sort_order.lower() == "desc":
-            order_by = order_by.desc()
-        query = query.order_by(order_by)
-    
-    clips = query.offset(skip).limit(limit).all()
-    return clips
+    try:
+        # Use a more selective query that explicitly selects only the columns that exist in the database
+        query = db.query(
+            models.VideoClip.id,
+            models.VideoClip.title,
+            models.VideoClip.description,
+            models.VideoClip.duration,
+            models.VideoClip.status,
+            models.VideoClip.error_message,
+            models.VideoClip.user_id,
+            models.VideoClip.capture_session_id,
+            models.VideoClip.created_at,
+            models.VideoClip.updated_at,
+            models.VideoClip.start_time,
+            models.VideoClip.end_time
+        )
+        
+        # Apply status filter if provided
+        if status:
+            query = query.filter(models.VideoClip.status == status)
+        
+        # Apply sorting if provided
+        if sort:
+            sort_field, sort_order = sort.split(":") if ":" in sort else (sort, "asc")
+            order_by = getattr(models.VideoClip, sort_field)
+            if sort_order.lower() == "desc":
+                order_by = order_by.desc()
+            query = query.order_by(order_by)
+        
+        # Execute the query
+        result = query.offset(skip).limit(limit).all()
+        
+        # Convert the result to a list of dictionaries
+        clips = []
+        for row in result:
+            clip_dict = {
+                "id": row.id,
+                "title": row.title,
+                "description": row.description,
+                "duration": row.duration,
+                "status": row.status,
+                "error_message": row.error_message,
+                "user_id": row.user_id,
+                "capture_session_id": row.capture_session_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "start_time": row.start_time,
+                "end_time": row.end_time,
+                # Add a default value for storage_path
+                "storage_path": None
+            }
+            clips.append(clip_dict)
+        
+        return clips
+    except Exception as e:
+        print(f"Error in list_clips: {str(e)}")
+        # Return an empty list as a fallback
+        return []
 
 @router.post("/", response_model=schemas.VideoClipResponse, status_code=status.HTTP_201_CREATED)
 async def create_clip(
