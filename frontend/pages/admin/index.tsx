@@ -38,7 +38,7 @@ interface SystemStats {
 
 const AdminDashboard: React.FC = () => {
   // Fetch system stats
-  const { data: systemStats, isLoading: statsLoading } = useQuery({
+  const { data: systemStats, isLoading: statsLoading, isError: statsError } = useQuery({
     queryKey: ['systemStats'],
     queryFn: async () => {
       return await api.get('/admin/stats');
@@ -278,8 +278,26 @@ const AdminDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+          ) : statsError ? (
+            <div className="p-6 text-center">
+              <div className="text-red-500 mb-4">
+                <svg className="h-12 w-12 mx-auto text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <h3 className="text-lg font-medium mt-2">Error loading system statistics</h3>
+                <p className="text-sm text-gray-600 mt-1">Please try refreshing the page or contact support if the issue persists.</p>
+              </div>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="mt-4 px-4 py-2 bg-primary text-white rounded hover:bg-primary-dark transition-colors"
+              >
+                Refresh Page
+              </button>
+            </div>
           ) : (
-            <div className="p-6 text-center text-red-500">Error loading system statistics</div>
+            <div className="p-6 text-center text-gray-500">
+              <p>No system statistics available</p>
+            </div>
           )}
         </div>
         
