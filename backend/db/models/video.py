@@ -10,7 +10,7 @@ class VideoClip(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     description = Column(String, nullable=True)
-    storage_path = Column(String)
+    storage_path = Column(String, nullable=True)
     duration = Column(Float)  # in seconds
     status = Column(String, index=True)  # processing, ready, failed
     error_message = Column(String, nullable=True)

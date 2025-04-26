@@ -15,16 +15,20 @@ class VideoClipUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
 
-class VideoClipResponse(VideoClipBase):
+class VideoClipResponse(BaseModel):
     id: int
+    title: str
+    description: Optional[str] = None
     status: str
-    storage_path: Optional[str]
-    duration: Optional[float]
+    storage_path: Optional[str] = None
+    duration: Optional[float] = None
     user_id: int
-    capture_session_id: int
+    capture_session_id: Optional[int] = None
     created_at: datetime
-    updated_at: Optional[datetime]
-    error_message: Optional[str]
+    updated_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
 
     class Config:
         from_attributes = True

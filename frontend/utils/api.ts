@@ -152,7 +152,7 @@ class ApiClient {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.getHeaders(),
-        credentials: 'same-origin',
+        credentials: 'include',
       });
 
       console.log(`Response for ${endpoint}:`, response.status);
@@ -198,7 +198,7 @@ class ApiClient {
       method: 'POST',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
-      credentials: 'same-origin',
+      credentials: 'include',
     });
 
     // Add special debug logging for capture endpoints
@@ -224,7 +224,7 @@ class ApiClient {
       method: 'PUT',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
-      credentials: 'same-origin',
+      credentials: 'include',
     });
 
     return this.handleResponse(response);
@@ -238,7 +238,7 @@ class ApiClient {
       method: 'PATCH',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
-      credentials: 'same-origin',
+      credentials: 'include',
     });
 
     return this.handleResponse(response);
@@ -251,7 +251,7 @@ class ApiClient {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
-      credentials: 'same-origin',
+      credentials: 'include',
     });
 
     return this.handleResponse(response);
@@ -280,6 +280,7 @@ class ApiClient {
       method: 'POST',
       headers,
       body: formData,
+      credentials: 'include',
     });
 
     return this.handleResponse(response);
