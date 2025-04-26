@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional
@@ -92,10 +92,11 @@ async def get_captures(
 @router.post("", response_model=Dict)
 async def start_capture(
     capture: CaptureCreate = Body(...),
+    draft: bool = Query(False, description="Save as draft without starting capture"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
-    """Start capturing the Parliament TV stream."""
+    """Start capturing the Parliament TV stream or save as draft."""
     # Debug information
     print(f"DEBUG - Capture request received from user: {current_user.email}, role: {current_user.role}")
     
@@ -107,16 +108,40 @@ async def start_capture(
         models.CaptureSession.status == "active"
     ).first()
     
-    if active_capture:
+    # If trying to start a new active capture when one is already running
+    if active_capture and not draft:
+        # Get user who started the active capture
+        active_user = db.query(models.User).filter(models.User.id == active_capture.user_id).first()
+        user_info = f"{active_user.full_name} ({active_user.email})" if active_user else "Unknown user"
+        
+        # Calculate how long the capture has been running
+        start_time = active_capture.created_at
+        current_time = datetime.utcnow()
+        duration_seconds = int((current_time - start_time).total_seconds())
+        hours, remainder = divmod(duration_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        duration_str = f"{hours}h {minutes}m {seconds}s"
+        
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A capture session is already running"
+            detail={
+                "message": "A capture session is already running",
+                "active_capture": {
+                    "id": active_capture.id,
+                    "title": getattr(active_capture, 'title', f"Capture Session {active_capture.id}"),
+                    "started_by": user_info,
+                    "started_at": active_capture.created_at.isoformat(),
+                    "duration": duration_str,
+                    "url": f"/capture/{active_capture.id}"
+                }
+            }
         )
     
     # Create new capture session with basic fields
+    status_value = "draft" if draft else "active"
     capture_session = models.CaptureSession(
         user_id=current_user.id,
-        status="active"
+        status=status_value
     )
     
     # Try to set additional fields if they exist in the model
@@ -141,12 +166,14 @@ async def start_capture(
     db.commit()
     db.refresh(capture_session)
     
-    # Start capture in background if not scheduled
+    # Start capture in background if not scheduled and not a draft
     scheduled_start = getattr(capture, 'scheduled_start', None)
-    if not scheduled_start:
+    if not scheduled_start and not draft:
         # Skip Celery task for now
         # task = video_tasks.start_stream_capture.delay()
         print("DEBUG - Skipping Celery task for stream capture")
+    elif draft:
+        print("DEBUG - Saving as draft, no capture started")
     
     # Format response to match frontend expectations
     user = db.query(models.User).filter(models.User.id == current_user.id).first()
@@ -172,11 +199,6 @@ async def start_capture(
             response[field] = getattr(capture_session, field)
         else:
             response[field] = None
-    
-    if 'title' not in response or not response['title']:
-        response['title'] = f"Capture Session {capture_session.id}"
-    
-    return response
 
 @router.post("/{capture_id}/stop", response_model=Dict)
 async def stop_capture(
