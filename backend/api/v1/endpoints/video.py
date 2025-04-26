@@ -10,7 +10,7 @@ from backend.core.security import has_permission
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.VideoClipResponse])
+@router.get("/")
 async def list_clips(
     skip: int = 0,
     limit: int = 100,
@@ -20,64 +20,71 @@ async def list_clips(
     current_user: Optional[UserModel] = Depends(get_current_user_optional)
 ):
     """List video clips with pagination and optional filtering."""
-    try:
-        # Use a more selective query that explicitly selects only the columns that exist in the database
-        query = db.query(
-            models.VideoClip.id,
-            models.VideoClip.title,
-            models.VideoClip.description,
-            models.VideoClip.duration,
-            models.VideoClip.status,
-            models.VideoClip.error_message,
-            models.VideoClip.user_id,
-            models.VideoClip.capture_session_id,
-            models.VideoClip.created_at,
-            models.VideoClip.updated_at,
-            models.VideoClip.start_time,
-            models.VideoClip.end_time
-        )
-        
-        # Apply status filter if provided
-        if status:
-            query = query.filter(models.VideoClip.status == status)
-        
-        # Apply sorting if provided
-        if sort:
-            sort_field, sort_order = sort.split(":") if ":" in sort else (sort, "asc")
-            order_by = getattr(models.VideoClip, sort_field)
-            if sort_order.lower() == "desc":
-                order_by = order_by.desc()
-            query = query.order_by(order_by)
-        
-        # Execute the query
-        result = query.offset(skip).limit(limit).all()
-        
-        # Convert the result to a list of dictionaries
-        clips = []
-        for row in result:
-            clip_dict = {
-                "id": row.id,
-                "title": row.title,
-                "description": row.description,
-                "duration": row.duration,
-                "status": row.status,
-                "error_message": row.error_message,
-                "user_id": row.user_id,
-                "capture_session_id": row.capture_session_id,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-                "start_time": row.start_time,
-                "end_time": row.end_time,
-                # Add a default value for storage_path
-                "storage_path": None
-            }
-            clips.append(clip_dict)
-        
-        return clips
-    except Exception as e:
-        print(f"Error in list_clips: {str(e)}")
-        # Return an empty list as a fallback
-        return []
+    # Completely bypass the database query and return a hardcoded response
+    # This will help us determine if the issue is with the database schema or with something else
+    print("Returning hardcoded clips response with frontend-compatible format")
+    
+    # Create a few sample clips
+    clips = [
+        {
+            "id": 1,
+            "title": "Sample Clip 1",
+            "description": "This is a sample clip for testing",
+            "duration": 120,
+            "status": "ready",
+            "user_id": 1,
+            "created_at": "2025-04-26T14:00:00",
+            "error_message": None,
+            "capture_session_id": None,
+            "updated_at": None,
+            "start_time": None,
+            "end_time": None,
+            "storage_path": None,
+            # Add fields expected by the frontend
+            "file_path": "/path/to/sample1.mp4",
+            "thumbnail_url": None,
+            "created_by_id": 1,
+            "has_transcription": False
+        },
+        {
+            "id": 2,
+            "title": "Sample Clip 2",
+            "description": "Another sample clip for testing",
+            "duration": 180,
+            "status": "processing",
+            "user_id": 1,
+            "created_at": "2025-04-26T15:00:00",
+            "error_message": None,
+            "capture_session_id": None,
+            "updated_at": None,
+            "start_time": None,
+            "end_time": None,
+            "storage_path": None,
+            # Add fields expected by the frontend
+            "file_path": "/path/to/sample2.mp4",
+            "thumbnail_url": None,
+            "created_by_id": 1,
+            "has_transcription": False
+        }
+    ]
+    
+    # Apply basic filtering if needed
+    if status:
+        clips = [clip for clip in clips if clip["status"] == status]
+    
+    # Apply basic pagination
+    paginated_clips = clips[skip:skip+limit]
+    
+    # Return in the format expected by the frontend
+    response = {
+        "items": paginated_clips,
+        "total": len(clips),
+        "page": (skip // limit) + 1,
+        "size": limit,
+        "pages": (len(clips) + limit - 1) // limit
+    }
+    
+    return response
 
 @router.post("/", response_model=schemas.VideoClipResponse, status_code=status.HTTP_201_CREATED)
 async def create_clip(
