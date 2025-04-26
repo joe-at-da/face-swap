@@ -93,12 +93,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Determine the correct API URL based on environment
       // When running in Docker, we need to use the service name
       let apiUrl = 'http://localhost:8000/api/v1/auth/login';
-      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-        // Use localhost when running locally
+      if (typeof window !== 'undefined') {
+        // Always use localhost when running in browser
         apiUrl = 'http://localhost:8000/api/v1/auth/login';
-      } else {
-        // Use backend service name when in Docker
-        apiUrl = 'http://backend:8000/api/v1/auth/login';
       }
       
       console.log('Using API URL:', apiUrl);
@@ -111,7 +108,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           'Accept': 'application/json',
         },
         body: formData,
-        credentials: 'include',
+        // Don't use 'include' for credentials as it requires specific CORS setup
+        credentials: 'same-origin',
       });
       
       console.log('Login response status:', response.status);

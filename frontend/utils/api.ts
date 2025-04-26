@@ -5,15 +5,9 @@
 // Determine the correct API URL based on environment
 let API_BASE_URL = 'http://localhost:8000/api/v1';
 
-// When running in Docker, we need to use the service name
+// Always use localhost when running in browser
 if (typeof window !== 'undefined') {
-  if (window.location.hostname === 'localhost') {
-    // Use localhost when running locally
-    API_BASE_URL = 'http://localhost:8000/api/v1';
-  } else {
-    // Use backend service name when in Docker
-    API_BASE_URL = 'http://backend:8000/api/v1';
-  }
+  API_BASE_URL = 'http://localhost:8000/api/v1';
 }
 
 console.log('API Base URL:', API_BASE_URL);
@@ -118,7 +112,7 @@ class ApiClient {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.getHeaders(),
-        credentials: 'include',
+        credentials: 'same-origin',
       });
 
       console.log(`Response for ${endpoint}:`, response.status);
@@ -137,6 +131,7 @@ class ApiClient {
       method: 'POST',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
+      credentials: 'same-origin',
     });
 
     return this.handleResponse(response);
@@ -150,6 +145,7 @@ class ApiClient {
       method: 'PUT',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
+      credentials: 'same-origin',
     });
 
     return this.handleResponse(response);
@@ -163,6 +159,7 @@ class ApiClient {
       method: 'PATCH',
       headers: this.getHeaders(),
       body: data ? JSON.stringify(data) : undefined,
+      credentials: 'same-origin',
     });
 
     return this.handleResponse(response);
@@ -175,6 +172,7 @@ class ApiClient {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
+      credentials: 'same-origin',
     });
 
     return this.handleResponse(response);
