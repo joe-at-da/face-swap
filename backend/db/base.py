@@ -5,3 +5,4 @@ from backend.db.base_class import Base
 from backend.db.models.user import User
 from backend.db.models.video import VideoClip
 from backend.db.models.social import SocialPost
+from backend.db.models.capture import CaptureSession
