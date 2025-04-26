@@ -1,24 +1,23 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from backend.api import deps
 from backend.db.models.user import User, UserRole
 from backend.schemas.auth import UserCreate, UserUpdate, User as UserResponse
+from backend.schemas.admin import SystemStats
 from backend.core.security import get_password_hash
 
 router = APIRouter()
 
-
-@router.get("/users", response_model=List[UserResponse])
-def list_users(
-    skip: int = 0,
-    limit: int = 100,
+@router.get("/stats", response_model=SystemStats)
+async def get_system_stats(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
     """
-    Retrieve all users.
+    Get system statistics for the admin dashboard.
     Only accessible to admin users.
     """
     if current_user.role != "ADMIN":
@@ -27,7 +26,87 @@ def list_users(
             detail="Not enough permissions",
         )
     
-    users = db.query(User).offset(skip).limit(limit).all()
+    try:
+        # Get user stats
+        total_users = db.query(func.count(User.id)).scalar() or 0
+        active_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
+        inactive_users = db.query(func.count(User.id)).filter(User.is_active == False).scalar() or 0
+        
+        # Return hardcoded stats for now to get the endpoint working
+        return {
+            "storage": {
+                "total": 1000000000000,  # 1 TB
+                "used": 250000000000,   # 250 GB
+                "available": 750000000000  # 750 GB
+            },
+            "clips": {
+                "total": 100,
+                "processing": 5,
+                "completed": 90,
+                "failed": 5
+            },
+            "captures": {
+                "total": 50,
+                "active": 2,
+                "completed": 45,
+                "failed": 3
+            },
+            "users": {
+                "total": total_users,
+                "active": active_users,
+                "inactive": inactive_users
+            },
+            "social": {
+                "total_posts": 75,
+                "scheduled_posts": 10,
+                "published_posts": 65
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting system stats: {str(e)}"
+        )
+
+
+@router.get("/users", response_model=List[UserResponse])
+def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    role: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Retrieve all users with optional filtering.
+    Only accessible to admin users.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    
+    query = db.query(User)
+    
+    # Apply filters if provided
+    if role:
+        query = query.filter(User.role == role)
+    
+    if is_active is not None:
+        query = query.filter(User.is_active == is_active)
+    
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            User.email.ilike(search_term) | 
+            User.full_name.ilike(search_term)
+        )
+    
+    # Apply pagination
+    users = query.offset(skip).limit(limit).all()
     return users
 
 
@@ -169,4 +248,42 @@ def delete_user(
     
     db.delete(user)
     db.commit()
+    return user
+
+
+@router.patch("/users/{user_id}/status", response_model=UserResponse)
+def update_user_status(
+    user_id: int,
+    is_active: bool,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Update a user's active status.
+    Only accessible to admin users.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    
+    # Prevent deactivating self
+    if user_id == current_user.id and not is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate yourself",
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    user.is_active = is_active
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return user
