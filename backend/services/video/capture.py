@@ -20,16 +20,43 @@ class StreamCapture:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = self.temp_dir / f"capture_{timestamp}.mp4"
         
+        # Add a timeout for the connection
+        connection_timeout = 30  # seconds
+        
         try:
-            stream = ffmpeg.input(self.stream_url)
-            stream = ffmpeg.output(stream, str(output_file), acodec='copy', vcodec='copy')
+            # Try to connect to the stream with a timeout
+            logger.info(f"Attempting to connect to stream: {self.stream_url}")
             
+            # Use a more robust ffmpeg command with error handling
+            stream = ffmpeg.input(self.stream_url, timeout=connection_timeout)
+            stream = ffmpeg.output(
+                stream, 
+                str(output_file), 
+                acodec='copy', 
+                vcodec='copy',
+                f='mp4',  # Force mp4 format
+                # Add error handling flags
+                reconnect=1,
+                reconnect_at_eof=1,
+                reconnect_streamed=1,
+                reconnect_delay_max=5
+            )
+            
+            # Start the process
             self._current_process = ffmpeg.run_async(stream)
-            logger.info(f"Started capture to {output_file}")
+            logger.info(f"Successfully started capture to {output_file}")
             return str(output_file)
             
         except ffmpeg.Error as e:
-            logger.error(f"Failed to start capture: {e.stderr.decode() if e.stderr else str(e)}")
+            error_message = e.stderr.decode() if e.stderr else str(e)
+            logger.error(f"Failed to start capture: {error_message}")
+            # Create a small log file to record the error
+            error_log_file = self.temp_dir / f"error_log_{timestamp}.txt"
+            with open(error_log_file, 'w') as f:
+                f.write(f"Error capturing from {self.stream_url}: {error_message}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error starting capture: {str(e)}")
             raise
     
     def stop_capture(self):

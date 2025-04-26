@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     TEST_DATABASE_URL: Optional[str] = None
     
     # Video Settings
-    PARLIAMENT_TV_URL: str = "https://www.parliamentlive.tv/Event/Index/56fac7d5-b3be-4f69-94f3-e68ffc46c9c1"
+    # Using a more reliable streaming URL for Parliament TV
+    PARLIAMENT_TV_URL: str = "https://www.parliamentlive.tv/Event/Index"
     TEMP_STORAGE_PATH: str = "/app/data/temp"
     MEDIA_STORAGE_PATH: str = "/app/data/media"
     MAX_CLIP_DURATION_MINUTES: int = 30
