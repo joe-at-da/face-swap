@@ -94,7 +94,7 @@ async def start_capture(
     current_user: models.User = Depends(get_current_user)
 ):
     """Start capturing the Parliament TV stream."""
-    has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     # Check if capture is already running
     active_capture = db.query(models.CaptureSession).filter(
@@ -177,7 +177,7 @@ async def stop_capture(
     current_user: models.User = Depends(get_current_user)
 ):
     """Stop a specific capture session."""
-    has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     # Get the specified capture session
     capture = db.query(models.CaptureSession).filter(
