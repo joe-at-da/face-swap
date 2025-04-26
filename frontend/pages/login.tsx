@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Image from 'next/image';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/common/ThemeToggle';
 
 const Login: React.FC = () => {
@@ -11,7 +12,24 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
+  const { theme } = useTheme();
   const router = useRouter();
+  
+  // Force dark mode class on body when component mounts
+  useEffect(() => {
+    // This ensures the body has the correct classes even if ThemeContext hasn't fully initialized
+    document.documentElement.classList.add('dark');
+    document.body.style.backgroundColor = '#111827';
+    document.body.style.color = '#ffffff';
+    
+    // Clean up function
+    return () => {
+      // Only remove if we're navigating away and theme is not dark
+      if (theme !== 'dark') {
+        document.documentElement.classList.remove('dark');
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +52,7 @@ const Login: React.FC = () => {
         <meta name="description" content="Login to the Parliament Video Clip Manager" />
       </Head>
 
-      <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-white dark:bg-gray-900 transition-colors duration-200">
+      <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-gray-900 dark:bg-gray-900 text-white dark:text-white transition-colors duration-200">
         <div className="absolute top-4 right-4">
           <ThemeToggle />
         </div>
@@ -56,7 +74,7 @@ const Login: React.FC = () => {
         </div>
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="py-8 px-4 shadow sm:rounded-lg sm:px-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 transition-colors duration-200">
+          <div className="py-8 px-4 shadow sm:rounded-lg sm:px-10 bg-gray-800 border border-gray-700 transition-colors duration-200">
             {error && (
               <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded relative" role="alert">
                 <span className="block sm:inline">{error}</span>

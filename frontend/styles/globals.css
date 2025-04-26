@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Default to dark mode */
+/* Base variables */
 :root {
   /* Custom colors */
   --color-primary: #0076C0;
@@ -10,7 +10,7 @@
   --color-secondary-dark: #4E090C;
   --color-secondary-light: #8A3538;
   
-  /* Dark mode colors by default */
+  /* Default to dark mode colors */
   --foreground-rgb: 255, 255, 255;
   --background-rgb: 17, 24, 39; /* dark gray */
   --background-secondary-rgb: 31, 41, 55; /* slightly lighter gray */
@@ -21,9 +21,22 @@
   --hover-bg: #374151;
 }
 
+/* Light mode variables */
+:root:not(.dark) {
+  --foreground-rgb: 0, 0, 0;
+  --background-rgb: 255, 255, 255; /* white */
+  --background-secondary-rgb: 249, 250, 251; /* very light gray */
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --border-color: #e5e7eb;
+  --card-bg: #ffffff;
+  --hover-bg: #f3f4f6;
+}
+
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-rgb));
+  transition: color 0.3s ease, background-color 0.3s ease;
 }
 
 @layer components {
@@ -118,4 +131,24 @@ table th {
 table td {
   border-color: var(--border-color);
   color: var(--text-secondary);
+}
+
+/* Add specific dark mode styles for Tailwind elements */
+.dark .bg-white {
+  background-color: #1f2937 !important;
+}
+
+.dark .text-gray-900 {
+  color: #f9fafb !important;
+}
+
+.dark .border-gray-200 {
+  border-color: #374151 !important;
+}
+
+/* Force transition on all elements for smoother theme changes */
+* {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 300ms;
 }

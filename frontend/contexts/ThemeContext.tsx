@@ -14,7 +14,7 @@ interface ThemeProviderProps {
 }
 
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setTheme] = useState<Theme>('dark');
 
   // Initialize theme from localStorage or system preference
   useEffect(() => {
@@ -60,18 +60,18 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
       htmlElement.setAttribute('data-theme', 'parliamentDark');
       htmlElement.classList.add('dark');
       document.body.classList.add('dark-mode');
+      document.body.style.backgroundColor = '#111827'; // Dark gray
+      document.body.style.color = '#ffffff';
     } else {
       htmlElement.setAttribute('data-theme', 'parliament');
       htmlElement.classList.remove('dark');
       document.body.classList.remove('dark-mode');
+      document.body.style.backgroundColor = '#ffffff'; // White
+      document.body.style.color = '#111827';
     }
     
     // Force a repaint to ensure styles are applied
-    const currentBg = document.body.style.backgroundColor;
-    document.body.style.backgroundColor = 'transparent';
-    setTimeout(() => {
-      document.body.style.backgroundColor = currentBg;
-    }, 1);
+    document.body.style.transition = 'background-color 0.3s ease, color 0.3s ease';
     
     localStorage.setItem('theme', theme);
     console.log('Theme changed to:', theme);
