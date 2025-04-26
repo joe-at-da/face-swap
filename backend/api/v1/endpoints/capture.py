@@ -9,7 +9,8 @@ from jose import jwt, JWTError
 from backend.api.deps import get_db
 from backend.core.security import has_permission, get_current_user, get_current_active_user
 from backend.db import models
-from backend.db.models.user import UserRole
+from backend.schemas.capture import CaptureCreate
+from backend.core.security import UserRole
 from backend.services.tasks import video_tasks
 from backend.core.config import settings
 
@@ -169,9 +170,14 @@ async def start_capture(
     # Start capture in background if not scheduled and not a draft
     scheduled_start = getattr(capture, 'scheduled_start', None)
     if not scheduled_start and not draft:
-        # Skip Celery task for now
-        # task = video_tasks.start_stream_capture.delay()
-        print("DEBUG - Skipping Celery task for stream capture")
+        # Start the actual video capture process
+        task = video_tasks.start_stream_capture.delay()
+        print(f"DEBUG - Started Celery task for stream capture: {task.id}")
+        
+        # Update the capture session with the task ID
+        if hasattr(capture_session, 'task_id'):
+            capture_session.task_id = task.id
+            db.commit()
     elif draft:
         print("DEBUG - Saving as draft, no capture started")
     
@@ -226,20 +232,14 @@ async def stop_capture(
             detail=f"Capture session with ID {capture_id} is not active"
         )
     
-    # Update capture session status
+    # Update capture status
     capture.status = "completed"
-    
-    # Try to set end_time if the field exists
-    if hasattr(capture, 'end_time'):
-        capture.end_time = datetime.now()
-        
+    capture.end_time = datetime.utcnow()
     db.commit()
-    db.refresh(capture)
     
-    # Stop capture in background
-    # Skip Celery task for now
-    # task = video_tasks.stop_stream_capture.delay()
-    print("DEBUG - Skipping Celery task for stopping stream capture")
+    # Stop the actual video capture process
+    task = video_tasks.stop_stream_capture.delay()
+    print(f"DEBUG - Started Celery task to stop stream capture: {task.id}")
     
     # Format response to match frontend expectations
     user = db.query(models.User).filter(models.User.id == capture.user_id).first()

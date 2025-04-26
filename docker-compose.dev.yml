@@ -69,7 +69,7 @@ services:
     depends_on:
       - redis
       - db
-    command: celery -A app.worker worker --loglevel=info
+    command: celery -A backend.worker:celery_app worker --loglevel=info
 
   prometheus:
     image: prom/prometheus
