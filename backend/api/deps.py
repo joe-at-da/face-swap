@@ -23,6 +23,8 @@ def get_current_user(
     token: str = Depends(oauth2_scheme)
 ) -> UserModel:
     """Get current authenticated user."""
+    # Debug information
+    print(f"DEBUG - Auth: Token received (first 10 chars): {token[:10] if token else 'None'}...")
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -32,8 +34,10 @@ def get_current_user(
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        sub = payload.get("sub")
-        if sub == "test":  # Handle test users
+        email = payload.get("sub")
+        role = payload.get("role", UserRole.STAFF)  # Default to STAFF if no role
+        
+        if email == "test":  # Handle test users
             # Get role from payload and convert to UserRole enum
             role_str = payload.get("role", "staff")
             if isinstance(role_str, str):
@@ -52,17 +56,13 @@ def get_current_user(
             )
             return user
         
-        try:
-            user_id = int(sub)
-        except (TypeError, ValueError):
-            raise credentials_exception
-            
-        if user_id is None:
+        if email is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    # Look up user by email (matching security.py implementation)
+    user = db.query(UserModel).filter(UserModel.email == email).first()
     if user is None:
         raise credentials_exception
 

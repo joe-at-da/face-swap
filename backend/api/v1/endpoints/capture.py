@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional
 from datetime import datetime
 from pydantic import BaseModel
+from jose import jwt, JWTError
 
-from backend.api.deps import get_db, get_current_user
-from backend.core.security import has_permission
+from backend.api.deps import get_db
+from backend.core.security import has_permission, get_current_user, get_current_active_user
 from backend.db import models
 from backend.db.models.user import UserRole
 from backend.services.tasks import video_tasks
@@ -43,7 +45,7 @@ class CaptureResponse(BaseModel):
 async def get_captures(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_active_user)
 ):
     """Get all capture sessions with optional filtering by status."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
@@ -91,9 +93,13 @@ async def get_captures(
 async def start_capture(
     capture: CaptureCreate = Body(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_active_user)
 ):
     """Start capturing the Parliament TV stream."""
+    # Debug information
+    print(f"DEBUG - Capture request received from user: {current_user.email}, role: {current_user.role}")
+    
+    # Check if user has required permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     # Check if capture is already running
@@ -138,7 +144,9 @@ async def start_capture(
     # Start capture in background if not scheduled
     scheduled_start = getattr(capture, 'scheduled_start', None)
     if not scheduled_start:
-        task = video_tasks.start_stream_capture.delay()
+        # Skip Celery task for now
+        # task = video_tasks.start_stream_capture.delay()
+        print("DEBUG - Skipping Celery task for stream capture")
     
     # Format response to match frontend expectations
     user = db.query(models.User).filter(models.User.id == current_user.id).first()
@@ -174,7 +182,7 @@ async def start_capture(
 async def stop_capture(
     capture_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_active_user)
 ):
     """Stop a specific capture session."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
@@ -207,7 +215,9 @@ async def stop_capture(
     db.refresh(capture)
     
     # Stop capture in background
-    task = video_tasks.stop_stream_capture.delay()
+    # Skip Celery task for now
+    # task = video_tasks.stop_stream_capture.delay()
+    print("DEBUG - Skipping Celery task for stopping stream capture")
     
     # Format response to match frontend expectations
     user = db.query(models.User).filter(models.User.id == capture.user_id).first()
@@ -242,7 +252,7 @@ async def stop_capture(
 @router.get("/status", response_model=Dict)
 async def get_capture_status(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_active_user)
 ):
     """Get the current capture status."""
     active_capture = db.query(models.CaptureSession).filter(
