@@ -15,8 +15,17 @@ def get_db() -> Generator:
     db = SessionLocal()
     try:
         yield db
+    except Exception as e:
+        # If an exception occurs during the request, rollback the transaction
+        db.rollback()
+        raise e
     finally:
-        db.close()
+        try:
+            # Close the session safely
+            db.close()
+        except Exception as e:
+            # Log the error but don't raise it to avoid crashing the application
+            print(f"Error closing database session: {str(e)}")
 
 def get_current_user(
     db: Session = Depends(get_db),

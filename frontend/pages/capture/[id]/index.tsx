@@ -462,11 +462,11 @@ const CaptureDetailPage: React.FC = () => {
               <div className="h-96 overflow-y-auto p-4 bg-gray-50 font-mono text-sm">
                 {logsLoading ? (
                   <div className="text-center text-gray-500 py-4">Loading logs...</div>
-                ) : !logsData || logsData.length === 0 ? (
+                ) : !logsData || !logsData.logs || logsData.logs.length === 0 ? (
                   <div className="text-center text-gray-500 py-4">No logs available</div>
                 ) : (
                   <div className="space-y-2">
-                    {logsData.map((log: CaptureLog) => (
+                    {logsData.logs.map((log: CaptureLog) => (
                       <div key={log.id} className="pb-2 border-b border-gray-200 last:border-0">
                         <div className="flex items-center justify-between mb-1">
                           <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getLogLevelBadgeClass(log.level)}`}>
@@ -484,7 +484,7 @@ const CaptureDetailPage: React.FC = () => {
               </div>
               
               {/* Logs pagination */}
-              {logsData && logsData.length > 0 && (
+              {logsData && logsData.logs && logsData.logs.length > 0 && (
                 <div className="px-6 py-3 border-t border-gray-200 flex justify-between items-center">
                   <button
                     type="button"
@@ -494,11 +494,11 @@ const CaptureDetailPage: React.FC = () => {
                   >
                     Previous
                   </button>
-                  <span className="text-sm text-gray-500">Page {logsPage}</span>
+                  <span className="text-sm text-gray-500">Page {logsPage} of {logsData.total_pages || 1}</span>
                   <button
                     type="button"
                     onClick={() => setLogsPage(logsPage + 1)}
-                    disabled={logsData.length < logsPerPage}
+                    disabled={!logsData.total_pages || logsPage >= logsData.total_pages || logsData.logs.length < logsPerPage}
                     className="text-sm text-gray-700 hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Next
