@@ -62,7 +62,9 @@ class ApiClient {
         const url = new URL(response.url);
         const isNonCriticalEndpoint = 
           url.pathname.includes('/clips') || 
-          url.pathname.includes('/social-media');
+          url.pathname.includes('/social-media') ||
+          url.pathname.includes('/capture') ||
+          url.pathname.includes('/social');
         
         // If we're not on the login page, we might need to refresh the token or redirect to login
         if (typeof window !== 'undefined' && window.location.pathname !== '/login') {

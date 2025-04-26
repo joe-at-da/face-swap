@@ -25,8 +25,8 @@ const Login: React.FC = () => {
     // Check if user is already authenticated
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
     if (token) {
-      console.log('User already has token, redirecting to direct-dashboard');
-      router.push('/direct-dashboard');
+      console.log('User already has token, redirecting to dashboard');
+      router.push('/dashboard');
     }
   }, [theme, router]);
 
