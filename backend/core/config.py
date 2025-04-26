@@ -19,9 +19,13 @@ class Settings(BaseSettings):
     TEST_DATABASE_URL: Optional[str] = None
     
     # Video Settings
-    # Using a reliable test stream for development
-    # For production, replace with the actual Parliament TV stream URL
-    PARLIAMENT_TV_URL: str = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    # For development, we use a reliable test stream
+    # For production, use the actual Parliament TV HLS stream URL captured from the browser
+    # The actual URL format looks like:
+    # https://p7of6fc-a2-westeurope-fay.cdn.redbee.live/parliamentlive/vod/entities/[EVENT_ID]_[TOKEN]/mat/[STREAM_ID].m3u8
+    # 
+    # For testing, we'll continue using a reliable test stream:
+    PARLIAMENT_TV_URL: str = "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8"
     TEMP_STORAGE_PATH: str = "/app/data/temp"
     MEDIA_STORAGE_PATH: str = "/app/data/media"
     MAX_CLIP_DURATION_MINUTES: int = 30

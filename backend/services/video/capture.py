@@ -1,12 +1,36 @@
 import os
 import logging
+import signal
+import subprocess
+import atexit
 from datetime import datetime
-import ffmpeg
 from pathlib import Path
+
+import ffmpeg
 
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Keep track of all active capture processes
+active_processes = []
+
+# Register a cleanup function to terminate all processes on exit
+def cleanup_processes():
+    for proc in active_processes:
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except (subprocess.TimeoutExpired, ProcessLookupError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+    active_processes.clear()
+
+# Register the cleanup function
+atexit.register(cleanup_processes)
 
 class StreamCapture:
     def __init__(self, stream_url: str = settings.PARLIAMENT_TV_URL):
@@ -44,6 +68,10 @@ class StreamCapture:
             
             # Start the process
             self._current_process = ffmpeg.run_async(stream)
+            
+            # Add to global list of active processes
+            active_processes.append(self._current_process)
+            
             logger.info(f"Successfully started capture to {output_file}")
             return str(output_file)
             
@@ -61,11 +89,28 @@ class StreamCapture:
     
     def stop_capture(self):
         """Stop the current capture process."""
-        if self._current_process and self._current_process.poll() is None:
-            self._current_process.terminate()
-            self._current_process.wait()
-            logger.info("Stopped capture process")
-            self._current_process = None
+        if self._current_process:
+            try:
+                # First try to terminate gracefully
+                if self._current_process.poll() is None:
+                    self._current_process.terminate()
+                    try:
+                        # Wait with timeout to avoid hanging
+                        self._current_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        # If it doesn't terminate in time, force kill
+                        self._current_process.kill()
+                        self._current_process.wait()
+                
+                # Remove from active processes list
+                if self._current_process in active_processes:
+                    active_processes.remove(self._current_process)
+                
+                logger.info("Stopped capture process")
+            except Exception as e:
+                logger.error(f"Error stopping capture process: {str(e)}")
+            finally:
+                self._current_process = None
     
     def is_capturing(self) -> bool:
         """Check if currently capturing."""
