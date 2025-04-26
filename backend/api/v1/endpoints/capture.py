@@ -117,7 +117,14 @@ async def start_capture(
         
         # Calculate how long the capture has been running
         start_time = active_capture.created_at
-        current_time = datetime.utcnow()
+        # Make sure both datetimes are timezone-aware or timezone-naive
+        if start_time.tzinfo is not None:
+            # If start_time is timezone-aware, make current_time timezone-aware too
+            current_time = datetime.utcnow().replace(tzinfo=start_time.tzinfo)
+        else:
+            # If start_time is timezone-naive, use naive current_time
+            current_time = datetime.utcnow()
+            
         duration_seconds = int((current_time - start_time).total_seconds())
         hours, remainder = divmod(duration_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -216,6 +223,8 @@ async def start_capture(
             response[field] = getattr(capture_session, field)
         else:
             response[field] = None
+            
+    return response
 
 @router.post("/{capture_id}/stop", response_model=Dict)
 async def stop_capture(
@@ -374,7 +383,8 @@ async def get_capture_logs(
             detail=f"Capture session with ID {capture_id} not found"
         )
     
-    # For now, return a placeholder response since we don't have actual logs
+    # Return a dictionary with an empty logs array
+    # The frontend expects an array of logs
     return {
         "logs": [],
         "total": 0,

@@ -20,7 +20,7 @@ const NewCapturePage: React.FC = () => {
   const [formData, setFormData] = useState<CaptureFormData>({
     title: '',
     description: '',
-    source_url: 'https://www.parliamentlive.tv/Event/Index/',
+    source_url: 'https://www.parliamentlive.tv/Event/Index/56fac7d5-b3be-4f69-94f3-e68ffc46c9c1',
   });
   
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -191,7 +191,7 @@ const NewCapturePage: React.FC = () => {
                     name="title"
                     value={formData.title}
                     onChange={handleInputChange}
-                    className={`mt-1 form-input ${errors.title ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
+                    className={`mt-1 w-200 form-input ${errors.title ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
                     placeholder="Enter capture session title"
                   />
                   {errors.title && (
@@ -210,7 +210,7 @@ const NewCapturePage: React.FC = () => {
                     rows={3}
                     value={formData.description}
                     onChange={handleInputChange}
-                    className="mt-1 form-input"
+                    className="mt-1 w-200 form-input"
                     placeholder="Enter capture session description"
                   />
                 </div>
@@ -226,8 +226,8 @@ const NewCapturePage: React.FC = () => {
                     name="source_url"
                     value={formData.source_url}
                     onChange={handleInputChange}
-                    className={`mt-1 form-input ${errors.source_url ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
-                    placeholder="https://www.parliamentlive.tv/Event/Index/..."
+                    className={`mt-1 w-200 form-input ${errors.source_url ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
+                    placeholder="https://www.parliamentlive.tv/Event/Index/56fac7d5-b3be-4f69-94f3-e68ffc46c9c1..."
                   />
                   {errors.source_url ? (
                     <p className="mt-1 text-sm text-red-600">{errors.source_url}</p>
