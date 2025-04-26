@@ -95,7 +95,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setUser(userData);
             console.log('%c[AuthContext] User authenticated successfully:', 'color: green', userData.email);
             
-            // Store authentication status in sessionStorage
+            // IMPORTANT: Store authentication status in sessionStorage
+            // This is critical to prevent redirect loops
             sessionStorage.setItem('isAuthenticated', 'true');
             
             // If we're on the login page and already authenticated, redirect to dashboard
@@ -163,7 +164,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     sessionStorage.setItem('loggingIn', 'true');
     
     try {
-      console.log('Attempting login for:', email);
+      console.log('%c[AuthContext] Attempting login for:', 'color: blue; font-weight: bold', email);
       
       // Create form data for OAuth2 login - this is the format expected by FastAPI's OAuth2PasswordRequestForm
       const formData = new URLSearchParams();
@@ -173,7 +174,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Always use localhost when running in browser
       const apiUrl = 'http://localhost:8000/api/v1/auth/login';
       
-      console.log('Using API URL:', apiUrl);
+      console.log('[AuthContext] Using API URL:', apiUrl);
       
       // Make the login request
       const response = await fetch(apiUrl, {
@@ -187,7 +188,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         credentials: 'same-origin',
       });
       
-      console.log('Login response status:', response.status);
+      console.log('[AuthContext] Login response status:', response.status);
       
       // Handle non-OK responses
       if (!response.ok) {
@@ -203,17 +204,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           errorDetail = errorText || `Login failed: ${response.status}`;
         }
         
-        console.error('Login error details:', errorDetail);
+        console.error('[AuthContext] Login error details:', errorDetail);
         throw new Error(errorDetail);
       }
       
       // Parse the successful response
       const data = await response.json();
-      console.log('Login successful, received token');
+      console.log('%c[AuthContext] Login successful, received token', 'color: green');
       const { access_token } = data;
       
       // Store token in both localStorage and sessionStorage for redundancy
-      console.log('Storing access token in localStorage, sessionStorage and state');
+      console.log('[AuthContext] Storing access token in localStorage, sessionStorage and state');
       localStorage.setItem('token', access_token);
       sessionStorage.setItem('token', access_token);
       setToken(access_token);
@@ -222,6 +223,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       api.setAuthToken(access_token);
       
       // Set flags to indicate successful authentication
+      // This is critical to prevent redirect loops
       sessionStorage.setItem('authSuccess', 'true');
       sessionStorage.setItem('isAuthenticated', 'true');
       try {
@@ -268,6 +270,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Logout function
   const logout = () => {
+    console.log('%c[AuthContext] Logging out user', 'color: orange');
+    
     // Clear all tokens and authentication state
     localStorage.removeItem('token');
     sessionStorage.removeItem('token');
