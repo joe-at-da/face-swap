@@ -2,8 +2,21 @@
  * API client for communicating with the backend
  */
 
-// Use direct localhost URL for API requests when running locally
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+// Determine the correct API URL based on environment
+let API_BASE_URL = 'http://localhost:8000/api/v1';
+
+// When running in Docker, we need to use the service name
+if (typeof window !== 'undefined') {
+  if (window.location.hostname === 'localhost') {
+    // Use localhost when running locally
+    API_BASE_URL = 'http://localhost:8000/api/v1';
+  } else {
+    // Use backend service name when in Docker
+    API_BASE_URL = 'http://backend:8000/api/v1';
+  }
+}
+
+console.log('API Base URL:', API_BASE_URL);
 
 class ApiClient {
   private token: string | null = null;
@@ -36,20 +49,41 @@ class ApiClient {
    */
   private async handleResponse(response: Response) {
     if (!response.ok) {
+      console.warn(`API error: ${response.status} for ${response.url}`);
+      
       // Handle 401 Unauthorized - could be expired token
       if (response.status === 401) {
         // If we're not on the login page, we might need to refresh the token or redirect to login
         if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-          // For now, just log the error - in a real app, you might want to refresh the token
           console.warn('Authentication error: Token may be expired');
+          
+          // Clear token and redirect to login
+          localStorage.removeItem('token');
+          this.token = null;
+          
+          // Redirect to login page
+          window.location.href = '/login';
+          return null; // Return early
         }
       }
       
       // Try to parse error response
       try {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `API error: ${response.status}`);
+        // First try to get the response as text
+        const responseText = await response.text();
+        
+        // Then try to parse as JSON if possible
+        try {
+          const errorData = JSON.parse(responseText);
+          console.error('API error details:', errorData);
+          throw new Error(errorData.detail || `API error: ${response.status}`);
+        } catch (parseError) {
+          // If not JSON, use the raw text
+          console.error('API error response:', responseText);
+          throw new Error(responseText || `API error: ${response.status}`);
+        }
       } catch (error) {
+        console.error('Failed to parse error response:', error);
         throw new Error(`API error: ${response.status}`);
       }
     }
@@ -79,12 +113,15 @@ class ApiClient {
     }
 
     try {
+      console.log(`Fetching ${url.toString()} with token:`, this.token ? 'Present' : 'None');
+      
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.getHeaders(),
         credentials: 'include',
       });
 
+      console.log(`Response for ${endpoint}:`, response.status);
       return this.handleResponse(response);
     } catch (error) {
       console.error(`Network error fetching ${endpoint}:`, error);

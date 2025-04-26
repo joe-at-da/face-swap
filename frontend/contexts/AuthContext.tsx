@@ -83,13 +83,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setIsLoading(true);
     
     try {
+      console.log('Attempting login for:', email);
+      
       // Create form data for OAuth2 login - this is the format expected by FastAPI's OAuth2PasswordRequestForm
       const formData = new URLSearchParams();
       formData.append('username', email); // OAuth2 expects 'username' even though we're using email
       formData.append('password', password);
       
-      // Use localhost when accessing from the browser
-      const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+      // Determine the correct API URL based on environment
+      // When running in Docker, we need to use the service name
+      let apiUrl = 'http://localhost:8000/api/v1/auth/login';
+      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+        // Use localhost when running locally
+        apiUrl = 'http://localhost:8000/api/v1/auth/login';
+      } else {
+        // Use backend service name when in Docker
+        apiUrl = 'http://backend:8000/api/v1/auth/login';
+      }
+      
+      console.log('Using API URL:', apiUrl);
+      
+      // Make the login request
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -99,12 +114,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         credentials: 'include',
       });
       
+      console.log('Login response status:', response.status);
+      
+      // Handle non-OK responses
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Login failed: ${response.status}`);
+        const errorText = await response.text();
+        let errorDetail = 'Unknown error';
+        
+        try {
+          // Try to parse as JSON
+          const errorData = JSON.parse(errorText);
+          errorDetail = errorData.detail || `Login failed: ${response.status}`;
+        } catch (parseError) {
+          // If not JSON, use the raw text
+          errorDetail = errorText || `Login failed: ${response.status}`;
+        }
+        
+        console.error('Login error details:', errorDetail);
+        throw new Error(errorDetail);
       }
       
+      // Parse the successful response
       const data = await response.json();
+      console.log('Login successful, received token');
       const { access_token } = data;
       
       // Store token
@@ -114,6 +146,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Fetch user data with the token
       api.setAuthToken(access_token);
       try {
+        console.log('Fetching user data...');
         const userData = await api.get('/auth/me');
         setUser(userData);
         console.log('User authenticated successfully:', userData.email);
@@ -130,8 +163,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Redirect to dashboard
       router.push('/dashboard');
-    } catch (error) {
-      console.error('Login failed:', error);
+    } catch (error: any) {
+      console.error('Login failed:', error.message || error);
       // Clear any partial authentication data
       localStorage.removeItem('token');
       setToken(null);
