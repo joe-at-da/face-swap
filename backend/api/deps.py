@@ -85,3 +85,25 @@ def get_current_user_with_roles(allowed_roles: list[UserRole]):
             )
         return current_user
     return _get_user_with_roles
+
+
+async def get_current_user_optional(request = None, db: Session = Depends(get_db)):
+    """Get current user if token is provided, otherwise return None.
+    
+    This is useful for endpoints that can work with or without authentication.
+    """
+    try:
+        # Try to get the token from the authorization header
+        if request and request.headers.get("Authorization"):
+            auth_header = request.headers.get("Authorization")
+            scheme, token = auth_header.split()
+            if scheme.lower() == "bearer":
+                try:
+                    return await get_current_user(db=db, token=token)
+                except HTTPException:
+                    # Invalid token, return None instead of raising an exception
+                    return None
+        return None
+    except (ValueError, AttributeError, HTTPException):
+        # Any error in parsing the token or headers, return None
+        return None

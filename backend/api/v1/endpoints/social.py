@@ -1,9 +1,11 @@
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Path, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
 
 from backend.db.models.user import UserRole
 from backend.api import deps
@@ -114,24 +116,41 @@ async def create_batch_social_posts(
 
 @router.get("/posts/", response_model=List[SocialPostResponse])
 async def list_social_posts(
+    request: Request,
     platform: Optional[SocialPlatform] = None,
     status: Optional[PostStatus] = None,
+    timeframe: Optional[str] = Query(None, description="Time frame for posts (e.g., '7days', '30days')"),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user_with_roles([UserRole.ADMIN, UserRole.MP, UserRole.STAFF]))
+    current_user = Depends(deps.get_current_user_optional)
 ):
     """
     List social media posts with optional filtering by platform and status.
     """
     query = db.query(SocialPost)
     
-    # Apply filters
+    # Apply filters if provided
     if platform:
         query = query.filter(SocialPost.platform == platform)
-    
+        
     if status:
         query = query.filter(SocialPost.status == status)
+        
+    # Apply timeframe filter if provided
+    if timeframe:
+        days = 30  # Default
+        if timeframe == "7days":
+            days = 7
+        elif timeframe == "30days":
+            days = 30
+        elif timeframe == "90days":
+            days = 90
+        # Add more timeframe options as needed
+        
+        # Filter by created_at date
+        start_date = datetime.utcnow() - timedelta(days=days)
+        query = query.filter(SocialPost.created_at >= start_date)
     
     # Filter by user unless admin
     if current_user.role != UserRole.ADMIN:
@@ -365,3 +384,103 @@ async def get_platform_status(
         ))
     
     return result
+
+
+@router.get("/stats", response_model=Dict[str, Any])
+async def get_social_stats(
+    request: Request,
+    days: int = Query(30, description="Number of days to include in the statistics"),
+    platform: Optional[SocialPlatform] = Query(None, description="Filter by platform"),
+    timeframe: Optional[str] = Query(None, description="Time frame for stats (e.g., '7days', '30days')"),
+    db: Session = Depends(deps.get_db),
+    current_user = Depends(deps.get_current_user_optional)
+):
+    """
+    Get statistics about social media posts.
+    
+    Returns aggregated data about posts by platform, status, and time period.
+    """
+    # Calculate the date range based on timeframe parameter if provided
+    end_date = datetime.utcnow()
+    
+    # Parse timeframe parameter if provided
+    if timeframe:
+        if timeframe == "7days":
+            days = 7
+        elif timeframe == "30days":
+            days = 30
+        elif timeframe == "90days":
+            days = 90
+        # Add more timeframe options as needed
+    
+    start_date = end_date - timedelta(days=days)
+    
+    # Base query for posts within the date range
+    query = db.query(SocialPost).filter(SocialPost.created_at >= start_date)
+    
+    # Apply platform filter if provided
+    if platform:
+        query = query.filter(SocialPost.platform == platform)
+    
+    # Get all posts within the date range
+    posts = query.all()
+    
+    # Count posts by platform
+    platform_counts = Counter([post.platform for post in posts])
+    
+    # Count posts by status
+    status_counts = Counter([post.status for post in posts])
+    
+    # Count posts by day (last 7 days)
+    last_week = end_date - timedelta(days=7)
+    daily_posts = []
+    for i in range(7):
+        day = end_date - timedelta(days=i)
+        day_start = datetime(day.year, day.month, day.day)
+        day_end = day_start + timedelta(days=1)
+        day_count = sum(1 for post in posts if day_start <= post.created_at < day_end)
+        daily_posts.append({
+            "date": day_start.strftime("%Y-%m-%d"),
+            "count": day_count
+        })
+    
+    # Get engagement metrics if available
+    engagement = {
+        "total_likes": 0,
+        "total_shares": 0,
+        "total_comments": 0,
+        "average_engagement_rate": 0
+    }
+    
+    # Count posts by user
+    user_posts = {}
+    for post in posts:
+        user_id = post.created_by_id
+        if user_id in user_posts:
+            user_posts[user_id] += 1
+        else:
+            user_posts[user_id] = 1
+    
+    # Compile all statistics
+    stats = {
+        "total_posts": len(posts),
+        "platforms": {
+            platform.value: count for platform, count in platform_counts.items()
+        },
+        "status": {
+            status.value: count for status, count in status_counts.items()
+        },
+        "daily_posts": daily_posts,
+        "engagement": engagement,
+        "top_users": [
+            {"user_id": user_id, "post_count": count} 
+            for user_id, count in sorted(user_posts.items(), key=lambda x: x[1], reverse=True)[:5]
+        ],
+        "date_range": {
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat(),
+            "days": days
+        }
+    }
+    
+    return stats
