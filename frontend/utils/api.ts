@@ -64,7 +64,8 @@ class ApiClient {
           url.pathname.includes('/clips') || 
           url.pathname.includes('/social-media') ||
           url.pathname.includes('/capture') ||
-          url.pathname.includes('/social');
+          url.pathname.includes('/social') ||
+          url.pathname.includes('/admin');
         
         // If we're not on the login page, we might need to refresh the token or redirect to login
         if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
