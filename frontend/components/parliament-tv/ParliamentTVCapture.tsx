@@ -3,6 +3,9 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 
+// API base URL - use environment variable if available or default to localhost
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+
 interface ParliamentTVCaptureProps {
   onSuccess?: (data: any) => void;
   onError?: (error: any) => void;
@@ -38,14 +41,14 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
 
     try {
       // First extract the stream URL
-      const extractResponse = await axios.get('http://localhost:8000/api/v1/parliament-tv/extract-url', {
+      const extractResponse = await axios.get(`${API_BASE_URL}/parliament-tv/extract-url`, {
         params: { url },
         ...getAuthHeaders()
       });
 
       if (extractResponse.data?.direct_stream) {
         // Then test if the stream URL is valid
-        const testResponse = await axios.get('http://localhost:8000/api/v1/parliament-tv/test-url', {
+        const testResponse = await axios.get(`${API_BASE_URL}/parliament-tv/test-url`, {
           params: { url: extractResponse.data.direct_stream },
           ...getAuthHeaders()
         });
@@ -95,7 +98,7 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setCaptureStatus(null);
     
     try {
-      const response = await axios.post('http://localhost:8000/api/v1/parliament-tv', {
+      const response = await axios.post(`${API_BASE_URL}/parliament-tv`, {
         url,
         title,
         description,

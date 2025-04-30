@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from sqlalchemy.orm import Session
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
+import json
 
 from backend.api.deps import get_db
 from backend.core.security import has_permission, get_current_active_user
@@ -14,6 +15,17 @@ router = APIRouter()
 
 # Initialize the Parliament TV capture service
 parliament_tv_service = ParliamentTVCapture()
+
+# Helper function to make objects JSON serializable
+def make_json_serializable(obj: Any) -> Any:
+    """Convert objects to JSON serializable format"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    return obj
 
 @router.post("", response_model=Dict)
 async def start_parliament_tv_capture(
@@ -91,6 +103,14 @@ async def start_parliament_tv_capture(
         
         # Start the capture process asynchronously
         def capture_callback(result):
+            # Process result to ensure it's JSON serializable
+            serializable_result = {}
+            for key, value in result.items():
+                if isinstance(value, datetime):
+                    serializable_result[key] = value.isoformat()
+                else:
+                    serializable_result[key] = value
+            
             # Update the capture session with the result
             capture_session = db.query(models.CaptureSession).filter(
                 models.CaptureSession.id == db_capture.id
@@ -99,21 +119,11 @@ async def start_parliament_tv_capture(
             if result.get("success", False):
                 capture_session.status = "completed"
                 capture_session.file_path = result.get("output_file")
-                
-                # Try to get file size
-                try:
-                    if result.get("output_file"):
-                        file_size = os.path.getsize(result.get("output_file"))
-                        capture_session.file_size = file_size
-                except (OSError, FileNotFoundError):
-                    pass
-                
+                capture_session.file_size = result.get("file_size")
                 capture_session.end_time = datetime.now()
-                capture_session.duration = result.get("duration")
                 capture_session.metadata = {
                     **capture_session.metadata,
-                    "stream_url": result.get("stream_url"),
-                    "time_marker": result.get("time_marker")
+                    "capture_result": serializable_result
                 }
             else:
                 capture_session.status = "failed"
@@ -125,13 +135,25 @@ async def start_parliament_tv_capture(
             
             db.commit()
         
-        # Start the capture process
+        # Start the capture process asynchronously
         parliament_tv_service.start_capture_async(
-            capture_request.url,
-            capture_request.duration,
-            capture_request.enable_facial_recognition,
+            url=stream_info["direct_stream"],
+            duration=capture_request.duration,
+            enable_facial_recognition=capture_request.enable_facial_recognition,
             callback=capture_callback
         )
+        
+        # Return the capture session information with serialized datetime
+        response_data = {
+            "id": db_capture.id,
+            "title": db_capture.title,
+            "status": db_capture.status,
+            "created_at": db_capture.created_at,
+            "message": "Capture started successfully"
+        }
+        
+        # Make the response JSON serializable
+        return make_json_serializable(response_data)
     
     # Format response
     user = db.query(models.User).filter(models.User.id == db_capture.user_id).first()
@@ -174,7 +196,22 @@ async def extract_parliament_tv_url(
             detail="Failed to extract stream URL from Parliament TV page"
         )
     
-    return stream_info
+    # Convert datetime objects to strings to ensure JSON serialization
+    serializable_info = {}
+    for key, value in stream_info.items():
+        if isinstance(value, dict):
+            serializable_info[key] = {}
+            for sub_key, sub_value in value.items():
+                if isinstance(sub_value, datetime):
+                    serializable_info[key][sub_key] = sub_value.isoformat()
+                else:
+                    serializable_info[key][sub_key] = sub_value
+        elif isinstance(value, datetime):
+            serializable_info[key] = value.isoformat()
+        else:
+            serializable_info[key] = value
+    
+    return serializable_info
 
 @router.get("/test-url", response_model=Dict)
 async def test_stream_url(
