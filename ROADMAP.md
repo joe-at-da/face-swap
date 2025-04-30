@@ -99,7 +99,7 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - Performance monitoring
 - Scale based on metrics
 
-## Current Progress (as of April 26, 2025)
+## Current Progress (as of April 30, 2025)
 
 ### Completed ✅
 1. Project Structure
@@ -123,7 +123,10 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Comprehensive test coverage
 
 4. Video Processing Pipeline
-   - Video capture from Parliament TV
+   - Enhanced video capture from Parliament TV with improved error handling
+   - Support for multiple video stream formats (HLS, MP4, RTMP)
+   - Better process management for video capture
+   - Fixed database transaction issues in capture sessions
    - Video clip creation and editing
    - Transcription service integration
    - Storage management system
@@ -175,18 +178,27 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 
 ### Recent Achievements (April 2025)
 
-1. Authentication System
+1. Video Capture System (April 30, 2025)
+   - Enhanced video capture functionality with improved error handling
+   - Added support for multiple video stream formats (HLS, MP4)
+   - Implemented better process management for video capture
+   - Fixed database transaction issues in capture sessions
+   - Created comprehensive documentation for video capture functionality
+   - Identified and documented the Parliament TV stream URL format
+
+2. Authentication System
    - Fixed redirect loop issues in authentication flow
    - Improved error handling for API requests
    - Enhanced token management for better security
 
-2. Docker Environment
+3. Docker Environment
    - Completed Docker Compose setup for development
    - Configured services for local testing
    - Added documentation for Docker usage
 
-3. Documentation & Navigation
+4. Documentation & Navigation
    - Created comprehensive troubleshooting guide in README
+   - Added detailed video capture documentation
    - Structured ROADMAP with clear progress indicators
    - Implemented all missing pages for complete navigation
    - Added placeholder content for upcoming features
@@ -222,6 +234,7 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 #### 5. Documentation & Training
    - ✅ Comprehensive README with troubleshooting guide
    - ✅ Structured ROADMAP with clear progress tracking
+   - ✅ Detailed video capture documentation
    - Create comprehensive user guides
    - Document administrative procedures
    - Complete OpenAPI/Swagger documentation

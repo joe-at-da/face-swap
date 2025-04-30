@@ -72,6 +72,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 - [Setup Guide](docs/setup_guide.md) - Detailed installation and configuration
 - [Authentication](docs/authentication.md) - Auth system and user roles
+- [Video Capture](docs/video_capture.md) - Video capture functionality and configuration
 - [Technical Roadmap](ROADMAP.md) - Project roadmap and phases
 - [Deployment Guide](docs/deployment.md) - Production deployment
 
@@ -268,12 +269,13 @@ pytest --cov=backend tests/
 
 The Parliament Video Clip Manager has reached beta status with all core features implemented. Both backend and frontend components are complete and ready for deployment.
 
-### Current Status (April 26, 2025)
+### Current Status (April 30, 2025)
 
 1. **Backend**
    - ✅ FastAPI server with all endpoints implemented
    - ✅ Authentication system with JWT and RBAC
    - ✅ Video processing pipeline
+   - ✅ Improved video capture functionality
    - ✅ Social media integration
    - ✅ Storage management
 
@@ -291,18 +293,26 @@ For detailed information about the project roadmap, including completed mileston
 
 ### Recent Achievements
 
-1. **Authentication System**
+1. **Video Capture System**
+   - Enhanced video capture functionality with improved error handling
+   - Added support for multiple video stream formats (HLS, MP4)
+   - Implemented better process management for video capture
+   - Fixed database transaction issues in capture sessions
+   - Added comprehensive documentation for video capture functionality
+
+2. **Authentication System**
    - Resolved redirect loop issues between login and dashboard
    - Implemented proper token storage and validation
    - Added graceful handling of API errors
 
-2. **Docker Environment**
+3. **Docker Environment**
    - Completed Docker Compose setup for all services
    - Configured monitoring with Prometheus and Grafana
    - Added development convenience commands
 
-3. **Documentation**
+4. **Documentation**
    - Comprehensive README with setup instructions
+   - Added detailed [video capture documentation](docs/video_capture.md)
    - Troubleshooting guide for common issues
    - API documentation with Swagger UI
 
