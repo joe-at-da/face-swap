@@ -54,7 +54,7 @@ def extract_stream_url(url, output_file=None):
     try:
         cmd = [
             sys.executable,
-            "scripts/extract_parliament_stream_v4.py",
+            "scripts/extract_direct_stream.py",
             url
         ]
         
