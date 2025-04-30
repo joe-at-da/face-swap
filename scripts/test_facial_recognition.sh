@@ -35,7 +35,11 @@ docker exec the-mp-app-1 chmod +x /app/scripts/facial_recognition_capture.py
 echo "Installing OpenCV in Docker container..."
 docker exec the-mp-app-1 apt-get update
 docker exec the-mp-app-1 apt-get install -y python3-opencv libopencv-dev
-docker exec the-mp-app-1 pip install numpy
+
+# Downgrade NumPy to a compatible version
+echo "Downgrading NumPy to a compatible version..."
+docker exec the-mp-app-1 pip uninstall -y numpy
+docker exec the-mp-app-1 pip install "numpy<2.0.0"
 
 # Step 6: Run the facial recognition script in the container
 echo "Running facial recognition on sample video..."
