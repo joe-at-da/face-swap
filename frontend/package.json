@@ -20,6 +20,7 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "autoprefixer": "^10.4.21",
+    "axios": "^1.9.0",
     "daisyui": "^5.0.28",
     "next": "^15.3.1",
     "postcss": "^8.5.3",
