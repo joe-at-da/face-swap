@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface ParliamentTVCaptureProps {
   onSuccess?: (data: any) => void;
@@ -9,6 +10,7 @@ interface ParliamentTVCaptureProps {
 
 const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, onError }) => {
   const router = useRouter();
+  const { token } = useAuth();
   const [url, setUrl] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -18,6 +20,15 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
   const [captureStatus, setCaptureStatus] = useState<any>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
+  
+  // Configure axios with authentication headers
+  const getAuthHeaders = () => {
+    return {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    };
+  };
 
   const validateUrl = async () => {
     if (!url) return;
@@ -27,14 +38,16 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
 
     try {
       // First extract the stream URL
-      const extractResponse = await axios.get('/api/v1/parliament-tv/extract-url', {
-        params: { url }
+      const extractResponse = await axios.get('http://localhost:8000/api/v1/parliament-tv/extract-url', {
+        params: { url },
+        ...getAuthHeaders()
       });
 
       if (extractResponse.data?.direct_stream) {
         // Then test if the stream URL is valid
-        const testResponse = await axios.get('/api/v1/parliament-tv/test-url', {
-          params: { url: extractResponse.data.direct_stream }
+        const testResponse = await axios.get('http://localhost:8000/api/v1/parliament-tv/test-url', {
+          params: { url: extractResponse.data.direct_stream },
+          ...getAuthHeaders()
         });
 
         setValidationResult({
@@ -51,11 +64,22 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
           message: 'Could not extract stream URL from Parliament TV page.'
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error validating URL:', error);
+      
+      // Check for specific error messages
+      const errorMessage = error.response?.data?.detail || 'Error validating URL';
+      let userMessage = 'Error validating URL. Please check the format and try again.';
+      
+      // Check if it's a yt-dlp not found error
+      if (errorMessage.includes('yt-dlp not found')) {
+        userMessage = 'The server is missing yt-dlp, which is required for extracting Parliament TV streams. Please contact the administrator to install it.';
+      }
+      
       setValidationResult({
         success: false,
-        message: 'Error validating URL. Please check the format and try again.'
+        message: userMessage,
+        error: errorMessage
       });
     } finally {
       setIsValidating(false);
@@ -71,13 +95,13 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setCaptureStatus(null);
     
     try {
-      const response = await axios.post('/api/v1/parliament-tv', {
+      const response = await axios.post('http://localhost:8000/api/v1/parliament-tv', {
         url,
         title,
         description,
         duration,
         enable_facial_recognition: enableFacialRecognition
-      });
+      }, getAuthHeaders());
       
       setCaptureStatus({
         success: true,
@@ -144,6 +168,12 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
               {validationResult.message}
               {validationResult.timeMarker && (
                 <p className="mt-1">Time marker detected: {validationResult.timeMarker} seconds</p>
+              )}
+              {validationResult.error && !validationResult.success && (
+                <div className="mt-2 p-2 bg-red-50 rounded text-xs">
+                  <p className="font-semibold">Technical details:</p>
+                  <p className="font-mono">{validationResult.error}</p>
+                </div>
               )}
             </div>
           )}
