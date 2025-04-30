@@ -222,6 +222,9 @@ def main():
             face_detection_interval=args.interval
         )
         
+        # Print the output file for capturing by the parent process
+        print(f"Output file: {output_file}")
+        
         if output_file:
             logger.info(f"Video capture completed successfully. Output file: {output_file}")
             return 0
