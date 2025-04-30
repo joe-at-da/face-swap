@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""
+Parliament TV Direct Capture with Facial Recognition
+
+This script extracts the direct stream URL from a Parliament TV web page,
+downloads the stream, and processes it with facial recognition to detect
+when the speaker is no longer present.
+
+Usage:
+    python parliament_capture_direct.py <parliament_tv_url> [--duration SECONDS] [--output OUTPUT_PATH]
+
+Example:
+    python parliament_capture_direct.py "https://parliamentlive.tv/event/index/263b4186-393c-49ce-aa55-68b9accd7a4e?in=13:25:38" --duration 60
+"""
+
+import sys
+import os
+import json
+import argparse
+import subprocess
+import logging
+from datetime import datetime
+from pathlib import Path
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(f"parliament_capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    ]
+)
+logger = logging.getLogger('parliament_capture_direct')
+
+def create_directories():
+    """Create necessary directories for storing temporary and output files."""
+    os.makedirs("data/temp", exist_ok=True)
+    os.makedirs("data/media/parliament_captures", exist_ok=True)
+    logger.info("Created necessary directories.")
+
+def check_command_exists(command):
+    """Check if a command exists in the system PATH."""
+    try:
+        subprocess.run(["which", command], check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+def extract_stream_url(url, output_file=None):
+    """Extract the direct stream URL from a Parliament TV web page."""
+    logger.info(f"Extracting stream URL from: {url}")
+    
+    try:
+        cmd = [
+            sys.executable,
+            "scripts/extract_parliament_stream_v4.py",
+            url
+        ]
+        
+        if output_file:
+            cmd.extend(["--output", output_file])
+        
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # If no output file specified, parse the output directly
+        if not output_file:
+            # Find the JSON in the output
+            output_lines = result.stdout.split('\n')
+            json_start = None
+            json_end = None
+            
+            for i, line in enumerate(output_lines):
+                if line.strip().startswith('{'):
+                    json_start = i
+                if json_start is not None and line.strip().endswith('}'):
+                    json_end = i
+                    break
+            
+            if json_start is not None and json_end is not None:
+                json_str = '\n'.join(output_lines[json_start:json_end+1])
+                stream_info = json.loads(json_str)
+                return stream_info
+            else:
+                logger.error("Could not find JSON in output")
+                return None
+        else:
+            logger.info(f"Stream URL extraction completed. Output saved to {output_file}")
+            with open(output_file, 'r') as f:
+                stream_info = json.load(f)
+            return stream_info
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error extracting stream URL: {e}")
+        logger.error(f"STDOUT: {e.stdout}")
+        logger.error(f"STDERR: {e.stderr}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON: {e}")
+        return None
+
+def download_stream(stream_url, output_file, duration=None):
+    """Download the stream using ffmpeg."""
+    logger.info(f"Downloading stream from: {stream_url}")
+    logger.info(f"Output file: {output_file}")
+    
+    if duration:
+        logger.info(f"Duration limit: {duration} seconds")
+    
+    # Use ffmpeg to download the stream
+    try:
+        cmd = ["ffmpeg", "-i", stream_url]
+        
+        if duration:
+            cmd.extend(["-t", str(duration)])
+        
+        cmd.extend(["-c", "copy", "-y", output_file])
+        
+        logger.info(f"Running command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        logger.info("Download completed successfully.")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error downloading stream: {e}")
+        logger.error(f"STDOUT: {e.stdout}")
+        logger.error(f"STDERR: {e.stderr}")
+        return False
+
+def process_with_facial_recognition(video_file, output_file=None, duration=None):
+    """Process the video with facial recognition."""
+    logger.info(f"Processing video with facial recognition: {video_file}")
+    
+    try:
+        cmd = [sys.executable, "scripts/facial_recognition_capture.py", video_file]
+        
+        if duration:
+            cmd.extend(["--duration", str(duration)])
+        
+        if output_file:
+            cmd.extend(["--output", output_file])
+        
+        logger.info(f"Running command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # Parse the output to find the path to the processed video
+        output_lines = result.stdout.split('\n')
+        processed_file = None
+        
+        for line in output_lines:
+            if "Output file:" in line:
+                processed_file = line.split("Output file:")[1].strip()
+                break
+        
+        logger.info(f"Facial recognition processing completed. Output file: {processed_file}")
+        return processed_file
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error processing video with facial recognition: {e}")
+        logger.error(f"STDOUT: {e.stdout}")
+        logger.error(f"STDERR: {e.stderr}")
+        return None
+
+def main():
+    parser = argparse.ArgumentParser(description='Parliament TV Direct Capture with Facial Recognition')
+    parser.add_argument('url', help='Parliament TV event URL')
+    parser.add_argument('--duration', '-d', type=int, help='Maximum duration to capture in seconds')
+    parser.add_argument('--output', '-o', help='Output file path')
+    args = parser.parse_args()
+    
+    # Check for required tools
+    if not check_command_exists("ffmpeg"):
+        logger.error("ffmpeg not found in PATH. Please install it with: brew install ffmpeg")
+        return 1
+    
+    # Create necessary directories
+    create_directories()
+    
+    # Generate timestamp for filenames
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Extract the direct stream URL
+    stream_info_file = f"data/temp/stream_info_{timestamp}.json"
+    stream_info = extract_stream_url(args.url, stream_info_file)
+    
+    if not stream_info:
+        logger.error("Failed to extract stream URL. Exiting.")
+        return 1
+    
+    # Get the direct stream URL
+    direct_stream_url = stream_info.get('direct_stream')
+    if not direct_stream_url:
+        logger.error("No direct stream URL found in stream info.")
+        return 1
+    
+    logger.info(f"Direct stream URL: {direct_stream_url}")
+    
+    # Get time marker if available
+    time_marker = None
+    if 'time_marker' in stream_info and 'seconds' in stream_info['time_marker']:
+        time_marker = stream_info['time_marker']['seconds']
+        logger.info(f"Time marker: {time_marker} seconds")
+    
+    # Download the stream
+    download_file = f"data/temp/parliament_stream_{timestamp}.mp4"
+    if not download_stream(direct_stream_url, download_file, args.duration):
+        logger.error("Failed to download stream. Exiting.")
+        return 1
+    
+    # Process with facial recognition
+    output_file = args.output or f"data/media/parliament_captures/parliament_capture_{timestamp}.mp4"
+    processed_file = process_with_facial_recognition(download_file, output_file, args.duration)
+    
+    if not processed_file:
+        logger.error("Failed to process with facial recognition. Exiting.")
+        return 1
+    
+    logger.info("Parliament TV capture with facial recognition completed successfully.")
+    logger.info(f"Output file: {processed_file}")
+    
+    # Print the result as JSON for easy parsing by other scripts
+    result = {
+        "success": True,
+        "input_url": args.url,
+        "stream_url": direct_stream_url,
+        "output_file": processed_file,
+        "time_marker": time_marker,
+        "duration": args.duration
+    }
+    
+    print(json.dumps(result, indent=2))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
