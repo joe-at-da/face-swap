@@ -15,6 +15,8 @@ The Parliament TV capture feature consists of several components:
 - Python 3.8+
 - FFmpeg (for video processing)
 - yt-dlp (for extracting stream URLs)
+  - Added to Dockerfile.backend for automatic installation
+  - Can be manually installed with `pip install yt-dlp`
 - OpenCV (for facial recognition)
 
 ## Backend API Endpoints
@@ -206,6 +208,8 @@ Tests if a stream URL is valid by downloading a small segment.
 1. **Stream URL Extraction Fails**
    - Ensure the Parliament TV URL is valid
    - Check that yt-dlp is installed and up to date
+     - In Docker: `docker-compose -f docker-compose.dev.yml exec app pip install yt-dlp`
+     - Local environment: `pip install yt-dlp`
    - Try using a different time marker in the URL
 
 2. **Stream Download Fails**
