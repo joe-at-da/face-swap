@@ -1,0 +1,290 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from sqlalchemy.orm import Session
+from typing import Dict, List, Optional
+from datetime import datetime
+
+from backend.api.deps import get_db
+from backend.core.security import has_permission, get_current_active_user
+from backend.core.security import UserRole
+from backend.db import models
+from backend.schemas.parliament_tv import ParliamentTVCaptureRequest, ParliamentTVCaptureResponse
+from backend.services.parliament_tv import ParliamentTVCapture
+
+router = APIRouter()
+
+# Initialize the Parliament TV capture service
+parliament_tv_service = ParliamentTVCapture()
+
+@router.post("", response_model=Dict)
+async def start_parliament_tv_capture(
+    capture_request: ParliamentTVCaptureRequest = Body(...),
+    draft: bool = Query(False, description="Save as draft without starting capture"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Start capturing a Parliament TV stream with facial recognition."""
+    # Check if user has required permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Check if capture is already running
+    active_capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.status == "active"
+    ).first()
+    
+    # If trying to start a new active capture when one is already running
+    if active_capture and not draft:
+        # Get user who started the active capture
+        active_user = db.query(models.User).filter(models.User.id == active_capture.user_id).first()
+        
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "A capture session is already in progress",
+                "capture_id": active_capture.id,
+                "started_by": active_user.full_name if active_user else "Unknown",
+                "started_at": active_capture.created_at
+            }
+        )
+    
+    # Create a new capture session in the database
+    db_capture = models.CaptureSession(
+        title=capture_request.title,
+        description=capture_request.description,
+        source_url=capture_request.url,
+        status="draft" if draft else "active",
+        user_id=current_user.id,
+        scheduled_start=capture_request.scheduled_start,
+        scheduled_end=capture_request.scheduled_end,
+        # Store Parliament TV specific fields in metadata
+        metadata={
+            "parliament_tv_url": capture_request.url,
+            "duration": capture_request.duration,
+            "enable_facial_recognition": capture_request.enable_facial_recognition
+        }
+    )
+    
+    db.add(db_capture)
+    db.commit()
+    db.refresh(db_capture)
+    
+    # If not a draft, start the capture process
+    if not draft:
+        # Extract stream URL first to validate it
+        stream_info = parliament_tv_service.extract_stream_url(capture_request.url)
+        
+        if not stream_info or not stream_info.get("direct_stream"):
+            # Update the capture session status to failed
+            db_capture.status = "failed"
+            db_capture.metadata = {
+                **db_capture.metadata,
+                "error": "Failed to extract stream URL"
+            }
+            db.commit()
+            
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "Failed to extract stream URL from Parliament TV page",
+                    "capture_id": db_capture.id
+                }
+            )
+        
+        # Start the capture process asynchronously
+        def capture_callback(result):
+            # Update the capture session with the result
+            capture_session = db.query(models.CaptureSession).filter(
+                models.CaptureSession.id == db_capture.id
+            ).first()
+            
+            if result.get("success", False):
+                capture_session.status = "completed"
+                capture_session.file_path = result.get("output_file")
+                
+                # Try to get file size
+                try:
+                    if result.get("output_file"):
+                        file_size = os.path.getsize(result.get("output_file"))
+                        capture_session.file_size = file_size
+                except (OSError, FileNotFoundError):
+                    pass
+                
+                capture_session.end_time = datetime.now()
+                capture_session.duration = result.get("duration")
+                capture_session.metadata = {
+                    **capture_session.metadata,
+                    "stream_url": result.get("stream_url"),
+                    "time_marker": result.get("time_marker")
+                }
+            else:
+                capture_session.status = "failed"
+                capture_session.end_time = datetime.now()
+                capture_session.metadata = {
+                    **capture_session.metadata,
+                    "error": result.get("error", "Unknown error")
+                }
+            
+            db.commit()
+        
+        # Start the capture process
+        parliament_tv_service.start_capture_async(
+            capture_request.url,
+            capture_request.duration,
+            capture_request.enable_facial_recognition,
+            callback=capture_callback
+        )
+    
+    # Format response
+    user = db.query(models.User).filter(models.User.id == db_capture.user_id).first()
+    
+    response = {
+        "id": db_capture.id,
+        "title": db_capture.title,
+        "status": db_capture.status,
+        "url": db_capture.source_url,
+        "duration": capture_request.duration,
+        "facial_recognition_enabled": capture_request.enable_facial_recognition,
+        "start_time": db_capture.created_at,
+        "created_by_id": user.id,
+        "created_by": {
+            "id": user.id,
+            "name": user.full_name,
+            "email": user.email
+        },
+        "created_at": db_capture.created_at,
+        "updated_at": db_capture.updated_at
+    }
+    
+    return response
+
+@router.get("/extract-url", response_model=Dict)
+async def extract_parliament_tv_url(
+    url: str,
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Extract the direct stream URL from a Parliament TV event page."""
+    # Check if user has required permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Extract the stream URL
+    stream_info = parliament_tv_service.extract_stream_url(url)
+    
+    if not stream_info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to extract stream URL from Parliament TV page"
+        )
+    
+    return stream_info
+
+@router.get("/test-url", response_model=Dict)
+async def test_stream_url(
+    url: str,
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Test if a stream URL is valid by downloading a small segment."""
+    # Check if user has required permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Test the stream URL
+    is_valid = parliament_tv_service.test_stream_url(url)
+    
+    return {
+        "url": url,
+        "is_valid": is_valid
+    }
+
+@router.get("", response_model=List[Dict])
+async def get_parliament_tv_captures(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Get all Parliament TV capture sessions with optional filtering by status."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Query capture sessions with Parliament TV metadata
+    query = db.query(models.CaptureSession).filter(
+        models.CaptureSession.metadata.has_key("parliament_tv_url")
+    )
+    
+    if status:
+        query = query.filter(models.CaptureSession.status == status)
+    
+    captures = query.order_by(models.CaptureSession.created_at.desc()).all()
+    
+    # Format response
+    result = []
+    for capture in captures:
+        user = db.query(models.User).filter(models.User.id == capture.user_id).first()
+        metadata = capture.metadata or {}
+        
+        result.append({
+            "id": capture.id,
+            "title": capture.title,
+            "status": capture.status,
+            "url": capture.source_url,
+            "duration": metadata.get("duration"),
+            "facial_recognition_enabled": metadata.get("enable_facial_recognition", False),
+            "start_time": capture.created_at,
+            "end_time": capture.end_time,
+            "file_path": capture.file_path,
+            "file_size": capture.file_size,
+            "created_by_id": user.id,
+            "created_by": {
+                "id": user.id,
+                "name": user.full_name,
+                "email": user.email
+            },
+            "created_at": capture.created_at,
+            "updated_at": capture.updated_at
+        })
+    
+    return result
+
+@router.get("/{capture_id}", response_model=Dict)
+async def get_parliament_tv_capture(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Get a specific Parliament TV capture session by ID."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id,
+        models.CaptureSession.metadata.has_key("parliament_tv_url")
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parliament TV capture session with ID {capture_id} not found"
+        )
+    
+    # Format response
+    user = db.query(models.User).filter(models.User.id == capture.user_id).first()
+    metadata = capture.metadata or {}
+    
+    response = {
+        "id": capture.id,
+        "title": capture.title,
+        "status": capture.status,
+        "url": capture.source_url,
+        "duration": metadata.get("duration"),
+        "facial_recognition_enabled": metadata.get("enable_facial_recognition", False),
+        "start_time": capture.created_at,
+        "end_time": capture.end_time,
+        "file_path": capture.file_path,
+        "file_size": capture.file_size,
+        "created_by_id": user.id,
+        "created_by": {
+            "id": user.id,
+            "name": user.full_name,
+            "email": user.email
+        },
+        "created_at": capture.created_at,
+        "updated_at": capture.updated_at
+    }
+    
+    return response
