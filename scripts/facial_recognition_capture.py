@@ -43,7 +43,14 @@ def install_dependencies():
     """Install required dependencies."""
     logger.info("Installing dependencies...")
     try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', 'opencv-python', 'numpy'], check=True)
+        # Use apt-get in Docker environment to install OpenCV dependencies
+        if os.path.exists('/.dockerenv'):
+            subprocess.run(['apt-get', 'update'], check=True)
+            subprocess.run(['apt-get', 'install', '-y', 'python3-opencv', 'libopencv-dev'], check=True)
+        else:
+            # Use pip for non-Docker environments
+            subprocess.run([sys.executable, '-m', 'pip', 'install', 'opencv-python', 'numpy'], check=True)
+        
         logger.info("Dependencies installed successfully.")
         return True
     except subprocess.CalledProcessError as e:
@@ -185,10 +192,11 @@ def capture_video_with_facial_recognition(video_url, output_file=None, max_durat
 
 def main():
     parser = argparse.ArgumentParser(description='Capture video with facial recognition.')
-    parser.add_argument('url', help='Video URL')
+    parser.add_argument('url', help='Video URL or file path')
     parser.add_argument('--duration', '-d', type=int, help='Maximum duration to capture in seconds')
     parser.add_argument('--output', '-o', help='Output file path')
     parser.add_argument('--interval', '-i', type=int, default=1, help='Face detection interval in seconds')
+    parser.add_argument('--docker', action='store_true', help='Running in Docker environment')
     args = parser.parse_args()
     
     try:
@@ -201,6 +209,10 @@ def main():
             # Re-import after installation
             import cv2
             import numpy as np
+        
+        # Determine if the URL is a local file or a remote URL
+        is_local_file = os.path.exists(args.url)
+        logger.info(f"Input is a {'local file' if is_local_file else 'remote URL'}: {args.url}")
         
         # Capture video with facial recognition
         output_file = capture_video_with_facial_recognition(
