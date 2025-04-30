@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
 """
-Enhanced script to extract video stream URLs from Parliament TV event pages.
-This version handles the specific URL format used by Parliament TV.
+Wrapper script for extract_direct_stream.py to maintain backward compatibility.
+This script extracts video stream URLs from Parliament TV event pages using yt-dlp.
+
 Usage: python extract_parliament_stream_v4.py <parliament_tv_event_url>
 Example: python extract_parliament_stream_v4.py https://parliamentlive.tv/event/index/263b4186-393c-49ce-aa55-68b9accd7a4e?in=13:25:38
+
+Note: This script is a wrapper around extract_direct_stream.py, which is the recommended
+script to use for new development.
 """
 
 import sys
-import re
 import json
 import argparse
-import os
-import requests
-from urllib.parse import urlparse, parse_qs, unquote, quote
-from datetime import datetime, timedelta
+import subprocess
+import logging
+from pathlib import Path
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('extract_parliament_stream_v4')
 
 def extract_time_marker(url):
     """Extract the time marker from the URL if present."""
@@ -207,6 +216,58 @@ def extract_stream_urls(event_id, time_marker=None):
         print(f"Unexpected error: {e}")
         return None
 
+def extract_direct_stream(url, output_file=None):
+    """Extract the direct stream URL using extract_direct_stream.py."""
+    logger.info(f"Extracting direct stream URL from: {url}")
+    
+    try:
+        cmd = [
+            sys.executable,
+            "scripts/extract_direct_stream.py",
+            url
+        ]
+        
+        if output_file:
+            cmd.extend(["--output", output_file])
+        
+        logger.info(f"Running command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # If no output file specified, parse the output directly
+        if not output_file:
+            # Find the JSON in the output
+            output_lines = result.stdout.split('\n')
+            json_start = None
+            json_end = None
+            
+            for i, line in enumerate(output_lines):
+                if line.strip().startswith('{'):
+                    json_start = i
+                if json_start is not None and line.strip().endswith('}'):
+                    json_end = i
+                    break
+            
+            if json_start is not None and json_end is not None:
+                json_str = '\n'.join(output_lines[json_start:json_end+1])
+                stream_info = json.loads(json_str)
+                return stream_info
+            else:
+                logger.error("Could not find JSON in output")
+                return None
+        else:
+            logger.info(f"Stream URL extraction completed. Output saved to {output_file}")
+            with open(output_file, 'r') as f:
+                stream_info = json.load(f)
+            return stream_info
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error extracting stream URL: {e}")
+        logger.error(f"STDOUT: {e.stdout}")
+        logger.error(f"STDERR: {e.stderr}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON: {e}")
+        return None
+
 def main():
     parser = argparse.ArgumentParser(description='Extract video stream URLs from Parliament TV event pages.')
     parser.add_argument('url', help='Parliament TV event URL')
@@ -214,50 +275,21 @@ def main():
     args = parser.parse_args()
     
     url = args.url
-    print(f"Analyzing Parliament TV URL: {url}")
+    logger.info(f"Analyzing Parliament TV URL: {url}")
     
-    # Extract the time marker if present
-    time_marker = extract_time_marker(url)
-    if time_marker:
-        total_seconds = time_marker.total_seconds()
-        print(f"Time marker found: {seconds_to_hms(total_seconds)} ({total_seconds} seconds)")
+    # Use the new extract_direct_stream.py script
+    stream_info = extract_direct_stream(url, args.output)
+    
+    if not stream_info:
+        logger.error("Could not extract stream information.")
+        return 1
+    
+    # Print the stream information if not saving to file
+    if not args.output:
+        print("\nStream Information:")
+        print(json.dumps(stream_info, indent=2))
     else:
-        print("No time marker found. Will start from the beginning.")
-    
-    # Extract the event ID
-    event_id = extract_event_id(url)
-    if not event_id:
-        print("Could not extract event ID from URL.")
-        return 1
-    
-    print(f"Event ID: {event_id}")
-    
-    # Extract stream URLs
-    stream_info = extract_stream_urls(event_id, time_marker)
-    
-    if not stream_info or (not stream_info.get('hls') and not stream_info.get('mp4') and not stream_info.get('direct_stream')):
-        print("Could not find any stream URLs.")
-        return 1
-    
-    # Add the time marker to the stream info
-    if time_marker:
-        stream_info['time_marker'] = {
-            'hms': seconds_to_hms(time_marker.total_seconds()),
-            'seconds': time_marker.total_seconds()
-        }
-    
-    # Add the event ID to the stream info
-    stream_info['event_id'] = event_id
-    
-    # Print the stream information
-    print("\nStream Information:")
-    print(json.dumps(stream_info, indent=2))
-    
-    # Save to file if requested
-    if args.output:
-        with open(args.output, 'w') as f:
-            json.dump(stream_info, f, indent=2)
-        print(f"\nStream information saved to {args.output}")
+        logger.info(f"Stream information saved to {args.output}")
     
     return 0
 
