@@ -3,9 +3,6 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 
-// API base URL - use environment variable if available or default to localhost
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-
 interface ParliamentTVCaptureProps {
   onSuccess?: (data: any) => void;
   onError?: (error: any) => void;
@@ -40,18 +37,14 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setValidationResult(null);
 
     try {
-      // First extract the stream URL
-      const extractResponse = await axios.get(`${API_BASE_URL}/parliament-tv/extract-url`, {
-        params: { url },
-        ...getAuthHeaders()
-      });
+      // First extract the stream URL - using the proxy
+      const extractResponse = await axios.get(`/api/v1/parliament-tv/extract-url?url=${encodeURIComponent(url)}`, getAuthHeaders());
+      console.log('Extract response:', extractResponse.data);
 
       if (extractResponse.data?.direct_stream) {
-        // Then test if the stream URL is valid
-        const testResponse = await axios.get(`${API_BASE_URL}/parliament-tv/test-url`, {
-          params: { url: extractResponse.data.direct_stream },
-          ...getAuthHeaders()
-        });
+        // Then test if the stream URL is valid - using the proxy
+        const testResponse = await axios.get(`/api/v1/parliament-tv/test-url?url=${encodeURIComponent(extractResponse.data.direct_stream)}`, getAuthHeaders());
+        console.log('Test response:', testResponse.data);
 
         setValidationResult({
           success: testResponse.data?.is_valid,
@@ -98,13 +91,14 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setCaptureStatus(null);
     
     try {
-      const response = await axios.post(`${API_BASE_URL}/parliament-tv`, {
+      const response = await axios.post('/api/v1/parliament-tv', {
         url,
         title,
         description,
         duration,
         enable_facial_recognition: enableFacialRecognition
       }, getAuthHeaders());
+      console.log('Capture response:', response.data);
       
       setCaptureStatus({
         success: true,

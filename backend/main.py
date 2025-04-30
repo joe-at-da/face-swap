@@ -1,29 +1,63 @@
+import json
+from datetime import datetime
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from backend.core.config import settings
 from backend.api.v1.api import api_router
 
+# Custom JSON encoder to handle datetime objects
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+# Custom JSONResponse class using our encoder
+class CustomJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+            cls=CustomJSONEncoder,
+        ).encode("utf-8")
+
+# Create FastAPI app with custom JSON response class
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="API for managing Parliament TV video clips",
-    version="1.0.0"
+    version="1.0.0",
+    default_response_class=CustomJSONResponse
 )
 
-# Configure CORS for frontend access - simplified approach for development
-# In a development environment, we'll allow all origins for easier debugging
+# Configure CORS for frontend access
+# In development, explicitly allow the frontend origin
 
-# For Docker development, we need to allow all frontend origins
+# Define allowed origins
+allowed_origins = [
+    "http://localhost:3000",  # NextJS dev server
+    "http://127.0.0.1:3000",
+    "http://frontend:3000",   # Docker service name
+    "http://localhost:8080",  # Alternative port
+]
+
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins in development
-    allow_credentials=False,  # Must be False when using wildcard origins
+    allow_origins=allowed_origins,
+    allow_credentials=True,   # Allow credentials when using specific origins
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=86400,  # 24 hours cache for preflight requests
 )
 
-print("CORS configured with wildcard origins for development")
+print(f"CORS configured with allowed origins: {allowed_origins}")
 
 # Health check endpoint
 @app.get("/health")
