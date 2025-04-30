@@ -43,7 +43,7 @@ def extract_stream_info(parliament_tv_url):
     logger.info(f"Extracting stream info from: {parliament_tv_url}")
     
     # Call our extraction script
-    extract_script = Path(__file__).parent / "extract_parliament_stream_v2.py"
+    extract_script = Path(__file__).parent / "extract_parliament_stream_v3.py"
     
     try:
         result = subprocess.run(
