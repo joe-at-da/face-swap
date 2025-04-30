@@ -48,14 +48,17 @@ async def start_parliament_tv_capture(
         # Get user who started the active capture
         active_user = db.query(models.User).filter(models.User.id == active_capture.user_id).first()
         
+        # Create a serializable error response
+        error_detail = make_json_serializable({
+            "message": "A capture session is already in progress",
+            "capture_id": active_capture.id,
+            "started_by": active_user.full_name if active_user else "Unknown",
+            "started_at": active_capture.created_at
+        })
+        
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "A capture session is already in progress",
-                "capture_id": active_capture.id,
-                "started_by": active_user.full_name if active_user else "Unknown",
-                "started_at": active_capture.created_at
-            }
+            detail=error_detail
         )
     
     # Create a new capture session in the database
@@ -93,12 +96,15 @@ async def start_parliament_tv_capture(
             }
             db.commit()
             
+            # Create a serializable error response
+            error_detail = make_json_serializable({
+                "message": "Failed to extract stream URL from Parliament TV page",
+                "capture_id": db_capture.id
+            })
+            
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "message": "Failed to extract stream URL from Parliament TV page",
-                    "capture_id": db_capture.id
-                }
+                detail=error_detail
             )
         
         # Start the capture process asynchronously
@@ -148,7 +154,7 @@ async def start_parliament_tv_capture(
             "id": db_capture.id,
             "title": db_capture.title,
             "status": db_capture.status,
-            "created_at": db_capture.created_at,
+            "created_at": make_json_serializable(db_capture.created_at),
             "message": "Capture started successfully"
         }
         
@@ -157,26 +163,27 @@ async def start_parliament_tv_capture(
     
     # Format response
     user = db.query(models.User).filter(models.User.id == db_capture.user_id).first()
+    metadata = db_capture.metadata or {}
     
     response = {
         "id": db_capture.id,
         "title": db_capture.title,
+        "description": db_capture.description,
         "status": db_capture.status,
         "url": db_capture.source_url,
-        "duration": capture_request.duration,
-        "facial_recognition_enabled": capture_request.enable_facial_recognition,
-        "start_time": db_capture.created_at,
-        "created_by_id": user.id,
+        "duration": metadata.get("duration"),
+        "facial_recognition_enabled": metadata.get("enable_facial_recognition", False),
         "created_by": {
             "id": user.id,
             "name": user.full_name,
             "email": user.email
         },
-        "created_at": db_capture.created_at,
-        "updated_at": db_capture.updated_at
+        "created_at": make_json_serializable(db_capture.created_at),
+        "updated_at": make_json_serializable(db_capture.updated_at)
     }
     
-    return response
+    # Make the response JSON serializable
+    return make_json_serializable(response)
 
 @router.get("/extract-url", response_model=Dict)
 async def extract_parliament_tv_url(
@@ -276,7 +283,8 @@ async def get_parliament_tv_captures(
             "updated_at": capture.updated_at
         })
     
-    return result
+    # Make the response JSON serializable
+    return make_json_serializable(result)
 
 @router.get("/{capture_id}", response_model=Dict)
 async def get_parliament_tv_capture(
@@ -324,4 +332,73 @@ async def get_parliament_tv_capture(
         "updated_at": capture.updated_at
     }
     
-    return response
+    # Make the response JSON serializable
+    return make_json_serializable(response)
+
+@router.post("/{capture_id}/stop", response_model=Dict)
+async def stop_parliament_tv_capture(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Stop an active Parliament TV capture session."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id,
+        models.CaptureSession.metadata.has_key("parliament_tv_url")
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parliament TV capture session with ID {capture_id} not found"
+        )
+    
+    # Check if the capture is active
+    if capture.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot stop capture session with status '{capture.status}'"
+        )
+    
+    # Stop the capture process
+    try:
+        # Update the capture session status
+        capture.status = "completed"
+        capture.end_time = datetime.now()
+        
+        # Add metadata about who stopped the capture
+        capture.metadata = {
+            **(capture.metadata or {}),
+            "stopped_by": current_user.id,
+            "stopped_by_name": current_user.full_name,
+            "stopped_at": datetime.now()
+        }
+        
+        db.commit()
+        db.refresh(capture)
+        
+        # Attempt to stop the actual capture process
+        # This is implementation-dependent and may need to be adapted
+        # to your specific capture service
+        try:
+            parliament_tv_service.stop_capture(capture_id)
+        except Exception as e:
+            # Log the error but don't fail the request
+            print(f"Error stopping capture process: {str(e)}")
+        
+        return make_json_serializable({
+            "id": capture.id,
+            "status": capture.status,
+            "message": "Capture stopped successfully",
+            "stopped_at": capture.end_time
+        })
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop capture: {str(e)}"
+        )

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -24,19 +24,39 @@ interface ParliamentTVCaptureProps {
   onError?: (error: any) => void;
 }
 
+interface CaptureStatus {
+  success: boolean;
+  message: string;
+  data?: any;
+  error?: any;
+}
+
+interface ValidationResult {
+  success: boolean;
+  message: string;
+  streamUrl?: string;
+  timeMarker?: number;
+  error?: string;
+}
+
 const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, onError }) => {
   const router = useRouter();
   const { token } = useAuth();
   const [url, setUrl] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [duration, setDuration] = useState(300);
+  const [duration, setDuration] = useState(300); // Default 5 minutes
   const [enableFacialRecognition, setEnableFacialRecognition] = useState(true);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [captureStatus, setCaptureStatus] = useState<any>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState<any>(null);
-  
+  const [captureStatus, setCaptureStatus] = useState<CaptureStatus | null>(null);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [activeCapture, setActiveCapture] = useState<{id: number, started_by: string, started_at: string} | null>(null);
+  const [isStoppingCapture, setIsStoppingCapture] = useState(false);
+
   // Configure axios with authentication headers
   const getAuthHeaders = () => {
     return {
@@ -45,6 +65,41 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       }
     };
   };
+  
+  // Check for active captures when component loads
+  useEffect(() => {
+    const checkActiveCaptures = async () => {
+      try {
+        const authHeaders = getAuthHeaders();
+        
+        const response = await axios.get(
+          `${API_BASE_URL}/parliament-tv?status=active`,
+          {
+            headers: authHeaders.headers
+          }
+        );
+        
+        console.log('Active captures:', response.data);
+        
+        if (Array.isArray(response.data) && response.data.length > 0) {
+          const activeCapture = response.data[0];
+          const user = activeCapture.created_by;
+          
+          setError(`A capture session is already in progress. Started by ${user.name} at ${new Date(activeCapture.created_at).toLocaleString()}.`);
+          
+          setActiveCapture({
+            id: activeCapture.id,
+            started_by: user.name,
+            started_at: activeCapture.created_at
+          });
+        }
+      } catch (err) {
+        console.error('Error checking active captures:', err);
+      }
+    };
+    
+    checkActiveCaptures();
+  }, [token]);
 
   const validateUrl = async () => {
     if (!url) return;
@@ -127,14 +182,60 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     }
   };
 
+  const stopActiveCapture = async () => {
+    if (!activeCapture) return;
+    
+    setIsStoppingCapture(true);
+    try {
+      const authHeaders = getAuthHeaders();
+      const token = authHeaders.headers.Authorization.split(' ')[1];
+      
+      const response = await axios.post(
+        `${API_BASE_URL}/parliament-tv/${activeCapture.id}/stop`,
+        {},
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      
+      console.log('Capture stopped successfully:', response.data);
+      
+      // Clear the error and active capture
+      setError('');
+      setActiveCapture(null);
+      setSuccess(true);
+      
+      // Show success message
+      setCaptureStatus({
+        success: true,
+        message: 'Capture stopped successfully!',
+        data: response.data
+      });
+      
+    } catch (err: any) {
+      console.error('Error stopping capture:', err);
+      
+      let errorMessage = 'Failed to stop capture. Please try again.';
+      
+      if (err.response) {
+        console.error('Error response data:', err.response.data);
+        errorMessage = err.response.data?.detail || errorMessage;
+      }
+      
+      setError(errorMessage);
+    } finally {
+      setIsStoppingCapture(false);
+    }
+  };
+  
   const startCapture = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!url || !title) return;
-    
-    setIsCapturing(true);
-    setCaptureStatus(null);
-    
+    setIsSubmitting(true);
+    setError('');
+
     try {
       console.log('Starting capture with data:', {
         url,
@@ -143,7 +244,10 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         duration,
         enable_facial_recognition: enableFacialRecognition
       });
-      
+
+      const authHeaders = getAuthHeaders();
+      const token = authHeaders.headers.Authorization.split(' ')[1];
+
       const response = await axios.post(
         `${API_BASE_URL}/parliament-tv`, 
         {
@@ -152,49 +256,90 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
           description,
           duration,
           enable_facial_recognition: enableFacialRecognition
-        }, 
+        },
         {
           headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
           }
         }
       );
+
+      console.log('Capture started successfully:', response.data);
       
-      console.log('Capture response status:', response.status);
-      console.log('Capture response data:', response.data);
+      setIsSubmitting(false);
+      setSuccess(true);
       
-      setCaptureStatus({
-        success: true,
-        message: 'Capture started successfully!',
-        data: response.data
-      });
+      // Reset form
+      setUrl('');
+      setTitle('');
+      setDescription('');
+      setDuration(300);
+      setEnableFacialRecognition(true);
       
+      // Call onSuccess callback if provided
       if (onSuccess) {
         onSuccess(response.data);
       }
       
-      // Redirect to the captures page after a short delay
-      setTimeout(() => {
-        router.push('/captures');
-      }, 2000);
-    } catch (error: any) {
-      console.error('Error starting capture:', error);
+    } catch (err: any) {
+      console.error('Error starting capture:', err);
+      setIsSubmitting(false);
       
-      setCaptureStatus({
-        success: false,
-        message: error.response?.data?.detail?.message || 'Error starting capture.',
-        error: error.response?.data || error.message
-      });
+      let errorMessage = 'Failed to start capture. Please try again.';
+      let errorDetails = '';
       
-      if (onError) {
-        onError(error);
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        console.error('Error response data:', err.response.data);
+        console.error('Error response status:', err.response.status);
+        console.error('Error response headers:', err.response.headers);
+        
+        // Handle specific error status codes
+        if (err.response.status === 409) {
+          console.log('Full conflict response:', JSON.stringify(err.response.data));
+          
+          const conflictData = err.response.data?.detail || {};
+          console.log('Conflict data extracted:', JSON.stringify(conflictData));
+          
+          errorMessage = conflictData.message || 'A capture session is already in progress';
+          
+          if (conflictData.capture_id && conflictData.started_by && conflictData.started_at) {
+            const startTime = new Date(conflictData.started_at).toLocaleString();
+            errorDetails = `Started by ${conflictData.started_by} at ${startTime}`;
+            
+            // Store active capture info for the stop button
+            setActiveCapture({
+              id: conflictData.capture_id,
+              started_by: conflictData.started_by,
+              started_at: conflictData.started_at
+            });
+          } else {
+            console.log('Missing required conflict data fields. Available fields:', Object.keys(conflictData).join(', '));
+          }
+        } else {
+          errorMessage = err.response.data?.detail?.message || err.response.data?.detail || errorMessage;
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        console.error('Error request:', err.request);
+        errorMessage = 'No response received from server. Please check your connection.';
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        console.error('Error message:', err.message);
+        errorMessage = err.message || errorMessage;
       }
-    } finally {
-      setIsCapturing(false);
+      
+      setError(errorMessage + (errorDetails ? `\n${errorDetails}` : ''));
+      
+      // Call onError callback if provided
+      if (onError) {
+        onError(err);
+      }
     }
   };
-  
+
   return (
     <div className="bg-white shadow-md rounded-lg p-6 max-w-2xl mx-auto">
       <h2 className="text-2xl font-bold mb-6">Parliament TV Capture</h2>
@@ -311,13 +456,32 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         <div className="pt-4">
           <button
             type="submit"
-            disabled={isCapturing || (validationResult && !validationResult.success)}
+            disabled={isCapturing || (validationResult && !validationResult.success) || isSubmitting}
             className="w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            {isCapturing ? 'Starting Capture...' : 'Start Capture'}
+            {isSubmitting ? 'Starting Capture...' : 'Start Capture'}
           </button>
         </div>
       </form>
+      
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+          <strong className="font-bold">Error: </strong>
+          <span className="block sm:inline whitespace-pre-line">{error}</span>
+          
+          {activeCapture && (
+            <div className="mt-3">
+              <button 
+                onClick={stopActiveCapture}
+                disabled={isStoppingCapture}
+                className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:bg-red-300 disabled:cursor-not-allowed"
+              >
+                {isStoppingCapture ? 'Stopping Capture...' : 'Stop Active Capture'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       
       {captureStatus && (
         <div className={`mt-6 p-4 rounded-md ${captureStatus.success ? 'bg-green-50' : 'bg-red-50'}`}>
