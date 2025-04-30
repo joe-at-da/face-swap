@@ -1,7 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
+
+// API base URL
+const API_BASE_URL = 'http://localhost:8000/api/v1';
+
+// Define types for API responses
+interface ExtractUrlResponse {
+  direct_stream: string;
+  time_marker?: {
+    seconds: number;
+  };
+}
+
+interface TestStreamResponse {
+  url: string;
+  is_valid: boolean;
+}
 
 interface ParliamentTVCaptureProps {
   onSuccess?: (data: any) => void;
@@ -37,14 +53,40 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setValidationResult(null);
 
     try {
-      // First extract the stream URL - using the proxy
-      const extractResponse = await axios.get(`/api/v1/parliament-tv/extract-url?url=${encodeURIComponent(url)}`, getAuthHeaders());
-      console.log('Extract response:', extractResponse.data);
+      // First extract the stream URL - direct API call with detailed error logging
+      console.log(`Calling extract-url API with URL: ${url}`);
+      console.log(`Full API URL: ${API_BASE_URL}/parliament-tv/extract-url?url=${encodeURIComponent(url)}`);
+      console.log('Auth headers:', getAuthHeaders());
+      
+      const extractResponse = await axios.get<ExtractUrlResponse>(
+        `${API_BASE_URL}/parliament-tv/extract-url`, 
+        {
+          params: { url },
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      
+      console.log('Extract response status:', extractResponse.status);
+      console.log('Extract response data:', extractResponse.data);
 
       if (extractResponse.data?.direct_stream) {
-        // Then test if the stream URL is valid - using the proxy
-        const testResponse = await axios.get(`/api/v1/parliament-tv/test-url?url=${encodeURIComponent(extractResponse.data.direct_stream)}`, getAuthHeaders());
-        console.log('Test response:', testResponse.data);
+        // Then test if the stream URL is valid
+        console.log(`Testing stream URL: ${extractResponse.data.direct_stream}`);
+        
+        const testResponse = await axios.get<TestStreamResponse>(
+          `${API_BASE_URL}/parliament-tv/test-url`, 
+          {
+            params: { url: extractResponse.data.direct_stream },
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
+        
+        console.log('Test response status:', testResponse.status);
+        console.log('Test response data:', testResponse.data);
 
         setValidationResult({
           success: testResponse.data?.is_valid,
@@ -62,13 +104,16 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       }
     } catch (error: any) {
       console.error('Error validating URL:', error);
+      console.error('Error response:', error.response);
+      console.error('Error request:', error.request);
+      console.error('Error config:', error.config);
       
       // Check for specific error messages
-      const errorMessage = error.response?.data?.detail || 'Error validating URL';
+      const errorMessage = error.response?.data?.detail || error.message || 'Error validating URL';
       let userMessage = 'Error validating URL. Please check the format and try again.';
       
       // Check if it's a yt-dlp not found error
-      if (errorMessage.includes('yt-dlp not found')) {
+      if (errorMessage.includes && errorMessage.includes('yt-dlp not found')) {
         userMessage = 'The server is missing yt-dlp, which is required for extracting Parliament TV streams. Please contact the administrator to install it.';
       }
       
@@ -91,14 +136,33 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setCaptureStatus(null);
     
     try {
-      const response = await axios.post('/api/v1/parliament-tv', {
+      console.log('Starting capture with data:', {
         url,
         title,
         description,
         duration,
         enable_facial_recognition: enableFacialRecognition
-      }, getAuthHeaders());
-      console.log('Capture response:', response.data);
+      });
+      
+      const response = await axios.post(
+        `${API_BASE_URL}/parliament-tv`, 
+        {
+          url,
+          title,
+          description,
+          duration,
+          enable_facial_recognition: enableFacialRecognition
+        }, 
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      console.log('Capture response status:', response.status);
+      console.log('Capture response data:', response.data);
       
       setCaptureStatus({
         success: true,
