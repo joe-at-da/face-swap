@@ -17,7 +17,8 @@ class ParliamentTVCapture:
     
     def __init__(self):
         """Initialize the Parliament TV capture service."""
-        self.scripts_dir = Path(settings.BASE_DIR) / "scripts"
+        # Use absolute paths for scripts directory
+        self.scripts_dir = Path("/app/scripts")
         self.temp_dir = Path(settings.TEMP_STORAGE_PATH)
         self.media_dir = Path(settings.MEDIA_STORAGE_PATH) / "parliament_captures"
         

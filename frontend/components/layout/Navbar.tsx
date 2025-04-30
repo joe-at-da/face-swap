@@ -57,6 +57,12 @@ const Navbar: React.FC = () => {
                 </span>
               </Link>
               
+              <Link href="/parliament-tv/capture">
+                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                  Parliament TV
+                </span>
+              </Link>
+              
               <Link href="/social">
                 <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Social Media
@@ -192,6 +198,12 @@ const Navbar: React.FC = () => {
             <Link href="/capture">
               <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                 Capture
+              </span>
+            </Link>
+            
+            <Link href="/parliament-tv/capture">
+              <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
+                Parliament TV
               </span>
             </Link>
             

@@ -7,6 +7,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 ## Features
 
 - 📹 Video capture from Parliament TV feeds
+- 🎭 Facial recognition-powered Parliament TV capture
 - ✂️ Easy clip editing and branding
 - 🎯 Face recognition and tagging
 - 🔊 Automated transcription and subtitling
@@ -100,6 +101,7 @@ Once both servers are running:
    - Dashboard: System statistics and quick actions
    - Video Clips: Browse, create, edit clips
    - Capture: Manage Parliament TV capture sessions
+   - Parliament TV: Capture Parliament TV streams with facial recognition
    - Social Media: Create and schedule posts
    - Admin: Manage users and storage
 
@@ -276,6 +278,7 @@ The Parliament Video Clip Manager has reached beta status with all core features
    - ✅ Authentication system with JWT and RBAC
    - ✅ Video processing pipeline
    - ✅ Improved video capture functionality
+   - ✅ Parliament TV capture with facial recognition
    - ✅ Social media integration
    - ✅ Storage management
 
@@ -283,6 +286,7 @@ The Parliament Video Clip Manager has reached beta status with all core features
    - ✅ Next.js with TypeScript implementation
    - ✅ Video clip management interface
    - ✅ Capture session interface
+   - ✅ Parliament TV capture interface
    - ✅ Social media dashboard
    - ✅ Admin interface (users, storage)
    - ✅ Authentication and authorization flows
@@ -296,6 +300,7 @@ For detailed information about the project roadmap, including completed mileston
 1. **Video Capture System**
    - Enhanced video capture functionality with improved error handling
    - Added support for multiple video stream formats (HLS, MP4)
+   - Implemented Parliament TV capture with facial recognition
    - Implemented better process management for video capture
    - Fixed database transaction issues in capture sessions
    - Added comprehensive documentation for video capture functionality
@@ -313,6 +318,7 @@ For detailed information about the project roadmap, including completed mileston
 4. **Documentation**
    - Comprehensive README with setup instructions
    - Added detailed [video capture documentation](docs/video_capture.md)
+   - Added [Parliament TV integration guide](docs/parliament_tv_integration.md)
    - Troubleshooting guide for common issues
    - API documentation with Swagger UI
 
