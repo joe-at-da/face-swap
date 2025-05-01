@@ -371,20 +371,96 @@ class ParliamentTVCapture:
             duration: Maximum duration to capture in seconds (default: 30 minutes)
             callback: Optional callback function to call with the result
         """
+        # Validate inputs before starting the thread
+        logger.info(f"start_capture_async called with URL: {url}, type: {type(url)}")
+        logger.info(f"capture_id: {capture_id}, type: {type(capture_id)}")
+        logger.info(f"duration: {duration}, type: {type(duration)}")
+        
+        # Ensure URL is not None and is a string
+        if url is None:
+            error_msg = "URL cannot be None"
+            logger.error(error_msg)
+            if callback:
+                callback({"success": False, "error": error_msg})
+            return
+        
+        if not isinstance(url, str):
+            logger.warning(f"URL is not a string: {url}, type: {type(url)}")
+            try:
+                url = str(url)
+                logger.info(f"Converted URL to string: {url}")
+            except Exception as e:
+                error_msg = f"Failed to convert URL to string: {str(e)}"
+                logger.error(error_msg)
+                if callback:
+                    callback({"success": False, "error": error_msg})
+                return
+        
+        # Ensure capture_id is not None and is an integer
+        if capture_id is None:
+            error_msg = "capture_id cannot be None"
+            logger.error(error_msg)
+            if callback:
+                callback({"success": False, "error": error_msg})
+            return
+        
+        try:
+            capture_id = int(capture_id)
+        except (ValueError, TypeError) as e:
+            error_msg = f"Failed to convert capture_id to integer: {str(e)}"
+            logger.error(error_msg)
+            if callback:
+                callback({"success": False, "error": error_msg})
+            return
+        
+        # Ensure duration is not None and is an integer
+        if duration is None:
+            logger.warning("duration is None, using default value of 1800 seconds")
+            duration = 1800
+        
+        try:
+            duration = int(duration)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to convert duration to integer: {str(e)}, using default value of 1800 seconds")
+            duration = 1800
+        
         def capture_thread():
             try:
                 logger.info(f"Starting capture thread with URL: {url}, capture_id: {capture_id}, duration: {duration}")
+                
+                # Ensure paths are initialized before calling start_capture
+                if self.temp_dir is None:
+                    logger.warning("temp_dir is None, initializing to default path")
+                    self.temp_dir = Path("/app/data/temp")
+                    os.makedirs(str(self.temp_dir), exist_ok=True)
+                    
+                if self.media_dir is None:
+                    logger.warning("media_dir is None, initializing to default path")
+                    self.media_dir = Path("/app/data/media/parliament_captures")
+                    os.makedirs(str(self.media_dir), exist_ok=True)
+                    
+                if self.scripts_dir is None:
+                    logger.warning("scripts_dir is None, initializing to default path")
+                    self.scripts_dir = Path("/app/scripts")
+                
+                # Call start_capture with validated inputs
                 result = self.start_capture(url, capture_id, duration)
                 logger.info(f"Capture thread completed with result: {result}")
+                
                 if callback:
                     logger.info("Calling callback function with result")
                     callback(result)
             except Exception as e:
-                logger.error(f"Unexpected error in capture thread: {str(e)}")
+                error_msg = f"Unexpected error in capture thread: {str(e)}"
+                logger.error(error_msg)
                 import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
+                tb = traceback.format_exc()
+                logger.error(f"Traceback: {tb}")
+                print(f"Unexpected error starting capture: {str(e)}")
+                print(f"Traceback: {tb}")
+                
                 if callback:
-                    callback({"success": False, "error": str(e)})
+                    callback({"success": False, "error": error_msg})
         
         logger.info("Creating capture thread")
         self._capture_thread = threading.Thread(target=capture_thread)
