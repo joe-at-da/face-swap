@@ -47,7 +47,7 @@ const NewCapturePage: React.FC = () => {
   const [formData, setFormData] = useState<CaptureFormData>({
     title: '',
     description: '',
-    source_url: 'https://www.parliamentlive.tv/Event/Index',
+    source_url: 'https://parliamentlive.tv/event/index/263b4186-393c-49ce-aa55-68b9accd7a4e?in=13:25:38',
     enable_facial_recognition: true,
     duration: 300, // Default 5 minutes
   });
