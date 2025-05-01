@@ -32,8 +32,8 @@ class ParliamentTVCapture:
         logger.info(f"Using media directory: {self.media_dir}")
         
         # Create directories if they don't exist
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
-        self.media_dir.mkdir(parents=True, exist_ok=True)
+        os.makedirs(str(self.temp_dir), exist_ok=True)
+        os.makedirs(str(self.media_dir), exist_ok=True)
         
         # Keep track of active capture processes
         self._current_process = None

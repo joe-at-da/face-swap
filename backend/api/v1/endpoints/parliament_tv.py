@@ -139,6 +139,9 @@ async def start_parliament_tv_capture(
                     else:
                         serializable_result[key] = value
                 
+                # Log the result for debugging
+                print(f"Capture callback received result: {serializable_result}")
+                
                 # Create a new database session for the callback
                 from backend.db.session import SessionLocal
                 callback_db = SessionLocal()
@@ -158,37 +161,66 @@ async def start_parliament_tv_capture(
                         
                         # Get the output file path from the result
                         output_file = result.get("output_file")
+                        print(f"Output file from result: {output_file}")
                         
                         # If no output file in result, try to find it based on capture ID
                         if not output_file or not os.path.exists(output_file):
                             print(f"Output file not found in result or doesn't exist: {output_file}")
                             print(f"Searching for file with capture ID: {capture_session.id}")
                             
-                            # Search in temp directory for files with the capture ID
-                            temp_dir = '/app/data/temp'
-                            patterns = [
-                                f"{temp_dir}/parliament_stream_*_{capture_session.id}.mp4",
-                                f"{temp_dir}/parliament_capture_*_{capture_session.id}.mp4",
-                                f"{temp_dir}/capture_*_{capture_session.id}.mp4"
+                            # Search in multiple directories for files with the capture ID
+                            search_dirs = [
+                                '/app/data/temp',
+                                '/app/data/media/parliament_captures',
+                                '/app/data/media',
+                                '/app/data'
                             ]
                             
-                            for pattern in patterns:
-                                matching_files = glob.glob(pattern)
-                                if matching_files:
-                                    output_file = matching_files[0]  # Use the first match
-                                    print(f"Found matching file: {output_file}")
+                            file_patterns = [
+                                f"parliament_stream_*_{capture_session.id}.mp4",
+                                f"parliament_capture_*_{capture_session.id}.mp4",
+                                f"capture_*_{capture_session.id}.mp4",
+                                f"*_{capture_session.id}.mp4"
+                            ]
+                            
+                            # Search in all directories with all patterns
+                            found_file = False
+                            for search_dir in search_dirs:
+                                if not os.path.exists(search_dir):
+                                    print(f"Search directory does not exist: {search_dir}")
+                                    continue
+                                    
+                                print(f"Searching in directory: {search_dir}")
+                                for pattern in file_patterns:
+                                    full_pattern = os.path.join(search_dir, pattern)
+                                    print(f"Searching with pattern: {full_pattern}")
+                                    matching_files = glob.glob(full_pattern)
+                                    
+                                    if matching_files:
+                                        # Sort by modification time, newest first
+                                        matching_files.sort(key=os.path.getmtime, reverse=True)
+                                        output_file = matching_files[0]  # Use the newest match
+                                        print(f"Found matching file: {output_file}")
+                                        found_file = True
+                                        break
+                                
+                                if found_file:
                                     break
                         
-                        capture_session.file_path = output_file
-                        
-                        # Calculate file size if file exists
+                        # Update the file path in the database
                         if output_file and os.path.exists(output_file):
+                            print(f"Setting file path in database to: {output_file}")
+                            capture_session.file_path = output_file
                             capture_session.file_size = os.path.getsize(output_file)
+                            print(f"File size: {capture_session.file_size} bytes")
+                        else:
+                            print(f"Warning: No valid output file found for capture {capture_session.id}")
                         
                         capture_session.end_time = datetime.now()
                         capture_session.metadata = {
                             **(capture_session.metadata or {}),
-                            "capture_result": serializable_result
+                            "capture_result": serializable_result,
+                            "output_file": output_file if output_file and os.path.exists(output_file) else None
                         }
                     else:
                         capture_session.status = "failed"
@@ -201,9 +233,12 @@ async def start_parliament_tv_capture(
                     # Commit changes with the new session
                     callback_db.commit()
                     print(f"Capture session {db_capture.id} updated successfully in callback")
+                    print(f"Final file path in database: {capture_session.file_path}")
                 except Exception as e:
                     callback_db.rollback()
                     print(f"Error updating capture session in callback: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
                 finally:
                     # Always close the new session
                     callback_db.close()

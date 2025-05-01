@@ -130,14 +130,21 @@ def download_stream(stream_url, output_file, duration=None):
     if not stream_url:
         logger.error("No stream URL provided for download")
         return False
-        
+    
+    # Ensure output_file is a string and not None
+    if output_file is None:
+        logger.error("No output file path provided")
+        return False
+    
+    # Convert to string if it's a Path object
+    output_file = str(output_file)
+    
     # Make sure the output directory exists
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
     logger.info(f"Downloading stream from {stream_url} to {output_file}")
-        
-    logger.info(f"Downloading stream from: {stream_url}")
-    logger.info(f"Output file: {output_file}")
+    logger.info(f"Output file absolute path: {os.path.abspath(output_file)}")
+    logger.info(f"Output directory exists: {os.path.exists(os.path.dirname(output_file))}")
     
     if duration:
         logger.info(f"Duration limit: {duration} seconds")
@@ -166,11 +173,7 @@ def download_stream(stream_url, output_file, duration=None):
             logger.warning("Could not parse ffprobe output, continuing with download")
         
         # Download the stream with explicit audio mapping
-        # Use -y to overwrite output files without asking
-        # Use -c:v copy to copy video without re-encoding
-        # Use -c:a aac to ensure audio is captured and encoded as AAC
-        # Use -ac 2 to ensure stereo audio
-        # Use -ar 44100 to set audio sample rate to 44.1kHz (standard)
+        # Force audio capture even if source doesn't have it
         cmd = [
             "ffmpeg", "-y", "-i", stream_url, 
             "-c:v", "copy", 
@@ -189,6 +192,18 @@ def download_stream(stream_url, output_file, duration=None):
         logger.info(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         
+        # Check if the output file was actually created
+        if not os.path.exists(output_file):
+            logger.error(f"Output file was not created at {output_file}")
+            return False
+        
+        # Check if the output file has content
+        file_size = os.path.getsize(output_file)
+        logger.info(f"Output file size: {file_size} bytes")
+        if file_size == 0:
+            logger.error("Output file is empty!")
+            return False
+        
         # Verify the output has audio
         verify_cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", output_file]
         verify_result = subprocess.run(verify_cmd, check=True, capture_output=True, text=True)
@@ -204,21 +219,27 @@ def download_stream(stream_url, output_file, duration=None):
             if not output_has_audio:
                 logger.warning("Output file does not have an audio stream!")
                 # If we still don't have audio, try one more approach with re-encoding
-                if not has_audio:
-                    logger.info("Attempting to re-encode with synthetic audio")
-                    # Create silent audio and merge with video
-                    silent_cmd = [
-                        "ffmpeg", "-i", output_file, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
-                        "-c:v", "copy", "-c:a", "aac", "-shortest", "-y", f"{output_file}.with_audio.mp4"
-                    ]
-                    subprocess.run(silent_cmd, check=True, capture_output=True, text=True)
-                    # Replace original file
-                    os.rename(f"{output_file}.with_audio.mp4", output_file)
+                logger.info("Attempting to re-encode with synthetic audio")
+                # Create silent audio and merge with video
+                silent_cmd = [
+                    "ffmpeg", "-i", output_file, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
+                    "-c:v", "copy", "-c:a", "aac", "-shortest", "-y", f"{output_file}.with_audio.mp4"
+                ]
+                subprocess.run(silent_cmd, check=True, capture_output=True, text=True)
+                # Replace original file
+                os.rename(f"{output_file}.with_audio.mp4", output_file)
         except json.JSONDecodeError:
             logger.warning("Could not verify audio in output file")
         
-        logger.info("Download completed successfully.")
-        return True
+        # Final verification that the file exists and has content
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            logger.info(f"Download completed successfully. File saved at: {output_file}")
+            # Print the output file path for easier parsing by other scripts
+            print(f"Output file: {output_file}")
+            return True
+        else:
+            logger.error(f"Final verification failed: File does not exist or is empty at {output_file}")
+            return False
     except subprocess.CalledProcessError as e:
         logger.error(f"Error downloading stream: {e}")
         logger.error(f"STDOUT: {e.stdout}")
