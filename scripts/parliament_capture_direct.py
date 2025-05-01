@@ -51,6 +51,18 @@ def extract_stream_url(url, output_file=None):
     """Extract the direct stream URL from a Parliament TV web page."""
     logger.info(f"Extracting stream URL from: {url}")
     
+    # Check if the URL is already a direct stream URL (ends with .m3u8)
+    if url.endswith('.m3u8'):
+        logger.info("URL appears to be a direct stream URL already")
+        stream_info = {"direct_stream": url}
+        
+        if output_file:
+            with open(output_file, 'w') as f:
+                json.dump(stream_info, f)
+        
+        return stream_info
+    
+    # If not a direct stream URL, extract it from Parliament TV page
     try:
         cmd = [
             sys.executable,
@@ -100,6 +112,10 @@ def extract_stream_url(url, output_file=None):
 
 def download_stream(stream_url, output_file, duration=None):
     """Download the stream using ffmpeg."""
+    if not stream_url:
+        logger.error("No stream URL provided for download")
+        return False
+        
     logger.info(f"Downloading stream from: {stream_url}")
     logger.info(f"Output file: {output_file}")
     
@@ -124,12 +140,25 @@ def download_stream(stream_url, output_file, duration=None):
                     break
             
             if not has_audio:
-                logger.warning("No audio stream detected in the source!")
+                logger.warning("No audio stream detected in the source! This may affect transcription.")
+                logger.info("Attempting to download with audio anyway...")
         except json.JSONDecodeError:
             logger.warning("Could not parse ffprobe output, continuing with download")
         
-        # Download the stream
-        cmd = ["ffmpeg", "-i", stream_url]
+        # Download the stream with explicit audio mapping
+        # Use -y to overwrite output files without asking
+        # Use -c:v copy to copy video without re-encoding
+        # Use -c:a aac to ensure audio is captured and encoded as AAC
+        # Use -ac 2 to ensure stereo audio
+        # Use -ar 44100 to set audio sample rate to 44.1kHz (standard)
+        cmd = [
+            "ffmpeg", "-y", "-i", stream_url, 
+            "-c:v", "copy", 
+            "-c:a", "aac", 
+            "-ac", "2", 
+            "-ar", "44100", 
+            "-strict", "experimental"
+        ]
         
         if duration:
             cmd.extend(["-t", str(duration)])
@@ -215,9 +244,10 @@ def process_with_facial_recognition(video_file, output_file=None, duration=None)
 
 def main():
     parser = argparse.ArgumentParser(description='Parliament TV Direct Capture with Facial Recognition')
-    parser.add_argument('url', help='Parliament TV event URL')
+    parser.add_argument('url', help='Parliament TV event URL or direct stream URL')
     parser.add_argument('--duration', '-d', type=int, help='Maximum duration to capture in seconds')
     parser.add_argument('--output', '-o', help='Output file path')
+    parser.add_argument('--capture-id', help='Capture ID for file naming')
     args = parser.parse_args()
     
     # Check for required tools
@@ -230,20 +260,27 @@ def main():
     
     # Generate timestamp for filenames
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    capture_id = args.capture_id if args.capture_id else ''
     
-    # Extract the direct stream URL
-    stream_info_file = f"data/temp/stream_info_{timestamp}.json"
-    stream_info = extract_stream_url(args.url, stream_info_file)
-    
-    if not stream_info:
-        logger.error("Failed to extract stream URL. Exiting.")
-        return 1
-    
-    # Get the direct stream URL
-    direct_stream_url = stream_info.get('direct_stream')
-    if not direct_stream_url:
-        logger.error("No direct stream URL found in stream info.")
-        return 1
+    # Check if the URL is already a direct stream URL
+    direct_stream_url = None
+    if args.url.endswith('.m3u8'):
+        logger.info("Input appears to be a direct stream URL")
+        direct_stream_url = args.url
+    else:
+        # Extract the direct stream URL
+        stream_info_file = f"data/temp/stream_info_{timestamp}.json"
+        stream_info = extract_stream_url(args.url, stream_info_file)
+        
+        if not stream_info:
+            logger.error("Failed to extract stream URL. Exiting.")
+            return 1
+        
+        # Get the direct stream URL
+        direct_stream_url = stream_info.get('direct_stream')
+        if not direct_stream_url:
+            logger.error("No direct stream URL found in stream info.")
+            return 1
     
     logger.info(f"Direct stream URL: {direct_stream_url}")
     
@@ -253,19 +290,33 @@ def main():
         time_marker = stream_info['time_marker']['seconds']
         logger.info(f"Time marker: {time_marker} seconds")
     
-    # Download the stream
-    download_file = f"data/temp/parliament_stream_{timestamp}.mp4"
-    if not download_stream(direct_stream_url, download_file, args.duration):
+    # Download the stream with capture ID in the filename
+    if args.output:
+        output_file = args.output
+    else:
+        # Include capture ID in the filename if provided
+        if args.capture_id:
+            output_file = f"data/temp/parliament_stream_{timestamp}_{args.capture_id}.mp4"
+        else:
+            output_file = f"data/temp/parliament_stream_{timestamp}.mp4"
+    
+    logger.info(f"Using output file: {output_file}")
+    if not download_stream(direct_stream_url, output_file, args.duration):
         logger.error("Failed to download stream. Exiting.")
         return 1
     
-    # Process with facial recognition
-    output_file = args.output or f"data/media/parliament_captures/parliament_capture_{timestamp}.mp4"
-    processed_file = process_with_facial_recognition(download_file, output_file, args.duration)
+    # Process the video with facial recognition
+    final_output_file = args.output or f"data/media/parliament_captures/parliament_capture_{timestamp}_{capture_id}.mp4"
+    
+    # Don't overwrite the input file - use a different output path
+    processed_file = process_with_facial_recognition(output_file, final_output_file, args.duration)
     
     if not processed_file:
         logger.error("Failed to process with facial recognition. Exiting.")
-        return 1
+        logger.info(f"However, the raw capture file is available at: {output_file}")
+        # Return the raw capture file path as output
+        print(f"Output file: {output_file}")
+        return 0
     
     logger.info("Parliament TV capture with facial recognition completed successfully.")
     logger.info(f"Output file: {processed_file}")

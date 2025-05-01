@@ -154,8 +154,36 @@ async def start_parliament_tv_capture(
                     
                     if result.get("success", False):
                         capture_session.status = "completed"
-                        capture_session.file_path = result.get("output_file")
-                        capture_session.file_size = result.get("file_size")
+                        
+                        # Get the output file path from the result
+                        output_file = result.get("output_file")
+                        
+                        # If no output file in result, try to find it based on capture ID
+                        if not output_file or not os.path.exists(output_file):
+                            print(f"Output file not found in result or doesn't exist: {output_file}")
+                            print(f"Searching for file with capture ID: {capture_session.id}")
+                            
+                            # Search in temp directory for files with the capture ID
+                            temp_dir = '/app/data/temp'
+                            patterns = [
+                                f"{temp_dir}/parliament_stream_*_{capture_session.id}.mp4",
+                                f"{temp_dir}/parliament_capture_*_{capture_session.id}.mp4",
+                                f"{temp_dir}/capture_*_{capture_session.id}.mp4"
+                            ]
+                            
+                            for pattern in patterns:
+                                matching_files = glob.glob(pattern)
+                                if matching_files:
+                                    output_file = matching_files[0]  # Use the first match
+                                    print(f"Found matching file: {output_file}")
+                                    break
+                        
+                        capture_session.file_path = output_file
+                        
+                        # Calculate file size if file exists
+                        if output_file and os.path.exists(output_file):
+                            capture_session.file_size = os.path.getsize(output_file)
+                        
                         capture_session.end_time = datetime.now()
                         capture_session.metadata = {
                             **(capture_session.metadata or {}),
@@ -186,8 +214,8 @@ async def start_parliament_tv_capture(
         # Start the capture process asynchronously
         parliament_tv_service.start_capture_async(
             url=stream_info["direct_stream"],
+            capture_id=db_capture.id,  # Pass the capture ID for proper file naming
             duration=capture_request.duration,
-            enable_facial_recognition=capture_request.enable_facial_recognition,
             callback=capture_callback
         )
         
@@ -513,10 +541,16 @@ async def stream_parliament_tv_video(
             video_file_paths.append(capture.file_path)
             print(f"Found video file in database path: {capture.file_path}")
     
-    # 2. Try to find by parliament_stream pattern
+    # 2. Try to find by parliament_stream pattern with capture ID
     parliament_patterns = [
+        # First look for files with the exact capture ID
         f"parliament_stream_*_{capture_id}.mp4",
+        f"parliament_capture_*_{capture_id}.mp4",
+        f"capture_*_{capture_id}.mp4",
+        # Then look for any parliament stream files (sorted by newest first)
         f"parliament_stream_*.mp4",
+        f"parliament_capture_*.mp4",
+        # Last resort - any MP4 files
         f"*_{capture_id}.mp4",
         "*.mp4"
     ]

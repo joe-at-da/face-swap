@@ -114,6 +114,27 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
 
     setIsValidating(true);
     setValidationResult(null);
+    
+    // Validate that the URL is a Parliament TV URL
+    const validDomains = ["parliamentlive.tv", "parliament.tv"];
+    let isValidDomain = false;
+    
+    for (const domain of validDomains) {
+      if (url.includes(domain)) {
+        isValidDomain = true;
+        break;
+      }
+    }
+    
+    if (!isValidDomain) {
+      setValidationResult({
+        success: false,
+        message: 'Invalid URL. Please enter a valid Parliament TV URL.',
+        error: 'URL must be from parliamentlive.tv or parliament.tv'
+      });
+      setIsValidating(false);
+      return;
+    }
 
     try {
       // First extract the stream URL - direct API call with detailed error logging

@@ -30,27 +30,32 @@ class ParliamentTVCapture:
         self._current_process = None
         self._capture_thread = None
     
-    def start_capture(self, url: str, duration: int = 300, enable_facial_recognition: bool = True) -> Dict:
+    def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
         """
-        Start capturing a Parliament TV stream.
+        Start capturing a Parliament TV stream with facial recognition.
         
         Args:
-            url: Parliament TV event URL
-            duration: Maximum duration to capture in seconds
-            enable_facial_recognition: Enable facial recognition to stop when speaker is no longer present
+            url: The URL of the Parliament TV event
+            capture_id: The ID of the capture in the database
+            duration: Maximum duration to capture in seconds (default: 30 minutes)
             
         Returns:
-            Dict containing capture information including output file path
+            A dictionary with the capture result
         """
         logger.info(f"Starting Parliament TV capture for URL: {url}")
         
-        # Generate timestamp for filenames
+        # Generate a timestamp for the output file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = self.media_dir / f"parliament_capture_{timestamp}.mp4"
-        log_file = self.temp_dir / f"parliament_capture_log_{timestamp}.json"
         
-        # Build the command
+        # Set up file paths
+        temp_file = self.temp_dir / f"parliament_stream_{timestamp}_{capture_id}.mp4"
+        output_file = self.media_dir / f"parliament_capture_{timestamp}_{capture_id}.mp4"
+        log_file = self.temp_dir / f"parliament_capture_log_{timestamp}_{capture_id}.json"
         capture_script = self.scripts_dir / "parliament_capture_direct.py"
+        
+        # Ensure the directories exist
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.media_dir.mkdir(parents=True, exist_ok=True)
         
         # Add extensive logging to diagnose the issue
         logger.info(f"URL being passed to capture script: {url}")
@@ -81,17 +86,30 @@ class ParliamentTVCapture:
                 "error": f"The URL provided does not appear to be a valid Parliament TV URL: {url}"
             }
         
-        # Note: We're using parliament_capture_direct.py instead of docker_facial_recognition.py
-        # to avoid the test flag issue that would cause it to use Big Buck Bunny test video
+        # First extract the direct stream URL
+        from scripts.extract_direct_stream import extract_direct_stream_url
+        
+        logger.info(f"Extracting direct stream URL from: {url}")
+        direct_stream_url = extract_direct_stream_url(url)
+        
+        if not direct_stream_url:
+            logger.error(f"Failed to extract direct stream URL from: {url}")
+            return {
+                "success": False,
+                "error": "Failed to extract direct stream URL from Parliament TV page"
+            }
+            
+        logger.info(f"Successfully extracted direct stream URL: {direct_stream_url}")
+        
+        # Now use parliament_capture_direct.py with the direct stream URL
         cmd = [
             sys.executable,
             str(capture_script),
-            url,
+            direct_stream_url,  # Use the direct stream URL instead of the Parliament TV URL
             "--duration", str(duration),
-            "--output", str(output_file)
+            "--output", str(temp_file),  # Use temp_file for initial capture
+            "--capture-id", str(capture_id)  # Pass the capture ID for proper file naming
         ]
-        
-        # Ensure we're not using the test flag that would cause it to use Big Buck Bunny
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
@@ -140,18 +158,18 @@ class ParliamentTVCapture:
                 "error": str(e)
             }
     
-    def start_capture_async(self, url: str, duration: int = 300, enable_facial_recognition: bool = True, callback=None) -> None:
+    def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, callback=None) -> None:
         """
         Start capturing a Parliament TV stream asynchronously.
         
         Args:
             url: Parliament TV event URL
-            duration: Maximum duration to capture in seconds
-            enable_facial_recognition: Enable facial recognition to stop when speaker is no longer present
+            capture_id: The ID of the capture in the database
+            duration: Maximum duration to capture in seconds (default: 30 minutes)
             callback: Optional callback function to call with the result
         """
         def capture_thread():
-            result = self.start_capture(url, duration, enable_facial_recognition)
+            result = self.start_capture(url, capture_id, duration)
             if callback:
                 callback(result)
         
