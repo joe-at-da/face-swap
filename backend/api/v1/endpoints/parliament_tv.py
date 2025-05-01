@@ -584,35 +584,44 @@ async def stream_parliament_tv_video(
                         video_file_paths.append(file_path)
                         print(f"Found video file in {directory}: {file_path}")
     
-    # 4. Check if any files were found
+    # If no video file found, return 404
     if not video_file_paths:
-        # List all mp4 files in the data directory for debugging
-        all_mp4_files = glob.glob(os.path.join(DATA_DIR, "*.mp4"))
-        print(f"No video files found for capture {capture_id}. Available mp4 files: {all_mp4_files}")
-        
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Video file for capture {capture_id} not found"
+            detail=f"No video file found for capture session {capture_id}"
         )
     
-    # Use the first matching file
-    file_path = video_file_paths[0]
-    print(f"Serving video file: {file_path}")
+    # Use the first found video file
+    video_file = video_file_paths[0]
+    print(f"Serving video file: {video_file}")
+    
+    # Check if the video file has audio
+    has_audio = False
+    try:
+        # Use ffprobe to check for audio streams
+        import subprocess
+        cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", 
+               "stream=codec_type", "-of", "json", video_file]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if "audio" in result.stdout:
+            has_audio = True
+            print(f"Video file has audio: {video_file}")
+        else:
+            print(f"WARNING: Video file does not have audio: {video_file}")
+    except Exception as e:
+        print(f"Error checking audio in video file: {str(e)}")
     
     # Update the file path in the database if it's different
-    if capture.file_path != file_path:
-        try:
-            capture.file_path = file_path
-            db.commit()
-            print(f"Updated file path in database for capture {capture_id}")
-        except Exception as e:
-            print(f"Error updating file path in database: {str(e)}")
-            db.rollback()
+    if capture.file_path != video_file:
+        capture.file_path = video_file
+        db.commit()
+        print(f"Updated file path in database for capture {capture_id}")
     
+    # Return the video file as a streaming response
     return FileResponse(
-        path=file_path,
+        path=video_file,
         media_type="video/mp4",
-        filename=os.path.basename(file_path)
+        filename=f"parliament_capture_{capture_id}.mp4"
     )
 
 @router.delete("/{capture_id}")
