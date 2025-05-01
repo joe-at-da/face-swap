@@ -35,10 +35,19 @@ logger = logging.getLogger('parliament_capture_direct')
 
 def create_directories():
     """Create necessary directories for storing temporary and output files."""
-    # Use absolute paths for directories
-    temp_dir = os.path.join('/app/data/temp')
-    media_dir = os.path.join('/app/data/media/parliament_captures')
+    # Use environment variables if available, otherwise use default paths
+    temp_dir = os.environ.get('TEMP_STORAGE_PATH', '/app/data/temp')
+    media_base = os.environ.get('MEDIA_STORAGE_PATH', '/app/data/media')
+    media_dir = os.path.join(media_base, 'parliament_captures')
     
+    # Ensure paths are absolute
+    temp_dir = os.path.abspath(temp_dir)
+    media_dir = os.path.abspath(media_dir)
+    
+    logger.info(f"Using temp directory: {temp_dir}")
+    logger.info(f"Using media directory: {media_dir}")
+    
+    # Create directories if they don't exist
     os.makedirs(temp_dir, exist_ok=True)
     os.makedirs(media_dir, exist_ok=True)
     logger.info(f"Created necessary directories: {temp_dir}, {media_dir}")
@@ -122,6 +131,11 @@ def download_stream(stream_url, output_file, duration=None):
         logger.error("No stream URL provided for download")
         return False
         
+    # Make sure the output directory exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    logger.info(f"Downloading stream from {stream_url} to {output_file}")
+        
     logger.info(f"Downloading stream from: {stream_url}")
     logger.info(f"Output file: {output_file}")
     
@@ -169,12 +183,8 @@ def download_stream(stream_url, output_file, duration=None):
         if duration:
             cmd.extend(["-t", str(duration)])
         
-        # If no audio was detected, try to force audio capture
-        if not has_audio:
-            logger.info("Attempting to capture with explicit audio settings")
-            cmd.extend(["-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-y", output_file])
-        else:
-            cmd.extend(["-c", "copy", "-y", output_file])
+        # Add output file to the command
+        cmd.append(output_file)
         
         logger.info(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -311,6 +321,12 @@ def main():
     logger.info(f"Using output file: {output_file}")
     logger.info(f"Capture ID: {args.capture_id if args.capture_id else 'None'}")
     
+    # Ensure the output file path is absolute
+    output_file = os.path.abspath(output_file)
+    
+    # Log the absolute path for debugging
+    logger.info(f"Using absolute output path: {output_file}")
+    
     # Make sure the output directory exists
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
@@ -318,8 +334,17 @@ def main():
         logger.error("Failed to download stream. Exiting.")
         return 1
     
-    # Process the video with facial recognition
-    final_output_file = args.output or os.path.join(media_dir, f"parliament_capture_{timestamp}_{capture_id}.mp4")
+    # Process the video with facial recognition - ALWAYS include capture ID in the filename
+    if args.output:
+        final_output_file = args.output
+    else:
+        # Make sure we're using the capture ID in the filename
+        if args.capture_id:
+            final_output_file = os.path.join(media_dir, f"parliament_capture_{timestamp}_{args.capture_id}.mp4")
+        else:
+            final_output_file = os.path.join(media_dir, f"parliament_capture_{timestamp}.mp4")
+            
+    logger.info(f"Final output file: {final_output_file}")
     
     # Make sure the output directory exists
     os.makedirs(os.path.dirname(final_output_file), exist_ok=True)
@@ -353,7 +378,8 @@ def main():
         "stream_url": direct_stream_url,
         "output_file": processed_file,
         "time_marker": time_marker,
-        "duration": args.duration
+        "duration": args.duration,
+        "capture_id": args.capture_id  # Include the capture ID in the result
     }
     
     print(json.dumps(result, indent=2))

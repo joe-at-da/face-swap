@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import os
 import glob
+import subprocess
 from pathlib import Path
 
 from backend.api.deps import get_db, get_current_user
@@ -563,18 +564,14 @@ async def stream_parliament_tv_video(
                 video_file_paths.append(file_path)
                 break
     
-    # 3. Try to find by parliament_stream pattern with capture ID
+    # 3. Try to find by parliament_stream pattern with capture ID - ONLY use patterns with the capture ID
     parliament_patterns = [
-        # First look for files with the exact capture ID
+        # ONLY look for files with the exact capture ID
         f"parliament_stream_*_{capture_id}.mp4",
         f"parliament_capture_*_{capture_id}.mp4",
         f"capture_*_{capture_id}.mp4",
-        # Then look for any parliament stream files (sorted by newest first)
-        f"parliament_stream_*.mp4",
-        f"parliament_capture_*.mp4",
-        # Last resort - any MP4 files
-        f"*_{capture_id}.mp4",
-        "*.mp4"
+        f"*_{capture_id}.mp4"
+        # NO FALLBACK to random videos
     ]
     
     for pattern in parliament_patterns:
@@ -587,7 +584,7 @@ async def stream_parliament_tv_video(
                 video_file_paths.append(file_path)
                 print(f"Found video file with pattern {pattern}: {file_path}")
     
-    # 3. Try to find in other common directories
+    # 3. Try to find in other common directories - ONLY look for files with the capture ID
     other_dirs = [
         "/app/data/media",
         "/app/data/temp",
@@ -597,41 +594,56 @@ async def stream_parliament_tv_video(
     for directory in other_dirs:
         if directory != DATA_DIR and os.path.exists(directory):
             print(f"Searching in alternative directory: {directory}")
-            for pattern in ["*.mp4", f"*_{capture_id}.mp4"]:
-                full_pattern = os.path.join(directory, pattern)
-                matching_files = glob.glob(full_pattern)
-                print(f"Found {len(matching_files)} files with pattern {pattern} in {directory}")
-                for file_path in matching_files:
-                    if file_path not in video_file_paths:
-                        video_file_paths.append(file_path)
-                        print(f"Found video file in {directory}: {file_path}")
+            # ONLY search for files with the capture ID
+            pattern = f"*_{capture_id}.mp4"
+            full_pattern = os.path.join(directory, pattern)
+            matching_files = glob.glob(full_pattern)
+            print(f"Found {len(matching_files)} files with pattern {pattern} in {directory}")
+            for file_path in matching_files:
+                if file_path not in video_file_paths:
+                    video_file_paths.append(file_path)
+                    print(f"Found video file in {directory}: {file_path}")
     
-    # If no video file found, return 404
+    # If no video file found or if we found files but none match the capture ID, return 404
     if not video_file_paths:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No video file found for capture session {capture_id}"
         )
     
-    # Use the first found video file
+    # Before serving, verify that the file belongs to this capture
     video_file = video_file_paths[0]
+    
+    # Extract timestamp from filename to verify it was created after the capture started
+    if capture.created_at:
+        try:
+            # Check if the file was actually created after the capture started
+            file_time = os.path.getmtime(video_file)
+            capture_time = capture.created_at.timestamp()
+            
+            # If file was created before the capture started, it's probably not the right file
+            if file_time < capture_time - 60:  # Allow 1 minute clock difference
+                print(f"WARNING: File {video_file} was created before the capture started")
+                print(f"File time: {datetime.fromtimestamp(file_time)}")
+                print(f"Capture time: {capture.created_at}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No valid video file found for capture {capture_id}"
+                )
+        except Exception as e:
+            print(f"Error checking file creation time: {str(e)}")
+    
     print(f"Serving video file: {video_file}")
     
     # Check if the video file has audio
-    has_audio = False
     try:
-        # Use ffprobe to check for audio streams
-        import subprocess
-        cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", 
-               "stream=codec_type", "-of", "json", video_file]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if "audio" in result.stdout:
-            has_audio = True
-            print(f"Video file has audio: {video_file}")
-        else:
+        probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "json", video_file]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        audio_info = json.loads(probe_result.stdout)
+        if not audio_info.get("streams"):
             print(f"WARNING: Video file does not have audio: {video_file}")
     except Exception as e:
-        print(f"Error checking audio in video file: {str(e)}")
+        print(f"Error checking audio streams: {str(e)}")
     
     # Update the file path in the database if it's different
     if capture.file_path != video_file:

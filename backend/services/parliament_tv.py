@@ -19,8 +19,17 @@ class ParliamentTVCapture:
         """Initialize the Parliament TV capture service."""
         # Use absolute paths for scripts directory
         self.scripts_dir = Path("/app/scripts")
-        self.temp_dir = Path(settings.TEMP_STORAGE_PATH)
-        self.media_dir = Path(settings.MEDIA_STORAGE_PATH) / "parliament_captures"
+        
+        # Set default paths if settings are not available
+        temp_path = settings.TEMP_STORAGE_PATH if hasattr(settings, 'TEMP_STORAGE_PATH') and settings.TEMP_STORAGE_PATH else "/app/data/temp"
+        media_path = settings.MEDIA_STORAGE_PATH if hasattr(settings, 'MEDIA_STORAGE_PATH') and settings.MEDIA_STORAGE_PATH else "/app/data/media"
+        
+        # Ensure paths are Path objects
+        self.temp_dir = Path(temp_path)
+        self.media_dir = Path(media_path) / "parliament_captures"
+        
+        logger.info(f"Using temp directory: {self.temp_dir}")
+        logger.info(f"Using media directory: {self.media_dir}")
         
         # Create directories if they don't exist
         self.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -127,9 +136,9 @@ class ParliamentTVCapture:
                 text=True
             )
             
-            # Process the output
-            stdout = result.stdout.decode('utf-8')
-            stderr = result.stderr.decode('utf-8')
+            # Process the output - no need to decode since text=True
+            stdout = result.stdout
+            stderr = result.stderr
             
             logger.info(f"Capture process completed with return code: {result.returncode}")
             logger.info(f"STDOUT: {stdout}")
