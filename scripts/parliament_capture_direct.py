@@ -294,13 +294,18 @@ def main():
     if args.output:
         output_file = args.output
     else:
-        # Include capture ID in the filename if provided
+        # ALWAYS include capture ID in the filename if provided
         if args.capture_id:
             output_file = f"data/temp/parliament_stream_{timestamp}_{args.capture_id}.mp4"
         else:
             output_file = f"data/temp/parliament_stream_{timestamp}.mp4"
     
     logger.info(f"Using output file: {output_file}")
+    logger.info(f"Capture ID: {args.capture_id if args.capture_id else 'None'}")
+    
+    # Make sure the output directory exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
     if not download_stream(direct_stream_url, output_file, args.duration):
         logger.error("Failed to download stream. Exiting.")
         return 1
@@ -308,15 +313,27 @@ def main():
     # Process the video with facial recognition
     final_output_file = args.output or f"data/media/parliament_captures/parliament_capture_{timestamp}_{capture_id}.mp4"
     
+    # Make sure the output directory exists
+    os.makedirs(os.path.dirname(final_output_file), exist_ok=True)
+    
     # Don't overwrite the input file - use a different output path
     processed_file = process_with_facial_recognition(output_file, final_output_file, args.duration)
     
     if not processed_file:
         logger.error("Failed to process with facial recognition. Exiting.")
         logger.info(f"However, the raw capture file is available at: {output_file}")
-        # Return the raw capture file path as output
-        print(f"Output file: {output_file}")
-        return 0
+        
+        # Check if the raw capture file exists and has content
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            # Return the raw capture file path as output
+            print(f"Output file: {output_file}")
+            # Also print in JSON format for easier parsing
+            print(json.dumps({"output_file": output_file, "success": True}))
+            return 0
+        else:
+            logger.error(f"Raw capture file does not exist or is empty: {output_file}")
+            print(json.dumps({"error": "Capture failed", "success": False}))
+            return 1
     
     logger.info("Parliament TV capture with facial recognition completed successfully.")
     logger.info(f"Output file: {processed_file}")

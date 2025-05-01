@@ -541,19 +541,42 @@ async def stream_parliament_tv_video(
             video_file_paths.append(capture.file_path)
             print(f"Found video file in database path: {capture.file_path}")
     
-    # 2. Try to find by parliament_stream pattern with capture ID
-    parliament_patterns = [
-        # First look for files with the exact capture ID
-        f"parliament_stream_*_{capture_id}.mp4",
-        f"parliament_capture_*_{capture_id}.mp4",
-        f"capture_*_{capture_id}.mp4",
-        # Then look for any parliament stream files (sorted by newest first)
-        f"parliament_stream_*.mp4",
-        f"parliament_capture_*.mp4",
-        # Last resort - any MP4 files
-        f"*_{capture_id}.mp4",
-        "*.mp4"
-    ]
+    # 2. Try to find by creation time - get files created around the time this capture was started
+    if not video_file_paths and capture.created_at:
+        # Get all mp4 files in the temp directory
+        all_mp4_files = glob.glob(os.path.join(DATA_DIR, "*.mp4"))
+        
+        # Sort files by modification time, newest first
+        sorted_files = sorted(all_mp4_files, key=os.path.getmtime, reverse=True)
+        
+        # Print the creation times for debugging
+        print(f"Capture created at: {capture.created_at}")
+        print(f"Looking for files created after the capture started")
+        
+        # Find files created after the capture started
+        capture_time = capture.created_at.timestamp()
+        for file_path in sorted_files:
+            file_time = os.path.getmtime(file_path)
+            # If file was created after the capture started and within 10 minutes
+            if file_time >= capture_time and file_time <= capture_time + 600:
+                print(f"Found file created after capture: {file_path}")
+                video_file_paths.append(file_path)
+                break
+    
+    # 3. Try to find by parliament_stream pattern with capture ID
+    if not video_file_paths:
+        parliament_patterns = [
+            # First look for files with the exact capture ID
+            f"parliament_stream_*_{capture_id}.mp4",
+            f"parliament_capture_*_{capture_id}.mp4",
+            f"capture_*_{capture_id}.mp4",
+            # Then look for any parliament stream files (sorted by newest first)
+            f"parliament_stream_*.mp4",
+            f"parliament_capture_*.mp4",
+            # Last resort - any MP4 files
+            f"*_{capture_id}.mp4",
+            "*.mp4"
+        ]
     
     for pattern in parliament_patterns:
         full_pattern = os.path.join(DATA_DIR, pattern)

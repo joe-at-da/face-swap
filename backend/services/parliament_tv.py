@@ -47,11 +47,16 @@ class ParliamentTVCapture:
         # Generate a timestamp for the output file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        # Set up file paths
+        # Set up file paths - ALWAYS include the capture_id in the filename
         temp_file = self.temp_dir / f"parliament_stream_{timestamp}_{capture_id}.mp4"
         output_file = self.media_dir / f"parliament_capture_{timestamp}_{capture_id}.mp4"
         log_file = self.temp_dir / f"parliament_capture_log_{timestamp}_{capture_id}.json"
         capture_script = self.scripts_dir / "parliament_capture_direct.py"
+        
+        # Log the file paths for debugging
+        logger.info(f"Temporary file path: {temp_file}")
+        logger.info(f"Output file path: {output_file}")
+        logger.info(f"Log file path: {log_file}")
         
         # Ensure the directories exist
         self.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -122,25 +127,60 @@ class ParliamentTVCapture:
                 text=True
             )
             
-            # Parse the JSON output
-            try:
-                output = json.loads(result.stdout)
-                
-                # Save the output to a log file
-                with open(log_file, 'w') as f:
-                    json.dump(output, f, indent=2)
-                
-                logger.info(f"Parliament TV capture completed successfully. Output file: {output.get('output_file')}")
-                return output
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse capture output as JSON: {e}")
-                logger.error(f"Output: {result.stdout}")
+            # Process the output
+            stdout = result.stdout.decode('utf-8')
+            stderr = result.stderr.decode('utf-8')
+            
+            logger.info(f"Capture process completed with return code: {result.returncode}")
+            logger.info(f"STDOUT: {stdout}")
+            
+            if result.returncode != 0:
+                logger.error(f"Capture process failed with return code: {result.returncode}")
+                logger.error(f"STDERR: {stderr}")
                 return {
                     "success": False,
-                    "error": "Failed to parse capture output",
-                    "stdout": result.stdout,
-                    "stderr": result.stderr
+                    "error": f"Capture process failed with return code: {result.returncode}",
+                    "stdout": stdout,
+                    "stderr": stderr
                 }
+            
+            # Try to parse JSON output from the script
+            output_file_path = None
+            json_data = None
+            
+            # Look for JSON in the output
+            for line in stdout.split('\n'):
+                if line.strip().startswith('{') and line.strip().endswith('}'): 
+                    try:
+                        json_data = json.loads(line.strip())
+                        logger.info(f"Found JSON output: {json_data}")
+                        if json_data.get('output_file'):
+                            output_file_path = json_data.get('output_file')
+                            break
+                    except json.JSONDecodeError:
+                        continue
+            
+            # If no JSON found, try the old method
+            if not output_file_path:
+                for line in stdout.split('\n'):
+                    if line.startswith('Output file:'):
+                        output_file_path = line.split('Output file:')[1].strip()
+                        break
+            
+            if not output_file_path:
+                logger.error("Could not find output file path in capture process output")
+                return {
+                    "success": False,
+                    "error": "Could not find output file path in capture process output",
+                    "stdout": stdout,
+                    "stderr": stderr
+                }
+            
+            logger.info(f"Parliament TV capture completed successfully. Output file: {output_file_path}")
+            return {
+                "success": True,
+                "output_file": output_file_path
+            }
         except subprocess.CalledProcessError as e:
             logger.error(f"Capture process failed with exit code {e.returncode}")
             logger.error(f"STDOUT: {e.stdout}")

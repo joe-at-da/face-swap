@@ -115,35 +115,89 @@ def delete_video(video_id):
     for file in deleted_files:
         print(f"  - {file}")
 
-def cleanup_temp_files():
-    """Clean up temporary files"""
+def cleanup_temp_files(keep_recent=5, days_old=1):
+    """Clean up temporary files
+    
+    Args:
+        keep_recent: Number of most recent files to keep for each pattern
+        days_old: Delete files older than this many days
+    """
     # Define patterns for temporary files
     temp_patterns = [
         "test_stream_*.mp4",
-        "stream_info_*.json"
+        "stream_info_*.json",
+        "sample_video_*.mp4",
+        "parliament_stream_*.mp4"  # Add parliament stream files
     ]
+    
+    # Calculate cutoff time (files older than this will be deleted)
+    cutoff_time = datetime.now().timestamp() - (days_old * 24 * 60 * 60)
     
     total_count = 0
     total_size = 0
     
-    print("Cleaning up temporary files...")
+    print(f"Cleaning up temporary files (keeping {keep_recent} most recent, deleting older than {days_old} days)...")
     
     for pattern in temp_patterns:
         files = glob.glob(os.path.join(DATA_DIR, pattern))
-        if files:
-            pattern_size = sum(os.path.getsize(f) for f in files)
-            print(f"Found {len(files)} files matching '{pattern}' ({format_size(pattern_size)})")
+        if not files:
+            continue
             
-            total_count += len(files)
-            total_size += pattern_size
-            
-            # Delete files
-            for file in files:
+        # Sort files by modification time (newest first)
+        files.sort(key=os.path.getmtime, reverse=True)
+        
+        # Keep the most recent files
+        files_to_keep = files[:keep_recent]
+        files_to_check = files[keep_recent:]
+        
+        pattern_size = 0
+        pattern_count = 0
+        
+        # Check older files against the cutoff time
+        for file in files_to_check:
+            # Skip if file is associated with an active capture
+            if "_capture_" in file and is_active_capture_file(file):
+                print(f"  - Keeping active capture file: {os.path.basename(file)}")
+                continue
+                
+            # Check if file is older than cutoff
+            mtime = os.path.getmtime(file)
+            if mtime < cutoff_time:
                 try:
+                    file_size = os.path.getsize(file)
                     os.remove(file)
-                    print(f"  - Deleted: {os.path.basename(file)}")
+                    pattern_size += file_size
+                    pattern_count += 1
+                    print(f"  - Deleted: {os.path.basename(file)} ({format_size(file_size)})")
                 except Exception as e:
                     print(f"  - Error deleting {os.path.basename(file)}: {str(e)}")
+        
+        if pattern_count > 0:
+            print(f"Deleted {pattern_count} files matching '{pattern}' ({format_size(pattern_size)})")
+            total_count += pattern_count
+            total_size += pattern_size
+
+def is_active_capture_file(file_path):
+    """Check if a file is associated with an active capture"""
+    # This is a simplified check - in production you might want to query the database
+    # Extract capture ID from filename if possible
+    filename = os.path.basename(file_path)
+    parts = filename.split('_')
+    
+    # If the filename has a capture ID at the end (before .mp4)
+    if len(parts) > 1:
+        try:
+            # Try to extract capture ID from the last part (removing .mp4)
+            possible_id = parts[-1].split('.')[0]
+            if possible_id.isdigit():
+                # Here you could check if this ID is an active capture in the database
+                # For now, we'll just assume it's not active if it's older than 1 hour
+                file_age = datetime.now().timestamp() - os.path.getmtime(file_path)
+                return file_age < 3600  # 1 hour in seconds
+        except (IndexError, ValueError):
+            pass
+    
+    return False
     
     print(f"Cleanup complete. Deleted {total_count} files, freed up {format_size(total_size)}.")
 
