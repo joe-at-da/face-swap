@@ -36,8 +36,19 @@ logger = logging.getLogger('parliament_capture_direct')
 def create_directories():
     """Create necessary directories for storing temporary and output files."""
     # Use environment variables if available, otherwise use default paths
-    temp_dir = os.environ.get('TEMP_STORAGE_PATH', '/app/data/temp')
-    media_base = os.environ.get('MEDIA_STORAGE_PATH', '/app/data/media')
+    temp_dir = os.environ.get('TEMP_STORAGE_PATH')
+    media_base = os.environ.get('MEDIA_STORAGE_PATH')
+    
+    # Set default paths if environment variables are not set or empty
+    if not temp_dir:
+        temp_dir = '/app/data/temp'
+        logger.warning(f"TEMP_STORAGE_PATH not set, using default: {temp_dir}")
+    
+    if not media_base:
+        media_base = '/app/data/media'
+        logger.warning(f"MEDIA_STORAGE_PATH not set, using default: {media_base}")
+    
+    # Create media directory for parliament captures
     media_dir = os.path.join(media_base, 'parliament_captures')
     
     # Ensure paths are absolute
@@ -48,9 +59,26 @@ def create_directories():
     logger.info(f"Using media directory: {media_dir}")
     
     # Create directories if they don't exist
-    os.makedirs(temp_dir, exist_ok=True)
-    os.makedirs(media_dir, exist_ok=True)
-    logger.info(f"Created necessary directories: {temp_dir}, {media_dir}")
+    try:
+        os.makedirs(temp_dir, exist_ok=True)
+        logger.info(f"Created/verified temp directory: {temp_dir}")
+    except Exception as e:
+        logger.error(f"Failed to create temp directory {temp_dir}: {str(e)}")
+        # Fallback to a directory we know should work
+        temp_dir = '/tmp'
+        os.makedirs(temp_dir, exist_ok=True)
+        logger.warning(f"Using fallback temp directory: {temp_dir}")
+    
+    try:
+        os.makedirs(media_dir, exist_ok=True)
+        logger.info(f"Created/verified media directory: {media_dir}")
+    except Exception as e:
+        logger.error(f"Failed to create media directory {media_dir}: {str(e)}")
+        # Fallback to temp directory if media directory creation fails
+        media_dir = temp_dir
+        logger.warning(f"Using fallback media directory: {media_dir}")
+    
+    logger.info(f"Final directories - temp: {temp_dir}, media: {media_dir}")
     
     return temp_dir, media_dir
 
@@ -126,119 +154,119 @@ def extract_stream_url(url, output_file=None):
         return None
 
 def download_stream(stream_url, output_file, duration=None):
-    """Download the stream using ffmpeg."""
-    if not stream_url:
-        logger.error("No stream URL provided for download")
-        return False
+    """Download a stream using ffmpeg."""
+    logger.info(f"Downloading stream: {stream_url}")
+    logger.info(f"Output file: {output_file}")
+    logger.info(f"Duration: {duration} seconds")
     
-    # Ensure output_file is a string and not None
-    if output_file is None:
-        logger.error("No output file path provided")
+    # Validate inputs
+    if not stream_url:
+        logger.error("Stream URL is empty")
+        return False
+        
+    if not output_file:
+        logger.error("Output file path is empty")
         return False
     
     # Convert to string if it's a Path object
     output_file = str(output_file)
     
-    # Make sure the output directory exists
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
-    logger.info(f"Downloading stream from {stream_url} to {output_file}")
-    logger.info(f"Output file absolute path: {os.path.abspath(output_file)}")
-    logger.info(f"Output directory exists: {os.path.exists(os.path.dirname(output_file))}")
-    
-    if duration:
-        logger.info(f"Duration limit: {duration} seconds")
-    
-    # Use ffmpeg to download the stream
+    # Ensure output directory exists
     try:
-        # First, probe the stream to check for audio
-        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", stream_url]
-        logger.info(f"Probing stream: {' '.join(probe_cmd)}")
-        probe_result = subprocess.run(probe_cmd, check=True, capture_output=True, text=True)
+        output_dir = os.path.dirname(output_file)
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Ensured output directory exists: {output_dir}")
+    except Exception as e:
+        logger.error(f"Failed to create output directory: {str(e)}")
+        return False
+    
+    # Check if the stream has audio
+    has_audio = False
+    try:
+        logger.info("Checking if stream has audio...")
+        cmd = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", stream_url]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
-        # Parse the probe result
-        has_audio = False
-        try:
-            probe_data = json.loads(probe_result.stdout)
-            streams = probe_data.get('streams', [])
-            for stream in streams:
-                if stream.get('codec_type') == 'audio':
-                    has_audio = True
-                    break
-            
-            if not has_audio:
-                logger.warning("No audio stream detected in the source! This may affect transcription.")
-                logger.info("Attempting to download with audio anyway...")
-        except json.JSONDecodeError:
-            logger.warning("Could not parse ffprobe output, continuing with download")
+        # Parse the output to check for audio streams
+        streams_data = json.loads(result.stdout)
+        streams = streams_data.get('streams', [])
         
-        # Download the stream with explicit audio mapping
-        # Force audio capture even if source doesn't have it
-        cmd = [
-            "ffmpeg", "-y", "-i", stream_url, 
-            "-c:v", "copy", 
-            "-c:a", "aac", 
-            "-ac", "2", 
-            "-ar", "44100", 
-            "-strict", "experimental"
-        ]
-        
-        if duration:
-            cmd.extend(["-t", str(duration)])
-        
-        # Add output file to the command
-        cmd.append(output_file)
-        
-        logger.info(f"Running command: {' '.join(cmd)}")
+        for stream in streams:
+            if stream.get('codec_type') == 'audio':
+                has_audio = True
+                break
+                
+        logger.info(f"Stream has audio: {has_audio}")
+    except Exception as e:
+        logger.warning(f"Error checking if stream has audio: {str(e)}")
+        # Assume it might have audio
+        has_audio = True
+        logger.info("Assuming stream has audio due to error checking")
+    
+    # Build the ffmpeg command
+    cmd = ["ffmpeg", "-y", "-i", stream_url, "-c:v", "copy"]
+    
+    # Always include audio options to ensure we capture audio if it's available
+    cmd.extend(["-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"])
+    
+    # Add duration if specified
+    if duration:
+        cmd.extend(["-t", str(duration)])
+    
+    # Add output file
+    cmd.append(output_file)
+    
+    logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
+    
+    try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        logger.info("Stream download completed successfully")
         
-        # Check if the output file was actually created
-        if not os.path.exists(output_file):
-            logger.error(f"Output file was not created at {output_file}")
-            return False
-        
-        # Check if the output file has content
-        file_size = os.path.getsize(output_file)
-        logger.info(f"Output file size: {file_size} bytes")
-        if file_size == 0:
-            logger.error("Output file is empty!")
-            return False
-        
-        # Verify the output has audio
-        verify_cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", output_file]
-        verify_result = subprocess.run(verify_cmd, check=True, capture_output=True, text=True)
-        
-        try:
-            verify_data = json.loads(verify_result.stdout)
-            output_has_audio = False
-            for stream in verify_data.get('streams', []):
-                if stream.get('codec_type') == 'audio':
-                    output_has_audio = True
-                    break
-            
-            if not output_has_audio:
-                logger.warning("Output file does not have an audio stream!")
-                # If we still don't have audio, try one more approach with re-encoding
-                logger.info("Attempting to re-encode with synthetic audio")
-                # Create silent audio and merge with video
-                silent_cmd = [
-                    "ffmpeg", "-i", output_file, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
-                    "-c:v", "copy", "-c:a", "aac", "-shortest", "-y", f"{output_file}.with_audio.mp4"
-                ]
-                subprocess.run(silent_cmd, check=True, capture_output=True, text=True)
-                # Replace original file
-                os.rename(f"{output_file}.with_audio.mp4", output_file)
-        except json.JSONDecodeError:
-            logger.warning("Could not verify audio in output file")
-        
-        # Final verification that the file exists and has content
+        # Verify the output file exists and has content
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            logger.info(f"Download completed successfully. File saved at: {output_file}")
-            # Print the output file path for easier parsing by other scripts
-            print(f"Output file: {output_file}")
-            return True
+            logger.info(f"Output file created successfully: {output_file} ({os.path.getsize(output_file)} bytes)")
+            
+            # Verify the output has audio
+            try:
+                verify_cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", output_file]
+                verify_result = subprocess.run(verify_cmd, check=True, capture_output=True, text=True)
+                
+                verify_data = json.loads(verify_result.stdout)
+                output_has_audio = False
+                for stream in verify_data.get('streams', []):
+                    if stream.get('codec_type') == 'audio':
+                        output_has_audio = True
+                        break
+                        
+                if not output_has_audio and has_audio:
+                    logger.warning("Stream had audio but output file does not have audio!")
+                    logger.warning("Attempting to add silent audio track...")
+                    
+                    # Create silent audio and merge with video
+                    silent_cmd = [
+                        "ffmpeg", "-i", output_file, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
+                        "-c:v", "copy", "-c:a", "aac", "-shortest", "-y", f"{output_file}.with_audio.mp4"
+                    ]
+                    subprocess.run(silent_cmd, check=True, capture_output=True, text=True)
+                    # Replace original file
+                    os.rename(f"{output_file}.with_audio.mp4", output_file)
+                    logger.info("Added silent audio track to the output file")
+                else:
+                    logger.info(f"Output file has audio: {output_has_audio}")
+            except Exception as e:
+                logger.warning(f"Error verifying audio in output file: {str(e)}")
+            
+            # Final verification that the file exists and has content
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                logger.info(f"Download completed successfully. File saved at: {output_file}")
+                # Print the output file path for easier parsing by other scripts
+                print(f"Output file: {output_file}")
+                return True
+            else:
+                logger.error(f"Final verification failed: File does not exist or is empty at {output_file}")
+                return False
         else:
-            logger.error(f"Final verification failed: File does not exist or is empty at {output_file}")
+            logger.error(f"Output file does not exist or is empty: {output_file}")
             return False
     except subprocess.CalledProcessError as e:
         logger.error(f"Error downloading stream: {e}")
@@ -282,10 +310,37 @@ def process_with_facial_recognition(video_file, output_file=None, duration=None)
 def main():
     parser = argparse.ArgumentParser(description='Parliament TV Direct Capture with Facial Recognition')
     parser.add_argument('url', help='Parliament TV event URL or direct stream URL')
-    parser.add_argument('--duration', '-d', type=int, help='Maximum duration to capture in seconds')
+    parser.add_argument('--duration', '-d', type=int, default=1800, help='Maximum duration to capture in seconds (default: 1800)')
     parser.add_argument('--output', '-o', help='Output file path')
     parser.add_argument('--capture-id', help='Capture ID for file naming')
-    args = parser.parse_args()
+    
+    try:
+        args = parser.parse_args()
+        
+        # Validate URL
+        if not args.url:
+            logger.error("URL cannot be empty")
+            print(json.dumps({"error": "URL cannot be empty", "success": False}))
+            return 1
+            
+        # Validate duration
+        if args.duration is not None and args.duration <= 0:
+            logger.warning(f"Invalid duration: {args.duration}, using default of 1800 seconds")
+            args.duration = 1800
+            
+        # Validate capture ID
+        if args.capture_id and not str(args.capture_id).isdigit():
+            logger.warning(f"Capture ID should be numeric, got: {args.capture_id}")
+            # We'll still use it, but log a warning
+            
+        logger.info(f"Starting capture with URL: {args.url}")
+        logger.info(f"Duration: {args.duration} seconds")
+        logger.info(f"Capture ID: {args.capture_id if args.capture_id else 'None'}")
+        logger.info(f"Output path: {args.output if args.output else 'Not specified, will use default'}")        
+    except Exception as e:
+        logger.error(f"Error parsing command-line arguments: {str(e)}")
+        print(json.dumps({"error": f"Error parsing command-line arguments: {str(e)}", "success": False}))
+        return 1
     
     # Check for required tools
     if not check_command_exists("ffmpeg"):
@@ -330,45 +385,92 @@ def main():
     logger.info(f"Direct stream URL: {direct_stream_url}")
     
     # Download the stream with capture ID in the filename
-    if args.output:
-        output_file = args.output
-    else:
-        # ALWAYS include capture ID in the filename if provided
-        if args.capture_id:
-            output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}_{args.capture_id}.mp4")
+    try:
+        if args.output:
+            # Use the provided output path
+            output_file = args.output
+            logger.info(f"Using provided output file path: {output_file}")
         else:
-            output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}.mp4")
-    
-    logger.info(f"Using output file: {output_file}")
-    logger.info(f"Capture ID: {args.capture_id if args.capture_id else 'None'}")
-    
-    # Ensure the output file path is absolute
-    output_file = os.path.abspath(output_file)
-    
-    # Log the absolute path for debugging
-    logger.info(f"Using absolute output path: {output_file}")
-    
-    # Make sure the output directory exists
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            # Generate a filename with the capture ID if available
+            safe_capture_id = str(args.capture_id) if args.capture_id else 'unknown'
+            output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}_{safe_capture_id}.mp4")
+            logger.info(f"Generated output file path: {output_file}")
+        
+        # Ensure the output file path is absolute
+        output_file = os.path.abspath(output_file)
+        logger.info(f"Absolute output path: {output_file}")
+        
+        # Validate the output file path
+        if not output_file.endswith('.mp4'):
+            logger.warning(f"Output file does not have .mp4 extension: {output_file}")
+            output_file = f"{output_file}.mp4"
+            logger.info(f"Added .mp4 extension: {output_file}")
+        
+        # Make sure the output directory exists
+        output_dir = os.path.dirname(output_file)
+        logger.info(f"Creating output directory if needed: {output_dir}")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Double-check that the directory was created
+        if not os.path.exists(output_dir):
+            logger.error(f"Failed to create output directory: {output_dir}")
+            # Fallback to temp directory
+            output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}_{safe_capture_id}.mp4")
+            logger.warning(f"Using fallback output file path: {output_file}")
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    except Exception as e:
+        logger.error(f"Error setting up output file path: {str(e)}")
+        # Fallback to a safe path
+        safe_capture_id = str(args.capture_id) if args.capture_id else 'unknown'
+        output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}_{safe_capture_id}.mp4")
+        logger.warning(f"Using fallback output file path due to error: {output_file}")
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
     if not download_stream(direct_stream_url, output_file, args.duration):
         logger.error("Failed to download stream. Exiting.")
         return 1
     
     # Process the video with facial recognition - ALWAYS include capture ID in the filename
-    if args.output:
-        final_output_file = args.output
-    else:
-        # Make sure we're using the capture ID in the filename
-        if args.capture_id:
-            final_output_file = os.path.join(media_dir, f"parliament_capture_{timestamp}_{args.capture_id}.mp4")
+    try:
+        if args.output:
+            # Use the provided output path for the final file as well
+            final_output_file = args.output
+            logger.info(f"Using provided output file path for final output: {final_output_file}")
         else:
-            final_output_file = os.path.join(media_dir, f"parliament_capture_{timestamp}.mp4")
-            
-    logger.info(f"Final output file: {final_output_file}")
-    
-    # Make sure the output directory exists
-    os.makedirs(os.path.dirname(final_output_file), exist_ok=True)
+            # Generate a filename with the capture ID if available
+            safe_capture_id = str(args.capture_id) if args.capture_id else 'unknown'
+            final_output_file = os.path.join(media_dir, f"parliament_capture_{timestamp}_{safe_capture_id}.mp4")
+            logger.info(f"Generated final output file path: {final_output_file}")
+        
+        # Ensure the final output file path is absolute
+        final_output_file = os.path.abspath(final_output_file)
+        logger.info(f"Absolute final output path: {final_output_file}")
+        
+        # Validate the output file path
+        if not final_output_file.endswith('.mp4'):
+            logger.warning(f"Final output file does not have .mp4 extension: {final_output_file}")
+            final_output_file = f"{final_output_file}.mp4"
+            logger.info(f"Added .mp4 extension to final output: {final_output_file}")
+        
+        # Make sure the output directory exists
+        final_output_dir = os.path.dirname(final_output_file)
+        logger.info(f"Creating final output directory if needed: {final_output_dir}")
+        os.makedirs(final_output_dir, exist_ok=True)
+        
+        # Double-check that the directory was created
+        if not os.path.exists(final_output_dir):
+            logger.error(f"Failed to create final output directory: {final_output_dir}")
+            # Fallback to temp directory
+            final_output_file = os.path.join(temp_dir, f"parliament_capture_{timestamp}_{safe_capture_id}.mp4")
+            logger.warning(f"Using fallback final output file path: {final_output_file}")
+            os.makedirs(os.path.dirname(final_output_file), exist_ok=True)
+    except Exception as e:
+        logger.error(f"Error setting up final output file path: {str(e)}")
+        # Fallback to a safe path
+        safe_capture_id = str(args.capture_id) if args.capture_id else 'unknown'
+        final_output_file = os.path.join(temp_dir, f"parliament_capture_{timestamp}_{safe_capture_id}.mp4")
+        logger.warning(f"Using fallback final output file path due to error: {final_output_file}")
+        os.makedirs(os.path.dirname(final_output_file), exist_ok=True)
     
     # Don't overwrite the input file - use a different output path
     processed_file = process_with_facial_recognition(output_file, final_output_file, args.duration)
