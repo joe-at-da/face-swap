@@ -35,9 +35,15 @@ logger = logging.getLogger('parliament_capture_direct')
 
 def create_directories():
     """Create necessary directories for storing temporary and output files."""
-    os.makedirs("data/temp", exist_ok=True)
-    os.makedirs("data/media/parliament_captures", exist_ok=True)
-    logger.info("Created necessary directories.")
+    # Use absolute paths for directories
+    temp_dir = os.path.join('/app/data/temp')
+    media_dir = os.path.join('/app/data/media/parliament_captures')
+    
+    os.makedirs(temp_dir, exist_ok=True)
+    os.makedirs(media_dir, exist_ok=True)
+    logger.info(f"Created necessary directories: {temp_dir}, {media_dir}")
+    
+    return temp_dir, media_dir
 
 def check_command_exists(command):
     """Check if a command exists in the system PATH."""
@@ -256,7 +262,7 @@ def main():
         return 1
     
     # Create necessary directories
-    create_directories()
+    temp_dir, media_dir = create_directories()
     
     # Generate timestamp for filenames
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -264,12 +270,15 @@ def main():
     
     # Check if the URL is already a direct stream URL
     direct_stream_url = None
+    stream_info = {}
+    time_marker = None
+    
     if args.url.endswith('.m3u8'):
         logger.info("Input appears to be a direct stream URL")
         direct_stream_url = args.url
     else:
         # Extract the direct stream URL
-        stream_info_file = f"data/temp/stream_info_{timestamp}.json"
+        stream_info_file = os.path.join(temp_dir, f"stream_info_{timestamp}.json")
         stream_info = extract_stream_url(args.url, stream_info_file)
         
         if not stream_info:
@@ -281,14 +290,13 @@ def main():
         if not direct_stream_url:
             logger.error("No direct stream URL found in stream info.")
             return 1
+        
+        # Get time marker if available
+        if 'time_marker' in stream_info and 'seconds' in stream_info['time_marker']:
+            time_marker = stream_info['time_marker']['seconds']
+            logger.info(f"Time marker: {time_marker} seconds")
     
     logger.info(f"Direct stream URL: {direct_stream_url}")
-    
-    # Get time marker if available
-    time_marker = None
-    if 'time_marker' in stream_info and 'seconds' in stream_info['time_marker']:
-        time_marker = stream_info['time_marker']['seconds']
-        logger.info(f"Time marker: {time_marker} seconds")
     
     # Download the stream with capture ID in the filename
     if args.output:
@@ -296,9 +304,9 @@ def main():
     else:
         # ALWAYS include capture ID in the filename if provided
         if args.capture_id:
-            output_file = f"data/temp/parliament_stream_{timestamp}_{args.capture_id}.mp4"
+            output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}_{args.capture_id}.mp4")
         else:
-            output_file = f"data/temp/parliament_stream_{timestamp}.mp4"
+            output_file = os.path.join(temp_dir, f"parliament_stream_{timestamp}.mp4")
     
     logger.info(f"Using output file: {output_file}")
     logger.info(f"Capture ID: {args.capture_id if args.capture_id else 'None'}")
@@ -311,7 +319,7 @@ def main():
         return 1
     
     # Process the video with facial recognition
-    final_output_file = args.output or f"data/media/parliament_captures/parliament_capture_{timestamp}_{capture_id}.mp4"
+    final_output_file = args.output or os.path.join(media_dir, f"parliament_capture_{timestamp}_{capture_id}.mp4")
     
     # Make sure the output directory exists
     os.makedirs(os.path.dirname(final_output_file), exist_ok=True)

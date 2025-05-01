@@ -564,19 +564,18 @@ async def stream_parliament_tv_video(
                 break
     
     # 3. Try to find by parliament_stream pattern with capture ID
-    if not video_file_paths:
-        parliament_patterns = [
-            # First look for files with the exact capture ID
-            f"parliament_stream_*_{capture_id}.mp4",
-            f"parliament_capture_*_{capture_id}.mp4",
-            f"capture_*_{capture_id}.mp4",
-            # Then look for any parliament stream files (sorted by newest first)
-            f"parliament_stream_*.mp4",
-            f"parliament_capture_*.mp4",
-            # Last resort - any MP4 files
-            f"*_{capture_id}.mp4",
-            "*.mp4"
-        ]
+    parliament_patterns = [
+        # First look for files with the exact capture ID
+        f"parliament_stream_*_{capture_id}.mp4",
+        f"parliament_capture_*_{capture_id}.mp4",
+        f"capture_*_{capture_id}.mp4",
+        # Then look for any parliament stream files (sorted by newest first)
+        f"parliament_stream_*.mp4",
+        f"parliament_capture_*.mp4",
+        # Last resort - any MP4 files
+        f"*_{capture_id}.mp4",
+        "*.mp4"
+    ]
     
     for pattern in parliament_patterns:
         full_pattern = os.path.join(DATA_DIR, pattern)
