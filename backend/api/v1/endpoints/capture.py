@@ -383,12 +383,152 @@ async def get_capture_logs(
             detail=f"Capture session with ID {capture_id} not found"
         )
     
-    # Return a dictionary with an empty logs array
-    # The frontend expects an array of logs
+    # Get logs from various sources
+    logs = []
+    
+    # 1. Add logs from capture metadata if available
+    if capture.metadata and isinstance(capture.metadata, dict):
+        for key, value in capture.metadata.items():
+            if key not in ['parliament_tv_url', 'duration', 'enable_facial_recognition']:
+                timestamp = datetime.now().isoformat()
+                if key == 'capture_completed_at' and isinstance(value, str):
+                    timestamp = value
+                elif key == 'capture_started_at' and isinstance(value, str):
+                    timestamp = value
+                
+                logs.append({
+                    "timestamp": timestamp,
+                    "level": "INFO",
+                    "message": f"{key}: {value}"
+                })
+    
+    # 2. Check for log files in the data directory
+    data_dir = os.environ.get('DATA_DIR', '/app/data/temp')
+    log_patterns = [
+        f"parliament_capture_*_{capture_id}.log",
+        f"parliament_capture_log_*_{capture_id}.json",
+        f"capture_{capture_id}_*.log"
+    ]
+    
+    for pattern in log_patterns:
+        matching_files = glob.glob(os.path.join(data_dir, pattern))
+        for log_file in matching_files:
+            try:
+                with open(log_file, 'r') as f:
+                    file_logs = f.readlines()
+                    for line in file_logs:
+                        line = line.strip()
+                        if line:
+                            # Try to parse log line
+                            timestamp = datetime.now().isoformat()
+                            level = "INFO"
+                            message = line
+                            
+                            # Try to extract timestamp and level
+                            parts = line.split(' - ', 2)
+                            if len(parts) >= 3:
+                                try:
+                                    timestamp_str = parts[0]
+                                    timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S,%f').isoformat()
+                                    level = parts[1].upper()
+                                    message = parts[2]
+                                except:
+                                    pass
+                            
+                            logs.append({
+                                "timestamp": timestamp,
+                                "level": level,
+                                "message": message
+                            })
+            except Exception as e:
+                print(f"Error reading log file {log_file}: {str(e)}")
+    
+    # 3. Add system logs for this capture
+    system_logs = [
+        {
+            "timestamp": capture.created_at.isoformat() if capture.created_at else datetime.now().isoformat(),
+            "level": "INFO",
+            "message": f"Capture session created with ID {capture.id}"
+        }
+    ]
+    
+    if capture.status == "active":
+        system_logs.append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "INFO",
+            "message": f"Capture is currently active"
+        })
+    elif capture.status == "completed":
+        system_logs.append({
+            "timestamp": capture.updated_at.isoformat() if capture.updated_at else datetime.now().isoformat(),
+            "level": "INFO",
+            "message": f"Capture completed"
+        })
+    
+    if capture.file_path:
+        system_logs.append({
+            "timestamp": capture.updated_at.isoformat() if capture.updated_at else datetime.now().isoformat(),
+            "level": "INFO",
+            "message": f"Video saved to {capture.file_path}"
+        })
+        
+        # Check if the file exists and has audio
+        if os.path.exists(capture.file_path):
+            try:
+                # Use ffprobe to check for audio streams
+                probe_cmd = [
+                    "ffprobe", "-v", "error", "-show_entries", 
+                    "stream=codec_type", "-of", "json", capture.file_path
+                ]
+                probe_result = subprocess.run(
+                    probe_cmd, 
+                    capture_output=True, 
+                    text=True
+                )
+                
+                if probe_result.returncode == 0:
+                    # Parse the probe result
+                    import json
+                    probe_data = json.loads(probe_result.stdout)
+                    streams = probe_data.get('streams', [])
+                    has_audio = False
+                    has_video = False
+                    
+                    for stream in streams:
+                        if stream.get('codec_type') == 'audio':
+                            has_audio = True
+                        elif stream.get('codec_type') == 'video':
+                            has_video = True
+                    
+                    system_logs.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "level": "INFO" if has_audio else "WARNING",
+                        "message": f"Video file has {'audio and video' if has_audio and has_video else 'video only' if has_video else 'audio only' if has_audio else 'no audio or video'} streams"
+                    })
+            except Exception as e:
+                system_logs.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "level": "ERROR",
+                    "message": f"Error checking video file: {str(e)}"
+                })
+    
+    # Add system logs to the logs list
+    logs.extend(system_logs)
+    
+    # Sort logs by timestamp (newest first)
+    logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    # Paginate logs
+    total_logs = len(logs)
+    total_pages = (total_logs + per_page - 1) // per_page if total_logs > 0 else 1
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    paginated_logs = logs[start_idx:end_idx] if start_idx < total_logs else []
+    
     return {
-        "logs": [],
-        "total": 0,
+        "logs": paginated_logs,
+        "total": total_logs,
         "page": page,
         "per_page": per_page,
-        "total_pages": 0
+        "total_pages": total_pages
     }
