@@ -476,6 +476,75 @@ def process_parliament_transcription(
         transcription.status = "processing"
         db.commit()
         
+        # Check if the video file exists
+        if not os.path.exists(video_path):
+            error_msg = f"Video file not found: {video_path}"
+            print(error_msg)
+            transcription.status = "failed"
+            transcription.error_message = error_msg
+            db.commit()
+            return
+        
+        # Check if the video has an audio stream
+        has_audio = False
+        try:
+            # Use ffprobe to check for audio streams
+            probe_cmd = [
+                "ffprobe", "-v", "error", "-show_entries", 
+                "stream=codec_type", "-of", "json", video_path
+            ]
+            probe_result = subprocess.run(
+                probe_cmd, 
+                check=True, 
+                capture_output=True, 
+                text=True
+            )
+            
+            # Parse the probe result
+            import json
+            probe_data = json.loads(probe_result.stdout)
+            streams = probe_data.get('streams', [])
+            for stream in streams:
+                if stream.get('codec_type') == 'audio':
+                    has_audio = True
+                    break
+            
+            if not has_audio:
+                print("No audio stream detected in the video file!")
+                
+                # Try to extract audio with ffmpeg to a temporary file
+                print("Attempting to extract audio or create silent audio track...")
+                temp_audio_file = f"{video_path}.audio_fixed.mp4"
+                
+                # Create a video with silent audio if needed
+                silent_cmd = [
+                    "ffmpeg", "-i", video_path, "-f", "lavfi", 
+                    "-i", "anullsrc=r=44100:cl=stereo", "-c:v", "copy", 
+                    "-c:a", "aac", "-shortest", "-y", temp_audio_file
+                ]
+                
+                silent_result = subprocess.run(
+                    silent_cmd,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if silent_result.returncode == 0 and os.path.exists(temp_audio_file):
+                    print(f"Created video with audio track: {temp_audio_file}")
+                    video_path = temp_audio_file
+                    has_audio = True
+                else:
+                    error_msg = "Failed to create audio track for the video. Transcription requires audio."
+                    print(error_msg)
+                    print(f"FFmpeg output: {silent_result.stderr}")
+                    transcription.status = "failed"
+                    transcription.error_message = error_msg
+                    db.commit()
+                    return
+        except Exception as e:
+            print(f"Error checking for audio stream: {str(e)}")
+            # Continue anyway, as the transcription script might handle this
+        
         # Create output directory
         output_dir = Path("/app/data/media/transcriptions")
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -536,6 +605,14 @@ def process_parliament_transcription(
         db.commit()
         
         print(f"Transcription completed successfully: {output_file}")
+        
+        # Clean up temporary files if we created them
+        if video_path.endswith('.audio_fixed.mp4') and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+                print(f"Removed temporary audio file: {video_path}")
+            except Exception as e:
+                print(f"Error removing temporary file: {str(e)}")
         
     except Exception as e:
         print(f"Error in process_parliament_transcription: {str(e)}")

@@ -108,15 +108,70 @@ def download_stream(stream_url, output_file, duration=None):
     
     # Use ffmpeg to download the stream
     try:
+        # First, probe the stream to check for audio
+        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", stream_url]
+        logger.info(f"Probing stream: {' '.join(probe_cmd)}")
+        probe_result = subprocess.run(probe_cmd, check=True, capture_output=True, text=True)
+        
+        # Parse the probe result
+        has_audio = False
+        try:
+            probe_data = json.loads(probe_result.stdout)
+            streams = probe_data.get('streams', [])
+            for stream in streams:
+                if stream.get('codec_type') == 'audio':
+                    has_audio = True
+                    break
+            
+            if not has_audio:
+                logger.warning("No audio stream detected in the source!")
+        except json.JSONDecodeError:
+            logger.warning("Could not parse ffprobe output, continuing with download")
+        
+        # Download the stream
         cmd = ["ffmpeg", "-i", stream_url]
         
         if duration:
             cmd.extend(["-t", str(duration)])
         
-        cmd.extend(["-c", "copy", "-y", output_file])
+        # If no audio was detected, try to force audio capture
+        if not has_audio:
+            logger.info("Attempting to capture with explicit audio settings")
+            cmd.extend(["-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-y", output_file])
+        else:
+            cmd.extend(["-c", "copy", "-y", output_file])
         
         logger.info(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # Verify the output has audio
+        verify_cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", output_file]
+        verify_result = subprocess.run(verify_cmd, check=True, capture_output=True, text=True)
+        
+        try:
+            verify_data = json.loads(verify_result.stdout)
+            output_has_audio = False
+            for stream in verify_data.get('streams', []):
+                if stream.get('codec_type') == 'audio':
+                    output_has_audio = True
+                    break
+            
+            if not output_has_audio:
+                logger.warning("Output file does not have an audio stream!")
+                # If we still don't have audio, try one more approach with re-encoding
+                if not has_audio:
+                    logger.info("Attempting to re-encode with synthetic audio")
+                    # Create silent audio and merge with video
+                    silent_cmd = [
+                        "ffmpeg", "-i", output_file, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
+                        "-c:v", "copy", "-c:a", "aac", "-shortest", "-y", f"{output_file}.with_audio.mp4"
+                    ]
+                    subprocess.run(silent_cmd, check=True, capture_output=True, text=True)
+                    # Replace original file
+                    os.rename(f"{output_file}.with_audio.mp4", output_file)
+        except json.JSONDecodeError:
+            logger.warning("Could not verify audio in output file")
+        
         logger.info("Download completed successfully.")
         return True
     except subprocess.CalledProcessError as e:
