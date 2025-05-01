@@ -256,16 +256,42 @@ const CaptureDetailPage: React.FC = () => {
     
     // Check if source URL is from Parliament TV
     if (capture.source_url && capture.source_url.includes('parliamentlive.tv')) {
+      console.log('Parliament TV capture detected via source_url:', capture.source_url);
       return true;
     }
     
     // Check metadata for Parliament TV specific fields
     if (capture.metadata && typeof capture.metadata === 'object') {
       const metadata = capture.metadata as Record<string, any>;
-      return !!metadata.parliament_tv_url;
+      const isParlTV = !!metadata.parliament_tv_url;
+      if (isParlTV) {
+        console.log('Parliament TV capture detected via metadata:', metadata.parliament_tv_url);
+      }
+      return isParlTV;
     }
     
     return false;
+  };
+  
+  // Get video source URL based on capture type
+  const getVideoSourceUrl = (capture: CaptureSession): string => {
+    if (!capture) return '';
+    
+    // For Parliament TV captures, use the streaming endpoint
+    if (isParliamentTVCapture(capture)) {
+      const streamUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
+      console.log('Using Parliament TV streaming URL:', streamUrl);
+      return streamUrl;
+    }
+    
+    // For regular captures, use the file path
+    if (capture.file_path) {
+      console.log('Using regular file path:', capture.file_path);
+      return capture.file_path;
+    }
+    
+    console.log('No valid video source found for capture:', capture.id);
+    return '';
   };
   
   if (isLoading) {
@@ -464,13 +490,35 @@ const CaptureDetailPage: React.FC = () => {
                 <div className="aspect-w-16 aspect-h-9 bg-black">
                   <video
                     ref={videoRef}
-                    src={isParliamentTVCapture(capture) 
-                      ? `${API_BASE_URL}/parliament-tv/${capture.id}/stream` 
-                      : capture.file_path}
+                    src={getVideoSourceUrl(capture)}
                     controls
                     className="w-full h-full object-contain"
-                    poster="/images/video-placeholder.jpg"
                   />
+                </div>
+                <div className="p-4 text-sm">
+                  <p>Having trouble playing the video? Try the direct link:</p>
+                  <a 
+                    href={getVideoSourceUrl(capture)} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Open video in new tab
+                  </a>
+                  
+                  {/* Debug info - helps diagnose video playback issues */}
+                  <details className="mt-4 border p-2 rounded">
+                    <summary className="font-medium cursor-pointer">Debug Info</summary>
+                    <div className="mt-2 space-y-1 text-xs font-mono bg-gray-100 p-2 rounded overflow-auto max-h-48">
+                      <p>Capture ID: {capture.id}</p>
+                      <p>Status: {capture.status}</p>
+                      <p>Source URL: {capture.source_url}</p>
+                      <p>File Path: {capture.file_path || 'Not available'}</p>
+                      <p>Is Parliament TV: {isParliamentTVCapture(capture) ? 'Yes' : 'No'}</p>
+                      <p>Video Source: {getVideoSourceUrl(capture)}</p>
+                      <p>Metadata: {JSON.stringify(capture.metadata || {}, null, 2)}</p>
+                    </div>
+                  </details>
                 </div>
               </div>
             )}
