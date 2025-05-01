@@ -129,37 +129,59 @@ async def start_parliament_tv_capture(
         
         # Start the capture process asynchronously
         def capture_callback(result):
-            # Process result to ensure it's JSON serializable
-            serializable_result = {}
-            for key, value in result.items():
-                if isinstance(value, datetime):
-                    serializable_result[key] = value.isoformat()
-                else:
-                    serializable_result[key] = value
-            
-            # Update the capture session with the result
-            capture_session = db.query(models.CaptureSession).filter(
-                models.CaptureSession.id == db_capture.id
-            ).first()
-            
-            if result.get("success", False):
-                capture_session.status = "completed"
-                capture_session.file_path = result.get("output_file")
-                capture_session.file_size = result.get("file_size")
-                capture_session.end_time = datetime.now()
-                capture_session.metadata = {
-                    **capture_session.metadata,
-                    "capture_result": serializable_result
-                }
-            else:
-                capture_session.status = "failed"
-                capture_session.end_time = datetime.now()
-                capture_session.metadata = {
-                    **capture_session.metadata,
-                    "error": result.get("error", "Unknown error")
-                }
-            
-            db.commit()
+            try:
+                # Process result to ensure it's JSON serializable
+                serializable_result = {}
+                for key, value in result.items():
+                    if isinstance(value, datetime):
+                        serializable_result[key] = value.isoformat()
+                    else:
+                        serializable_result[key] = value
+                
+                # Create a new database session for the callback
+                from backend.db.session import SessionLocal
+                callback_db = SessionLocal()
+                
+                try:
+                    # Update the capture session with the result
+                    capture_session = callback_db.query(models.CaptureSession).filter(
+                        models.CaptureSession.id == db_capture.id
+                    ).first()
+                    
+                    if not capture_session:
+                        print(f"Error: Capture session {db_capture.id} not found in callback")
+                        return
+                    
+                    if result.get("success", False):
+                        capture_session.status = "completed"
+                        capture_session.file_path = result.get("output_file")
+                        capture_session.file_size = result.get("file_size")
+                        capture_session.end_time = datetime.now()
+                        capture_session.metadata = {
+                            **(capture_session.metadata or {}),
+                            "capture_result": serializable_result
+                        }
+                    else:
+                        capture_session.status = "failed"
+                        capture_session.end_time = datetime.now()
+                        capture_session.metadata = {
+                            **(capture_session.metadata or {}),
+                            "error": result.get("error", "Unknown error")
+                        }
+                    
+                    # Commit changes with the new session
+                    callback_db.commit()
+                    print(f"Capture session {db_capture.id} updated successfully in callback")
+                except Exception as e:
+                    callback_db.rollback()
+                    print(f"Error updating capture session in callback: {str(e)}")
+                finally:
+                    # Always close the new session
+                    callback_db.close()
+            except Exception as e:
+                print(f"Unexpected error in capture callback: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
         # Start the capture process asynchronously
         parliament_tv_service.start_capture_async(
