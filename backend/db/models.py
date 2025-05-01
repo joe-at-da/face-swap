@@ -1,8 +1,10 @@
 from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, JSON, Enum, Integer
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import enum
 from backend.db.models.user import UserRole
 from backend.db.base_model import Base
+from backend.db.models.transcription import ParliamentTranscription
 
 class ClipStatus(str, enum.Enum):
     DRAFT = "draft"

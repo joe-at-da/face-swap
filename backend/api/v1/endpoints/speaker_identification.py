@@ -16,7 +16,7 @@ from backend.services.utils import make_json_serializable
 
 router = APIRouter()
 
-@router.post("", response_model=Dict)
+@router.post("/", response_model=Dict)
 async def identify_speakers(
     request: SpeakerIdentificationRequest = Body(...),
     background_tasks: BackgroundTasks = None,
@@ -130,7 +130,7 @@ async def get_speaker_identification(
     
     return make_json_serializable(response)
 
-@router.get("", response_model=List[Dict])
+@router.get("/", response_model=List[Dict])
 async def get_speaker_identifications(
     capture_id: Optional[int] = None,
     status: Optional[str] = None,
@@ -155,6 +155,50 @@ async def get_speaker_identifications(
     
     # Execute the query
     identifications = query.all()
+    
+    # Prepare the response
+    results = []
+    for identification in identifications:
+        results.append({
+            "id": identification.id,
+            "capture_id": identification.capture_session_id,
+            "status": identification.status,
+            "created_at": identification.created_at,
+            "updated_at": identification.updated_at,
+            "results": identification.results,
+            "output_file": identification.output_file,
+            "threshold": identification.threshold
+        })
+    
+    return make_json_serializable(results)
+
+@router.get("/capture/{capture_id}", response_model=List[Dict])
+async def get_speaker_identifications_by_capture(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """
+    Get all speaker identifications for a specific capture session.
+    """
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Check if capture exists
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Get all identifications for this capture
+    identifications = db.query(models.SpeakerIdentification).filter(
+        models.SpeakerIdentification.capture_session_id == capture_id
+    ).all()
     
     # Prepare the response
     results = []
