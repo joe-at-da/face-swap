@@ -1,100 +1,50 @@
 import os
 import sys
 import json
+import time
 import logging
-import subprocess
 import threading
-from pathlib import Path
+import subprocess
 from datetime import datetime
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union, Any
+
+import requests
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from backend.core.config import settings
+from backend.db.session import get_db
+from backend.db.models.capture import CaptureSession as Capture
+from backend.db.models.capture_log import CaptureLog
 
 logger = logging.getLogger(__name__)
 
 class ParliamentTVCapture:
-    def __init__(self, temp_dir=None, media_dir=None, scripts_dir=None):
-        """
-        Initialize the Parliament TV capture service.
+    def __init__(self):
+        """Initialize the Parliament TV capture service."""
+        # Set up paths
+        self.data_dir = os.environ.get("DATA_DIR", "/app/data")
+        self.temp_storage_path = os.environ.get("TEMP_STORAGE_PATH", "/app/data/temp")
+        self.media_storage_path = os.environ.get("MEDIA_STORAGE_PATH", "/app/data/media")
         
-        Args:
-            temp_dir: Directory to store temporary files
-            media_dir: Directory to store media files
-            scripts_dir: Directory containing the capture scripts
-        """
-        try:
-            # Initialize path variables with fallbacks to ensure they're never None
-            # First try the provided parameters, then environment variables, then default paths
-            if temp_dir:
-                self.temp_dir = Path(temp_dir)
-            elif os.environ.get("TEMP_STORAGE_PATH"):
-                self.temp_dir = Path(os.environ.get("TEMP_STORAGE_PATH"))
-            else:
-                self.temp_dir = Path("/tmp")
-            
-            if media_dir:
-                self.media_dir = Path(media_dir)
-            elif os.environ.get("MEDIA_STORAGE_PATH"):
-                self.media_dir = Path(os.environ.get("MEDIA_STORAGE_PATH"))
-            else:
-                self.media_dir = Path("/media")
-            
-            # For scripts_dir, try multiple approaches to find a valid path
-            if scripts_dir:
-                self.scripts_dir = Path(scripts_dir)
-            elif os.environ.get("DATA_DIR"):
-                self.scripts_dir = Path(os.environ.get("DATA_DIR")) / "scripts"
-            else:
-                # Try several common locations
-                potential_paths = [
-                    Path("/app/scripts"),
-                    Path(os.getcwd()) / "scripts",
-                    Path(os.getcwd()).parent / "scripts",
-                    Path("/scripts")
-                ]
-                
-                for path in potential_paths:
-                    if path.exists():
-                        self.scripts_dir = path
-                        break
-                else:
-                    # If none of the paths exist, use a default but create the directory
-                    self.scripts_dir = Path("/app/scripts")
-                    os.makedirs(str(self.scripts_dir), exist_ok=True)
-            
-            # Log the initialized paths
-            logger.info(f"Initialized ParliamentTVCapture with paths:")
-            logger.info(f"  temp_dir: {self.temp_dir}")
-            logger.info(f"  media_dir: {self.media_dir}")
-            logger.info(f"  scripts_dir: {self.scripts_dir}")
-            
-            # Ensure the directories exist
+        # Convert to Path objects for easier manipulation
+        self.temp_dir = Path(self.temp_storage_path) if self.temp_storage_path else None
+        self.media_dir = Path(self.media_storage_path) if self.media_storage_path else None
+        self.scripts_dir = Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        
+        # Debug paths
+        print(f"Temp dir: {self.temp_dir}")
+        print(f"Media dir: {self.media_dir}")
+        print(f"Scripts dir: {self.scripts_dir}")
+        
+        # Initialize active captures dictionary
+        self.active_captures = {}
+        
+        # Create directories
+        if self.temp_dir:
             os.makedirs(str(self.temp_dir), exist_ok=True)
-            os.makedirs(str(self.media_dir), exist_ok=True)
-            os.makedirs(str(self.scripts_dir), exist_ok=True)
-            
-            # Keep track of active capture processes
-            self._current_process = None
-            self._capture_thread = None
-            self.active_captures = {}
-            
-            # Log initialization success
-            logger.info("ParliamentTVCapture service initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing ParliamentTVCapture: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            
-            # Set default values to prevent NoneType errors
-            self.scripts_dir = Path("/app/scripts")
-            self.temp_dir = Path("/app/data/temp")
-            self.media_dir = Path("/app/data/media/parliament_captures")
-            self._current_process = None
-            self._capture_thread = None
-            self.active_captures = {}
-            
-            # Create directories
-            os.makedirs(str(self.temp_dir), exist_ok=True)
+        if self.media_dir:
             os.makedirs(str(self.media_dir), exist_ok=True)
 
     def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
@@ -114,79 +64,46 @@ class ParliamentTVCapture:
         try:
             # Extract the direct stream URL
             stream_info = self.extract_stream_url(url)
-            
             if not stream_info or not stream_info.get("direct_stream"):
                 logger.error(f"Failed to extract stream URL from {url}")
-                return {
-                    "success": False,
-                    "error": "Failed to extract stream URL"
-                }
+                return {"success": False, "error": "Failed to extract stream URL"}
             
             direct_stream = stream_info.get("direct_stream")
             logger.info(f"Extracted direct stream URL: {direct_stream}")
             
             # Test the stream URL
-            if not self.test_stream_url(direct_stream):
-                logger.error(f"Stream URL is not valid: {direct_stream}")
-                return {
-                    "success": False,
-                    "error": "Stream URL is not valid"
-                }
+            stream_test = self.test_stream_url(direct_stream)
+            if not stream_test.get("success"):
+                logger.error(f"Stream URL test failed: {stream_test.get('error')}")
+                return {"success": False, "error": f"Stream URL test failed: {stream_test.get('error')}"}
             
-            # Generate a unique filename based on capture ID and timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(self.media_dir, f"parliament_capture_{capture_id}_{timestamp}.mp4")
+            # Get a database session
+            db = next(get_db())
             
-            # Run the capture script
-            cmd = [
-                sys.executable,
-                os.path.join(self.scripts_dir, "parliament_capture_direct.py"),
-                direct_stream,
-                "--output", output_file,
-                "--duration", str(duration),
-                "--capture-id", str(capture_id)
-            ]
+            # Get the capture from the database
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not db_capture:
+                logger.error(f"Capture {capture_id} not found in database")
+                return {"success": False, "error": f"Capture {capture_id} not found in database"}
             
-            logger.info(f"Running capture command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Update the capture with the direct stream URL
+            db_capture.stream_url = direct_stream
+            db_capture.status = "active"
+            db_capture.started_at = datetime.now()
+            db.commit()
             
-            # Check if the capture was successful
-            if result.returncode == 0:
-                # Parse the output to extract the output file path
-                output_file = None
-                for line in result.stdout.splitlines():
-                    if line.startswith("Output file:"):
-                        output_file = line.replace("Output file:", "").strip()
-                        break
-                
-                if output_file and os.path.exists(output_file):
-                    logger.info(f"Capture completed successfully. Output file: {output_file}")
-                    return {
-                        "success": True,
-                        "output_file": output_file
-                    }
-                else:
-                    logger.error("Capture completed but output file not found")
-                    return {
-                        "success": False,
-                        "error": "Output file not found"
-                    }
-            else:
-                logger.error(f"Capture failed with return code {result.returncode}")
-                logger.error(f"STDOUT: {result.stdout}")
-                logger.error(f"STDERR: {result.stderr}")
-                return {
-                    "success": False,
-                    "error": f"Capture failed: {result.stderr}"
-                }
+            # Log the start of the capture
+            self.log_capture(db, db_capture.id, "info", f"Starting capture for URL: {url}")
+            self.log_capture(db, db_capture.id, "info", f"Direct stream URL: {direct_stream}")
+            
+            # Run the capture process
+            result = self.run_capture_process(db_capture, direct_stream)
+            
+            return {"success": True, "message": "Capture started successfully", "capture_id": capture_id}
+            
         except Exception as e:
-            logger.error(f"Error in start_capture: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            logger.exception(f"Error starting capture: {str(e)}")
+            return {"success": False, "error": f"Error starting capture: {str(e)}"}
 
     def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, callback=None) -> bool:
         """
@@ -206,38 +123,43 @@ class ParliamentTVCapture:
             
             # Extract the direct stream URL
             stream_info = self.extract_stream_url(url)
-            
             if not stream_info or not stream_info.get("direct_stream"):
                 logger.error(f"Failed to extract stream URL from {url}")
-                if callback:
-                    callback(capture_id, None, "Failed to extract stream URL")
                 return False
             
-            # Create a thread to run the capture
-            capture_thread = threading.Thread(
-                target=self._run_capture,
-                args=(url, capture_id, duration, callback),
-                daemon=True
-            )
+            direct_stream = stream_info.get("direct_stream")
+            logger.info(f"Extracted direct stream URL: {direct_stream}")
             
-            # Store the thread
-            self._capture_thread = capture_thread
+            # Test the stream URL
+            stream_test = self.test_stream_url(direct_stream)
+            if not stream_test.get("success"):
+                logger.error(f"Stream URL test failed: {stream_test.get('error')}")
+                return False
             
-            # Start the thread
-            capture_thread.start()
+            # Get a database session
+            db = next(get_db())
             
-            logger.info(f"Capture thread started for {url}")
-            return True
+            # Get the capture from the database
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not db_capture:
+                logger.error(f"Capture {capture_id} not found in database")
+                return False
+            
+            # Update the capture with the direct stream URL
+            db_capture.stream_url = direct_stream
+            db_capture.status = "active"
+            db_capture.started_at = datetime.now()
+            db.commit()
+            
+            # Log the start of the capture
+            self.log_capture(db, db_capture.id, "info", f"Starting async capture for URL: {url}")
+            self.log_capture(db, db_capture.id, "info", f"Direct stream URL: {direct_stream}")
+            
+            # Start the capture thread
+            return self.start_capture_thread(db_capture, stream_info)
+            
         except Exception as e:
-            logger.error(f"Error starting async capture: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            
-            if callback:
-                callback(capture_id, None, {
-                    "success": False,
-                    "error": str(e)
-                })
+            logger.exception(f"Error starting async capture: {str(e)}")
             return False
 
     def start_capture_thread(self, db_capture, stream_info):
@@ -257,18 +179,14 @@ class ParliamentTVCapture:
                 print(f"temp_dir: {self.temp_dir}, media_dir: {self.media_dir}, scripts_dir: {self.scripts_dir}")
                 return False
             
-            # Ensure directories exist
-            os.makedirs(self.temp_dir, exist_ok=True)
-            os.makedirs(self.media_dir, exist_ok=True)
-            
-            # Create a thread to run the capture
+            # Create a thread to run the capture process
             capture_thread = threading.Thread(
                 target=self.run_capture_process,
                 args=(db_capture, direct_stream),
                 daemon=True
             )
             
-            # Store the thread in active_captures
+            # Store the thread in the active_captures dictionary
             self.active_captures[capture_id] = {
                 "thread": capture_thread,
                 "start_time": datetime.now(),
@@ -292,10 +210,25 @@ class ParliamentTVCapture:
             capture_id = db_capture.id
             duration = db_capture.duration or 1800  # Default to 30 minutes
             
+            # Ensure paths are valid before using them
+            if self.temp_dir is None:
+                print(f"Warning: temp_dir is None, using default /tmp")
+                self.temp_dir = Path("/tmp")
+                os.makedirs(str(self.temp_dir), exist_ok=True)
+                
+            if self.media_dir is None:
+                print(f"Warning: media_dir is None, using default /tmp")
+                self.media_dir = Path("/tmp")
+                os.makedirs(str(self.media_dir), exist_ok=True)
+                
+            if self.scripts_dir is None:
+                print(f"Warning: scripts_dir is None, using default /app/scripts")
+                self.scripts_dir = Path("/app/scripts")
+                
             # Run the improved capture script
             cmd = [
                 sys.executable,
-                os.path.join(self.scripts_dir, "parliament_capture_direct.py"),
+                os.path.join(str(self.scripts_dir), "parliament_capture_direct.py"),
                 direct_stream,
                 "--capture-id", str(capture_id),
                 "--duration", str(duration),
@@ -316,17 +249,17 @@ class ParliamentTVCapture:
                         break
                 
                 if output_file and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                    print(f"Capture successful for {capture_id}, output file: {output_file}")
-                    # Update the database
+                    print(f"Capture successful, output file: {output_file}")
                     self.capture_callback(db_capture, output_file)
                 else:
-                    print(f"Capture failed for {capture_id}: Output file not found or empty")
+                    print(f"Capture failed, output file not found or empty: {output_file}")
+                    print(f"Command output: {result.stdout}")
                     self.capture_callback(db_capture, None, "Output file not found or empty")
             else:
                 # Capture failed
-                print(f"Capture failed for {capture_id}")
-                print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
+                print(f"Capture failed with return code {result.returncode}")
+                print(f"Command output: {result.stdout}")
+                print(f"Command error: {result.stderr}")
                 self.capture_callback(db_capture, None, f"Capture failed: {result.stderr}")
         except Exception as e:
             print(f"Error in capture process: {str(e)}")
@@ -338,170 +271,270 @@ class ParliamentTVCapture:
             if capture_id in self.active_captures:
                 del self.active_captures[capture_id]
 
-    def _run_capture(self, url: str, capture_id: int, duration: int, callback=None):
+    def stop_capture(self, capture_id: int) -> Dict:
         """
-        Run the capture process in a separate thread.
+        Stop a running capture.
         
         Args:
-            url: Parliament TV event URL
-            capture_id: The ID of the capture in the database
-            duration: Maximum duration to capture in seconds
-            callback: Optional callback function to call with the result
-        """
-        try:
-            # Start the capture
-            result = self.start_capture(url, capture_id, duration)
-            
-            # Call the callback if provided
-            if callback:
-                if result.get("success"):
-                    callback(capture_id, result.get("output_file"))
-                else:
-                    callback(capture_id, None, result.get("error"))
-        except Exception as e:
-            logger.error(f"Error in _run_capture: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            
-            if callback:
-                callback(capture_id, None, str(e))
-
-    def extract_stream_url(self, url: str) -> Optional[Dict]:
-        """
-        Extract the direct stream URL from a Parliament TV event page.
-        
-        Args:
-            url: Parliament TV event URL
+            capture_id: The ID of the capture to stop
             
         Returns:
-            Dict containing stream information or None if extraction failed
+            A dictionary with the result
         """
-        logger.info(f"Extracting stream URL from: {url}")
+        logger.info(f"Stopping capture {capture_id}")
         
-        # Check if the URL is already a direct stream URL
-        if url.endswith('.m3u8'):
-            logger.info(f"URL appears to be a direct stream URL already: {url}")
-            return {"direct_stream": url}
+        try:
+            # Get a database session
+            db = next(get_db())
+            
+            # Get the capture from the database
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not db_capture:
+                logger.error(f"Capture {capture_id} not found in database")
+                return {"success": False, "error": f"Capture {capture_id} not found in database"}
+            
+            # Check if the capture is active
+            if db_capture.status != "active":
+                logger.warning(f"Capture {capture_id} is not active (status: {db_capture.status})")
+                return {"success": True, "message": f"Capture {capture_id} is already stopped"}
+            
+            # Stop the capture thread if it exists
+            if capture_id in self.active_captures:
+                # The thread will clean up itself when it exits
+                logger.info(f"Stopping capture thread for {capture_id}")
+                # We can't force stop a thread in Python, but we can mark the capture as stopped
+                # and the thread will exit when it checks the status
+                db_capture.status = "stopped"
+                db.commit()
+                
+                # Log the stop
+                self.log_capture(db, capture_id, "info", "Capture stopped by user")
+                
+                # Wait for the thread to exit (it should check the status and exit)
+                # We'll give it a few seconds to exit gracefully
+                for _ in range(5):
+                    if capture_id not in self.active_captures:
+                        break
+                    time.sleep(1)
+                
+                # If the thread is still running, we'll remove it from the active_captures dictionary
+                if capture_id in self.active_captures:
+                    del self.active_captures[capture_id]
+                
+                logger.info(f"Capture {capture_id} stopped")
+                return {"success": True, "message": f"Capture {capture_id} stopped"}
+            else:
+                # The capture is active in the database but not in our active_captures dictionary
+                # This could happen if the server was restarted while a capture was running
+                logger.warning(f"Capture {capture_id} is active in the database but not in active_captures")
+                
+                # Update the capture status in the database
+                db_capture.status = "stopped"
+                db.commit()
+                
+                # Log the stop
+                self.log_capture(db, capture_id, "info", "Capture stopped (not in active_captures)")
+                
+                logger.info(f"Capture {capture_id} marked as stopped in the database")
+                return {"success": True, "message": f"Capture {capture_id} marked as stopped in the database"}
+                
+        except Exception as e:
+            logger.exception(f"Error stopping capture {capture_id}: {str(e)}")
+            return {"success": False, "error": f"Error stopping capture: {str(e)}"}
+
+    def get_active_captures(self) -> List[Dict]:
+        """
+        Get a list of active captures.
         
-        # Ensure scripts_dir and temp_dir are set
-        if self.scripts_dir is None:
-            logger.error("scripts_dir is None, using default path")
-            self.scripts_dir = Path("/app/scripts")
+        Returns:
+            A list of dictionaries with information about active captures
+        """
+        try:
+            # Get a database session
+            db = next(get_db())
+            
+            # Get all active captures from the database
+            db_captures = db.query(Capture).filter(Capture.status == "active").all()
+            
+            # Convert to a list of dictionaries
+            captures = []
+            for db_capture in db_captures:
+                capture_info = {
+                    "id": db_capture.id,
+                    "url": db_capture.url,
+                    "stream_url": db_capture.stream_url,
+                    "status": db_capture.status,
+                    "started_at": db_capture.started_at.isoformat() if db_capture.started_at else None,
+                    "duration": db_capture.duration,
+                    "active_thread": db_capture.id in self.active_captures
+                }
+                captures.append(capture_info)
+            
+            return captures
+            
+        except Exception as e:
+            logger.exception(f"Error getting active captures: {str(e)}")
+            return []
+
+    def extract_stream_url(self, url: str) -> Dict:
+        """
+        Extract the direct stream URL from a Parliament TV event URL.
         
-        if self.temp_dir is None:
-            logger.error("temp_dir is None, using default path")
-            self.temp_dir = Path("/app/data/temp")
-            os.makedirs(str(self.temp_dir), exist_ok=True)
+        Args:
+            url: The URL of the Parliament TV event
+            
+        Returns:
+            A dictionary with the direct stream URL and other information
+        """
+        logger.info(f"Extracting stream URL from {url}")
         
-        extract_script = self.scripts_dir / "extract_direct_stream.py"
-        output_file = self.temp_dir / f"stream_info_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        
-        # Check if extract_script exists
-        if not os.path.exists(str(extract_script)):
-            logger.error(f"Extract script not found at {extract_script}")
-            # Try alternative paths
-            alternative_paths = [
-                Path("scripts/extract_direct_stream.py"),
-                Path("../scripts/extract_direct_stream.py"),
-                Path("/app/scripts/extract_direct_stream.py")
+        try:
+            # Check if the URL is already a direct stream URL
+            if url.endswith('.m3u8'):
+                stream_info = {"direct_stream": url}
+                return stream_info
+            
+            # Use the extract-url.py script to extract the direct stream URL
+            cmd = [
+                sys.executable,
+                os.path.join(str(self.scripts_dir), "extract-url.py"),
+                url
             ]
             
-            for alt_path in alternative_paths:
-                if os.path.exists(str(alt_path)):
-                    logger.info(f"Found alternative script path: {alt_path}")
-                    extract_script = alt_path
-                    break
-            else:
-                logger.error("Could not find extract_direct_stream.py script")
-                # Fallback to a hardcoded test stream if extraction fails
-                logger.warning("Using a fallback direct stream URL")
-                return {"direct_stream": url}  # Return the original URL as fallback
-        
-        cmd = [
-            sys.executable,
-            str(extract_script),
-            url,
-            "--output", str(output_file)
-        ]
-        
-        try:
-            logger.info(f"Running extract command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info(f"Running extract-url command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
-            # Read the output file
-            if os.path.exists(str(output_file)):
-                with open(output_file, 'r') as f:
-                    stream_info = json.load(f)
-                
-                # Validate that direct_stream is in the result
-                if 'direct_stream' not in stream_info or not stream_info['direct_stream']:
-                    logger.error("No direct_stream found in extracted stream info")
-                    return {"direct_stream": url}  # Return the original URL as fallback
-                
-                logger.info(f"Stream URL extraction completed. Direct stream URL: {stream_info.get('direct_stream')}")
-                return stream_info
+            if result.returncode == 0:
+                # Parse the output to get the direct stream URL
+                try:
+                    stream_info = json.loads(result.stdout)
+                    logger.info(f"Extracted stream info: {stream_info}")
+                    return stream_info
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse extract-url output as JSON: {result.stdout}")
+                    return {}
             else:
-                logger.error(f"Output file not found: {output_file}")
-                return {"direct_stream": url}  # Return the original URL as fallback
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Stream URL extraction failed: {e}")
-            logger.error(f"STDOUT: {e.stdout}")
-            logger.error(f"STDERR: {e.stderr}")
-            return {"direct_stream": url}  # Return the original URL as fallback
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            logger.error(f"Error reading stream info: {e}")
-            return {"direct_stream": url}  # Return the original URL as fallback
+                logger.error(f"extract-url command failed with return code {result.returncode}")
+                logger.error(f"Command output: {result.stdout}")
+                logger.error(f"Command error: {result.stderr}")
+                return {}
+                
         except Exception as e:
-            logger.error(f"Unexpected error in extract_stream_url: {str(e)}")
-            return {"direct_stream": url}  # Return the original URL as fallback
+            logger.exception(f"Error extracting stream URL: {str(e)}")
+            return {}
 
-    def test_stream_url(self, stream_url: str) -> bool:
+    def test_stream_url(self, url: str) -> Dict:
         """
-        Test if a stream URL is valid by downloading a small segment.
+        Test if a stream URL is valid and accessible.
         
         Args:
-            stream_url: Stream URL to test
+            url: The URL of the stream to test
             
         Returns:
-            True if the stream URL is valid, False otherwise
+            A dictionary with the test result
         """
-        logger.info(f"Testing stream URL: {stream_url}")
-        
-        test_script = self.scripts_dir / "test_stream_url.sh"
-        
-        cmd = [
-            str(test_script),
-            stream_url
-        ]
+        logger.info(f"Testing stream URL: {url}")
         
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            return "Success! The stream URL is valid." in result.stdout
-        except subprocess.CalledProcessError:
-            return False
+            # Make a HEAD request to the URL
+            response = requests.head(url, timeout=5)
             
+            if response.status_code == 200:
+                logger.info(f"Stream URL test successful: {url}")
+                return {"success": True, "message": "Stream URL is valid and accessible"}
+            else:
+                logger.warning(f"Stream URL test failed with status code {response.status_code}: {url}")
+                return {"success": False, "error": f"Stream URL returned status code {response.status_code}"}
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Stream URL test failed with exception: {str(e)}")
+            return {"success": False, "error": f"Error testing stream URL: {str(e)}"}
+
+    def log_capture(self, db: Session, capture_id: int, level: str, message: str) -> None:
+        """
+        Log a message for a capture.
+        
+        Args:
+            db: Database session
+            capture_id: The ID of the capture
+            level: Log level (info, warning, error)
+            message: Log message
+        """
+        try:
+            # Create a new log entry
+            log = CaptureLog(
+                capture_id=capture_id,
+                level=level,
+                message=message,
+                timestamp=datetime.now()
+            )
+            
+            # Add to the database
+            db.add(log)
+            db.commit()
+            
+        except Exception as e:
+            logger.exception(f"Error logging capture message: {str(e)}")
+
     def capture_callback(self, db_capture, output_file, error=None):
-        """Callback function for when a capture is completed."""
+        """
+        Callback function called when a capture is complete.
+        
+        Args:
+            db_capture: The capture database object
+            output_file: Path to the output file, or None if the capture failed
+            error: Error message if the capture failed
+        """
         try:
-            capture_id = db_capture.id
-            print(f"Capture callback for {capture_id}")
+            # Get a database session
+            db = next(get_db())
             
-            if output_file:
-                print(f"Capture successful: {output_file}")
-                # Update the database with the output file
+            # Get the capture from the database
+            capture_id = db_capture.id
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            
+            if not db_capture:
+                print(f"Error: Capture {capture_id} not found in database")
+                return
+            
+            if error:
+                # Capture failed
+                db_capture.status = "failed"
+                db_capture.error_message = error
+                self.log_capture(db, capture_id, "error", error)
+            else:
+                # Capture succeeded
                 db_capture.status = "completed"
                 db_capture.output_file = output_file
-                db_capture.completed_at = datetime.now()
-            else:
-                print(f"Capture failed: {error}")
-                # Update the database with the error
-                db_capture.status = "failed"
-                db_capture.error = error
-                
-            # Save the changes to the database
-            db_capture.save()
-            print(f"Database updated for capture {capture_id}")
+                self.log_capture(db, capture_id, "info", f"Capture completed successfully, output file: {output_file}")
+            
+            # Update the capture in the database
+            db_capture.completed_at = datetime.now()
+            db.commit()
+            
         except Exception as e:
             print(f"Error in capture_callback: {str(e)}")
             import traceback
             print(traceback.format_exc())
+
+# Create a singleton instance
+parliament_tv_capture = ParliamentTVCapture()
+
+# For backwards compatibility
+def start_capture(url: str, capture_id: int, duration: int = 1800) -> Dict:
+    return parliament_tv_capture.start_capture(url, capture_id, duration)
+
+def start_capture_async(url: str, capture_id: int, duration: int = 1800, callback=None) -> bool:
+    return parliament_tv_capture.start_capture_async(url, capture_id, duration, callback)
+
+def stop_capture(capture_id: int) -> Dict:
+    return parliament_tv_capture.stop_capture(capture_id)
+
+def get_active_captures() -> List[Dict]:
+    return parliament_tv_capture.get_active_captures()
+
+def extract_stream_url(url: str) -> Dict:
+    return parliament_tv_capture.extract_stream_url(url)
+
+def test_stream_url(url: str) -> Dict:
+    return parliament_tv_capture.test_stream_url(url)

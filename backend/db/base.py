@@ -6,5 +6,6 @@ from backend.db.models.user import User
 from backend.db.models.video import VideoClip
 from backend.db.models.social import SocialPost
 from backend.db.models.capture import CaptureSession
+from backend.db.models.capture_log import CaptureLog
 from backend.db.models.speaker import SpeakerIdentification
 from backend.db.models.transcription import ParliamentTranscription
