@@ -28,6 +28,7 @@ interface CaptureSession {
   };
   created_at: string;
   updated_at: string;
+  metadata?: Record<string, any>;
 }
 
 interface CaptureLog {
@@ -43,6 +44,9 @@ const CaptureDetailPage: React.FC = () => {
   const { id } = router.query;
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement>(null);
+  
+  // API base URL for streaming
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
   
   // State for logs pagination
   const [logsPage, setLogsPage] = useState(1);
@@ -223,23 +227,45 @@ const CaptureDetailPage: React.FC = () => {
   
   // Get time until scheduled start
   const getTimeUntilStart = (): string => {
-    if (!capture || !capture.scheduled_start) return '--';
+    if (!capture || !capture.scheduled_start) return '';
     
-    const startTime = new Date(capture.scheduled_start).getTime();
-    const now = new Date().getTime();
-    const remainingMs = startTime - now;
+    const now = new Date();
+    const scheduledStart = new Date(capture.scheduled_start);
+    const diffMs = scheduledStart.getTime() - now.getTime();
     
-    if (remainingMs <= 0) return 'Starting soon';
+    if (diffMs <= 0) return 'Starting soon';
     
-    const days = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+    const diffSecs = Math.floor(diffMs / 1000);
+    const days = Math.floor(diffSecs / 86400);
+    const hours = Math.floor((diffSecs % 86400) / 3600);
+    const minutes = Math.floor((diffSecs % 3600) / 60);
+    const seconds = diffSecs % 60;
     
     if (days > 0) {
-      return `Starts in ${days}d ${hours}h ${minutes}m`;
+      return `${days}d ${hours}h ${minutes}m`;
+    } else if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    } else {
+      return `${minutes}m ${seconds}s`;
+    }
+  };
+  
+  // Check if a capture is a Parliament TV capture
+  const isParliamentTVCapture = (capture: CaptureSession): boolean => {
+    if (!capture) return false;
+    
+    // Check if source URL is from Parliament TV
+    if (capture.source_url && capture.source_url.includes('parliamentlive.tv')) {
+      return true;
     }
     
-    return `Starts in ${hours}h ${minutes}m`;
+    // Check metadata for Parliament TV specific fields
+    if (capture.metadata && typeof capture.metadata === 'object') {
+      const metadata = capture.metadata as Record<string, any>;
+      return !!metadata.parliament_tv_url;
+    }
+    
+    return false;
   };
   
   if (isLoading) {
@@ -429,7 +455,7 @@ const CaptureDetailPage: React.FC = () => {
             </div>
             
             {/* Video preview for completed captures */}
-            {capture.status === 'completed' && capture.file_path && (
+            {capture.status === 'completed' && (
               <div className="bg-white rounded-lg shadow overflow-hidden mb-6">
                 <div className="px-6 py-4 border-b border-gray-200">
                   <h2 className="text-lg font-medium text-gray-800">Video Preview</h2>
@@ -438,9 +464,12 @@ const CaptureDetailPage: React.FC = () => {
                 <div className="aspect-w-16 aspect-h-9 bg-black">
                   <video
                     ref={videoRef}
-                    src={capture.file_path}
+                    src={isParliamentTVCapture(capture) 
+                      ? `${API_BASE_URL}/parliament-tv/${capture.id}/stream` 
+                      : capture.file_path}
                     controls
                     className="w-full h-full object-contain"
+                    poster="/images/video-placeholder.jpg"
                   />
                 </div>
               </div>
