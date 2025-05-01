@@ -74,21 +74,47 @@ def extract_direct_stream_url(url):
     """Extract the direct stream URL using yt-dlp."""
     logger.info(f"Extracting direct stream URL from: {url}")
     
+    # Ensure URL has audio parameter set to false (not audio-only)
+    if "audioOnly=" in url and "audioOnly=True" in url:
+        url = url.replace("audioOnly=True", "audioOnly=False")
+    elif "audioOnly=" not in url:
+        if "?" in url:
+            url += "&audioOnly=False"
+        else:
+            url += "?audioOnly=False"
+    
+    logger.info(f"Using URL with audio parameter: {url}")
+    
     # Check if yt-dlp is installed
     if not check_command_exists("yt-dlp"):
         logger.error("yt-dlp not found. Please install it with: brew install yt-dlp")
         return None
     
     try:
-        # Run yt-dlp to get the direct stream URL
+        # First, list all available formats to understand what's available
+        format_cmd = [
+            "yt-dlp",
+            "--no-check-certificate",
+            "--list-formats",
+            url
+        ]
+        
+        logger.info(f"Listing available formats: {' '.join(format_cmd)}")
+        format_result = subprocess.run(format_cmd, capture_output=True, text=True)
+        logger.info(f"Available formats:\n{format_result.stdout}")
+        
+        # Run yt-dlp to get the direct stream URL with best format that includes audio
         cmd = [
             "yt-dlp",
             "--no-check-certificate",
             "--dump-json",
             "--no-playlist",
+            # Explicitly request format with both video and audio
+            "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
             url
         ]
         
+        logger.info(f"Running yt-dlp command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         
         try:
@@ -96,15 +122,42 @@ def extract_direct_stream_url(url):
             
             # Get the direct stream URL
             direct_url = info.get('url')
-            if not direct_url:
+            has_audio = False
+            
+            # Check if the format has audio
+            if 'requested_formats' in info:
+                for fmt in info['requested_formats']:
+                    if fmt.get('acodec', 'none') != 'none':
+                        has_audio = True
+                        break
+                
+                # If we have multiple formats (separate audio/video), use the direct URL from info
+                if len(info['requested_formats']) > 1:
+                    logger.info("Found separate audio and video streams, using direct URL from info")
+                    direct_url = info.get('url')
+            elif info.get('acodec', 'none') != 'none':
+                has_audio = True
+            
+            if not direct_url or not has_audio:
                 formats = info.get('formats', [])
                 if formats:
-                    # Get the highest quality format
-                    formats.sort(key=lambda x: x.get('height', 0), reverse=True)
-                    direct_url = formats[0].get('url')
+                    # Find a format with both video and audio
+                    for fmt in formats:
+                        if fmt.get('acodec', 'none') != 'none' and fmt.get('vcodec', 'none') != 'none':
+                            direct_url = fmt.get('url')
+                            has_audio = True
+                            logger.info(f"Selected format with audio: {fmt.get('format_id')} - {fmt.get('format')}")
+                            break
+                    
+                    # If no combined format found, get highest quality video
+                    if not direct_url:
+                        formats.sort(key=lambda x: x.get('height', 0), reverse=True)
+                        direct_url = formats[0].get('url')
+                        logger.warning("Could not find format with audio, using highest quality video")
             
             if direct_url:
                 logger.info(f"Found direct stream URL: {direct_url}")
+                logger.info(f"Stream has audio: {has_audio}")
                 return direct_url
             else:
                 logger.error("No direct stream URL found in yt-dlp output")
@@ -117,6 +170,34 @@ def extract_direct_stream_url(url):
         logger.error(f"Error running yt-dlp: {e}")
         logger.error(f"STDOUT: {e.stdout}")
         logger.error(f"STDERR: {e.stderr}")
+        
+        # Try an alternative approach using youtube-dl
+        try:
+            logger.info("Trying alternative approach with youtube-dl...")
+            cmd = [
+                "youtube-dl",
+                "--no-check-certificate",
+                "--dump-json",
+                "--no-playlist",
+                "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
+                url
+            ]
+            
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            
+            try:
+                info = json.loads(result.stdout)
+                direct_url = info.get('url')
+                
+                if direct_url:
+                    logger.info(f"Found direct stream URL using youtube-dl: {direct_url}")
+                    return direct_url
+                else:
+                    logger.error("No direct stream URL found in youtube-dl output")
+            except json.JSONDecodeError:
+                logger.error("Failed to parse youtube-dl output as JSON")
+        except subprocess.CalledProcessError:
+            pass
         
         # Try an alternative approach using ffmpeg probe
         try:
