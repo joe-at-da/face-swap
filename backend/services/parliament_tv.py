@@ -56,11 +56,42 @@ class ParliamentTVCapture:
         # Generate a timestamp for the output file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        # Set up file paths - ALWAYS include the capture_id in the filename
-        temp_file = self.temp_dir / f"parliament_stream_{timestamp}_{capture_id}.mp4"
-        output_file = self.media_dir / f"parliament_capture_{timestamp}_{capture_id}.mp4"
-        log_file = self.temp_dir / f"parliament_capture_log_{timestamp}_{capture_id}.json"
-        capture_script = self.scripts_dir / "parliament_capture_direct.py"
+        # Debug the paths
+        logger.info(f"temp_dir: {self.temp_dir}, type: {type(self.temp_dir)}")
+        logger.info(f"media_dir: {self.media_dir}, type: {type(self.media_dir)}")
+        logger.info(f"scripts_dir: {self.scripts_dir}, type: {type(self.scripts_dir)}")
+        
+        # Ensure all directory paths are Path objects and exist
+        if self.temp_dir is None:
+            logger.error("temp_dir is None, using default path")
+            self.temp_dir = Path("/app/data/temp")
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+        
+        if self.media_dir is None:
+            logger.error("media_dir is None, using default path")
+            self.media_dir = Path("/app/data/media/parliament_captures")
+            os.makedirs(str(self.media_dir), exist_ok=True)
+        
+        if self.scripts_dir is None:
+            logger.error("scripts_dir is None, using default path")
+            self.scripts_dir = Path("/app/scripts")
+        
+        # Now create the file paths
+        temp_file = Path(str(self.temp_dir)) / f"parliament_stream_{timestamp}_{capture_id}.mp4"
+        output_file = Path(str(self.media_dir)) / f"parliament_capture_{timestamp}_{capture_id}.mp4"
+        log_file = Path(str(self.temp_dir)) / f"parliament_capture_log_{timestamp}_{capture_id}.json"
+        capture_script = Path(str(self.scripts_dir)) / "parliament_capture_direct.py"
+        
+        # Log the file paths
+        logger.info(f"temp_file: {temp_file}, type: {type(temp_file)}")
+        logger.info(f"output_file: {output_file}, type: {type(output_file)}")
+        logger.info(f"log_file: {log_file}, type: {type(log_file)}")
+        logger.info(f"capture_script: {capture_script}, type: {type(capture_script)}")
+        
+        # Ensure parent directories exist
+        os.makedirs(os.path.dirname(str(temp_file)), exist_ok=True)
+        os.makedirs(os.path.dirname(str(output_file)), exist_ok=True)
+        os.makedirs(os.path.dirname(str(log_file)), exist_ok=True)
         
         # Log the file paths for debugging
         logger.info(f"Temporary file path: {temp_file}")
@@ -101,10 +132,31 @@ class ParliamentTVCapture:
             }
         
         # First extract the direct stream URL
-        from scripts.extract_direct_stream import extract_direct_stream_url
-        
-        logger.info(f"Extracting direct stream URL from: {url}")
-        direct_stream_url = extract_direct_stream_url(url)
+        try:
+            # Try to import from scripts module
+            from scripts.extract_direct_stream import extract_direct_stream_url
+        except ImportError:
+            # If that fails, try to import using a subprocess call
+            logger.info("Could not import extract_direct_stream_url directly, using subprocess")
+            try:
+                # Use subprocess to call the script directly
+                extract_cmd = [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.path.append('/app'); from scripts.extract_direct_stream import extract_direct_stream_url; print(extract_direct_stream_url('" + url + "'))"
+                ]
+                extract_result = subprocess.run(extract_cmd, check=True, capture_output=True, text=True)
+                direct_stream_url = extract_result.stdout.strip()
+                logger.info(f"Extracted direct stream URL using subprocess: {direct_stream_url}")
+            except Exception as e:
+                logger.error(f"Error extracting direct stream URL using subprocess: {e}")
+                # If all else fails, just use the original URL
+                direct_stream_url = url
+                logger.warning(f"Using original URL as direct stream URL: {direct_stream_url}")
+        else:
+            # If import succeeded, call the function directly
+            logger.info(f"Extracting direct stream URL from: {url}")
+            direct_stream_url = extract_direct_stream_url(url)
         
         if not direct_stream_url:
             logger.error(f"Failed to extract direct stream URL from: {url}")
@@ -114,6 +166,28 @@ class ParliamentTVCapture:
             }
             
         logger.info(f"Successfully extracted direct stream URL: {direct_stream_url}")
+        
+        # Check if the capture script exists
+        if not os.path.exists(str(capture_script)):
+            logger.error(f"Capture script not found at {capture_script}")
+            # Try to find the script in the current directory or parent directories
+            alternative_paths = [
+                Path("scripts/parliament_capture_direct.py"),
+                Path("../scripts/parliament_capture_direct.py"),
+                Path("/app/scripts/parliament_capture_direct.py")
+            ]
+            
+            for alt_path in alternative_paths:
+                if os.path.exists(str(alt_path)):
+                    logger.info(f"Found alternative script path: {alt_path}")
+                    capture_script = alt_path
+                    break
+            else:
+                logger.error("Could not find parliament_capture_direct.py script")
+                return {
+                    "success": False,
+                    "error": "Capture script not found"
+                }
         
         # Now use parliament_capture_direct.py with the direct stream URL
         cmd = [
@@ -128,17 +202,29 @@ class ParliamentTVCapture:
         logger.info(f"Running command: {' '.join(cmd)}")
         
         try:
+            # Log the command being run
+            cmd_str = ' '.join(str(c) for c in cmd)
+            logger.info(f"Running command: {cmd_str}")
+            
+            # Ensure all command arguments are strings
+            cmd = [str(c) for c in cmd]
+            
             # Run the capture script
             result = subprocess.run(
                 cmd, 
-                check=True, 
+                check=False,  # Don't raise exception on non-zero exit
                 capture_output=True, 
                 text=True
             )
             
-            # Process the output - no need to decode since text=True
+            # Process the output
             stdout = result.stdout
             stderr = result.stderr
+            
+            # Log the result
+            logger.info(f"Command exit code: {result.returncode}")
+            logger.info(f"Command stdout: {stdout[:1000]}" + ("..." if len(stdout) > 1000 else ""))
+            logger.info(f"Command stderr: {stderr[:1000]}" + ("..." if len(stderr) > 1000 else ""))
             
             logger.info(f"Capture process completed with return code: {result.returncode}")
             logger.info(f"STDOUT: {stdout}")
