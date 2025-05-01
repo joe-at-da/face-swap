@@ -4,11 +4,14 @@ from sqlalchemy.orm import Session
 import os
 import subprocess
 from pathlib import Path
+from datetime import datetime
 
 from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission
 from backend.db import models
 from backend.db.models.user import UserRole
+from backend.db.models.transcription import ParliamentTranscription
+from backend.db.models.speaker import SpeakerIdentification
 from backend.schemas import transcription as schemas
 from backend.services.tasks import transcription_tasks
 from backend.services.utils import make_json_serializable
@@ -210,8 +213,8 @@ async def transcribe_parliament_tv(
         )
     
     # Check if transcription already exists
-    existing = db.query(models.ParliamentTranscription).filter(
-        models.ParliamentTranscription.capture_session_id == capture_id
+    existing = db.query(ParliamentTranscription).filter(
+        ParliamentTranscription.capture_session_id == capture_id
     ).first()
     
     if existing:
@@ -252,7 +255,7 @@ async def transcribe_parliament_tv(
             })
     
     # Create new transcription record
-    new_transcription = models.ParliamentTranscription(
+    new_transcription = ParliamentTranscription(
         capture_session_id=capture_id,
         status="processing",
         language=language,
@@ -369,8 +372,8 @@ async def get_parliament_tv_transcriptions_by_capture(
         )
     
     # Get all transcriptions for this capture
-    transcriptions = db.query(models.ParliamentTranscription).filter(
-        models.ParliamentTranscription.capture_session_id == capture_id
+    transcriptions = db.query(ParliamentTranscription).filter(
+        ParliamentTranscription.capture_session_id == capture_id
     ).all()
     
     # Prepare the response
@@ -461,8 +464,8 @@ def process_parliament_transcription(
     
     try:
         # Get the transcription record
-        transcription = db.query(models.ParliamentTranscription).filter(
-            models.ParliamentTranscription.id == transcription_id
+        transcription = db.query(ParliamentTranscription).filter(
+            ParliamentTranscription.id == transcription_id
         ).first()
         
         if not transcription:

@@ -8,7 +8,7 @@ import os
 import glob
 from pathlib import Path
 
-from backend.api.deps import get_db
+from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission, get_current_active_user
 from backend.core.security import UserRole
 from backend.db import models
@@ -436,7 +436,7 @@ async def stop_parliament_tv_capture(
 async def stream_parliament_tv_video(
     capture_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """Stream a Parliament TV video file."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
