@@ -62,19 +62,28 @@ class ParliamentTVCapture:
         logger.info(f"scripts_dir: {self.scripts_dir}, type: {type(self.scripts_dir)}")
         
         # Ensure all directory paths are Path objects and exist
+        # Convert to Path objects if they're strings, or use defaults if None
         if self.temp_dir is None:
             logger.error("temp_dir is None, using default path")
             self.temp_dir = Path("/app/data/temp")
-            os.makedirs(str(self.temp_dir), exist_ok=True)
+        elif isinstance(self.temp_dir, str):
+            self.temp_dir = Path(self.temp_dir)
         
         if self.media_dir is None:
             logger.error("media_dir is None, using default path")
             self.media_dir = Path("/app/data/media/parliament_captures")
-            os.makedirs(str(self.media_dir), exist_ok=True)
+        elif isinstance(self.media_dir, str):
+            self.media_dir = Path(self.media_dir)
         
         if self.scripts_dir is None:
             logger.error("scripts_dir is None, using default path")
             self.scripts_dir = Path("/app/scripts")
+        elif isinstance(self.scripts_dir, str):
+            self.scripts_dir = Path(self.scripts_dir)
+        
+        # Ensure directories exist
+        os.makedirs(str(self.temp_dir), exist_ok=True)
+        os.makedirs(str(self.media_dir), exist_ok=True)
         
         # Now create the file paths
         temp_file = Path(str(self.temp_dir)) / f"parliament_stream_{timestamp}_{capture_id}.mp4"
@@ -190,6 +199,23 @@ class ParliamentTVCapture:
                 }
         
         # Now use parliament_capture_direct.py with the direct stream URL
+        # Add extensive logging to debug the NoneType error
+        logger.info(f"capture_script: {capture_script}, exists: {os.path.exists(str(capture_script))}")
+        logger.info(f"direct_stream_url: {direct_stream_url}, type: {type(direct_stream_url)}")
+        logger.info(f"temp_file: {temp_file}, type: {type(temp_file)}")
+        logger.info(f"capture_id: {capture_id}, type: {type(capture_id)}")
+        
+        # Check for None values
+        if capture_script is None:
+            logger.error("capture_script is None!")
+            return {"success": False, "error": "capture_script is None"}
+        if direct_stream_url is None:
+            logger.error("direct_stream_url is None!")
+            return {"success": False, "error": "direct_stream_url is None"}
+        if temp_file is None:
+            logger.error("temp_file is None!")
+            return {"success": False, "error": "temp_file is None"}
+        
         cmd = [
             sys.executable,
             str(capture_script),
@@ -200,6 +226,10 @@ class ParliamentTVCapture:
         ]
         
         logger.info(f"Running command: {' '.join(cmd)}")
+        logger.info(f"Command types: {[type(c) for c in cmd]}")
+        
+        # Convert all command arguments to strings to avoid NoneType errors
+        cmd = [str(c) if c is not None else "" for c in cmd]
         
         try:
             # Log the command being run
@@ -324,8 +354,44 @@ class ParliamentTVCapture:
         """
         logger.info(f"Extracting stream URL from: {url}")
         
+        # Check if the URL is already a direct stream URL (ends with .m3u8)
+        if url.endswith('.m3u8'):
+            logger.info(f"URL appears to be a direct stream URL already: {url}")
+            return {"direct_stream": url}
+        
+        # Ensure scripts_dir and temp_dir are set
+        if self.scripts_dir is None:
+            logger.error("scripts_dir is None, using default path")
+            self.scripts_dir = Path("/app/scripts")
+        
+        if self.temp_dir is None:
+            logger.error("temp_dir is None, using default path")
+            self.temp_dir = Path("/app/data/temp")
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+        
         extract_script = self.scripts_dir / "extract_direct_stream.py"
         output_file = self.temp_dir / f"stream_info_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        # Check if extract_script exists
+        if not os.path.exists(str(extract_script)):
+            logger.error(f"Extract script not found at {extract_script}")
+            # Try alternative paths
+            alternative_paths = [
+                Path("scripts/extract_direct_stream.py"),
+                Path("../scripts/extract_direct_stream.py"),
+                Path("/app/scripts/extract_direct_stream.py")
+            ]
+            
+            for alt_path in alternative_paths:
+                if os.path.exists(str(alt_path)):
+                    logger.info(f"Found alternative script path: {alt_path}")
+                    extract_script = alt_path
+                    break
+            else:
+                logger.error("Could not find extract_direct_stream.py script")
+                # Fallback to a hardcoded test stream if extraction fails
+                logger.warning("Using a fallback direct stream URL")
+                return {"direct_stream": url}  # Return the original URL as fallback
         
         cmd = [
             sys.executable,
@@ -335,22 +401,35 @@ class ParliamentTVCapture:
         ]
         
         try:
+            logger.info(f"Running extract command: {' '.join(cmd)}")
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             
             # Read the output file
-            with open(output_file, 'r') as f:
-                stream_info = json.load(f)
-            
-            logger.info(f"Stream URL extraction completed. Direct stream URL: {stream_info.get('direct_stream')}")
-            return stream_info
+            if os.path.exists(str(output_file)):
+                with open(output_file, 'r') as f:
+                    stream_info = json.load(f)
+                
+                # Validate that direct_stream is in the result
+                if 'direct_stream' not in stream_info or not stream_info['direct_stream']:
+                    logger.error("No direct_stream found in extracted stream info")
+                    return {"direct_stream": url}  # Return the original URL as fallback
+                
+                logger.info(f"Stream URL extraction completed. Direct stream URL: {stream_info.get('direct_stream')}")
+                return stream_info
+            else:
+                logger.error(f"Output file not found: {output_file}")
+                return {"direct_stream": url}  # Return the original URL as fallback
         except subprocess.CalledProcessError as e:
             logger.error(f"Stream URL extraction failed: {e}")
             logger.error(f"STDOUT: {e.stdout}")
             logger.error(f"STDERR: {e.stderr}")
-            return None
+            return {"direct_stream": url}  # Return the original URL as fallback
         except (json.JSONDecodeError, FileNotFoundError) as e:
             logger.error(f"Error reading stream info: {e}")
-            return None
+            return {"direct_stream": url}  # Return the original URL as fallback
+        except Exception as e:
+            logger.error(f"Unexpected error in extract_stream_url: {str(e)}")
+            return {"direct_stream": url}  # Return the original URL as fallback
     
     def test_stream_url(self, stream_url: str) -> bool:
         """
