@@ -570,7 +570,105 @@ def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, c
                 "error": error_msg
             })
         return False
+
+def start_capture_thread(self, db_capture, stream_info):
+    """Start a thread to capture the Parliament TV stream."""
+    try:
+        print(f"Starting capture thread for {db_capture.id}")
+        capture_id = db_capture.id
+        direct_stream = stream_info.get("direct_stream")
         
+        # Validate inputs
+        if not direct_stream:
+            print(f"Error: No direct stream URL found for capture {capture_id}")
+            return False
+        
+        if not self.temp_dir or not self.media_dir or not self.scripts_dir:
+            print(f"Error: Invalid directories for capture {capture_id}")
+            print(f"temp_dir: {self.temp_dir}, media_dir: {self.media_dir}, scripts_dir: {self.scripts_dir}")
+            return False
+        
+        # Ensure directories exist
+        os.makedirs(self.temp_dir, exist_ok=True)
+        os.makedirs(self.media_dir, exist_ok=True)
+        
+        # Create a thread to run the capture
+        capture_thread = threading.Thread(
+            target=self.run_capture_process,
+            args=(db_capture, direct_stream),
+            daemon=True
+        )
+        
+        # Store the thread in active_captures
+        self.active_captures[capture_id] = {
+            "thread": capture_thread,
+            "start_time": datetime.now(),
+            "stream_url": direct_stream
+        }
+        
+        # Start the thread
+        capture_thread.start()
+        
+        print(f"Capture thread started for {capture_id}")
+        return True
+    except Exception as e:
+        print(f"Error starting capture thread: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return False
+
+def run_capture_process(self, db_capture, direct_stream):
+    """Run the capture process and update the database."""
+    try:
+        capture_id = db_capture.id
+        duration = db_capture.duration or 1800  # Default to 30 minutes
+        
+        # Run the improved capture script
+        cmd = [
+            sys.executable,
+            os.path.join(self.scripts_dir, "parliament_capture_direct.py"),
+            direct_stream,
+            "--capture-id", str(capture_id),
+            "--duration", str(duration),
+            "--temp-dir", self.temp_dir,
+            "--media-dir", self.media_dir
+        ]
+        
+        print(f"Running capture command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        # Check if the capture was successful
+        if result.returncode == 0:
+            # Parse the output to get the output file path
+            output_file = None
+            for line in result.stdout.splitlines():
+                if line.startswith("Output file:"):
+                    output_file = line.replace("Output file:", "").strip()
+                    break
+            
+            if output_file and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                print(f"Capture successful for {capture_id}, output file: {output_file}")
+                # Update the database
+                self.capture_callback(db_capture, output_file)
+            else:
+                print(f"Capture failed for {capture_id}: Output file not found or empty")
+                self.capture_callback(db_capture, None, "Output file not found or empty")
+        else:
+            # Capture failed
+            print(f"Capture failed for {capture_id}")
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            self.capture_callback(db_capture, None, f"Capture failed: {result.stderr}")
+    except Exception as e:
+        print(f"Error in capture process: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        self.capture_callback(db_capture, None, f"Exception in capture process: {str(e)}")
+    finally:
+        # Remove from active_captures
+        if capture_id in self.active_captures:
+            del self.active_captures[capture_id]
+
 def _run_capture(self, url: str, capture_id: int, duration: int, callback=None):
     """
     Run the capture process in a separate thread.
