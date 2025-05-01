@@ -2,6 +2,8 @@
 
 This document provides a comprehensive guide to the Parliament TV capture feature, which allows users to capture Parliament TV streams with facial recognition to automatically stop when the speaker is no longer present.
 
+**Last Updated:** May 1, 2025
+
 ## Overview
 
 The Parliament TV capture feature consists of several components:
@@ -222,12 +224,51 @@ Tests if a stream URL is valid by downloading a small segment.
    - Check that the video contains a visible speaker
    - Adjust the facial recognition parameters if needed
 
+4. **Video Playback Issues**
+   - Check that the video file exists in the expected location
+   - Verify that the streaming endpoint is working correctly
+   - Use the debugging tools described below to diagnose issues
+
 ### Logs
 
 Logs for the capture process are stored in the following locations:
 
 - Backend API logs: `/var/log/the-mp/backend.log`
 - Capture script logs: `parliament_capture_*.log` in the current directory
+
+### Debugging Tools
+
+#### Video Server for Debugging
+
+A debugging video server is available to help diagnose video playback issues:
+
+```bash
+# Run inside Docker container
+python /app/scripts/video_server.py
+
+# Run on host machine (recommended)
+python /Users/joebradley/Veedoo/Development/the-mp/scripts/host_video_server.py
+```
+
+This server provides a web interface at http://localhost:8765 that allows you to:
+
+- Browse all available Parliament TV videos
+- Play videos directly in your browser
+- Download videos for offline viewing
+- See detailed file information
+
+The host version of the server copies videos from the Docker container to your local machine, making them accessible even if there are permission or networking issues with the Docker container.
+
+#### Debug Information in Capture Detail Page
+
+The capture detail page now includes a debug section that shows:
+
+- Capture ID and status
+- File path information
+- Video source URL being used
+- Direct download link for the video file
+
+This information can help diagnose issues with video playback and file access.
 
 ## Integration with Other Features
 
@@ -237,6 +278,22 @@ The Parliament TV capture feature integrates with the following existing feature
 2. **Media Storage**: Captured videos are stored in the media directory
 3. **User Authentication**: Only authenticated users with appropriate permissions can initiate captures
 
+## Recent Changes
+
+### Integration with Main Application
+
+The Parliament TV capture functionality has been integrated into the main application:
+
+1. **Unified Navigation**: Parliament TV captures are now accessible through the main Captures section
+2. **Enhanced Video Player**: The video player now handles Parliament TV videos with improved error recovery
+3. **Robust Streaming Endpoint**: The streaming endpoint has been updated to better find and serve video files
+
+### Technical Improvements
+
+1. **Improved File Path Handling**: The system now tries multiple approaches to find video files
+2. **Automatic File Path Updates**: When a file is found through alternative methods, the database is updated
+3. **Fallback Mechanisms**: If one video source fails, the player automatically tries alternative sources
+
 ## Future Enhancements
 
 Planned enhancements for the Parliament TV capture feature include:
@@ -245,3 +302,4 @@ Planned enhancements for the Parliament TV capture feature include:
 2. **Speaker Recognition**: Identify specific speakers in the video
 3. **Automatic Transcription**: Generate transcripts of the captured content
 4. **Clip Generation**: Create short clips from the captured content
+5. **Unified Media Management**: Complete integration with the main media management system
