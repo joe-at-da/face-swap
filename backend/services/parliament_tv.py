@@ -15,26 +15,65 @@ logger = logging.getLogger(__name__)
 class ParliamentTVCapture:
     """Service for capturing Parliament TV streams with facial recognition."""
     
-    def __init__(self):
-        """Initialize the Parliament TV capture service."""
+    def __init__(self, temp_dir=None, media_dir=None, scripts_dir=None):
+        """
+        Initialize the Parliament TV capture service.
+        
+        Args:
+            temp_dir: Directory to store temporary files
+            media_dir: Directory to store media files
+            scripts_dir: Directory containing the capture scripts
+        """
         try:
-            # Use absolute paths for scripts directory
-            self.scripts_dir = Path("/app/scripts")
+            # Initialize path variables with fallbacks to ensure they're never None
+            # First try the provided parameters, then environment variables, then default paths
+            if temp_dir:
+                self.temp_dir = Path(temp_dir)
+            elif os.environ.get("TEMP_STORAGE_PATH"):
+                self.temp_dir = Path(os.environ.get("TEMP_STORAGE_PATH"))
+            else:
+                self.temp_dir = Path("/tmp")
             
-            # Set default paths if settings are not available
-            temp_path = settings.TEMP_STORAGE_PATH if hasattr(settings, 'TEMP_STORAGE_PATH') and settings.TEMP_STORAGE_PATH else "/app/data/temp"
-            media_path = settings.MEDIA_STORAGE_PATH if hasattr(settings, 'MEDIA_STORAGE_PATH') and settings.MEDIA_STORAGE_PATH else "/app/data/media"
+            if media_dir:
+                self.media_dir = Path(media_dir)
+            elif os.environ.get("MEDIA_STORAGE_PATH"):
+                self.media_dir = Path(os.environ.get("MEDIA_STORAGE_PATH"))
+            else:
+                self.media_dir = Path("/media")
             
-            # Ensure paths are Path objects and not None
-            self.temp_dir = Path(temp_path) if temp_path else Path("/app/data/temp")
-            self.media_dir = Path(media_path) / "parliament_captures" if media_path else Path("/app/data/media/parliament_captures")
+            # For scripts_dir, try multiple approaches to find a valid path
+            if scripts_dir:
+                self.scripts_dir = Path(scripts_dir)
+            elif os.environ.get("DATA_DIR"):
+                self.scripts_dir = Path(os.environ.get("DATA_DIR")) / "scripts"
+            else:
+                # Try several common locations
+                potential_paths = [
+                    Path("/app/scripts"),
+                    Path(os.getcwd()) / "scripts",
+                    Path(os.getcwd()).parent / "scripts",
+                    Path("/scripts")
+                ]
+                
+                for path in potential_paths:
+                    if path.exists():
+                        self.scripts_dir = path
+                        break
+                else:
+                    # If none of the paths exist, use a default but create the directory
+                    self.scripts_dir = Path("/app/scripts")
+                    os.makedirs(str(self.scripts_dir), exist_ok=True)
             
-            logger.info(f"Using temp directory: {self.temp_dir}")
-            logger.info(f"Using media directory: {self.media_dir}")
+            # Log the initialized paths
+            logger.info(f"Initialized ParliamentTVCapture with paths:")
+            logger.info(f"  temp_dir: {self.temp_dir}")
+            logger.info(f"  media_dir: {self.media_dir}")
+            logger.info(f"  scripts_dir: {self.scripts_dir}")
             
-            # Create directories if they don't exist
+            # Ensure the directories exist
             os.makedirs(str(self.temp_dir), exist_ok=True)
             os.makedirs(str(self.media_dir), exist_ok=True)
+            os.makedirs(str(self.scripts_dir), exist_ok=True)
             
             # Keep track of active capture processes
             self._current_process = None
@@ -43,7 +82,7 @@ class ParliamentTVCapture:
             # Log initialization success
             logger.info("ParliamentTVCapture service initialized successfully")
         except Exception as e:
-            logger.error(f"Error initializing ParliamentTVCapture service: {str(e)}")
+            logger.error(f"Error initializing ParliamentTVCapture: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             
@@ -206,21 +245,55 @@ class ParliamentTVCapture:
         logger.info(f"Successfully extracted direct stream URL: {direct_stream_url}")
         
         # Check if the capture script exists
-        if not os.path.exists(str(capture_script)):
+        script_found = False
+        if capture_script is not None and os.path.exists(str(capture_script)):
+            script_found = True
+            logger.info(f"Found capture script at: {capture_script}")
+        else:
             logger.error(f"Capture script not found at {capture_script}")
             # Try to find the script in the current directory or parent directories
             alternative_paths = [
                 Path("scripts/parliament_capture_direct.py"),
                 Path("../scripts/parliament_capture_direct.py"),
-                Path("/app/scripts/parliament_capture_direct.py")
+                Path("/app/scripts/parliament_capture_direct.py"),
+                Path("/scripts/parliament_capture_direct.py"),
+                Path(os.path.join(os.getcwd(), "scripts/parliament_capture_direct.py")),
+                Path(os.path.join(os.getcwd(), "../scripts/parliament_capture_direct.py"))
             ]
             
             for alt_path in alternative_paths:
-                if os.path.exists(str(alt_path)):
-                    logger.info(f"Found alternative script path: {alt_path}")
-                    capture_script = alt_path
-                    break
-            else:
+                try:
+                    if os.path.exists(str(alt_path)):
+                        logger.info(f"Found alternative script path: {alt_path}")
+                        capture_script = alt_path
+                        script_found = True
+                        break
+                except Exception as e:
+                    logger.error(f"Error checking path {alt_path}: {str(e)}")
+            
+            if not script_found:
+                # Last resort: try to find the script by searching in common directories
+                search_dirs = ["/app", "/", ".", "..", "/usr/local", "/usr/local/bin"]
+                for search_dir in search_dirs:
+                    try:
+                        if os.path.exists(search_dir):
+                            logger.info(f"Searching for script in {search_dir}")
+                            for root, dirs, files in os.walk(search_dir, topdown=True, followlinks=False):
+                                if "parliament_capture_direct.py" in files:
+                                    script_path = os.path.join(root, "parliament_capture_direct.py")
+                                    logger.info(f"Found script at: {script_path}")
+                                    capture_script = Path(script_path)
+                                    script_found = True
+                                    break
+                                # Limit depth to avoid excessive searching
+                                if root.count(os.sep) - search_dir.count(os.sep) > 3:
+                                    dirs[:] = []
+                        if script_found:
+                            break
+                    except Exception as e:
+                        logger.error(f"Error searching in {search_dir}: {str(e)}")
+            
+            if not script_found:
                 logger.error("Could not find parliament_capture_direct.py script")
                 return {
                     "success": False,
@@ -361,7 +434,7 @@ class ParliamentTVCapture:
                 "error": str(e)
             }
     
-    def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, callback=None) -> None:
+    def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, callback=None) -> bool:
         """
         Start capturing a Parliament TV stream asynchronously.
         
@@ -370,11 +443,24 @@ class ParliamentTVCapture:
             capture_id: The ID of the capture in the database
             duration: Maximum duration to capture in seconds (default: 30 minutes)
             callback: Optional callback function to call with the result
+            
+        Returns:
+            bool: True if the capture thread was started successfully, False otherwise
         """
+        # Print detailed debugging information
+        print(f"DEBUG - start_capture_async called with URL: {url}, type: {type(url)}")
+        print(f"DEBUG - capture_id: {capture_id}, type: {type(capture_id)}")
+        print(f"DEBUG - duration: {duration}, type: {type(duration)}")
+        print(f"DEBUG - callback: {callback is not None}")
+        print(f"DEBUG - self.temp_dir: {self.temp_dir}, type: {type(self.temp_dir)}")
+        print(f"DEBUG - self.media_dir: {self.media_dir}, type: {type(self.media_dir)}")
+        print(f"DEBUG - self.scripts_dir: {self.scripts_dir}, type: {type(self.scripts_dir)}")
+        
         # Validate inputs before starting the thread
         logger.info(f"start_capture_async called with URL: {url}, type: {type(url)}")
         logger.info(f"capture_id: {capture_id}, type: {type(capture_id)}")
         logger.info(f"duration: {duration}, type: {type(duration)}")
+        logger.info(f"callback: {callback is not None}")
         
         # Ensure URL is not None and is a string
         if url is None:
@@ -382,7 +468,7 @@ class ParliamentTVCapture:
             logger.error(error_msg)
             if callback:
                 callback({"success": False, "error": error_msg})
-            return
+            return False
         
         if not isinstance(url, str):
             logger.warning(f"URL is not a string: {url}, type: {type(url)}")
@@ -394,7 +480,7 @@ class ParliamentTVCapture:
                 logger.error(error_msg)
                 if callback:
                     callback({"success": False, "error": error_msg})
-                return
+                return False
         
         # Ensure capture_id is not None and is an integer
         if capture_id is None:
@@ -402,7 +488,7 @@ class ParliamentTVCapture:
             logger.error(error_msg)
             if callback:
                 callback({"success": False, "error": error_msg})
-            return
+            return False
         
         try:
             capture_id = int(capture_id)
@@ -411,7 +497,7 @@ class ParliamentTVCapture:
             logger.error(error_msg)
             if callback:
                 callback({"success": False, "error": error_msg})
-            return
+            return False
         
         # Ensure duration is not None and is an integer
         if duration is None:
@@ -424,50 +510,113 @@ class ParliamentTVCapture:
             logger.warning(f"Failed to convert duration to integer: {str(e)}, using default value of 1800 seconds")
             duration = 1800
         
-        def capture_thread():
-            try:
-                logger.info(f"Starting capture thread with URL: {url}, capture_id: {capture_id}, duration: {duration}")
+        # Find the capture script
+        try:
+            # First check if scripts_dir contains the script
+            script_path = None
+            if self.scripts_dir is not None:
+                potential_script = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
+                if os.path.exists(potential_script):
+                    script_path = potential_script
+                    logger.info(f"Found script at: {script_path}")
+            
+            # If not found, try alternative locations
+            if not script_path:
+                alternative_paths = [
+                    "/app/scripts/parliament_capture_direct.py",
+                    "scripts/parliament_capture_direct.py",
+                    "../scripts/parliament_capture_direct.py",
+                    "/scripts/parliament_capture_direct.py",
+                    os.path.join(os.getcwd(), "scripts/parliament_capture_direct.py"),
+                    os.path.join(os.getcwd(), "../scripts/parliament_capture_direct.py")
+                ]
                 
-                # Ensure paths are initialized before calling start_capture
-                if self.temp_dir is None:
-                    logger.warning("temp_dir is None, initializing to default path")
-                    self.temp_dir = Path("/app/data/temp")
-                    os.makedirs(str(self.temp_dir), exist_ok=True)
-                    
-                if self.media_dir is None:
-                    logger.warning("media_dir is None, initializing to default path")
-                    self.media_dir = Path("/app/data/media/parliament_captures")
-                    os.makedirs(str(self.media_dir), exist_ok=True)
-                    
-                if self.scripts_dir is None:
-                    logger.warning("scripts_dir is None, initializing to default path")
-                    self.scripts_dir = Path("/app/scripts")
-                
-                # Call start_capture with validated inputs
-                result = self.start_capture(url, capture_id, duration)
-                logger.info(f"Capture thread completed with result: {result}")
-                
-                if callback:
-                    logger.info("Calling callback function with result")
-                    callback(result)
-            except Exception as e:
-                error_msg = f"Unexpected error in capture thread: {str(e)}"
+                for alt_path in alternative_paths:
+                    if os.path.exists(alt_path):
+                        script_path = alt_path
+                        logger.info(f"Found script at alternative location: {script_path}")
+                        break
+            
+            # If we still can't find the script, raise an error
+            if not script_path:
+                error_msg = "Could not find parliament_capture_direct.py script in any location"
                 logger.error(error_msg)
-                import traceback
-                tb = traceback.format_exc()
-                logger.error(f"Traceback: {tb}")
-                print(f"Unexpected error starting capture: {str(e)}")
-                print(f"Traceback: {tb}")
-                
                 if callback:
                     callback({"success": False, "error": error_msg})
+                return False
+            
+            # Store the script path for use in _run_capture
+            self._script_path = script_path
+            
+            # Ensure temp and media directories exist
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            os.makedirs(str(self.media_dir), exist_ok=True)
+            
+            # Start the capture in a separate thread
+            self._capture_thread = threading.Thread(
+                target=self._run_capture,
+                args=(url, capture_id, duration, callback)
+            )
+            self._capture_thread.daemon = True
+            self._capture_thread.start()
+            logger.debug("Started capture thread")
+            return True
+        except Exception as e:
+            error_msg = f"Error starting capture thread: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            print(f"Unexpected error starting capture: {str(e)}")
+            if callback:
+                callback({
+                    "success": False,
+                    "error": error_msg
+                })
+            return False
+            
+    def _run_capture(self, url: str, capture_id: int, duration: int, callback=None):
+        """
+        Run the capture process in a separate thread.
         
-        logger.info("Creating capture thread")
-        self._capture_thread = threading.Thread(target=capture_thread)
-        self._capture_thread.daemon = True
-        logger.info("Starting capture thread")
-        self._capture_thread.start()
-        logger.info("Capture thread started")
+        Args:
+            url: Parliament TV event URL
+            capture_id: The ID of the capture in the database
+            duration: Maximum duration to capture in seconds
+            callback: Optional callback function to call with the result
+        """
+        try:
+            # Ensure paths are initialized before calling start_capture
+            if self.temp_dir is None:
+                logger.warning("temp_dir is None, initializing to default path")
+                self.temp_dir = Path("/app/data/temp")
+                os.makedirs(str(self.temp_dir), exist_ok=True)
+                
+            if self.media_dir is None:
+                logger.warning("media_dir is None, initializing to default path")
+                self.media_dir = Path("/app/data/media/parliament_captures")
+                os.makedirs(str(self.media_dir), exist_ok=True)
+                
+            if self.scripts_dir is None:
+                logger.warning("scripts_dir is None, initializing to default path")
+                self.scripts_dir = Path("/app/scripts")
+            
+            # Call start_capture with validated inputs
+            result = self.start_capture(url, capture_id, duration)
+            logger.info(f"Capture thread completed with result: {result}")
+            
+            if callback:
+                logger.info("Calling callback function with result")
+                callback(result)
+        except Exception as e:
+            error_msg = f"Unexpected error in capture thread: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"Traceback: {tb}")
+            print(f"Unexpected error in capture thread: {str(e)}")
+            
+            if callback:
+                callback({"success": False, "error": error_msg})
     
     def extract_stream_url(self, url: str) -> Optional[Dict]:
         """
