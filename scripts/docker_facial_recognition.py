@@ -270,6 +270,7 @@ def main():
     args = parser.parse_args()
     
     try:
+        # Only use the test video if explicitly requested with the --test flag
         if args.test:
             # Use a test video for development
             test_video_url = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"

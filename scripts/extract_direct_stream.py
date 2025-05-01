@@ -74,6 +74,15 @@ def extract_direct_stream_url(url):
     """Extract the direct stream URL using yt-dlp."""
     logger.info(f"Extracting direct stream URL from: {url}")
     
+    # Validate that the URL is a Parliament TV URL
+    if not url or not isinstance(url, str):
+        logger.error(f"Invalid URL provided: {url}")
+        return None
+        
+    if not ("parliamentlive.tv" in url or "parliament.tv" in url or "parliamentlive" in url):
+        logger.error(f"URL does not appear to be a valid Parliament TV URL: {url}")
+        return None
+    
     # Ensure URL has audio parameter set to false (not audio-only)
     if "audioOnly=" in url and "audioOnly=True" in url:
         url = url.replace("audioOnly=True", "audioOnly=False")
@@ -113,6 +122,10 @@ def extract_direct_stream_url(url):
             "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
             url
         ]
+        
+        # Add more detailed logging
+        logger.info(f"Extracting from URL: {url}")
+        logger.info(f"Using command: {' '.join(cmd)}")
         
         logger.info(f"Running yt-dlp command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)

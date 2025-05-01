@@ -52,6 +52,29 @@ class ParliamentTVCapture:
         # Build the command
         capture_script = self.scripts_dir / "parliament_capture_direct.py"
         
+        # Add extensive logging to diagnose the issue
+        logger.info(f"URL being passed to capture script: {url}")
+        logger.info(f"URL type: {type(url)}")
+        
+        # Validate that the URL is not empty and is a proper URL
+        if not url or not isinstance(url, str):
+            logger.error(f"Invalid URL provided to start_capture: {url}")
+            return {
+                "success": False,
+                "error": f"Invalid URL provided: {url}"
+            }
+        
+        # Check if the URL is the Big Buck Bunny test URL
+        if "commondatastorage.googleapis.com" in url and "BigBuckBunny" in url:
+            logger.error(f"Detected Big Buck Bunny test URL: {url}")
+            logger.error("This suggests the URL extraction failed and fell back to the test video")
+            return {
+                "success": False,
+                "error": "URL extraction failed and fell back to test video. Please check the Parliament TV URL."
+            }
+        
+        # Note: We're using parliament_capture_direct.py instead of docker_facial_recognition.py
+        # to avoid the test flag issue that would cause it to use Big Buck Bunny test video
         cmd = [
             sys.executable,
             str(capture_script),
@@ -59,6 +82,8 @@ class ParliamentTVCapture:
             "--duration", str(duration),
             "--output", str(output_file)
         ]
+        
+        # Ensure we're not using the test flag that would cause it to use Big Buck Bunny
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
