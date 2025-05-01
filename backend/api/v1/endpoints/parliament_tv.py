@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Response, File, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
+import os
+import glob
+from pathlib import Path
 
 from backend.api.deps import get_db
 from backend.core.security import has_permission, get_current_active_user
@@ -15,6 +19,9 @@ router = APIRouter()
 
 # Initialize the Parliament TV capture service
 parliament_tv_service = ParliamentTVCapture()
+
+# Define the data directory where videos are stored
+DATA_DIR = os.environ.get('DATA_DIR', '/app/data/temp')
 
 # Helper function to make objects JSON serializable
 def make_json_serializable(obj: Any) -> Any:
@@ -424,3 +431,172 @@ async def stop_parliament_tv_capture(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to stop capture: {str(e)}"
         )
+
+@router.get("/{capture_id}/stream")
+async def stream_parliament_tv_video(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Stream a Parliament TV video file."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    # Check if it's a Parliament TV capture
+    try:
+        if capture and (not capture.metadata or not isinstance(capture.metadata, dict) or 'parliament_tv_url' not in capture.metadata):
+            capture = None
+    except Exception as e:
+        print(f"Error checking metadata for capture {capture_id}: {str(e)}")
+        capture = None
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parliament TV capture session with ID {capture_id} not found"
+        )
+    
+    # Check if file exists
+    if not capture.file_path or not os.path.exists(capture.file_path):
+        # Try to find the file in the data directory based on naming pattern
+        file_pattern = f"parliament_stream_*_{capture_id}.mp4"
+        matching_files = glob.glob(os.path.join(DATA_DIR, file_pattern))
+        
+        if not matching_files:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Video file for capture {capture_id} not found"
+            )
+        
+        # Use the first matching file
+        file_path = matching_files[0]
+    else:
+        file_path = capture.file_path
+    
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=os.path.basename(file_path)
+    )
+
+@router.delete("/{capture_id}")
+async def delete_parliament_tv_capture(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Delete a Parliament TV capture session and its associated files."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    # Check if it's a Parliament TV capture
+    try:
+        if capture and (not capture.metadata or not isinstance(capture.metadata, dict) or 'parliament_tv_url' not in capture.metadata):
+            capture = None
+    except Exception as e:
+        print(f"Error checking metadata for capture {capture_id}: {str(e)}")
+        capture = None
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parliament TV capture session with ID {capture_id} not found"
+        )
+    
+    # If the capture is active, stop it first
+    if capture.status == "active":
+        try:
+            # Update the capture session status
+            capture.status = "completed"
+            capture.end_time = datetime.now()
+            
+            # Add metadata about who stopped the capture
+            capture.metadata = {
+                **(capture.metadata or {}),
+                "stopped_by": current_user.id,
+                "stopped_by_name": current_user.full_name,
+                "stopped_at": datetime.now()
+            }
+            
+            # Attempt to stop the actual capture process
+            try:
+                parliament_tv_service.stop_capture(capture_id)
+            except Exception as e:
+                # Log the error but don't fail the request
+                print(f"Error stopping capture process: {str(e)}")
+        except Exception as e:
+            print(f"Error stopping active capture: {str(e)}")
+    
+    # Delete associated files
+    files_deleted = []
+    
+    # Try to delete the main video file
+    if capture.file_path and os.path.exists(capture.file_path):
+        try:
+            os.remove(capture.file_path)
+            files_deleted.append(os.path.basename(capture.file_path))
+        except Exception as e:
+            print(f"Error deleting file {capture.file_path}: {str(e)}")
+    
+    # Try to find and delete other associated files
+    file_patterns = [
+        f"parliament_stream_*_{capture_id}.mp4",
+        f"parliament_capture_log_*_{capture_id}.json",
+        f"stream_info_*_{capture_id}.json"
+    ]
+    
+    for pattern in file_patterns:
+        matching_files = glob.glob(os.path.join(DATA_DIR, pattern))
+        for file_path in matching_files:
+            try:
+                os.remove(file_path)
+                files_deleted.append(os.path.basename(file_path))
+            except Exception as e:
+                print(f"Error deleting file {file_path}: {str(e)}")
+    
+    # Delete the database record
+    db.delete(capture)
+    db.commit()
+    
+    return {
+        "message": f"Capture session {capture_id} deleted successfully",
+        "files_deleted": files_deleted
+    }
+
+@router.post("/cleanup")
+async def cleanup_temporary_files(
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Clean up temporary files from Parliament TV captures."""
+    has_permission(current_user, [UserRole.ADMIN])
+    
+    # Define file patterns to clean up
+    patterns = [
+        "test_stream_*.mp4",
+        "stream_info_*.json"
+    ]
+    
+    files_deleted = []
+    
+    for pattern in patterns:
+        matching_files = glob.glob(os.path.join(DATA_DIR, pattern))
+        for file_path in matching_files:
+            try:
+                os.remove(file_path)
+                files_deleted.append(os.path.basename(file_path))
+            except Exception as e:
+                print(f"Error deleting file {file_path}: {str(e)}")
+    
+    return {
+        "message": "Temporary files cleaned up successfully",
+        "files_deleted": files_deleted,
+        "count": len(files_deleted)
+    }
