@@ -1,11 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { useMutation } from '@tanstack/react-query';
+import axios from 'axios';
 import Link from 'next/link';
 import MainLayout from '../../components/layout/MainLayout';
-import { withAuth } from '../../contexts/AuthContext';
+import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
+
+// API base URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 
 interface CaptureFormData {
   title: string;
@@ -13,31 +17,255 @@ interface CaptureFormData {
   source_url: string;
   scheduled_start?: string;
   scheduled_end?: string;
+  enable_facial_recognition?: boolean;
+  duration?: number;
+}
+
+interface ValidationResult {
+  success: boolean;
+  message: string;
+  streamUrl?: string;
+  timeMarker?: number;
+  error?: string;
+}
+
+interface ExtractUrlResponse {
+  direct_stream: string;
+  time_marker?: {
+    seconds: number;
+  };
+}
+
+interface TestStreamResponse {
+  url: string;
+  is_valid: boolean;
 }
 
 const NewCapturePage: React.FC = () => {
   const router = useRouter();
+  const { token } = useAuth();
   const [formData, setFormData] = useState<CaptureFormData>({
     title: '',
     description: '',
     source_url: 'https://www.parliamentlive.tv/Event/Index',
+    enable_facial_recognition: true,
+    duration: 300, // Default 5 minutes
   });
   
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [scheduleCapture, setScheduleCapture] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [activeCapture, setActiveCapture] = useState<{id: number, started_by: string, started_at: string} | null>(null);
+  const [isStoppingCapture, setIsStoppingCapture] = useState(false);
   
+  // Configure axios with authentication headers
+  const getAuthHeaders = () => {
+    return {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    };
+  };
+
+  // Check for active captures when component loads
+  useEffect(() => {
+    // Only check for active captures if we have a token
+    if (!token) return;
+    
+    const checkActiveCaptures = async () => {
+      try {
+        // Wait a bit to ensure auth context is fully initialized
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const response = await axios.get<any[]>(
+          `${API_BASE_URL}/parliament-tv?status=active`,
+          getAuthHeaders()
+        );
+        
+        console.log('Active captures:', response.data);
+        
+        if (Array.isArray(response.data) && response.data.length > 0) {
+          const activeCapture = response.data[0];
+          const user = activeCapture.created_by;
+          
+          setErrors({
+            form: `A capture session is already in progress. Started by ${user.name} at ${new Date(activeCapture.created_at).toLocaleString()}.`
+          });
+          
+          setActiveCapture({
+            id: activeCapture.id,
+            started_by: user.name,
+            started_at: activeCapture.created_at
+          });
+        }
+      } catch (err) {
+        console.error('Error checking active captures:', err);
+        // Don't show error to user, just log it
+      }
+    };
+    
+    checkActiveCaptures();
+  }, [token]);
+
+  // Stop active capture
+  const stopActiveCapture = async () => {
+    if (!activeCapture) return;
+    
+    setIsStoppingCapture(true);
+    
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/parliament-tv/${activeCapture.id}/stop`,
+        {},
+        getAuthHeaders()
+      );
+      
+      console.log('Stop capture response:', response.data);
+      
+      // Clear active capture and error
+      setActiveCapture(null);
+      setErrors({});
+      
+      // Show success message
+      alert('Capture stopped successfully');
+      
+      // Refresh the page
+      window.location.reload();
+    } catch (err) {
+      console.error('Error stopping capture:', err);
+      alert('Failed to stop capture. Please try again.');
+    } finally {
+      setIsStoppingCapture(false);
+    }
+  };
+
+  // Validate Parliament TV URL
+  const validateUrl = async () => {
+    if (!formData.source_url) return;
+
+    setIsValidating(true);
+    setValidationResult(null);
+
+    try {
+      // First extract the stream URL
+      const extractResponse = await axios.get<ExtractUrlResponse>(
+        `${API_BASE_URL}/parliament-tv/extract-url`, 
+        {
+          params: { url: formData.source_url },
+          ...getAuthHeaders()
+        }
+      );
+      
+      console.log('Extract URL response:', extractResponse.data);
+      
+      if (!extractResponse.data.direct_stream) {
+        setValidationResult({
+          success: false,
+          message: 'Failed to extract stream URL from Parliament TV page',
+          error: 'No direct stream URL found'
+        });
+        setIsValidating(false);
+        return;
+      }
+      
+      // Now test if the stream URL is valid
+      const testResponse = await axios.get<TestStreamResponse>(
+        `${API_BASE_URL}/parliament-tv/test-url`,
+        {
+          params: { url: extractResponse.data.direct_stream },
+          ...getAuthHeaders()
+        }
+      );
+      
+      console.log('Test URL response:', testResponse.data);
+      
+      if (testResponse.data.is_valid) {
+        // Stream is valid
+        setValidationResult({
+          success: true,
+          message: 'Stream URL is valid and ready for capture.',
+          streamUrl: extractResponse.data.direct_stream,
+          timeMarker: extractResponse.data.time_marker?.seconds || 0
+        });
+        
+        // Update form data with direct stream URL
+        setFormData(prev => ({
+          ...prev,
+          source_url: extractResponse.data.direct_stream
+        }));
+      } else {
+        // Stream is not valid
+        setValidationResult({
+          success: false,
+          message: 'Stream URL is not valid or cannot be played.',
+          error: 'Stream validation failed'
+        });
+      }
+    } catch (error: any) {
+      console.error('URL validation error:', error);
+      
+      setValidationResult({
+        success: false,
+        message: 'Failed to validate stream URL',
+        error: error.response?.data?.detail || error.message || 'Unknown error'
+      });
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
   // Start capture mutation
   const startCaptureMutation = useMutation({
     mutationFn: async (data: CaptureFormData) => {
-      return await api.post('/capture', data);
+      // For Parliament TV captures, use the parliament-tv endpoint
+      if (data.source_url.includes('parliamentlive.tv')) {
+        const payload = {
+          url: data.source_url,
+          title: data.title,
+          description: data.description,
+          duration: data.duration,
+          enable_facial_recognition: data.enable_facial_recognition,
+          scheduled_start: data.scheduled_start,
+          scheduled_end: data.scheduled_end
+        };
+        
+        const response = await axios.post(
+          `${API_BASE_URL}/parliament-tv`,
+          payload,
+          getAuthHeaders()
+        );
+        
+        return response.data;
+      } else {
+        // For other captures, use the regular capture endpoint
+        return await api.post('/capture', data);
+      }
     },
     onSuccess: (data) => {
       router.push(`/capture/${data.id}`);
     },
     onError: (error: any) => {
-      setErrors({
-        form: error.message || 'Failed to start capture session',
-      });
+      console.error('Capture error:', error);
+      
+      // Check if it's a conflict error (409)
+      if (error.response?.status === 409) {
+        const conflictData = error.response.data.detail;
+        
+        setErrors({
+          form: `A capture session is already in progress. Started by ${conflictData.started_by} at ${new Date(conflictData.started_at).toLocaleString()}.`
+        });
+        
+        setActiveCapture({
+          id: conflictData.capture_id,
+          started_by: conflictData.started_by,
+          started_at: conflictData.started_at
+        });
+      } else {
+        setErrors({
+          form: error.response?.data?.detail || error.message || 'Failed to start capture session'
+        });
+      }
     },
   });
 
@@ -80,8 +308,8 @@ const NewCapturePage: React.FC = () => {
     
     if (!formData.source_url.trim()) {
       newErrors.source_url = 'Source URL is required';
-    } else if (!formData.source_url.includes('parliamentlive.tv')) {
-      newErrors.source_url = 'Source URL must be from parliamentlive.tv';
+    } else if (formData.source_url.includes('parliamentlive.tv') && !validationResult?.success) {
+      newErrors.source_url = 'Please validate the Parliament TV URL first';
     }
     
     if (scheduleCapture) {
@@ -218,25 +446,88 @@ const NewCapturePage: React.FC = () => {
                 {/* Source URL */}
                 <div>
                   <label htmlFor="source_url" className="block text-sm font-medium text-gray-700">
-                    Parliament TV Source URL *
+                    Source URL
                   </label>
-                  <input
-                    type="url"
-                    id="source_url"
-                    name="source_url"
-                    value={formData.source_url}
-                    onChange={handleInputChange}
-                    className={`mt-1 w-200 form-input ${errors.source_url ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
-                    placeholder="https://www.parliamentlive.tv/Event/Index/"
-                  />
-                  {errors.source_url ? (
+                  <div className="mt-1 flex rounded-md shadow-sm">
+                    <input
+                      type="url"
+                      id="source_url"
+                      name="source_url"
+                      placeholder="https://www.parliamentlive.tv/Event/Index/..."
+                      value={formData.source_url}
+                      onChange={handleInputChange}
+                      className={`flex-1 form-input rounded-none rounded-l-md ${errors.source_url ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={validateUrl}
+                      disabled={isValidating || !formData.source_url.includes('parliamentlive.tv')}
+                      className="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                      {isValidating ? 'Validating...' : 'Validate'}
+                    </button>
+                  </div>
+                  {errors.source_url && (
                     <p className="mt-1 text-sm text-red-600">{errors.source_url}</p>
-                  ) : (
-                    <p className="mt-1 text-sm text-gray-500">
-                      Enter the URL of the Parliament TV stream you want to capture
-                    </p>
+                  )}
+                  {validationResult && (
+                    <div className={`mt-2 text-sm ${validationResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                      {validationResult.message}
+                      {validationResult.timeMarker && validationResult.success && (
+                        <p className="text-green-600">Time marker detected: {validationResult.timeMarker} seconds</p>
+                      )}
+                    </div>
                   )}
                 </div>
+                
+                {/* Parliament TV specific options - only show if URL is from parliamentlive.tv */}
+                {formData.source_url.includes('parliamentlive.tv') && (
+                  <div className="space-y-4 border-t border-gray-200 pt-4">
+                    <h3 className="text-lg font-medium text-gray-900">Parliament TV Options</h3>
+                    
+                    {/* Duration */}
+                    <div>
+                      <label htmlFor="duration" className="block text-sm font-medium text-gray-700">
+                        Maximum Duration (seconds)
+                      </label>
+                      <input
+                        type="number"
+                        id="duration"
+                        name="duration"
+                        min="60"
+                        max="7200"
+                        value={formData.duration || 300}
+                        onChange={(e) => setFormData(prev => ({ ...prev, duration: parseInt(e.target.value) }))}
+                        className="mt-1 form-input"
+                      />
+                      <p className="mt-1 text-sm text-gray-500">
+                        Capture will stop after this duration or when facial recognition detects the speaker is no longer present.
+                      </p>
+                    </div>
+                    
+                    {/* Facial Recognition */}
+                    <div className="relative flex items-start">
+                      <div className="flex items-center h-5">
+                        <input
+                          id="enable_facial_recognition"
+                          name="enable_facial_recognition"
+                          type="checkbox"
+                          checked={formData.enable_facial_recognition}
+                          onChange={(e) => setFormData(prev => ({ ...prev, enable_facial_recognition: e.target.checked }))}
+                          className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                        />
+                      </div>
+                      <div className="ml-3 text-sm">
+                        <label htmlFor="enable_facial_recognition" className="font-medium text-gray-700">
+                          Enable Facial Recognition
+                        </label>
+                        <p className="text-gray-500">
+                          Automatically stop capturing when the speaker is no longer present.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 
                 {/* Schedule toggle */}
                 <div className="pt-4">
@@ -330,11 +621,32 @@ const NewCapturePage: React.FC = () => {
                 </div>
               </div>
               
+              {/* Error message and active capture */}
+              {errors.form && (
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+                  <strong className="font-bold">Error: </strong>
+                  <span className="block sm:inline whitespace-pre-line">{errors.form}</span>
+                  
+                  {activeCapture && (
+                    <div className="mt-3">
+                      <button 
+                        type="button"
+                        onClick={stopActiveCapture}
+                        disabled={isStoppingCapture}
+                        className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:bg-red-300 disabled:cursor-not-allowed"
+                      >
+                        {isStoppingCapture ? 'Stopping Capture...' : 'Stop Active Capture'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              
               {/* Submit button */}
               <div className="pt-4">
                 <button
                   type="submit"
-                  disabled={startCaptureMutation.isPending}
+                  disabled={startCaptureMutation.isPending || (formData.source_url.includes('parliamentlive.tv') && !validationResult?.success)}
                   className="w-full btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block disabled:opacity-50"
                 >
                   {startCaptureMutation.isPending ? 'Starting Capture...' : scheduleCapture ? 'Schedule Capture' : 'Start Capture Now'}
