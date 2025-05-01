@@ -1,6 +1,8 @@
 import { AppProps } from 'next/app';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import '../styles/globals.css';
 import { AuthProvider } from '../contexts/AuthContext';
 import { ThemeProvider } from '../contexts/ThemeContext';
@@ -31,6 +33,18 @@ function MyApp({ Component, pageProps }: AppProps) {
             <Component {...pageProps} />
           </AuthProvider>
         )}
+        <ToastContainer 
+          position="top-right"
+          autoClose={5000}
+          hideProgressBar={false}
+          newestOnTop
+          closeOnClick
+          rtl={false}
+          pauseOnFocusLoss
+          draggable
+          pauseOnHover
+          theme="colored"
+        />
       </ThemeProvider>
     </QueryClientProvider>
   );

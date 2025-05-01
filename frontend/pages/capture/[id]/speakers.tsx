@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { toast } from 'react-toastify';
 import MainLayout from '../../../components/layout/MainLayout';
 import { withAuth } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
@@ -84,11 +83,11 @@ const SpeakerIdentificationPage: React.FC = () => {
       });
     },
     onSuccess: () => {
-      toast.success('Speaker identification started');
+      console.log('Speaker identification started');
       refetchIdentifications();
     },
     onError: (error: any) => {
-      toast.error(`Error starting speaker identification: ${error.message}`);
+      console.error(`Error starting speaker identification: ${error.message}`);
     }
   });
 
@@ -98,11 +97,11 @@ const SpeakerIdentificationPage: React.FC = () => {
       return await api.delete(`/speakers/${identificationId}`);
     },
     onSuccess: () => {
-      toast.success('Speaker identification deleted');
+      console.log('Speaker identification deleted');
       refetchIdentifications();
     },
     onError: (error: any) => {
-      toast.error(`Error deleting speaker identification: ${error.message}`);
+      console.error(`Error deleting speaker identification: ${error.message}`);
     }
   });
 
