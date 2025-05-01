@@ -68,14 +68,21 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
   
   // Check for active captures when component loads
   useEffect(() => {
+    // Only check for active captures if we have a token
+    if (!token) return;
+    
     const checkActiveCaptures = async () => {
       try {
-        const authHeaders = getAuthHeaders();
+        // Wait a bit to ensure auth context is fully initialized
+        await new Promise(resolve => setTimeout(resolve, 500));
         
-        const response = await axios.get(
+        const response = await axios.get<any[]>(
           `${API_BASE_URL}/parliament-tv?status=active`,
           {
-            headers: authHeaders.headers
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
           }
         );
         
@@ -95,6 +102,7 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         }
       } catch (err) {
         console.error('Error checking active captures:', err);
+        // Don't show error to user, just log it
       }
     };
     
@@ -300,21 +308,61 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         if (err.response.status === 409) {
           console.log('Full conflict response:', JSON.stringify(err.response.data));
           
-          const conflictData = err.response.data?.detail || {};
+          // Try to extract the conflict data from different possible structures
+          let conflictData;
+          if (typeof err.response.data.detail === 'object') {
+            conflictData = err.response.data.detail;
+          } else if (typeof err.response.data === 'object') {
+            conflictData = err.response.data;
+          } else {
+            conflictData = {};
+          }
+          
           console.log('Conflict data extracted:', JSON.stringify(conflictData));
           
           errorMessage = conflictData.message || 'A capture session is already in progress';
           
-          if (conflictData.capture_id && conflictData.started_by && conflictData.started_at) {
-            const startTime = new Date(conflictData.started_at).toLocaleString();
-            errorDetails = `Started by ${conflictData.started_by} at ${startTime}`;
+          // Check for capture ID in different possible locations
+          const captureId = conflictData.capture_id || conflictData.id;
+          const startedBy = conflictData.started_by || conflictData.user || 'another user';
+          const startedAt = conflictData.started_at || conflictData.created_at;
+          
+          if (captureId && startedAt) {
+            const startTime = new Date(startedAt).toLocaleString();
+            errorDetails = `Started by ${startedBy} at ${startTime}`;
             
             // Store active capture info for the stop button
             setActiveCapture({
-              id: conflictData.capture_id,
-              started_by: conflictData.started_by,
-              started_at: conflictData.started_at
+              id: captureId,
+              started_by: startedBy,
+              started_at: startedAt
             });
+            
+            // Automatically check for active captures to get more details
+            try {
+              axios.get<any[]>(
+                `${API_BASE_URL}/parliament-tv?status=active`,
+                {
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                  }
+                }
+              ).then(response => {
+                if (Array.isArray(response.data) && response.data.length > 0) {
+                  const activeCapture = response.data[0];
+                  const user = activeCapture.created_by;
+                  
+                  setActiveCapture({
+                    id: activeCapture.id,
+                    started_by: user.name,
+                    started_at: activeCapture.created_at
+                  });
+                }
+              }).catch(e => console.error('Failed to get active captures:', e));
+            } catch (e) {
+              console.error('Error in secondary active capture check:', e);
+            }
           } else {
             console.log('Missing required conflict data fields. Available fields:', Object.keys(conflictData).join(', '));
           }

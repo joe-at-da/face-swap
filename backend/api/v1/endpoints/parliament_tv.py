@@ -247,14 +247,22 @@ async def get_parliament_tv_captures(
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     # Query capture sessions with Parliament TV metadata
-    query = db.query(models.CaptureSession).filter(
-        models.CaptureSession.metadata.has_key("parliament_tv_url")
-    )
+    # First get all capture sessions
+    query = db.query(models.CaptureSession)
     
     if status:
         query = query.filter(models.CaptureSession.status == status)
     
-    captures = query.order_by(models.CaptureSession.created_at.desc()).all()
+    # Get all captures and filter in Python for those with parliament_tv_url in metadata
+    all_captures = query.order_by(models.CaptureSession.created_at.desc()).all()
+    captures = []
+    for capture in all_captures:
+        try:
+            # Check if metadata is a dictionary and has parliament_tv_url
+            if capture.metadata and isinstance(capture.metadata, dict) and 'parliament_tv_url' in capture.metadata:
+                captures.append(capture)
+        except Exception as e:
+            print(f"Error checking metadata for capture {capture.id}: {str(e)}")
     
     # Format response
     result = []
@@ -297,9 +305,16 @@ async def get_parliament_tv_capture(
     
     # Get the specified capture session
     capture = db.query(models.CaptureSession).filter(
-        models.CaptureSession.id == capture_id,
-        models.CaptureSession.metadata.has_key("parliament_tv_url")
+        models.CaptureSession.id == capture_id
     ).first()
+    
+    # Check if it's a Parliament TV capture
+    try:
+        if capture and (not capture.metadata or not isinstance(capture.metadata, dict) or 'parliament_tv_url' not in capture.metadata):
+            capture = None
+    except Exception as e:
+        print(f"Error checking metadata for capture {capture_id}: {str(e)}")
+        capture = None
     
     if not capture:
         raise HTTPException(
@@ -346,9 +361,16 @@ async def stop_parliament_tv_capture(
     
     # Get the specified capture session
     capture = db.query(models.CaptureSession).filter(
-        models.CaptureSession.id == capture_id,
-        models.CaptureSession.metadata.has_key("parliament_tv_url")
+        models.CaptureSession.id == capture_id
     ).first()
+    
+    # Check if it's a Parliament TV capture
+    try:
+        if capture and (not capture.metadata or not isinstance(capture.metadata, dict) or 'parliament_tv_url' not in capture.metadata):
+            capture = None
+    except Exception as e:
+        print(f"Error checking metadata for capture {capture_id}: {str(e)}")
+        capture = None
     
     if not capture:
         raise HTTPException(
