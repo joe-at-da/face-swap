@@ -73,6 +73,14 @@ class ParliamentTVCapture:
                 "error": "URL extraction failed and fell back to test video. Please check the Parliament TV URL."
             }
         
+        # Validate that the URL is a proper Parliament TV URL
+        if not ("parliamentlive.tv" in url or "parliament.tv" in url):
+            logger.error(f"URL does not appear to be a Parliament TV URL: {url}")
+            return {
+                "success": False,
+                "error": f"The URL provided does not appear to be a valid Parliament TV URL: {url}"
+            }
+        
         # Note: We're using parliament_capture_direct.py instead of docker_facial_recognition.py
         # to avoid the test flag issue that would cause it to use Big Buck Bunny test video
         cmd = [

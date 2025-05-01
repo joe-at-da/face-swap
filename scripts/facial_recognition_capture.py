@@ -9,7 +9,7 @@ Usage:
     python facial_recognition_capture.py <video_url> [--duration SECONDS] [--output OUTPUT_FILE]
 
 Example:
-    python facial_recognition_capture.py http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4 --duration 60
+    python facial_recognition_capture.py https://example-parliament-stream.mp4 --duration 60
 """
 
 import os

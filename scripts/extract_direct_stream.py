@@ -79,8 +79,18 @@ def extract_direct_stream_url(url):
         logger.error(f"Invalid URL provided: {url}")
         return None
         
-    if not ("parliamentlive.tv" in url or "parliament.tv" in url or "parliamentlive" in url):
+    # Strict validation for Parliament TV URLs
+    valid_domains = ["parliamentlive.tv", "parliament.tv"]
+    is_valid = False
+    
+    for domain in valid_domains:
+        if domain in url:
+            is_valid = True
+            break
+    
+    if not is_valid:
         logger.error(f"URL does not appear to be a valid Parliament TV URL: {url}")
+        logger.error("Only URLs from parliamentlive.tv or parliament.tv are supported")
         return None
     
     # Ensure URL has audio parameter set to false (not audio-only)

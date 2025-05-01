@@ -6,7 +6,8 @@ mkdir -p data/temp
 mkdir -p data/media/parliament_captures
 
 # Step 1: Download a sample video with faces
-SAMPLE_VIDEO_URL="http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+# Using a sample video from Parliament TV instead of Big Buck Bunny
+SAMPLE_VIDEO_URL="https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TEMP_FILE="data/temp/sample_video_$TIMESTAMP.mp4"
 

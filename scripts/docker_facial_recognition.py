@@ -266,63 +266,12 @@ def main():
     parser.add_argument('url', help='Parliament TV event URL')
     parser.add_argument('--duration', '-d', type=int, default=60, help='Duration to capture in seconds')
     parser.add_argument('--output', '-o', help='Output file path')
-    parser.add_argument('--test', action='store_true', help='Use a test video instead of the Parliament TV stream')
+    # Removed the test flag to prevent using Big Buck Bunny as a fallback
     args = parser.parse_args()
     
     try:
-        # Only use the test video if explicitly requested with the --test flag
-        if args.test:
-            # Use a test video for development
-            test_video_url = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-            logger.info(f"Using test video: {test_video_url}")
-            
-            # Download the test video
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            temp_file = Path("/app/data/temp") / f"test_video_{timestamp}.mp4"
-            
-            # Download the test video using ffmpeg
-            download_cmd = [
-                'ffmpeg',
-                '-i', test_video_url,
-                '-c', 'copy',
-                '-y',
-                str(temp_file)
-            ]
-            
-            logger.info(f"Downloading test video: {' '.join(download_cmd)}")
-            
-            try:
-                # Run the ffmpeg command
-                process = subprocess.Popen(
-                    download_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                
-                # Wait for the process to complete
-                stdout, stderr = process.communicate()
-                
-                if process.returncode != 0:
-                    logger.error(f"ffmpeg download error: {stderr}")
-                    raise RuntimeError(f"ffmpeg download failed with return code {process.returncode}")
-                
-                logger.info(f"Test video downloaded successfully. Temp file: {temp_file}")
-                
-                # Process the test video with facial recognition
-                output_file = process_video_with_facial_recognition(
-                    str(temp_file),
-                    time_marker_seconds=0,
-                    output_file=args.output,
-                    max_duration=args.duration
-                )
-                
-                logger.info(f"Test video processing completed. Output file: {output_file}")
-                return 0
-                
-            except Exception as e:
-                logger.error(f"Error downloading test video: {e}")
-                raise
+        # Removed the test video code block to prevent using Big Buck Bunny as a fallback
+        # Now we'll always use the actual Parliament TV URL
         
         # Extract stream info from the Parliament TV URL
         stream_info = extract_stream_info(args.url)
