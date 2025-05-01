@@ -142,37 +142,42 @@ class ParliamentTVCapture:
         
         # First extract the direct stream URL
         try:
-            # Try to import from scripts module
-            from scripts.extract_direct_stream import extract_direct_stream_url
-        except ImportError:
-            # If that fails, try to import using a subprocess call
-            logger.info("Could not import extract_direct_stream_url directly, using subprocess")
-            try:
-                # Use subprocess to call the script directly
-                extract_cmd = [
-                    sys.executable,
-                    "-c",
-                    "import sys; sys.path.append('/app'); from scripts.extract_direct_stream import extract_direct_stream_url; print(extract_direct_stream_url('" + url + "'))"
-                ]
-                extract_result = subprocess.run(extract_cmd, check=True, capture_output=True, text=True)
-                direct_stream_url = extract_result.stdout.strip()
-                logger.info(f"Extracted direct stream URL using subprocess: {direct_stream_url}")
-            except Exception as e:
-                logger.error(f"Error extracting direct stream URL using subprocess: {e}")
-                # If all else fails, just use the original URL
+            # Use our improved extract_stream_url method instead of trying to import
+            logger.info(f"Calling extract_stream_url with URL: {url}")
+            stream_info = self.extract_stream_url(url)
+            
+            if not stream_info:
+                logger.error("extract_stream_url returned None")
+                stream_info = {"direct_stream": url}  # Fallback to original URL
+                
+            logger.info(f"Stream info: {stream_info}")
+            direct_stream_url = stream_info.get("direct_stream")
+            logger.info(f"Direct stream URL: {direct_stream_url}, type: {type(direct_stream_url)}")
+            
+            if not direct_stream_url:
+                logger.error("direct_stream_url is None or empty, using original URL as fallback")
                 direct_stream_url = url
-                logger.warning(f"Using original URL as direct stream URL: {direct_stream_url}")
-        else:
-            # If import succeeded, call the function directly
-            logger.info(f"Extracting direct stream URL from: {url}")
-            direct_stream_url = extract_direct_stream_url(url)
+                
+        except Exception as e:
+            logger.error(f"Error extracting direct stream URL: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # If all else fails, just use the original URL
+            direct_stream_url = url
+            logger.warning(f"Using original URL as direct stream URL: {direct_stream_url}")
         
+        # Ensure direct_stream_url is not None
         if not direct_stream_url:
             logger.error(f"Failed to extract direct stream URL from: {url}")
             return {
                 "success": False,
                 "error": "Failed to extract direct stream URL from Parliament TV page"
             }
+            
+        # Validate direct_stream_url is a string
+        if not isinstance(direct_stream_url, str):
+            logger.error(f"direct_stream_url is not a string: {direct_stream_url}, type: {type(direct_stream_url)}")
+            direct_stream_url = str(direct_stream_url) if direct_stream_url is not None else url
             
         logger.info(f"Successfully extracted direct stream URL: {direct_stream_url}")
         
@@ -334,13 +339,26 @@ class ParliamentTVCapture:
             callback: Optional callback function to call with the result
         """
         def capture_thread():
-            result = self.start_capture(url, capture_id, duration)
-            if callback:
-                callback(result)
+            try:
+                logger.info(f"Starting capture thread with URL: {url}, capture_id: {capture_id}, duration: {duration}")
+                result = self.start_capture(url, capture_id, duration)
+                logger.info(f"Capture thread completed with result: {result}")
+                if callback:
+                    logger.info("Calling callback function with result")
+                    callback(result)
+            except Exception as e:
+                logger.error(f"Unexpected error in capture thread: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                if callback:
+                    callback({"success": False, "error": str(e)})
         
+        logger.info("Creating capture thread")
         self._capture_thread = threading.Thread(target=capture_thread)
         self._capture_thread.daemon = True
+        logger.info("Starting capture thread")
         self._capture_thread.start()
+        logger.info("Capture thread started")
     
     def extract_stream_url(self, url: str) -> Optional[Dict]:
         """

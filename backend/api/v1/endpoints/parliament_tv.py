@@ -106,20 +106,44 @@ async def start_parliament_tv_capture(
     # If not a draft, start the capture process
     if not draft:
         # Extract stream URL first to validate it
+        print(f"Extracting stream URL from: {capture_request.url}")
         stream_info = parliament_tv_service.extract_stream_url(capture_request.url)
+        print(f"Stream info: {stream_info}")
         
-        if not stream_info or not stream_info.get("direct_stream"):
+        # Ensure stream_info is a dictionary
+        if not stream_info:
+            stream_info = {}
+            
+        # Ensure direct_stream exists and is a string
+        direct_stream = stream_info.get("direct_stream")
+        if not direct_stream:
+            print("No direct_stream found in stream_info, using original URL")
+            direct_stream = capture_request.url
+            stream_info["direct_stream"] = direct_stream
+        
+        print(f"Direct stream URL: {direct_stream}")
+        
+        # Validate the direct stream URL
+        if not isinstance(direct_stream, str):
+            print(f"Direct stream URL is not a string: {direct_stream}, type: {type(direct_stream)}")
+            direct_stream = str(direct_stream) if direct_stream is not None else capture_request.url
+            stream_info["direct_stream"] = direct_stream
+            
+        # Test if the direct stream URL is valid
+        is_valid = parliament_tv_service.test_stream_url(direct_stream)
+        if not is_valid:
+            print(f"Direct stream URL is not valid: {direct_stream}")
             # Update the capture session status to failed
             db_capture.status = "failed"
             db_capture.metadata = {
                 **db_capture.metadata,
-                "error": "Failed to extract stream URL"
+                "error": "Failed to extract valid stream URL"
             }
             db.commit()
             
             # Create a serializable error response
             error_detail = make_json_serializable({
-                "message": "Failed to extract stream URL from Parliament TV page",
+                "message": "Failed to extract valid stream URL from Parliament TV page",
                 "capture_id": db_capture.id
             })
             
@@ -248,12 +272,39 @@ async def start_parliament_tv_capture(
                 traceback.print_exc()
         
         # Start the capture process asynchronously
-        parliament_tv_service.start_capture_async(
-            url=stream_info["direct_stream"],
-            capture_id=db_capture.id,  # Pass the capture ID for proper file naming
-            duration=capture_request.duration,
-            callback=capture_callback
-        )
+        print(f"Starting capture with direct_stream: {direct_stream}")
+        print(f"Capture ID: {db_capture.id}, Duration: {capture_request.duration}")
+        
+        try:
+            parliament_tv_service.start_capture_async(
+                url=direct_stream,  # Use the validated direct_stream variable
+                capture_id=db_capture.id,  # Pass the capture ID for proper file naming
+                duration=capture_request.duration,
+                callback=capture_callback
+            )
+            print(f"Capture process started successfully for ID: {db_capture.id}")
+        except Exception as e:
+            print(f"Error starting capture process: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            
+            # Update the capture session status to failed
+            db_capture.status = "failed"
+            db_capture.metadata = {
+                **db_capture.metadata,
+                "error": f"Failed to start capture: {str(e)}"
+            }
+            db.commit()
+            
+            # Return error response but don't raise exception
+            response_data = {
+                "id": db_capture.id,
+                "title": db_capture.title,
+                "status": db_capture.status,
+                "created_at": make_json_serializable(db_capture.created_at),
+                "message": f"Failed to start capture: {str(e)}"
+            }
+            return make_json_serializable(response_data)
         
         # Return the capture session information with serialized datetime
         response_data = {
