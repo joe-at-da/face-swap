@@ -435,11 +435,10 @@ async def stop_parliament_tv_capture(
 @router.get("/{capture_id}/stream")
 async def stream_parliament_tv_video(
     capture_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
-    """Stream a Parliament TV video file."""
-    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    """Stream a Parliament TV video file. This endpoint is publicly accessible."""
+    # No authentication required for video streaming
     
     # Get the specified capture session
     capture = db.query(models.CaptureSession).filter(
@@ -457,41 +456,64 @@ async def stream_parliament_tv_video(
     print(f"Capture status: {capture.status}")
     print(f"Capture file path: {capture.file_path}")
     if hasattr(capture, 'metadata') and capture.metadata:
-        print(f"Capture metadata: {json.dumps(make_json_serializable(capture.metadata))}")
+        try:
+            metadata_dict = dict(capture.metadata) if hasattr(capture.metadata, '__dict__') else capture.metadata
+            print(f"Capture metadata: {metadata_dict}")
+        except Exception as e:
+            print(f"Error serializing metadata: {str(e)}")
+            # Continue without printing metadata
     
     # Try multiple approaches to find the video file
     video_file_paths = []
     
+    # Print the DATA_DIR for debugging
+    print(f"Looking for video files in DATA_DIR: {DATA_DIR}")
+    print(f"DATA_DIR exists: {os.path.exists(DATA_DIR)}")
+    
     # 1. Check if the file path in the database exists
-    if capture.file_path and os.path.exists(capture.file_path):
-        video_file_paths.append(capture.file_path)
-        print(f"Found video file in database path: {capture.file_path}")
+    if capture.file_path:
+        print(f"Database file path: {capture.file_path}")
+        print(f"Database file path exists: {os.path.exists(capture.file_path)}")
+        if os.path.exists(capture.file_path):
+            video_file_paths.append(capture.file_path)
+            print(f"Found video file in database path: {capture.file_path}")
     
     # 2. Try to find by parliament_stream pattern
     parliament_patterns = [
         f"parliament_stream_*_{capture_id}.mp4",
-        f"parliament_stream_*.mp4"
+        f"parliament_stream_*.mp4",
+        f"*_{capture_id}.mp4",
+        "*.mp4"
     ]
     
     for pattern in parliament_patterns:
-        matching_files = glob.glob(os.path.join(DATA_DIR, pattern))
+        full_pattern = os.path.join(DATA_DIR, pattern)
+        print(f"Searching with pattern: {full_pattern}")
+        matching_files = glob.glob(full_pattern)
+        print(f"Found {len(matching_files)} files with pattern {pattern}")
         for file_path in matching_files:
             if file_path not in video_file_paths:
                 video_file_paths.append(file_path)
                 print(f"Found video file with pattern {pattern}: {file_path}")
     
-    # 3. Try to find by capture pattern
-    capture_patterns = [
-        f"capture_*_{capture_id}.mp4",
-        f"capture_*.mp4"
+    # 3. Try to find in other common directories
+    other_dirs = [
+        "/app/data/media",
+        "/app/data/temp",
+        "/app/data"
     ]
     
-    for pattern in capture_patterns:
-        matching_files = glob.glob(os.path.join(DATA_DIR, pattern))
-        for file_path in matching_files:
-            if file_path not in video_file_paths:
-                video_file_paths.append(file_path)
-                print(f"Found video file with pattern {pattern}: {file_path}")
+    for directory in other_dirs:
+        if directory != DATA_DIR and os.path.exists(directory):
+            print(f"Searching in alternative directory: {directory}")
+            for pattern in ["*.mp4", f"*_{capture_id}.mp4"]:
+                full_pattern = os.path.join(directory, pattern)
+                matching_files = glob.glob(full_pattern)
+                print(f"Found {len(matching_files)} files with pattern {pattern} in {directory}")
+                for file_path in matching_files:
+                    if file_path not in video_file_paths:
+                        video_file_paths.append(file_path)
+                        print(f"Found video file in {directory}: {file_path}")
     
     # 4. Check if any files were found
     if not video_file_paths:
