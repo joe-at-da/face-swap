@@ -26,13 +26,26 @@ DATA_DIR = os.environ.get('DATA_DIR', '/app/data/temp')
 # Helper function to make objects JSON serializable
 def make_json_serializable(obj: Any) -> Any:
     """Convert objects to JSON serializable format"""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {k: make_json_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [make_json_serializable(item) for item in obj]
-    return obj
+    try:
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {k: make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [make_json_serializable(item) for item in obj]
+        elif hasattr(obj, '__dict__'):
+            # Handle objects with __dict__ attribute (like MetaData)
+            return make_json_serializable(obj.__dict__)
+        elif hasattr(obj, 'keys') and callable(getattr(obj, 'keys', None)):
+            # Handle dictionary-like objects
+            return {k: make_json_serializable(obj[k]) for k in obj.keys()}
+        elif hasattr(obj, '__iter__') and callable(getattr(obj, '__iter__', None)) and not isinstance(obj, (str, bytes)):
+            # Handle iterable objects
+            return [make_json_serializable(item) for item in obj]
+        return obj
+    except Exception as e:
+        print(f"Error serializing object: {str(e)}")
+        return str(obj)  # Fallback to string representation
 
 @router.post("", response_model=Dict)
 async def start_parliament_tv_capture(

@@ -5,6 +5,9 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 from jose import jwt, JWTError
+import os
+import subprocess
+import json
 
 from backend.api.deps import get_db
 from backend.core.security import has_permission, get_current_user, get_current_active_user
@@ -488,7 +491,6 @@ async def get_capture_logs(
                 
                 if probe_result.returncode == 0:
                     # Parse the probe result
-                    import json
                     probe_data = json.loads(probe_result.stdout)
                     streams = probe_data.get('streams', [])
                     has_audio = False
