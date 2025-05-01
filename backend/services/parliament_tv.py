@@ -17,27 +17,46 @@ class ParliamentTVCapture:
     
     def __init__(self):
         """Initialize the Parliament TV capture service."""
-        # Use absolute paths for scripts directory
-        self.scripts_dir = Path("/app/scripts")
-        
-        # Set default paths if settings are not available
-        temp_path = settings.TEMP_STORAGE_PATH if hasattr(settings, 'TEMP_STORAGE_PATH') and settings.TEMP_STORAGE_PATH else "/app/data/temp"
-        media_path = settings.MEDIA_STORAGE_PATH if hasattr(settings, 'MEDIA_STORAGE_PATH') and settings.MEDIA_STORAGE_PATH else "/app/data/media"
-        
-        # Ensure paths are Path objects
-        self.temp_dir = Path(temp_path)
-        self.media_dir = Path(media_path) / "parliament_captures"
-        
-        logger.info(f"Using temp directory: {self.temp_dir}")
-        logger.info(f"Using media directory: {self.media_dir}")
-        
-        # Create directories if they don't exist
-        os.makedirs(str(self.temp_dir), exist_ok=True)
-        os.makedirs(str(self.media_dir), exist_ok=True)
-        
-        # Keep track of active capture processes
-        self._current_process = None
-        self._capture_thread = None
+        try:
+            # Use absolute paths for scripts directory
+            self.scripts_dir = Path("/app/scripts")
+            
+            # Set default paths if settings are not available
+            temp_path = settings.TEMP_STORAGE_PATH if hasattr(settings, 'TEMP_STORAGE_PATH') and settings.TEMP_STORAGE_PATH else "/app/data/temp"
+            media_path = settings.MEDIA_STORAGE_PATH if hasattr(settings, 'MEDIA_STORAGE_PATH') and settings.MEDIA_STORAGE_PATH else "/app/data/media"
+            
+            # Ensure paths are Path objects and not None
+            self.temp_dir = Path(temp_path) if temp_path else Path("/app/data/temp")
+            self.media_dir = Path(media_path) / "parliament_captures" if media_path else Path("/app/data/media/parliament_captures")
+            
+            logger.info(f"Using temp directory: {self.temp_dir}")
+            logger.info(f"Using media directory: {self.media_dir}")
+            
+            # Create directories if they don't exist
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            os.makedirs(str(self.media_dir), exist_ok=True)
+            
+            # Keep track of active capture processes
+            self._current_process = None
+            self._capture_thread = None
+            
+            # Log initialization success
+            logger.info("ParliamentTVCapture service initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing ParliamentTVCapture service: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Set default values to prevent NoneType errors
+            self.scripts_dir = Path("/app/scripts")
+            self.temp_dir = Path("/app/data/temp")
+            self.media_dir = Path("/app/data/media/parliament_captures")
+            self._current_process = None
+            self._capture_thread = None
+            
+            # Create directories
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            os.makedirs(str(self.media_dir), exist_ok=True)
     
     def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
         """
@@ -85,11 +104,16 @@ class ParliamentTVCapture:
         os.makedirs(str(self.temp_dir), exist_ok=True)
         os.makedirs(str(self.media_dir), exist_ok=True)
         
-        # Now create the file paths
-        temp_file = Path(str(self.temp_dir)) / f"parliament_stream_{timestamp}_{capture_id}.mp4"
-        output_file = Path(str(self.media_dir)) / f"parliament_capture_{timestamp}_{capture_id}.mp4"
-        log_file = Path(str(self.temp_dir)) / f"parliament_capture_log_{timestamp}_{capture_id}.json"
-        capture_script = Path(str(self.scripts_dir)) / "parliament_capture_direct.py"
+        # Now create the file paths - ensure all paths are strings first to avoid NoneType errors
+        temp_dir_str = str(self.temp_dir) if self.temp_dir else "/app/data/temp"
+        media_dir_str = str(self.media_dir) if self.media_dir else "/app/data/media/parliament_captures"
+        scripts_dir_str = str(self.scripts_dir) if self.scripts_dir else "/app/scripts"
+        
+        # Create Path objects from the strings
+        temp_file = Path(temp_dir_str) / f"parliament_stream_{timestamp}_{capture_id}.mp4"
+        output_file = Path(media_dir_str) / f"parliament_capture_{timestamp}_{capture_id}.mp4"
+        log_file = Path(temp_dir_str) / f"parliament_capture_log_{timestamp}_{capture_id}.json"
+        capture_script = Path(scripts_dir_str) / "parliament_capture_direct.py"
         
         # Log the file paths
         logger.info(f"temp_file: {temp_file}, type: {type(temp_file)}")
@@ -221,19 +245,28 @@ class ParliamentTVCapture:
             logger.error("temp_file is None!")
             return {"success": False, "error": "temp_file is None"}
         
+        # Ensure all arguments are valid and not None
+        python_executable = sys.executable if sys.executable else "python"
+        capture_script_str = str(capture_script) if capture_script else "/app/scripts/parliament_capture_direct.py"
+        direct_stream_url_str = str(direct_stream_url) if direct_stream_url else url
+        duration_str = str(duration) if duration else "1800"
+        temp_file_str = str(temp_file) if temp_file else f"/app/data/temp/parliament_stream_{timestamp}_{capture_id}.mp4"
+        capture_id_str = str(capture_id) if capture_id else "0"
+        
+        # Create command with validated arguments
         cmd = [
-            sys.executable,
-            str(capture_script),
-            direct_stream_url,  # Use the direct stream URL instead of the Parliament TV URL
-            "--duration", str(duration),
-            "--output", str(temp_file),  # Use temp_file for initial capture
-            "--capture-id", str(capture_id)  # Pass the capture ID for proper file naming
+            python_executable,
+            capture_script_str,
+            direct_stream_url_str,  # Use the direct stream URL instead of the Parliament TV URL
+            "--duration", duration_str,
+            "--output", temp_file_str,  # Use temp_file for initial capture
+            "--capture-id", capture_id_str  # Pass the capture ID for proper file naming
         ]
         
         logger.info(f"Running command: {' '.join(cmd)}")
         logger.info(f"Command types: {[type(c) for c in cmd]}")
         
-        # Convert all command arguments to strings to avoid NoneType errors
+        # Double-check that all command arguments are strings
         cmd = [str(c) if c is not None else "" for c in cmd]
         
         try:
