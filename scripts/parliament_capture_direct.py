@@ -44,13 +44,15 @@ def create_directories(temp_dir=None, media_dir=None):
         Tuple of (temp_dir, media_dir) with absolute paths
     """
     # Use provided paths, environment variables, or default paths
-    if temp_dir is None:
-        temp_dir = os.environ.get('TEMP_STORAGE_PATH', '/tmp')
+    if temp_dir is None or temp_dir == "":
+        temp_dir = os.environ.get('TEMP_STORAGE_PATH')
+        if not temp_dir or temp_dir == "":
+            temp_dir = '/tmp'
         print(f"DEBUG - Using temp_dir from env: {temp_dir}")
     
-    if media_dir is None:
+    if media_dir is None or media_dir == "":
         media_base = os.environ.get('MEDIA_STORAGE_PATH')
-        if media_base:
+        if media_base and media_base != "":
             media_dir = os.path.join(media_base, 'parliament_captures')
         else:
             media_dir = '/app/data/media'
@@ -59,6 +61,11 @@ def create_directories(temp_dir=None, media_dir=None):
     else:
         print(f"DEBUG - Using provided media_dir: {media_dir}")
 
+    # Ensure paths are valid strings
+    if temp_dir is None or temp_dir == "":
+        temp_dir = '/tmp'
+    if media_dir is None or media_dir == "":
+        media_dir = '/app/data/media'
     
     # Ensure paths are absolute
     temp_dir = os.path.abspath(str(temp_dir))
@@ -209,16 +216,27 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
     
     # Check if the stream URL is valid
     if not stream_url or not isinstance(stream_url, str) or not stream_url.strip():
+        logger.error("Stream URL is None, empty, or not a string")
         return None
     
-    if not output_dir:
+    # Ensure output_dir is valid
+    if output_dir is None or output_dir == "":
         logger.error("Output directory is None or empty")
-        print(f"DEBUG - Output directory is None or empty")
-        return None
+        print(f"DEBUG - Output directory is None or empty, using /tmp")
+        output_dir = "/tmp"
+        
+    # Convert output_dir to string if it's a Path object
+    output_dir = str(output_dir)
         
     # Ensure output directory exists
-    if not os.path.exists(output_dir):
-        logger.info(f"Creating output directory: {output_dir}")
+    try:
+        if not os.path.exists(output_dir):
+            logger.info(f"Creating output directory: {output_dir}")
+            os.makedirs(output_dir, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to create output directory {output_dir}: {str(e)}")
+        output_dir = "/tmp"
+        logger.warning(f"Using fallback output directory: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
     
     # Generate output filename
@@ -383,8 +401,23 @@ def main():
     print(f"DEBUG - facial_recognition: {args.facial_recognition}")
     print(f"DEBUG - output: {args.output}")
     
-    # Create directories
-    temp_dir, media_dir = create_directories(args.temp_dir, args.media_dir)
+    # Validate URL
+    if not args.url or not isinstance(args.url, str) or not args.url.strip():
+        logger.error("URL is None, empty, or not a string")
+        return 1
+    
+    # Create directories - ensure they're strings if provided
+    temp_dir_arg = str(args.temp_dir) if args.temp_dir else None
+    media_dir_arg = str(args.media_dir) if args.media_dir else None
+    temp_dir, media_dir = create_directories(temp_dir_arg, media_dir_arg)
+    
+    # Ensure temp_dir and media_dir are not None
+    if temp_dir is None:
+        temp_dir = "/tmp"
+        logger.warning(f"Using fallback temp directory: {temp_dir}")
+    if media_dir is None:
+        media_dir = "/tmp"
+        logger.warning(f"Using fallback media directory: {media_dir}")
     
     # Check for required tools
     if not check_command_exists("ffmpeg"):
@@ -423,14 +456,13 @@ def main():
     # Make sure the output directory exists
     output_dir = os.path.dirname(output_file)
     logger.info(f"Creating output directory if needed: {output_dir}")
-    os.makedirs(output_dir, exist_ok=True)
-        
-    # Double-check that the directory was created
-    if not os.path.exists(output_dir):
-        logger.error(f"Failed to create output directory: {output_dir}")
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to create output directory {output_dir}: {str(e)}")
         # Fallback to temp directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(temp_dir, f"parliament_capture_{args.capture_id}_{timestamp}.mp4")
+        output_file = os.path.join("/tmp", f"parliament_capture_{args.capture_id}_{timestamp}.mp4")
         logger.warning(f"Using fallback output file path: {output_file}")
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
