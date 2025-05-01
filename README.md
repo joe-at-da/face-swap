@@ -126,6 +126,23 @@ Once both servers are running:
    docker-compose -f docker-compose.dev.yml up -d --build frontend
    ```
 
+3. **Syncing New Files with Docker Containers**
+   When adding new Python modules or files to the backend, ensure they are properly synced with Docker containers:
+   
+   ```bash
+   # Option 1: Use volume mounts in docker-compose.dev.yml (recommended for development)
+   # Add this to the app service in docker-compose.dev.yml:
+   # volumes:
+   #   - ./backend:/app/backend
+   
+   # Option 2: Copy new files into the container
+   docker-compose -f docker-compose.dev.yml exec app mkdir -p /app/backend/path/to/new/directory
+   docker-compose -f docker-compose.dev.yml exec app bash -c "cat > /app/backend/path/to/new/file.py" < local_file.py
+   
+   # Option 3: Rebuild the container (slower but ensures all files are included)
+   docker-compose -f docker-compose.dev.yml up -d --build app
+   ```
+
 3. **Viewing Logs**
    ```bash
    # View logs for all services
@@ -271,7 +288,7 @@ pytest --cov=backend tests/
 
 The Parliament Video Clip Manager has reached beta status with all core features implemented. Both backend and frontend components are complete and ready for deployment.
 
-### Current Status (April 30, 2025)
+### Current Status (May 1, 2025)
 
 1. **Backend**
    - ✅ FastAPI server with all endpoints implemented
@@ -279,6 +296,7 @@ The Parliament Video Clip Manager has reached beta status with all core features
    - ✅ Video processing pipeline
    - ✅ Improved video capture functionality
    - ✅ Parliament TV capture with facial recognition
+   - ✅ Automatic transcription with Whisper integration
    - ✅ Social media integration
    - ✅ Storage management
 
@@ -287,6 +305,7 @@ The Parliament Video Clip Manager has reached beta status with all core features
    - ✅ Video clip management interface
    - ✅ Capture session interface
    - ✅ Parliament TV capture interface
+   - ✅ Transcription interface for viewing and managing transcriptions
    - ✅ Social media dashboard
    - ✅ Admin interface (users, storage)
    - ✅ Authentication and authorization flows
@@ -314,11 +333,13 @@ For detailed information about the project roadmap, including completed mileston
    - Completed Docker Compose setup for all services
    - Configured monitoring with Prometheus and Grafana
    - Added development convenience commands
+   - **Important Note**: When adding new files or modules to the backend, ensure they are properly synced with Docker containers. Use volume mounts in development or rebuild containers after adding new files.
 
 4. **Documentation**
    - Comprehensive README with setup instructions
    - Added detailed [video capture documentation](docs/video_capture.md)
    - Added [Parliament TV integration guide](docs/parliament_tv_integration.md)
+   - Added [Transcription feature documentation](docs/transcription.md)
    - Troubleshooting guide for common issues
    - API documentation with Swagger UI
 

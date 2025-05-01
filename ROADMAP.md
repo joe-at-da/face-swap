@@ -46,13 +46,13 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - ✅ Video capture system
 - ✅ Basic CRUD operations
 
-### Phase 2: Video Processing 🏗️
+### Phase 2: Video Processing ✅
 - ✅ Parliament TV feed integration
 - ✅ Video capture and storage
 - ✅ Basic clip editing
-- ✅ Transcription integration
+- ✅ Transcription integration with Whisper
 - ✅ Storage management system
-- 🏗️ Face recognition setup
+- ✅ Face recognition setup
 
 ### Phase 3: User Interface ✅
 - ✅ Next.js frontend setup
@@ -176,9 +176,17 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - 🏗️ Batch processing
    - 🏗️ Advanced search capabilities
 
-### Recent Achievements (April 2025)
+### Recent Achievements (May 2025)
 
-1. Video Capture System (April 30, 2025)
+1. Transcription Feature (May 1, 2025)
+   - Implemented automatic transcription for Parliament TV videos using Whisper
+   - Created backend API endpoints for managing transcriptions
+   - Developed frontend interface for viewing and managing transcriptions
+   - Added support for multiple output formats (TXT, SRT, JSON, DOCX)
+   - Integrated with speaker identification for enhanced transcription accuracy
+   - Added language selection support (English, Welsh, Irish, Scottish Gaelic)
+
+2. Video Capture System (April 30, 2025)
    - Enhanced video capture functionality with improved error handling
    - Added support for multiple video stream formats (HLS, MP4)
    - Implemented better process management for video capture
@@ -195,6 +203,8 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Completed Docker Compose setup for development
    - Configured services for local testing
    - Added documentation for Docker usage
+   - Improved Docker development workflow with file synchronization guidance
+   - Added troubleshooting steps for common Docker development issues
 
 4. Documentation & Navigation
    - Created comprehensive troubleshooting guide in README
@@ -230,6 +240,10 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Custom branding tools for MPs
    - Advanced search with full-text capabilities for clips and transcriptions
    - Batch processing functionality for operations on multiple clips
+   - Enhanced transcription features:
+     - Automatic speaker diarization
+     - Transcription editing interface
+     - Transcription export to additional formats
 
 #### 5. Documentation & Training
    - ✅ Comprehensive README with troubleshooting guide
