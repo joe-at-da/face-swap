@@ -446,36 +446,77 @@ async def stream_parliament_tv_video(
         models.CaptureSession.id == capture_id
     ).first()
     
-    # Check if it's a Parliament TV capture
-    try:
-        if capture and (not capture.metadata or not isinstance(capture.metadata, dict) or 'parliament_tv_url' not in capture.metadata):
-            capture = None
-    except Exception as e:
-        print(f"Error checking metadata for capture {capture_id}: {str(e)}")
-        capture = None
-    
     if not capture:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Parliament TV capture session with ID {capture_id} not found"
+            detail=f"Capture session with ID {capture_id} not found"
         )
     
-    # Check if file exists
-    if not capture.file_path or not os.path.exists(capture.file_path):
-        # Try to find the file in the data directory based on naming pattern
-        file_pattern = f"parliament_stream_*_{capture_id}.mp4"
-        matching_files = glob.glob(os.path.join(DATA_DIR, file_pattern))
+    # Log capture details for debugging
+    print(f"Streaming video for capture {capture_id}")
+    print(f"Capture status: {capture.status}")
+    print(f"Capture file path: {capture.file_path}")
+    if hasattr(capture, 'metadata') and capture.metadata:
+        print(f"Capture metadata: {json.dumps(make_json_serializable(capture.metadata))}")
+    
+    # Try multiple approaches to find the video file
+    video_file_paths = []
+    
+    # 1. Check if the file path in the database exists
+    if capture.file_path and os.path.exists(capture.file_path):
+        video_file_paths.append(capture.file_path)
+        print(f"Found video file in database path: {capture.file_path}")
+    
+    # 2. Try to find by parliament_stream pattern
+    parliament_patterns = [
+        f"parliament_stream_*_{capture_id}.mp4",
+        f"parliament_stream_*.mp4"
+    ]
+    
+    for pattern in parliament_patterns:
+        matching_files = glob.glob(os.path.join(DATA_DIR, pattern))
+        for file_path in matching_files:
+            if file_path not in video_file_paths:
+                video_file_paths.append(file_path)
+                print(f"Found video file with pattern {pattern}: {file_path}")
+    
+    # 3. Try to find by capture pattern
+    capture_patterns = [
+        f"capture_*_{capture_id}.mp4",
+        f"capture_*.mp4"
+    ]
+    
+    for pattern in capture_patterns:
+        matching_files = glob.glob(os.path.join(DATA_DIR, pattern))
+        for file_path in matching_files:
+            if file_path not in video_file_paths:
+                video_file_paths.append(file_path)
+                print(f"Found video file with pattern {pattern}: {file_path}")
+    
+    # 4. Check if any files were found
+    if not video_file_paths:
+        # List all mp4 files in the data directory for debugging
+        all_mp4_files = glob.glob(os.path.join(DATA_DIR, "*.mp4"))
+        print(f"No video files found for capture {capture_id}. Available mp4 files: {all_mp4_files}")
         
-        if not matching_files:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Video file for capture {capture_id} not found"
-            )
-        
-        # Use the first matching file
-        file_path = matching_files[0]
-    else:
-        file_path = capture.file_path
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file for capture {capture_id} not found"
+        )
+    
+    # Use the first matching file
+    file_path = video_file_paths[0]
+    print(f"Serving video file: {file_path}")
+    
+    # Update the file path in the database if it's different
+    if capture.file_path != file_path:
+        try:
+            capture.file_path = file_path
+            db.commit()
+            print(f"Updated file path in database for capture {capture_id}")
+        except Exception as e:
+            print(f"Error updating file path in database: {str(e)}")
+            db.rollback()
     
     return FileResponse(
         path=file_path,

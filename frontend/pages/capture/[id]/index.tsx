@@ -290,8 +290,33 @@ const CaptureDetailPage: React.FC = () => {
       return capture.file_path;
     }
     
-    console.log('No valid video source found for capture:', capture.id);
-    return '';
+    // Fallback to the Parliament TV streaming endpoint even if not detected as Parliament TV
+    // This increases our chances of finding the video
+    const fallbackUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
+    console.log('Using fallback streaming URL:', fallbackUrl);
+    return fallbackUrl;
+  };
+  
+  // Handle video error
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    console.error('Video playback error:', e);
+    const videoElement = e.currentTarget;
+    
+    // Try the alternate source if the current one fails
+    if (videoElement.src.includes('/parliament-tv/')) {
+      // If Parliament TV streaming failed, try the file path directly
+      if (capture?.file_path) {
+        console.log('Trying direct file path after streaming error:', capture.file_path);
+        videoElement.src = capture.file_path;
+        videoElement.load();
+      }
+    } else if (capture) {
+      // If direct file path failed, try Parliament TV streaming
+      const streamUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
+      console.log('Trying Parliament TV streaming after direct path error:', streamUrl);
+      videoElement.src = streamUrl;
+      videoElement.load();
+    }
   };
   
   if (isLoading) {
@@ -493,6 +518,8 @@ const CaptureDetailPage: React.FC = () => {
                     src={getVideoSourceUrl(capture)}
                     controls
                     className="w-full h-full object-contain"
+                    onError={handleVideoError}
+                    playsInline
                   />
                 </div>
                 <div className="p-4 text-sm">
