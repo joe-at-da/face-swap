@@ -204,46 +204,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           errorDetail = errorText || `Login failed: ${response.status}`;
         }
         
-        console.error('[AuthContext] Login error details:', errorDetail);
         throw new Error(errorDetail);
       }
       
-      // Parse the successful response
       const data = await response.json();
       console.log('%c[AuthContext] Login successful, received token', 'color: green');
-      const { access_token } = data;
       
-      // Store token in both localStorage and sessionStorage for redundancy
-      console.log('[AuthContext] Storing access token in localStorage, sessionStorage and state');
-      localStorage.setItem('token', access_token);
-      sessionStorage.setItem('token', access_token);
-      setToken(access_token);
+      // Store token in both localStorage and sessionStorage for persistence
+      localStorage.setItem('token', data.access_token);
+      sessionStorage.setItem('token', data.access_token);
       
-      // Ensure token is set in API client
-      api.setAuthToken(access_token);
+      // Set token in state and API
+      setToken(data.access_token);
+      api.setAuthToken(data.access_token);
       
-      // Set flags to indicate successful authentication
-      // This is critical to prevent redirect loops
-      sessionStorage.setItem('authSuccess', 'true');
+      // Fetch user data
+      console.log('[AuthContext] Fetching user data with new token');
+      const userData = await api.get('/auth/me');
+      console.log('[AuthContext] User data received:', userData);
+      setUser(userData);
+      
+      // Set authentication flags
       sessionStorage.setItem('isAuthenticated', 'true');
-      try {
-        console.log('Fetching user data...');
-        const userData = await api.get('/auth/me');
-        setUser(userData);
-        console.log('User authenticated successfully:', userData.email);
-      } catch (error) {
-        console.warn('Could not fetch user data:', error);
-        // Set a minimal user object with the email
-        setUser({
-          id: 0, // Placeholder ID
-          email,
-          name: email.split('@')[0], // Use part of email as name
-          role: UserRole.ADMIN // Use the enum value for admin role
-        });
-      }
-      
-      // Set flags to prevent redirect loops
       sessionStorage.setItem('justLoggedIn', 'true');
+      sessionStorage.setItem('authSuccess', 'true');
       
       // Clear the login flag
       sessionStorage.removeItem('loggingIn');
@@ -252,11 +236,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setTimeout(() => {
         console.log('Redirecting to dashboard after successful login');
         router.push('/dashboard');
-      }, 100);
+      }, 300); // Increased delay to ensure state updates
     } catch (error: any) {
       console.error('Login failed:', error.message || error);
       // Clear any partial authentication data
       localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('isAuthenticated');
+      sessionStorage.removeItem('authSuccess');
+      sessionStorage.removeItem('justLoggedIn');
+      
       setToken(null);
       setUser(null);
       api.setAuthToken(null);

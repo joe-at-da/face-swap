@@ -508,8 +508,21 @@ const CaptureDetailPage: React.FC = () => {
             {/* Video preview for completed captures */}
             {capture.status === 'completed' && (
               <div className="bg-white rounded-lg shadow overflow-hidden mb-6">
-                <div className="px-6 py-4 border-b border-gray-200">
+                <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                   <h2 className="text-lg font-medium text-gray-800">Video Preview</h2>
+                  <div className="flex space-x-2">
+                    <Link href={`/capture/${capture.id}/speakers`}>
+                      <span className="text-sm text-primary hover:text-primary-dark cursor-pointer">
+                        Speaker Identification
+                      </span>
+                    </Link>
+                    <span className="text-gray-300">|</span>
+                    <Link href={`/capture/${capture.id}/transcription`}>
+                      <span className="text-sm text-primary hover:text-primary-dark cursor-pointer">
+                        Transcription
+                      </span>
+                    </Link>
+                  </div>
                 </div>
                 
                 <div className="aspect-w-16 aspect-h-9 bg-black">

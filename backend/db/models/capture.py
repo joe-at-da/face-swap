@@ -28,3 +28,4 @@ class CaptureSession(Base):
     user = relationship("User", back_populates="capture_sessions")
     video_clips = relationship("VideoClip", back_populates="capture_session")
     speaker_identifications = relationship("SpeakerIdentification", back_populates="capture_session")
+    transcriptions = relationship("ParliamentTranscription", back_populates="capture_session")

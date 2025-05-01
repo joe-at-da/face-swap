@@ -14,6 +14,17 @@ console.log('API Base URL:', API_BASE_URL);
 
 class ApiClient {
   private token: string | null = null;
+
+  constructor() {
+    // Initialize token from storage when the client is created
+    if (typeof window !== 'undefined') {
+      const storedToken = localStorage.getItem('token') || sessionStorage.getItem('token');
+      if (storedToken) {
+        this.token = storedToken;
+        console.log('API token initialized from storage');
+      }
+    }
+  }
   
   /**
    * Get the current authentication token

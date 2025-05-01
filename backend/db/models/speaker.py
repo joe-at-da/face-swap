@@ -21,6 +21,7 @@ class SpeakerIdentification(Base):
     # Relationships
     capture_session = relationship("CaptureSession", back_populates="speaker_identifications")
     created_by = relationship("User", back_populates="speaker_identifications")
+    transcriptions = relationship("ParliamentTranscription", back_populates="speaker_identification")
 
 class Speaker(Base):
     """Speaker model for identified MPs."""

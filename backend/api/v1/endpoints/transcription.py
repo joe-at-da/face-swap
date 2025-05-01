@@ -1,6 +1,9 @@
-from typing import List, Dict
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Dict, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body
 from sqlalchemy.orm import Session
+import os
+import subprocess
+from pathlib import Path
 
 from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission
@@ -8,6 +11,7 @@ from backend.db import models
 from backend.db.models.user import UserRole
 from backend.schemas import transcription as schemas
 from backend.services.tasks import transcription_tasks
+from backend.services.utils import make_json_serializable
 
 router = APIRouter()
 
@@ -156,3 +160,390 @@ async def search_transcriptions(
                 ))
     
     return results
+
+@router.post("/parliament-tv", response_model=Dict)
+async def transcribe_parliament_tv(
+    background_tasks: BackgroundTasks,
+    data: Dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Create a transcription for a Parliament TV video.
+    This will start a background task to process the transcription.
+    
+    Required fields in request body:
+    - capture_id: ID of the Parliament TV capture to transcribe
+    - format: Output format (txt, srt, json, docx)
+    - speaker_id: Optional ID of speaker identification to use for speaker attribution
+    """
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    capture_id = data.get("capture_id")
+    output_format = data.get("format", "txt")
+    speaker_id = data.get("speaker_id")
+    language = data.get("language", "en")
+    model = data.get("model", "medium")
+    
+    if not capture_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="capture_id is required"
+        )
+    
+    # Check if capture exists
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Check if file exists
+    if not capture.file_path or not os.path.exists(capture.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file for capture {capture_id} not found"
+        )
+    
+    # Check if transcription already exists
+    existing = db.query(models.ParliamentTranscription).filter(
+        models.ParliamentTranscription.capture_session_id == capture_id
+    ).first()
+    
+    if existing:
+        # If it exists but failed, we can retry
+        if existing.status == "failed":
+            existing.status = "processing"
+            existing.error_message = None
+            db.commit()
+            db.refresh(existing)
+            
+            # Start transcription in background
+            background_tasks.add_task(
+                process_parliament_transcription,
+                existing.id,
+                capture.file_path,
+                output_format,
+                speaker_id,
+                language,
+                model
+            )
+            
+            return make_json_serializable({
+                "id": existing.id,
+                "capture_id": capture_id,
+                "status": "processing",
+                "message": "Transcription restarted",
+                "created_at": existing.created_at
+            })
+        else:
+            # If it's already processing or ready, return it
+            return make_json_serializable({
+                "id": existing.id,
+                "capture_id": capture_id,
+                "status": existing.status,
+                "output_file": existing.output_file,
+                "created_at": existing.created_at,
+                "updated_at": existing.updated_at
+            })
+    
+    # Create new transcription record
+    new_transcription = models.ParliamentTranscription(
+        capture_session_id=capture_id,
+        status="processing",
+        language=language,
+        format=output_format,
+        model=model,
+        created_by_id=current_user.id
+    )
+    
+    # If speaker ID is provided, link it
+    if speaker_id:
+        speaker_identification = db.query(models.SpeakerIdentification).filter(
+            models.SpeakerIdentification.id == speaker_id
+        ).first()
+        
+        if speaker_identification:
+            new_transcription.speaker_identification_id = speaker_id
+    
+    db.add(new_transcription)
+    db.commit()
+    db.refresh(new_transcription)
+    
+    # Start transcription in background
+    background_tasks.add_task(
+        process_parliament_transcription,
+        new_transcription.id,
+        capture.file_path,
+        output_format,
+        speaker_id,
+        language,
+        model
+    )
+    
+    return make_json_serializable({
+        "id": new_transcription.id,
+        "capture_id": capture_id,
+        "status": "processing",
+        "message": "Transcription started",
+        "created_at": new_transcription.created_at
+    })
+
+@router.get("/parliament-tv/{transcription_id}", response_model=Dict)
+async def get_parliament_tv_transcription(
+    transcription_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Get a specific Parliament TV transcription by ID.
+    """
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    transcription = db.query(models.ParliamentTranscription).filter(
+        models.ParliamentTranscription.id == transcription_id
+    ).first()
+    
+    if not transcription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcription not found"
+        )
+    
+    # Get the capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == transcription.capture_session_id
+    ).first()
+    
+    # Prepare the response
+    response = {
+        "id": transcription.id,
+        "capture_id": transcription.capture_session_id,
+        "status": transcription.status,
+        "language": transcription.language,
+        "format": transcription.format,
+        "model": transcription.model,
+        "output_file": transcription.output_file,
+        "error_message": transcription.error_message,
+        "speaker_identification_id": transcription.speaker_identification_id,
+        "created_at": transcription.created_at,
+        "updated_at": transcription.updated_at
+    }
+    
+    # Add capture details if available
+    if capture:
+        response["capture"] = {
+            "id": capture.id,
+            "title": capture.title,
+            "status": capture.status,
+            "file_path": capture.file_path,
+            "created_at": capture.created_at
+        }
+    
+    return make_json_serializable(response)
+
+@router.get("/parliament-tv/capture/{capture_id}", response_model=List[Dict])
+async def get_parliament_tv_transcriptions_by_capture(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Get all transcriptions for a specific Parliament TV capture.
+    """
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Check if capture exists
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Get all transcriptions for this capture
+    transcriptions = db.query(models.ParliamentTranscription).filter(
+        models.ParliamentTranscription.capture_session_id == capture_id
+    ).all()
+    
+    # Prepare the response
+    results = []
+    for transcription in transcriptions:
+        results.append({
+            "id": transcription.id,
+            "capture_id": transcription.capture_session_id,
+            "status": transcription.status,
+            "language": transcription.language,
+            "format": transcription.format,
+            "model": transcription.model,
+            "output_file": transcription.output_file,
+            "created_at": transcription.created_at,
+            "updated_at": transcription.updated_at
+        })
+    
+    return make_json_serializable(results)
+
+@router.delete("/parliament-tv/{transcription_id}", response_model=Dict)
+async def delete_parliament_tv_transcription(
+    transcription_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Delete a Parliament TV transcription and its associated files.
+    """
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the transcription
+    transcription = db.query(models.ParliamentTranscription).filter(
+        models.ParliamentTranscription.id == transcription_id
+    ).first()
+    
+    if not transcription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcription not found"
+        )
+    
+    # Delete associated files
+    files_deleted = []
+    if transcription.output_file and os.path.exists(transcription.output_file):
+        try:
+            os.remove(transcription.output_file)
+            files_deleted.append(os.path.basename(transcription.output_file))
+        except Exception as e:
+            print(f"Error deleting file {transcription.output_file}: {str(e)}")
+    
+    # Delete metadata file if it exists
+    if transcription.output_file:
+        metadata_file = transcription.output_file.replace('.txt', '.meta.json')
+        metadata_file = metadata_file.replace('.srt', '.meta.json')
+        metadata_file = metadata_file.replace('.json', '.meta.json')
+        metadata_file = metadata_file.replace('.docx', '.meta.json')
+        
+        if os.path.exists(metadata_file):
+            try:
+                os.remove(metadata_file)
+                files_deleted.append(os.path.basename(metadata_file))
+            except Exception as e:
+                print(f"Error deleting file {metadata_file}: {str(e)}")
+    
+    # Delete the database record
+    db.delete(transcription)
+    db.commit()
+    
+    return {
+        "message": f"Transcription {transcription_id} deleted successfully",
+        "files_deleted": files_deleted
+    }
+
+def process_parliament_transcription(
+    transcription_id: int,
+    video_path: str,
+    output_format: str = "txt",
+    speaker_id: Optional[int] = None,
+    language: str = "en",
+    model: str = "medium"
+):
+    """
+    Process a Parliament TV video for transcription.
+    This function is meant to be run as a background task.
+    """
+    # Create a database session
+    db = next(get_db())
+    
+    try:
+        # Get the transcription record
+        transcription = db.query(models.ParliamentTranscription).filter(
+            models.ParliamentTranscription.id == transcription_id
+        ).first()
+        
+        if not transcription:
+            print(f"Transcription with ID {transcription_id} not found")
+            return
+        
+        # Update status to processing
+        transcription.status = "processing"
+        db.commit()
+        
+        # Create output directory
+        output_dir = Path("/app/data/media/transcriptions")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate output filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = output_dir / f"transcript_{transcription.capture_session_id}_{timestamp}.{output_format}"
+        
+        # Get speaker identification file if provided
+        speaker_id_path = None
+        if speaker_id:
+            speaker_identification = db.query(models.SpeakerIdentification).filter(
+                models.SpeakerIdentification.id == speaker_id
+            ).first()
+            
+            if speaker_identification and speaker_identification.results:
+                # The results should be stored in a JSON file
+                if speaker_identification.output_file:
+                    speaker_id_path = speaker_identification.output_file.replace('.mp4', '.json')
+        
+        # Run the transcription script
+        cmd = [
+            "python",
+            "/app/scripts/parliament_transcription.py",
+            video_path,
+            "--output", str(output_file),
+            "--format", output_format,
+            "--language", language,
+            "--model", model
+        ]
+        
+        if speaker_id_path:
+            cmd.extend(["--speaker-id", speaker_id_path])
+        
+        print(f"Running transcription: {' '.join(cmd)}")
+        
+        # Execute the command
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        stdout, stderr = process.communicate()
+        
+        # Check if the process was successful
+        if process.returncode != 0:
+            print(f"Transcription failed: {stderr}")
+            transcription.status = "failed"
+            transcription.error_message = stderr
+            db.commit()
+            return
+        
+        # Update the transcription record
+        transcription.status = "completed"
+        transcription.output_file = str(output_file)
+        db.commit()
+        
+        print(f"Transcription completed successfully: {output_file}")
+        
+    except Exception as e:
+        print(f"Error in process_parliament_transcription: {str(e)}")
+        
+        # Update the record with the error
+        try:
+            transcription.status = "failed"
+            transcription.error_message = str(e)
+            db.commit()
+        except:
+            pass
+    
+    finally:
+        db.close()

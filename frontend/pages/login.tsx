@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Image from 'next/image';
 import { useTheme } from '../contexts/ThemeContext';
 import ThemeToggle from '../components/common/ThemeToggle';
+import { useAuth } from '../contexts/AuthContext';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -11,6 +12,7 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { theme } = useTheme();
+  const { login } = useAuth();
   const router = useRouter();
   
   // Force dark mode class on body when component mounts
@@ -36,49 +38,14 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // Create form data for OAuth2 login
-      const formData = new URLSearchParams();
-      formData.append('username', email); // OAuth2 expects 'username' even though we're using email
-      formData.append('password', password);
+      console.log('Attempting login via AuthContext');
       
-      console.log('Attempting direct login from login page');
+      // Use the AuthContext login function instead of direct fetch
+      await login(email, password);
       
-      // Make the login request directly
-      const response = await fetch('http://localhost:8000/api/v1/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-        body: formData,
-        credentials: 'same-origin',
-      });
+      console.log('Login successful via AuthContext');
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorDetail = 'Unknown error';
-        
-        try {
-          // Try to parse as JSON
-          const errorData = JSON.parse(errorText);
-          errorDetail = errorData.detail || `Login failed: ${response.status}`;
-        } catch (parseError) {
-          // If not JSON, use the raw text
-          errorDetail = errorText || `Login failed: ${response.status}`;
-        }
-        
-        throw new Error(errorDetail);
-      }
-      
-      const data = await response.json();
-      console.log('Login successful, received token');
-      
-      // Store token in both localStorage and sessionStorage
-      localStorage.setItem('token', data.access_token);
-      sessionStorage.setItem('token', data.access_token);
-      
-      // Redirect to regular dashboard on successful login
-      router.push('/dashboard');
+      // The redirect will be handled by the AuthContext
     } catch (err: any) {
       setError(err.message || 'Failed to login. Please check your credentials.');
     } finally {
