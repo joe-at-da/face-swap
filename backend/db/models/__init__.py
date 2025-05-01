@@ -1,4 +1,5 @@
-# Import models in the correct order to avoid circular dependencies
+# Import all models here for Alembic to detect them
+from backend.db.models.speaker import SpeakerIdentification, Speaker, SpeakerAppearance
 from .user import User, UserRole
 from .capture import CaptureSession
 from .social import SocialPost, SocialPlatform, PostStatus

@@ -24,3 +24,4 @@ class User(Base):
     capture_sessions = relationship("CaptureSession", back_populates="user")
     video_clips = relationship("VideoClip", back_populates="created_by_user")
     social_posts = relationship("SocialPost", back_populates="created_by")
+    speaker_identifications = relationship("SpeakerIdentification", back_populates="created_by")
