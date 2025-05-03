@@ -2,6 +2,7 @@ from typing import List, Dict, Optional
 import os
 import glob
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 
@@ -109,30 +110,17 @@ async def get_all_videos(
     
     return video_files
 
-@router.get("/stream/{filename}", response_model=None)
+@router.get("/stream/{filename}", response_model=None, response_class=FileResponse)
 async def stream_video(
     filename: str,
-    token: Optional[str] = None,
+    token: str = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
     """Stream a video file by filename.
     
-    Supports both standard authentication and token-based authentication via query parameter.
+    Supports authentication via JWT token.
     """
-    # If token is provided, try to authenticate with it
-    if token:
-        try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-            username: str = payload.get("sub")
-            if username:
-                user = db.query(models.User).filter(models.User.email == username).first()
-                if user:
-                    current_user = user
-        except JWTError:
-            # Continue with the current_user from the dependency
-            pass
-    
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
@@ -156,7 +144,6 @@ async def stream_video(
     video_path = found_files[0]
     
     # Return the file as a streaming response
-    from fastapi.responses import FileResponse
     return FileResponse(video_path, media_type="video/mp4")
 
 
