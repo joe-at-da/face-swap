@@ -738,10 +738,22 @@ async def stream_parliament_tv_video(
         print(f"Updated file path in database for capture {capture_id}")
     
     # Return the video file as a streaming response
-    return FileResponse(
-        path=video_file,
+    # Use StreamingResponse instead of FileResponse to avoid content length mismatch errors
+    def iterfile():
+        with open(video_file, 'rb') as f:
+            while chunk := f.read(8192):  # Read in 8KB chunks
+                yield chunk
+    
+    headers = {
+        'Content-Disposition': f'attachment; filename="parliament_capture_{capture_id}.mp4"',
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+    }
+    
+    return StreamingResponse(
+        iterfile(),
         media_type="video/mp4",
-        filename=f"parliament_capture_{capture_id}.mp4"
+        headers=headers
     )
 
 @router.delete("/{capture_id}")

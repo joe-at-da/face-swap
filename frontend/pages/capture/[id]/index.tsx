@@ -528,11 +528,14 @@ const CaptureDetailPage: React.FC = () => {
                 <div className="aspect-w-16 aspect-h-9 bg-black">
                   <video
                     ref={videoRef}
+                    key={`video-${capture.id}-${capture.updated_at}`}
                     src={getVideoSourceUrl(capture)}
                     controls
                     className="w-full h-full object-contain"
                     onError={handleVideoError}
                     playsInline
+                    preload="auto"
+                    crossOrigin="anonymous"
                   />
                 </div>
                 <div className="p-4 text-sm">
