@@ -266,21 +266,26 @@ const NewCapturePage: React.FC = () => {
     mutationFn: async (data: CaptureFormData) => {
     // For Parliament TV captures, use the parliament-tv endpoint
     if (sourceUrlIncludes(data.source_url, 'parliamentlive.tv')) {
-      // Prepare the URL parameter based on the source_url format
-      let urlParam: any;
+      // The backend expects url to be a string, so we need to handle the different formats
+      let urlParam: string;
       
       if (typeof data.source_url === 'string') {
+        // If it's already a string, use it directly
         urlParam = data.source_url;
       } else if (typeof data.source_url === 'object') {
-        // If it's an object with video_url and audio_url, pass it directly
-        urlParam = {
-          video_url: data.source_url.video_url,
-          audio_url: data.source_url.audio_url
-        };
+        // If it's an object with video_url and audio_url, use the video_url
+        // The backend will extract both video and audio streams from the Parliament TV page
+        urlParam = data.source_url.video_url;
+        
+        // Log what we're doing for debugging
+        console.log('Using video_url from source_url object:', urlParam);
+      } else {
+        // Fallback to an empty string if somehow we have an invalid type
+        urlParam = '';
       }
       
       const payload = {
-        url: urlParam,
+        url: urlParam, // This must be a string as per the backend schema
         title: data.title,
         description: data.description,
         duration: data.duration,
@@ -289,6 +294,8 @@ const NewCapturePage: React.FC = () => {
         scheduled_end: data.scheduled_end
       };
       
+      // Use axios directly to call the parliament-tv endpoint
+      console.log('[CAPTURE DEBUG] POST request to /parliament-tv with data', payload);
       const response = await axios.post(
         `${API_BASE_URL}/parliament-tv`,
         payload,
@@ -297,8 +304,16 @@ const NewCapturePage: React.FC = () => {
       
       return response.data;
     } else {
+      // For other captures, we need to ensure source_url is a string
+      const modifiedData = { ...data };
+      
+      if (typeof modifiedData.source_url === 'object') {
+        modifiedData.source_url = modifiedData.source_url.video_url;
+      }
+      
       // For other captures, use the regular capture endpoint
-      return await api.post('/capture', data);
+      console.log('[CAPTURE DEBUG] POST request to /capture with data', modifiedData);
+      return await api.post('/capture', modifiedData);
     }
   },
     onSuccess: (data) => {
