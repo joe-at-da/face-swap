@@ -766,7 +766,40 @@ class ParliamentTVCapture:
             
             # First, check if the stream has audio
             print(f"DEBUG - download_stream - Checking if stream has audio")
-            probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "json", stream_url]
+            
+            # Check if the URL is a dictionary with separate video and audio URLs
+            if isinstance(stream_url, dict) and 'audio_url' in stream_url and 'video_url' in stream_url:
+                # We have separate audio and video URLs
+                audio_url = stream_url['audio_url']
+                video_url = stream_url['video_url']
+                print(f"DEBUG - download_stream - Found separate audio URL: {audio_url}")
+                print(f"DEBUG - download_stream - Found separate video URL: {video_url}")
+                has_audio = True
+                
+                # Use the video URL for the main stream
+                stream_url = video_url
+                
+                # Download the audio and video separately and then combine them
+                temp_audio_file = f"{output_path}.audio.mp3"
+                
+                # Download the audio first
+                audio_cmd = [
+                    "ffmpeg", "-y", 
+                    "-i", audio_url,
+                    "-vn", "-acodec", "copy",
+                    "-t", str(duration),
+                    temp_audio_file
+                ]
+                
+                print(f"DEBUG - download_stream - Downloading audio: {' '.join(audio_cmd)}")
+                audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
+                
+                if audio_result.returncode != 0:
+                    print(f"ERROR - download_stream - Failed to download audio: {audio_result.stderr}")
+                    has_audio = False
+            else:
+                # Standard URL, check for audio
+                probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "json", stream_url]
             try:
                 probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
                 print(f"DEBUG - download_stream - ffprobe returned with code: {probe_result.returncode}")
@@ -793,14 +826,28 @@ class ParliamentTVCapture:
                 has_audio = False
             
             # Build the ffmpeg command
-            cmd = ["ffmpeg", "-y", "-i", stream_url, "-c:v", "copy"]
-            
-            # Add audio options based on whether the stream has audio
-            if has_audio:
-                cmd.extend(["-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"])
+            if isinstance(stream_url, dict) and 'audio_url' in stream_url and 'video_url' in stream_url and os.path.exists(temp_audio_file):
+                # We have separate audio and video files, combine them
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", stream_url,  # Video stream
+                    "-i", temp_audio_file,  # Audio file
+                    "-c:v", "copy",  # Copy video codec
+                    "-c:a", "aac",  # Convert audio to AAC
+                    "-map", "0:v",  # Use video from first input
+                    "-map", "1:a",  # Use audio from second input
+                    "-shortest"  # End when shortest input ends
+                ]
             else:
-                print("DEBUG - download_stream - Stream has no audio, adding silent audio track")
-                cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-c:a", "aac", "-shortest"])
+                # Standard approach with a single URL
+                cmd = ["ffmpeg", "-y", "-i", stream_url, "-c:v", "copy"]
+                
+                # Add audio options based on whether the stream has audio
+                if has_audio:
+                    cmd.extend(["-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"])
+                else:
+                    print("DEBUG - download_stream - Stream has no audio, adding silent audio track")
+                    cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-c:a", "aac", "-shortest"])
             
             # Add duration and output path
             cmd.extend(["-t", str(duration), output_path])

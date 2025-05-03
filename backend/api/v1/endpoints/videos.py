@@ -272,20 +272,85 @@ def stream_audio_from_video(filename: str, db: Session):
             
             if not has_audio:
                 print(f"ERROR - stream_audio_from_video - No audio stream found in video: {video_path}")
-                # Create a silent audio file instead
-                silent_cmd = [
-                    'ffmpeg',
-                    '-f', 'lavfi',
-                    '-i', 'anullsrc=r=44100:cl=stereo',
-                    '-t', '10',  # 10 seconds of silence
-                    '-acodec', 'libmp3lame',
-                    '-q:a', '2',
-                    '-y',
-                    audio_path
-                ]
                 
-                silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
-                print(f"DEBUG - stream_audio_from_video - Created silent audio file: {audio_path}")
+                # Try to find the original Parliament TV URL for this video
+                # Extract capture ID from filename if possible
+                capture_id = None
+                if "_" in filename:
+                    parts = filename.split("_")
+                    for part in parts:
+                        if part.isdigit():
+                            capture_id = int(part)
+                            break
+                
+                if capture_id:
+                    print(f"DEBUG - stream_audio_from_video - Found capture ID: {capture_id}")
+                    # Look up the capture in the database
+                    capture = db.query(models.CaptureSession).filter(
+                        models.CaptureSession.id == capture_id
+                    ).first()
+                    
+                    if capture and capture.url:
+                        print(f"DEBUG - stream_audio_from_video - Found original URL: {capture.url}")
+                        # Try to extract audio from the original URL
+                        try:
+                            # Initialize the Parliament TV capture service
+                            from backend.services.parliament_tv import ParliamentTVCapture
+                            parliament_tv = ParliamentTVCapture()
+                            
+                            # Extract the stream URL
+                            stream_info = parliament_tv.extract_stream_url(capture.url)
+                            
+                            if "error" not in stream_info:
+                                direct_stream = stream_info.get("direct_stream")
+                                audio_url = None
+                                
+                                # Check if direct_stream is a dictionary with separate audio URL
+                                if isinstance(direct_stream, dict) and "audio_url" in direct_stream:
+                                    audio_url = direct_stream["audio_url"]
+                                    print(f"DEBUG - stream_audio_from_video - Found audio URL: {audio_url}")
+                                elif isinstance(direct_stream, str):
+                                    audio_url = direct_stream
+                                
+                                if audio_url:
+                                    # Extract audio from the URL
+                                    audio_cmd = [
+                                        'ffmpeg',
+                                        '-i', audio_url,
+                                        '-vn',  # No video
+                                        '-acodec', 'libmp3lame',
+                                        '-q:a', '2',
+                                        '-y',
+                                        audio_path
+                                    ]
+                                    
+                                    audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
+                                    
+                                    if audio_result.returncode == 0 and os.path.exists(audio_path):
+                                        print(f"DEBUG - stream_audio_from_video - Successfully extracted audio from original URL: {audio_path}")
+                                        has_audio = True
+                                    else:
+                                        print(f"ERROR - stream_audio_from_video - Failed to extract audio from URL: {audio_url}")
+                                        print(f"ERROR - stream_audio_from_video - ffmpeg stderr: {audio_result.stderr}")
+                        except Exception as e:
+                            print(f"ERROR - stream_audio_from_video - Error extracting audio from original URL: {str(e)}")
+                
+                # If we still don't have audio, create a silent track
+                if not has_audio or not os.path.exists(audio_path):
+                    print(f"DEBUG - stream_audio_from_video - Creating silent audio file as fallback")
+                    silent_cmd = [
+                        'ffmpeg',
+                        '-f', 'lavfi',
+                        '-i', 'anullsrc=r=44100:cl=stereo',
+                        '-t', '10',  # 10 seconds of silence
+                        '-acodec', 'libmp3lame',
+                        '-q:a', '2',
+                        '-y',
+                        audio_path
+                    ]
+                    
+                    silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
+                    print(f"DEBUG - stream_audio_from_video - Created silent audio file: {audio_path}")
             else:
                 # Extract audio from the video file using ffmpeg
                 cmd = [
