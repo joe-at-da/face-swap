@@ -8,7 +8,11 @@ const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 // Define types for API responses
 interface ExtractUrlResponse {
-  direct_stream: string;
+  direct_stream: {
+    video_url: string;
+    audio_url?: string;
+  } | string;
+  event_id?: string;
   time_marker?: {
     seconds: number;
   };
@@ -156,30 +160,61 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       console.log('Extract response data:', extractResponse.data);
 
       if (extractResponse.data?.direct_stream) {
-        // Then test if the stream URL is valid
-        console.log(`Testing stream URL: ${extractResponse.data.direct_stream}`);
-        
-        const testResponse = await axios.get<TestStreamResponse>(
-          `${API_BASE_URL}/parliament-tv/test-url`, 
-          {
-            params: { url: extractResponse.data.direct_stream },
-            headers: {
-              Authorization: `Bearer ${token}`
-            }
-          }
-        );
-        
-        console.log('Test response status:', testResponse.status);
-        console.log('Test response data:', testResponse.data);
-
+      // Then test if the stream URL is valid
+      console.log('Extract URL response:', extractResponse.data);
+      
+      let videoUrl = '';
+      let audioUrl = '';
+      let params = {};
+      
+      // Handle both string and object formats for direct_stream
+      if (typeof extractResponse.data.direct_stream === 'string') {
+        // If it's a string, use it as the video URL
+        videoUrl = extractResponse.data.direct_stream;
+        console.log(`Testing stream URL (string format): ${videoUrl}`);
+        params = { url: videoUrl };
+      } else if (typeof extractResponse.data.direct_stream === 'object') {
+        // If it's an object with video_url and audio_url, use those
+        videoUrl = extractResponse.data.direct_stream.video_url;
+        audioUrl = extractResponse.data.direct_stream.audio_url || '';
+        console.log(`Testing stream URL (object format):\nVideo URL: ${videoUrl}\nAudio URL: ${audioUrl}`);
+        params = { video_url: videoUrl };
+        if (audioUrl) {
+          params = { ...params, audio_url: audioUrl };
+        }
+      }
+      
+      if (!videoUrl) {
         setValidationResult({
-          success: testResponse.data?.is_valid,
-          message: testResponse.data?.is_valid 
-            ? 'Stream URL is valid and ready for capture.' 
-            : 'Stream URL was extracted but could not be validated. Capture may still work.',
-          streamUrl: extractResponse.data.direct_stream,
-          timeMarker: extractResponse.data.time_marker?.seconds
+          success: false,
+          message: 'Could not extract a valid stream URL from Parliament TV page.'
         });
+        return;
+      }
+      
+      console.log('Sending test request with params:', params);
+      
+      const testResponse = await axios.get<TestStreamResponse>(
+        `${API_BASE_URL}/parliament-tv/test-url`, 
+        {
+          params,
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      
+      console.log('Test response status:', testResponse.status);
+      console.log('Test response data:', testResponse.data);
+
+      setValidationResult({
+        success: testResponse.data?.is_valid,
+        message: testResponse.data?.is_valid 
+          ? 'Stream URL is valid and ready for capture.' 
+          : 'Stream URL was extracted but could not be validated. Capture may still work.',
+        streamUrl: videoUrl,
+        timeMarker: extractResponse.data.time_marker?.seconds
+      });
       } else {
         setValidationResult({
           success: false,
@@ -266,26 +301,42 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setError('');
 
     try {
-      console.log('Starting capture with data:', {
+      // First, extract the direct stream URL to get the latest format
+      const authHeaders = getAuthHeaders();
+      const authToken = authHeaders.headers.Authorization.split(' ')[1];
+      
+      // Extract the direct stream URL
+      const extractResponse = await axios.get<ExtractUrlResponse>(
+        `${API_BASE_URL}/parliament-tv/extract-url`, 
+        {
+          params: { url },
+          headers: {
+            Authorization: `Bearer ${authToken}`
+          }
+        }
+      );
+        
+      console.log('Extract response for capture:', extractResponse.data);
+      
+      // Prepare the capture request with the latest stream URL format
+      let captureData: any = {
         url,
         title,
         description,
         duration,
         enable_facial_recognition: enableFacialRecognition
-      });
-
-      const authHeaders = getAuthHeaders();
-      const token = authHeaders.headers.Authorization.split(' ')[1];
+      };
+      
+      // Add the direct_stream data if available
+      if (extractResponse.data?.direct_stream) {
+        captureData.direct_stream = extractResponse.data.direct_stream;
+      }
+      
+      console.log('Starting capture with data:', captureData);
 
       const response = await axios.post(
         `${API_BASE_URL}/parliament-tv`, 
-        {
-          url,
-          title,
-          description,
-          duration,
-          enable_facial_recognition: enableFacialRecognition
-        },
+        captureData,
         {
           headers: {
             'Content-Type': 'application/json',

@@ -2,7 +2,7 @@
 
 This document provides a comprehensive guide to the Parliament TV capture feature, which allows users to capture Parliament TV streams with facial recognition to automatically stop when the speaker is no longer present.
 
-**Last Updated:** May 1, 2025
+**Last Updated:** May 3, 2025
 
 ## Overview
 
@@ -290,9 +290,14 @@ The Parliament TV capture functionality has been integrated into the main applic
 
 ### Technical Improvements
 
-1. **Improved File Path Handling**: The system now tries multiple approaches to find video files
-2. **Automatic File Path Updates**: When a file is found through alternative methods, the database is updated
-3. **Fallback Mechanisms**: If one video source fails, the player automatically tries alternative sources
+1. **Enhanced Stream URL Extraction**: The system now identifies and extracts both video and audio streams from Parliament TV
+2. **Combined Video and Audio Processing**: Separate video and audio streams are automatically combined using ffmpeg
+3. **Silent Audio Addition**: For video-only streams, a silent audio track is added to ensure all output files have audio
+4. **Improved File Path Handling**: The system now uses hard-coded paths and creates directories if they don't exist
+5. **NoneType Error Resolution**: Fixed issues with None values in path handling and stream processing
+6. **Robust ffmpeg Integration**: Direct ffmpeg command execution instead of thread-based approach for better reliability
+7. **Automatic File Path Updates**: When a file is found through alternative methods, the database is updated
+8. **Fallback Mechanisms**: If one video source fails, the player automatically tries alternative sources
 
 ## Future Enhancements
 

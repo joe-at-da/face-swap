@@ -3,13 +3,17 @@
 ## Overview
 This roadmap outlines the planned enhancements for the Parliament TV capture functionality in the MP Video Clip Manager. The goal is to create a more intelligent, automated system for capturing, identifying, and processing parliamentary video content.
 
-## Current Status (May 1, 2025)
+## Current Status (May 3, 2025)
 - ✅ Basic Parliament TV capture functionality implemented
-- ✅ Stream URL extraction and validation
+- ✅ Stream URL extraction and validation with support for both video and audio streams
 - ✅ Active capture detection and management
 - ✅ Integration with main capture UI
 - ✅ Facial recognition-based capture termination
 - ✅ Error handling for conflicts and invalid streams
+- ✅ Fixed NoneType errors in capture process
+- ✅ Improved video and audio stream handling
+- ✅ Enhanced ffmpeg integration for combining video and audio
+- ✅ Robust path handling with directory creation
 
 ## Phase 1: Speaker Identification (May-June 2025)
 
@@ -128,6 +132,14 @@ This roadmap outlines the planned enhancements for the Parliament TV capture fun
   - **Mitigation**: Create flexible adapters and fallback mechanisms
 
 ## Next Immediate Steps
+
+### Immediate (1-2 weeks):
+1. Enhance stream format detection to better identify and process various Parliament TV stream types
+2. Implement automatic retry mechanisms for failed captures
+3. Add stream quality selection options in the capture UI
+4. Create more comprehensive logging for capture diagnostics
+
+### Short-term (2-4 weeks):
 1. Begin development of enhanced facial recognition system
 2. Create database schema for MP profiles and reference images
 3. Implement basic speaker identification during capture

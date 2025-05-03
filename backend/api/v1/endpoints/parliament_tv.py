@@ -379,19 +379,39 @@ async def extract_parliament_tv_url(
 
 @router.get("/test-url", response_model=Dict)
 async def test_stream_url(
-    url: str,
+    url: Optional[str] = None,
+    video_url: Optional[str] = None,
+    audio_url: Optional[str] = None,
     current_user: models.User = Depends(get_current_active_user)
 ):
-    """Test if a stream URL is valid by downloading a small segment."""
+    """Test if a stream URL is valid by downloading a small segment.
+    
+    Can accept either a single 'url' parameter or separate 'video_url' and 'audio_url' parameters.
+    When both video and audio URLs are provided, only the video URL is tested for validity.
+    """
     # Check if user has required permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
+    # Determine which URL to test
+    test_url = None
+    if url:
+        test_url = url
+    elif video_url:
+        test_url = video_url
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either 'url' or 'video_url' must be provided"
+        )
+    
     # Test the stream URL
-    is_valid = parliament_tv_service.test_stream_url(url)
+    is_valid = parliament_tv_service.test_stream_url(test_url)
     
     return {
-        "url": url,
-        "is_valid": is_valid
+        "url": test_url,
+        "is_valid": is_valid,
+        "video_url": video_url,
+        "audio_url": audio_url
     }
 
 @router.get("", response_model=List[Dict])
