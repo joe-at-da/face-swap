@@ -354,7 +354,7 @@ const VideoGalleryPage: React.FC = () => {
               </div>
               <div className="aspect-w-16 aspect-h-9">
                 <video 
-                  src={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}`} 
+                  src={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}?token=${token}`} 
                   controls 
                   className="w-full h-full object-contain"
                   autoPlay
@@ -396,7 +396,7 @@ const VideoGalleryPage: React.FC = () => {
                   </button>
                 )}
                 <a 
-                  href={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}`}
+                  href={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}?token=${token}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"

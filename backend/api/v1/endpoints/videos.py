@@ -120,6 +120,19 @@ async def stream_video(
     
     Supports both standard authentication and token-based authentication via query parameter.
     """
+    # If token is provided, try to authenticate with it
+    if token:
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            username: str = payload.get("sub")
+            if username:
+                user = db.query(models.User).filter(models.User.email == username).first()
+                if user:
+                    current_user = user
+        except JWTError:
+            # Continue with the current_user from the dependency
+            pass
+    
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
@@ -150,6 +163,7 @@ async def stream_video(
 @router.delete("/delete/{filename}")
 async def delete_video(
     filename: str,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
     """Delete a video file by filename."""
