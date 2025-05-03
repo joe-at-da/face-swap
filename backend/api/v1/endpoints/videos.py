@@ -433,7 +433,7 @@ async def stream_combined_video_with_token(
     This endpoint is for streaming combined files with token authentication.
     """
     # Validate the token and get the user
-    current_user = await get_user_from_token(token, db)
+    current_user = get_user_from_token(token, db)
     
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
@@ -468,7 +468,7 @@ async def stream_audio_with_token(
     This endpoint is for streaming just the audio with token authentication.
     """
     # Validate the token and get the user
-    current_user = await get_user_from_token(token, db)
+    current_user = get_user_from_token(token, db)
     
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
