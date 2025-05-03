@@ -181,25 +181,35 @@ async def start_capture(
     # Start capture in background if not scheduled and not a draft
     scheduled_start = getattr(capture, 'scheduled_start', None)
     if not scheduled_start and not draft:
-        # Start the actual video capture process directly
-        def start_capture_thread():
-            try:
-                stream_capture = StreamCapture()
-                output_file = stream_capture.start_capture()
-                print(f"DEBUG - Started direct capture to file: {output_file}")
-                
-                # Store the output file path in the database
-                if hasattr(capture_session, 'file_path'):
-                    capture_session.file_path = output_file
-                    db.commit()
-            except Exception as e:
-                print(f"ERROR - Failed to start capture: {str(e)}")
-        
-        # Start capture in a separate thread
-        capture_thread = threading.Thread(target=start_capture_thread)
-        capture_thread.daemon = True
-        capture_thread.start()
-        print(f"DEBUG - Started capture thread")
+        # Start the actual video capture process directly using ffmpeg
+        try:
+            # Create a StreamCapture instance with hard-coded paths
+            stream_capture = StreamCapture()
+            print(f"DEBUG - Created StreamCapture instance with stream_url: {stream_capture.stream_url}")
+            print(f"DEBUG - temp_dir: {stream_capture.temp_dir}, exists: {stream_capture.temp_dir.exists()}")
+            
+            # Start the capture directly
+            output_file = stream_capture.start_capture()
+            print(f"DEBUG - Started direct capture to file: {output_file}")
+            
+            # Store the output file path in the database
+            if hasattr(capture_session, 'file_path'):
+                capture_session.file_path = output_file
+                db.commit()
+                print(f"DEBUG - Updated file_path in database: {output_file}")
+        except Exception as e:
+            print(f"ERROR - Failed to start capture: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
+            
+            # Update the capture session status to failed
+            capture_session.status = "failed"
+            if hasattr(capture_session, 'metadata') and capture_session.metadata is not None:
+                capture_session.metadata = {
+                    **capture_session.metadata,
+                    "error": f"Failed to start capture: {str(e)}"
+                }
+            db.commit()
     elif draft:
         print("DEBUG - Saving as draft, no capture started")
     

@@ -35,8 +35,15 @@ atexit.register(cleanup_processes)
 class StreamCapture:
     def __init__(self, stream_url: str = settings.PARLIAMENT_TV_URL):
         self.stream_url = stream_url
-        self.temp_dir = Path(settings.TEMP_STORAGE_PATH)
+        
+        # CRITICAL FIX: Hard-code paths to ensure they're never None
+        self.temp_dir = Path("/app/data/temp")
+        print(f"DEBUG - StreamCapture.__init__ - Using hard-coded temp_dir: {self.temp_dir}")
+        
+        # Create directory if it doesn't exist
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        print(f"DEBUG - StreamCapture.__init__ - temp_dir exists: {self.temp_dir.exists()}")
+        
         self._current_process = None
         
     def start_capture(self) -> str:
