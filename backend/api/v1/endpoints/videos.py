@@ -106,3 +106,121 @@ async def stream_video(
     # Return the file as a streaming response
     from fastapi.responses import FileResponse
     return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.delete("/delete/{filename}")
+async def delete_video(
+    filename: str,
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Delete a video file by filename."""
+    # Only admins can delete videos
+    has_permission(current_user, [UserRole.ADMIN])
+    
+    # Get the data directory from environment variable
+    data_dir = os.getenv("DATA_DIR", "/app/data")
+    
+    # Construct the full path, ensuring we don't allow directory traversal
+    # Strip any leading slashes or path components to ensure we stay within data_dir
+    safe_filename = filename.lstrip("/").replace("../", "").replace("..\\", "")
+    
+    # Search for the file in the data directory and its subdirectories
+    found_files = glob.glob(os.path.join(data_dir, "**", safe_filename), recursive=True)
+    
+    if not found_files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file {filename} not found"
+        )
+    
+    # Use the first match
+    video_path = found_files[0]
+    
+    try:
+        # Delete the file
+        os.remove(video_path)
+        
+        # Check if there's a corresponding capture session in the database
+        capture_id = None
+        if "_" in filename:
+            parts = filename.split("_")
+            for part in parts:
+                if part.isdigit():
+                    capture_id = int(part)
+                    break
+        
+        # Update the database if a capture session was found
+        if capture_id:
+            capture = db.query(models.CaptureSession).filter(
+                models.CaptureSession.id == capture_id
+            ).first()
+            
+            if capture:
+                # Update the capture status to indicate the video was deleted
+                capture.status = "deleted"
+                db.commit()
+        
+        return {"status": "success", "detail": f"Video file {filename} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting video file: {str(e)}"
+        )
+
+
+@router.delete("/delete-all")
+async def delete_all_videos(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Delete all video files."""
+    # Only admins can delete all videos
+    has_permission(current_user, [UserRole.ADMIN])
+    
+    # Get the data directory from environment variable
+    data_dir = os.getenv("DATA_DIR", "/app/data")
+    
+    # Find all MP4 files in the data directory and its subdirectories
+    mp4_files = glob.glob(os.path.join(data_dir, "**/*.mp4"), recursive=True)
+    
+    deleted_count = 0
+    errors = []
+    
+    for file_path in mp4_files:
+        try:
+            # Delete the file
+            os.remove(file_path)
+            deleted_count += 1
+            
+            # Try to find a corresponding capture in the database
+            filename = os.path.basename(file_path)
+            capture_id = None
+            
+            # Extract capture ID from filename if possible
+            if "_" in filename:
+                parts = filename.split("_")
+                for part in parts:
+                    if part.isdigit():
+                        capture_id = int(part)
+                        break
+            
+            # Update the database if a capture session was found
+            if capture_id:
+                capture = db.query(models.CaptureSession).filter(
+                    models.CaptureSession.id == capture_id
+                ).first()
+                
+                if capture:
+                    # Update the capture status to indicate the video was deleted
+                    capture.status = "deleted"
+        except Exception as e:
+            errors.append({"file": file_path, "error": str(e)})
+    
+    # Commit all database changes at once
+    db.commit()
+    
+    return {
+        "status": "success", 
+        "deleted_count": deleted_count,
+        "errors": errors
+    }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import MainLayout from '../../components/layout/MainLayout';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
+import { toast } from 'react-toastify';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -25,11 +26,15 @@ interface VideoFile {
 
 const VideoGalleryPage: React.FC = () => {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [videos, setVideos] = useState<VideoFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedVideo, setSelectedVideo] = useState<VideoFile | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [videoToDelete, setVideoToDelete] = useState<VideoFile | null>(null);
 
   useEffect(() => {
     fetchVideos();
@@ -92,6 +97,84 @@ const VideoGalleryPage: React.FC = () => {
     setSelectedVideo(null);
   };
 
+  const handleDeleteClick = (e: React.MouseEvent, video: VideoFile) => {
+    e.stopPropagation(); // Prevent video modal from opening
+    setVideoToDelete(video);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleDeleteAllClick = () => {
+    setShowDeleteAllConfirm(true);
+  };
+
+  const closeDeleteConfirm = () => {
+    setShowDeleteConfirm(false);
+    setVideoToDelete(null);
+  };
+
+  const closeDeleteAllConfirm = () => {
+    setShowDeleteAllConfirm(false);
+  };
+
+  const deleteVideo = async (video: VideoFile) => {
+    if (!token) return;
+    
+    setIsDeleting(true);
+    try {
+      await axios.delete(`${API_BASE_URL}/videos/delete/${encodeURIComponent(video.filename)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      // Remove the video from the list
+      setVideos(videos.filter(v => v.filename !== video.filename));
+      toast.success(`Video ${video.filename} deleted successfully`);
+      
+      // Close the confirmation dialog
+      closeDeleteConfirm();
+      
+      // If the deleted video is currently selected, close the modal
+      if (selectedVideo && selectedVideo.filename === video.filename) {
+        closeVideoModal();
+      }
+    } catch (err) {
+      console.error('Error deleting video:', err);
+      toast.error('Failed to delete video');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const deleteAllVideos = async () => {
+    if (!token) return;
+    
+    setIsDeleting(true);
+    try {
+      const response = await axios.delete<{status: string; deleted_count: number; errors: any[]}>(`${API_BASE_URL}/videos/delete-all`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      // Clear the videos list
+      setVideos([]);
+      const deletedCount = response.data?.deleted_count || 0;
+      toast.success(`${deletedCount} videos deleted successfully`);
+      
+      // Close the confirmation dialog
+      closeDeleteAllConfirm();
+      
+      // Close the video modal if open
+      closeVideoModal();
+    } catch (err) {
+      console.error('Error deleting all videos:', err);
+      toast.error('Failed to delete videos');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <MainLayout>
@@ -120,9 +203,20 @@ const VideoGalleryPage: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Video Gallery</h1>
-          <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-            Capture New Video
-          </Link>
+          <div className="flex space-x-2">
+            {user?.role === UserRole.ADMIN && videos.length > 0 && (
+              <button 
+                onClick={handleDeleteAllClick}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete All Videos'}
+              </button>
+            )}
+            <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+              Capture New Video
+            </Link>
+          </div>
         </div>
 
         {videos.length === 0 ? (
@@ -151,13 +245,26 @@ const VideoGalleryPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="p-4">
-                  <h3 className="text-lg font-medium text-gray-900 truncate" title={video.title}>{video.title}</h3>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-gray-500">
-                    <div>
-                      <span className="font-medium">Duration:</span> {formatDuration(video.duration)}
-                    </div>
+                  <div className="flex justify-between items-start">
+                    <h3 className="font-semibold text-lg mb-2 truncate">{video.title || video.filename}</h3>
+                    {user?.role === UserRole.ADMIN && (
+                      <button 
+                        onClick={(e) => handleDeleteClick(e, video)}
+                        className="text-red-600 hover:text-red-800"
+                        title="Delete video"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
                     <div>
                       <span className="font-medium">Size:</span> {formatFileSize(video.size)}
+                    </div>
+                    <div>
+                      <span className="font-medium">Duration:</span> {formatDuration(video.duration)}
                     </div>
                     <div>
                       <span className="font-medium">Status:</span> {video.status}
@@ -179,6 +286,58 @@ const VideoGalleryPage: React.FC = () => {
           </div>
         )}
 
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && videoToDelete && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-md w-full p-6">
+              <h3 className="text-lg font-medium mb-4">Delete Video</h3>
+              <p className="mb-4">Are you sure you want to delete the video <strong>{videoToDelete.title || videoToDelete.filename}</strong>? This action cannot be undone.</p>
+              <div className="flex justify-end space-x-2">
+                <button 
+                  onClick={closeDeleteConfirm}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => deleteVideo(videoToDelete)}
+                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete All Confirmation Modal */}
+        {showDeleteAllConfirm && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-md w-full p-6">
+              <h3 className="text-lg font-medium mb-4">Delete All Videos</h3>
+              <p className="mb-4">Are you sure you want to delete <strong>all {videos.length} videos</strong>? This action cannot be undone.</p>
+              <div className="flex justify-end space-x-2">
+                <button 
+                  onClick={closeDeleteAllConfirm}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={deleteAllVideos}
+                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete All'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Video Modal */}
         {selectedVideo && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
@@ -196,7 +355,7 @@ const VideoGalleryPage: React.FC = () => {
               </div>
               <div className="aspect-w-16 aspect-h-9">
                 <video 
-                  src={`${API_BASE_URL}${selectedVideo.stream_url}`} 
+                  src={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}?token=${token}`} 
                   controls 
                   className="w-full h-full object-contain"
                   autoPlay
@@ -224,8 +383,21 @@ const VideoGalleryPage: React.FC = () => {
                 </div>
               </div>
               <div className="p-4 border-t flex justify-end space-x-2">
+                {user?.role === UserRole.ADMIN && (
+                  <button 
+                    onClick={() => {
+                      setVideoToDelete(selectedVideo);
+                      setShowDeleteConfirm(true);
+                      closeVideoModal();
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                    disabled={isDeleting}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete Video'}
+                  </button>
+                )}
                 <a 
-                  href={`${API_BASE_URL}${selectedVideo.stream_url}`}
+                  href={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}?token=${token}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
