@@ -123,13 +123,13 @@ def extract_direct_stream_url(url):
         format_result = subprocess.run(format_cmd, capture_output=True, text=True)
         logger.info(f"Available formats:\n{format_result.stdout}")
         
-        # Run yt-dlp to get the direct stream URL with best format that includes audio
+        # Run yt-dlp to get the direct stream URL with best format that includes video and audio
         cmd = [
             "yt-dlp",
             "--no-check-certificate",
             "--dump-json",
             "--no-playlist",
-            "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
+            "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",  # Prioritize formats with video
             url
         ]
         
@@ -138,37 +138,53 @@ def extract_direct_stream_url(url):
         
         try:
             info = json.loads(result.stdout)
+            formats = info.get('formats', [])
             
-            # Check if the URL is directly available
-            direct_url = info.get('url')
+            # Find the best format with both video and audio
+            best_format = None
             
-            if not direct_url:
-                # Try to get the manifest URL
-                direct_url = info.get('manifest_url')
+            # First, try to find a format with both video and audio
+            for fmt in formats:
+                if fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none':
+                    best_format = fmt
+                    break
             
-            if not direct_url:
-                # Try to get the HLS URL
-                formats = info.get('formats', [])
-                for format_info in formats:
-                    if format_info.get('protocol') == 'm3u8_native':
-                        direct_url = format_info.get('url')
+            # If no combined format found, try to find a video-only format
+            if not best_format:
+                for fmt in formats:
+                    if fmt.get('vcodec') != 'none':
+                        best_format = fmt
                         break
             
-            if direct_url:
+            # If still no format found, try to get any format that's not audio-only
+            if not best_format:
+                for fmt in formats:
+                    if not fmt.get('url', '').endswith('audio_eng=64000.m3u8'):
+                        best_format = fmt
+                        break
+            
+            if best_format:
+                direct_url = best_format.get('url')
                 logger.info(f"Found direct stream URL: {direct_url}")
                 
-                # Check if the stream has audio
-                has_audio = False
-                if info.get('requested_formats'):
-                    for format_info in info.get('requested_formats', []):
-                        if format_info.get('acodec') != 'none':
-                            has_audio = True
-                            break
-                else:
-                    # Single format
-                    has_audio = info.get('acodec') != 'none'
-                
-                logger.info(f"Stream has audio: {has_audio}")
+                # Check if it's an audio-only stream and try to convert to video stream
+                if 'audio_eng=64000.m3u8' in direct_url:
+                    # Try to replace audio stream with video stream
+                    video_url = direct_url.replace('audio_eng=64000.m3u8', 'video=3400000.m3u8')
+                    logger.info(f"Converted audio-only URL to video URL: {video_url}")
+                    return video_url
+                return direct_url
+            
+            # If no suitable format found, try to get the URL from the main info
+            direct_url = info.get('url')
+            if direct_url:
+                # Check if it's an audio-only stream and try to convert to video stream
+                if 'audio_eng=64000.m3u8' in direct_url:
+                    # Try to replace audio stream with video stream
+                    video_url = direct_url.replace('audio_eng=64000.m3u8', 'video=3400000.m3u8')
+                    logger.info(f"Converted audio-only URL to video URL: {video_url}")
+                    return video_url
+                logger.info(f"Found direct stream URL from main info: {direct_url}")
                 return direct_url
             else:
                 logger.error("No direct stream URL found in yt-dlp output")

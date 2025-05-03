@@ -187,8 +187,31 @@ async def start_capture(
             source_url = capture.source_url if hasattr(capture, 'source_url') and capture.source_url else None
             print(f"DEBUG - Source URL from capture request: {source_url}")
             
-            # Create a StreamCapture instance with the source URL
-            stream_capture = StreamCapture(stream_url=source_url)
+            # Extract the direct stream URL if it's a Parliament TV URL
+            direct_stream_url = None
+            if source_url and ('parliamentlive.tv' in source_url or 'parliament.tv' in source_url):
+                try:
+                    # Import the Parliament TV service
+                    from backend.services.parliament_tv import parliament_tv_service
+                    
+                    # Extract the direct stream URL
+                    print(f"DEBUG - Extracting direct stream URL from: {source_url}")
+                    stream_info = parliament_tv_service.extract_stream_url(source_url)
+                    
+                    if stream_info and 'direct_stream' in stream_info:
+                        direct_stream_url = stream_info['direct_stream']
+                        print(f"DEBUG - Extracted direct stream URL: {direct_stream_url}")
+                    else:
+                        print(f"DEBUG - Failed to extract direct stream URL from: {source_url}")
+                except Exception as extract_error:
+                    print(f"ERROR - Failed to extract direct stream URL: {str(extract_error)}")
+            
+            # Use the direct stream URL if available, otherwise fall back to the original URL
+            final_url = direct_stream_url if direct_stream_url else source_url
+            print(f"DEBUG - Final URL for capture: {final_url}")
+            
+            # Create a StreamCapture instance with the final URL
+            stream_capture = StreamCapture(stream_url=final_url)
             print(f"DEBUG - Created StreamCapture instance with stream_url: {stream_capture.stream_url}")
             print(f"DEBUG - temp_dir: {stream_capture.temp_dir}, exists: {stream_capture.temp_dir.exists()}")
             
