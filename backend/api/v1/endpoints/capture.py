@@ -183,8 +183,12 @@ async def start_capture(
     if not scheduled_start and not draft:
         # Start the actual video capture process directly using ffmpeg
         try:
-            # Create a StreamCapture instance with hard-coded paths
-            stream_capture = StreamCapture()
+            # Get the source URL from the capture request
+            source_url = capture.source_url if hasattr(capture, 'source_url') and capture.source_url else None
+            print(f"DEBUG - Source URL from capture request: {source_url}")
+            
+            # Create a StreamCapture instance with the source URL
+            stream_capture = StreamCapture(stream_url=source_url)
             print(f"DEBUG - Created StreamCapture instance with stream_url: {stream_capture.stream_url}")
             print(f"DEBUG - temp_dir: {stream_capture.temp_dir}, exists: {stream_capture.temp_dir.exists()}")
             
@@ -204,12 +208,40 @@ async def start_capture(
             
             # Update the capture session status to failed
             capture_session.status = "failed"
-            if hasattr(capture_session, 'metadata') and capture_session.metadata is not None:
-                capture_session.metadata = {
-                    **capture_session.metadata,
-                    "error": f"Failed to start capture: {str(e)}"
-                }
-            db.commit()
+            
+            # Safely handle metadata - check if it's a dict-like object
+            try:
+                if hasattr(capture_session, 'metadata'):
+                    # Check if metadata is a dict-like object
+                    if hasattr(capture_session.metadata, 'items') and callable(getattr(capture_session.metadata, 'items', None)):
+                        # It's a dict-like object, update it
+                        capture_session.metadata = {
+                            **dict(capture_session.metadata),
+                            "error": f"Failed to start capture: {str(e)}"
+                        }
+                    else:
+                        # Not a dict-like object, create a new dict
+                        print(f"WARNING: metadata is not a dict-like object: {type(capture_session.metadata)}")
+                        capture_session.metadata = {
+                            "error": f"Failed to start capture: {str(e)}"
+                        }
+            except Exception as metadata_error:
+                print(f"ERROR: Failed to update metadata: {str(metadata_error)}")
+                # Create a new metadata dict
+                try:
+                    capture_session.metadata = {
+                        "error": f"Failed to start capture: {str(e)}"
+                    }
+                except:
+                    # Last resort - if we can't set metadata at all, just log the error
+                    print(f"CRITICAL ERROR: Cannot set metadata on capture_session")
+            
+            # Save changes
+            try:
+                db.commit()
+            except Exception as commit_error:
+                print(f"ERROR: Failed to commit changes: {str(commit_error)}")
+                db.rollback()
     elif draft:
         print("DEBUG - Saving as draft, no capture started")
     

@@ -33,8 +33,15 @@ def cleanup_processes():
 atexit.register(cleanup_processes)
 
 class StreamCapture:
-    def __init__(self, stream_url: str = settings.PARLIAMENT_TV_URL):
-        self.stream_url = stream_url
+    def __init__(self, stream_url: str = None):
+        # CRITICAL FIX: Handle None stream_url
+        if stream_url is None:
+            # Default to a test stream if None is provided
+            self.stream_url = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+            print(f"WARNING - StreamCapture.__init__ - stream_url was None, using test stream: {self.stream_url}")
+        else:
+            self.stream_url = stream_url
+            print(f"DEBUG - StreamCapture.__init__ - Using stream_url: {self.stream_url}")
         
         # CRITICAL FIX: Hard-code paths to ensure they're never None
         self.temp_dir = Path("/app/data/temp")
