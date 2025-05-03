@@ -274,156 +274,28 @@ class ParliamentTVCapture:
             self.scripts_dir = Path("/app/scripts")
             
             # Create directories if they don't exist
-            print(f"DEBUG - Creating directories: {self.temp_dir}, {self.media_dir}")
-            try:
-                os.makedirs(str(self.temp_dir), exist_ok=True)
-                print(f"DEBUG - Created temp_dir: {self.temp_dir}")
-            except Exception as e:
-                print(f"ERROR - Failed to create temp_dir: {str(e)}")
-                
-            try:
-                os.makedirs(str(self.media_dir), exist_ok=True)
-                print(f"DEBUG - Created media_dir: {self.media_dir}")
-            except Exception as e:
-                print(f"ERROR - Failed to create media_dir: {str(e)}")
+            print(f"DEBUG - run_capture_process - Creating temp_dir: {temp_dir_str}")
+            os.makedirs(temp_dir_str, exist_ok=True)
             
-            # Print debug info about paths
-            print(f"DEBUG - Using paths: temp_dir={self.temp_dir}, media_dir={self.media_dir}, scripts_dir={self.scripts_dir}")
+            print(f"DEBUG - run_capture_process - Creating media_dir: {media_dir_str}")
+            os.makedirs(media_dir_str, exist_ok=True)
             
-            capture_id = db_capture.id
-            duration = db_capture.duration or 1800  # Default to 30 minutes
-            print(f"DEBUG - capture_id={capture_id}, duration={duration}")
-            
-            # Verify script exists
-            try:
-                script_path = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
-                print(f"DEBUG - Script path: {script_path}, exists: {os.path.exists(script_path)}")
-            except Exception as e:
-                print(f"ERROR - Failed to create script_path: {str(e)}")
-                script_path = "/app/scripts/parliament_capture_direct.py"
-                print(f"DEBUG - Using fallback script_path: {script_path}")
-            
-            # If script doesn't exist in /app/scripts, try to find it elsewhere
-            if not os.path.exists(script_path):
-                print("DEBUG - Script not found in /app/scripts, searching in other locations")
-                # Try to find the script in the scripts directory
-                alt_script_path = "/Users/joebradley/Veedoo/Development/the-mp/scripts/parliament_capture_direct.py"
-                if os.path.exists(alt_script_path):
-                    script_path = alt_script_path
-                    print(f"DEBUG - Found script at: {script_path}")
-                else:
-                    print(f"ERROR - Could not find script at alternate location: {alt_script_path}")
-            
-            # Check if sys.executable is valid
-            print(f"DEBUG - sys.executable: {sys.executable}, exists: {os.path.exists(sys.executable)}")
-            
-            # Run the improved capture script
-            print("DEBUG - Building command")
-            try:
-                # Ensure all paths are valid strings
-                temp_dir_str = str(self.temp_dir) if self.temp_dir else "/app/data/temp"
-                media_dir_str = str(self.media_dir) if self.media_dir else "/app/data/media"
-                
-                # Verify paths exist
-                print(f"DEBUG - Verifying paths: temp_dir={temp_dir_str}, exists={os.path.exists(temp_dir_str)}")
-                print(f"DEBUG - Verifying paths: media_dir={media_dir_str}, exists={os.path.exists(media_dir_str)}")
-                
-                # Create directories if they don't exist
-                os.makedirs(temp_dir_str, exist_ok=True)
-                os.makedirs(media_dir_str, exist_ok=True)
-                
-                # Verify script_path exists
-                print(f"DEBUG - Script path before command: {script_path}, exists: {os.path.exists(script_path)}")
-                if not os.path.exists(script_path):
-                    print(f"ERROR - Script not found at {script_path}, searching for alternatives")
-                    alt_paths = [
-                        "/app/scripts/parliament_capture_direct.py",
-                        "/app/backend/scripts/parliament_capture_direct.py",
-                        "/app/backend/scripts/extract-url.py"
-                    ]
-                    for alt_path in alt_paths:
-                        if os.path.exists(alt_path):
-                            script_path = alt_path
-                            print(f"DEBUG - Found script at alternative location: {script_path}")
-                            break
-                
-                # Verify direct_stream is a string
-                if not isinstance(direct_stream, str):
-                    print(f"ERROR - direct_stream is not a string: {direct_stream}, type: {type(direct_stream)}")
-                    direct_stream = str(direct_stream)
-                
-                # Verify sys.executable exists
-                print(f"DEBUG - sys.executable: {sys.executable}, exists: {os.path.exists(sys.executable)}")
-                
-                cmd = [
-                    sys.executable,
-                    script_path,
-                    direct_stream,
-                    "--capture-id", str(capture_id),
-                    "--duration", str(duration),
-                    "--temp-dir", temp_dir_str,
-                    "--media-dir", media_dir_str
-                ]
-                print(f"DEBUG - Command built successfully: {' '.join(cmd)}")
-            except Exception as e:
-                print(f"ERROR - Failed to build command: {str(e)}")
-                import traceback
-                print(traceback.format_exc())
-                self.capture_callback(db_capture, None, f"Failed to build command: {str(e)}")
+            # Verify directories exist after creation
+            if not os.path.exists(temp_dir_str):
+                print(f"ERROR - run_capture_process - Failed to create temp_dir: {temp_dir_str}")
+                self.capture_callback(db_capture, None, f"Failed to create temp directory: {temp_dir_str}")
                 return
             
-            print(f"Running capture command: {' '.join(cmd)}")
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                print(f"DEBUG - subprocess.run completed, returncode: {result.returncode}")
-            except Exception as e:
-                print(f"ERROR - Failed to run subprocess: {str(e)}")
-                import traceback
-                print(traceback.format_exc())
-                self.capture_callback(db_capture, None, f"Failed to run subprocess: {str(e)}")
+            if not os.path.exists(media_dir_str):
+                print(f"ERROR - run_capture_process - Failed to create media_dir: {media_dir_str}")
+                self.capture_callback(db_capture, None, f"Failed to create media directory: {media_dir_str}")
                 return
             
-            # Check if the capture was successful
-            if result.returncode == 0:
-                # Parse the output to get the output file path
-                output_file = None
-                for line in result.stdout.splitlines():
-                    if line.startswith("Output file:"):
-                        output_file = line.replace("Output file:", "").strip()
-                        break
-                
-                if output_file and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                    print(f"Capture successful, output file: {output_file}")
-                    self.capture_callback(db_capture, output_file)
-                else:
-                    print(f"Capture failed, output file not found or empty: {output_file}")
-                    print(f"Command output: {result.stdout}")
-                    self.capture_callback(db_capture, None, "Output file not found or empty")
-            else:
-                # Capture failed
-                print(f"Capture failed with return code {result.returncode}")
-                print(f"Command output: {result.stdout}")
-                print(f"Command error: {result.stderr}")
-                self.capture_callback(db_capture, None, f"Capture failed: {result.stderr}")
-        except Exception as e:
-            print(f"Unexpected error in capture process: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            self.capture_callback(db_capture, None, f"Exception in capture process: {str(e)}")
-        finally:
-            # Remove from active_captures
-            if capture_id in self.active_captures:
-                del self.active_captures[capture_id]
-
-    def stop_capture(self, capture_id: int) -> Dict:
-        """
-        Stop a running capture.
-        
-        Args:
-            capture_id: The ID of the capture to stop
+            print(f"DEBUG - run_capture_process - Directories created successfully")
+            print(f"DEBUG - run_capture_process - temp_dir: {temp_dir_str}, exists: {os.path.exists(temp_dir_str)}")
+            print(f"DEBUG - run_capture_process - media_dir: {media_dir_str}, exists: {os.path.exists(media_dir_str)}")
             
-        Returns:
-            A dictionary with the result
+            # Build the command
         """
         logger.info(f"Stopping capture {capture_id}")
         
@@ -535,42 +407,109 @@ class ParliamentTVCapture:
             A dictionary with the direct stream URL and other information
         """
         logger.info(f"Extracting stream URL from {url}")
+        print(f"DEBUG - extract_stream_url - URL: {url}")
         
         try:
+            # Validate URL
+            if url is None:
+                logger.error("URL is None in extract_stream_url")
+                print("ERROR - extract_stream_url - URL is None")
+                return {}
+                
+            if not isinstance(url, str):
+                logger.error(f"URL is not a string in extract_stream_url: {type(url)}")
+                print(f"ERROR - extract_stream_url - URL is not a string: {type(url)}")
+                return {}
+                
             # Check if the URL is already a direct stream URL
             if url.endswith('.m3u8'):
                 stream_info = {"direct_stream": url}
+                logger.info(f"URL is already a direct stream: {url}")
+                print(f"DEBUG - extract_stream_url - URL is already a direct stream: {url}")
                 return stream_info
+            
+            # Verify scripts_dir exists
+            if self.scripts_dir is None:
+                logger.error("scripts_dir is None in extract_stream_url")
+                print("ERROR - extract_stream_url - scripts_dir is None")
+                # Set a default scripts directory
+                self.scripts_dir = "/app/scripts"
+                logger.info(f"Set default scripts_dir to {self.scripts_dir}")
+                print(f"DEBUG - extract_stream_url - Set default scripts_dir to {self.scripts_dir}")
+            
+            # Check if extract-url.py exists
+            script_path = os.path.join(str(self.scripts_dir), "extract-url.py")
+            if not os.path.exists(script_path):
+                logger.error(f"extract-url.py not found at {script_path}")
+                print(f"ERROR - extract_stream_url - extract-url.py not found at {script_path}")
+                # Try to find the script in other locations
+                alternative_paths = [
+                    "/app/backend/scripts/extract-url.py",
+                    "/app/scripts/extract-url.py"
+                ]
+                for alt_path in alternative_paths:
+                    if os.path.exists(alt_path):
+                        script_path = alt_path
+                        logger.info(f"Found extract-url.py at alternative location: {script_path}")
+                        print(f"DEBUG - extract_stream_url - Found extract-url.py at alternative location: {script_path}")
+                        break
+                else:
+                    logger.error("extract-url.py not found in any location")
+                    print("ERROR - extract_stream_url - extract-url.py not found in any location")
+                    return {}
             
             # Use the extract-url.py script to extract the direct stream URL
             cmd = [
                 sys.executable,
-                os.path.join(str(self.scripts_dir), "extract-url.py"),
+                script_path,
                 url
             ]
             
             logger.info(f"Running extract-url command: {' '.join(cmd)}")
+            print(f"DEBUG - extract_stream_url - Running command: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode == 0:
                 # Parse the output to get the direct stream URL
                 try:
+                    if not result.stdout:
+                        logger.error("extract-url.py returned empty output")
+                        print("ERROR - extract_stream_url - extract-url.py returned empty output")
+                        return {}
+                        
                     stream_info = json.loads(result.stdout)
+                    
+                    # Validate stream_info
+                    if not stream_info:
+                        logger.error("extract-url.py returned empty JSON")
+                        print("ERROR - extract_stream_url - extract-url.py returned empty JSON")
+                        return {}
+                        
+                    if "direct_stream" not in stream_info:
+                        logger.error(f"direct_stream not found in extract-url.py output: {stream_info}")
+                        print(f"ERROR - extract_stream_url - direct_stream not found in extract-url.py output: {stream_info}")
+                        return {}
+                        
                     logger.info(f"Extracted stream info: {stream_info}")
+                    print(f"DEBUG - extract_stream_url - Extracted stream info: {stream_info}")
                     return stream_info
                 except json.JSONDecodeError:
                     logger.error(f"Failed to parse extract-url output as JSON: {result.stdout}")
+                    print(f"ERROR - extract_stream_url - Failed to parse extract-url output as JSON: {result.stdout}")
                     return {}
             else:
                 logger.error(f"extract-url command failed with return code {result.returncode}")
                 logger.error(f"Command output: {result.stdout}")
                 logger.error(f"Command error: {result.stderr}")
+                print(f"ERROR - extract_stream_url - extract-url command failed with return code {result.returncode}")
+                print(f"ERROR - extract_stream_url - Command output: {result.stdout}")
+                print(f"ERROR - extract_stream_url - Command error: {result.stderr}")
                 return {}
                 
         except Exception as e:
             print(f"Unexpected error extracting stream URL: {str(e)}")
             import traceback
-            print(f"ERROR - Traceback: {traceback.format_exc()}")
+            print(f"ERROR - extract_stream_url - Traceback: {traceback.format_exc()}")
             return {}
 
     def test_stream_url(self, url: str) -> Dict:
