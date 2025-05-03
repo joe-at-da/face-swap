@@ -221,6 +221,9 @@ def stream_audio_from_video(filename: str, db: Session):
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
     
+    print(f"DEBUG - stream_audio_from_video - Extracting audio from video: {filename}")
+    print(f"DEBUG - stream_audio_from_video - Data directory: {data_dir}")
+    
     # Construct the full path, ensuring we don't allow directory traversal
     safe_filename = filename.lstrip("/").replace("../", "")
     
@@ -228,6 +231,7 @@ def stream_audio_from_video(filename: str, db: Session):
     found_files = glob.glob(os.path.join(data_dir, "**", safe_filename), recursive=True)
     
     if not found_files:
+        print(f"ERROR - stream_audio_from_video - Video file not found: {filename}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Video file {filename} not found"
@@ -235,53 +239,91 @@ def stream_audio_from_video(filename: str, db: Session):
     
     # Use the first match
     video_path = found_files[0]
+    print(f"DEBUG - stream_audio_from_video - Found video file: {video_path}")
     
     # Create a temporary directory for the extracted audio if it doesn't exist
     temp_dir = os.path.join(data_dir, "temp", "audio_extracts")
     os.makedirs(temp_dir, exist_ok=True)
+    print(f"DEBUG - stream_audio_from_video - Audio extract directory: {temp_dir}")
     
     # Define the output audio file path
     audio_filename = f"audio_{os.path.basename(video_path).replace('.mp4', '.mp3')}"
     audio_path = os.path.join(temp_dir, audio_filename)
+    print(f"DEBUG - stream_audio_from_video - Audio output path: {audio_path}")
     
     # Check if we already have the extracted audio file
-    if not os.path.exists(audio_path):
-        # Extract audio from the video file using ffmpeg
+    if os.path.exists(audio_path):
+        print(f"DEBUG - stream_audio_from_video - Audio file already exists: {audio_path}")
+    else:
+        print(f"DEBUG - stream_audio_from_video - Extracting audio from video...")
+        # First, check if the video has an audio stream
+        probe_cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", 
+            "stream=codec_type", "-of", "json", video_path
+        ]
+        
         try:
-            cmd = [
-                'ffmpeg',
-                '-i', video_path,
-                '-vn',  # No video
-                '-acodec', 'libmp3lame',  # Use MP3 codec
-                '-q:a', '2',  # Quality setting
-                '-y',  # Overwrite if exists
-                audio_path
-            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            print(f"DEBUG - stream_audio_from_video - ffprobe result: {probe_result.stdout}")
             
-            # Run the command
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            import json
+            probe_data = json.loads(probe_result.stdout)
+            has_audio = len(probe_data.get("streams", [])) > 0
             
-            # Check if the audio file was created
-            if not os.path.exists(audio_path):
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to extract audio from {filename}"
-                )
+            if not has_audio:
+                print(f"ERROR - stream_audio_from_video - No audio stream found in video: {video_path}")
+                # Create a silent audio file instead
+                silent_cmd = [
+                    'ffmpeg',
+                    '-f', 'lavfi',
+                    '-i', 'anullsrc=r=44100:cl=stereo',
+                    '-t', '10',  # 10 seconds of silence
+                    '-acodec', 'libmp3lame',
+                    '-q:a', '2',
+                    '-y',
+                    audio_path
+                ]
                 
-        except subprocess.CalledProcessError as e:
-            # Check if the video has no audio stream
-            if "Stream specifier ':a' in filtergraph description" in e.stderr or "does not contain any stream" in e.stderr:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No audio stream found in {filename}"
-                )
+                silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
+                print(f"DEBUG - stream_audio_from_video - Created silent audio file: {audio_path}")
             else:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Error extracting audio: {e.stderr}"
-                )
+                # Extract audio from the video file using ffmpeg
+                cmd = [
+                    'ffmpeg',
+                    '-i', video_path,
+                    '-vn',  # No video
+                    '-acodec', 'libmp3lame',  # Use MP3 codec
+                    '-q:a', '2',  # Quality setting
+                    '-y',  # Overwrite if exists
+                    audio_path
+                ]
+                
+                # Run the command
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                print(f"DEBUG - stream_audio_from_video - ffmpeg extraction result code: {result.returncode}")
+                
+                # Check if the audio file was created
+                if not os.path.exists(audio_path):
+                    print(f"ERROR - stream_audio_from_video - Failed to create audio file: {audio_path}")
+                    print(f"ERROR - stream_audio_from_video - ffmpeg stderr: {result.stderr}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to extract audio from {filename}"
+                    )
+                else:
+                    print(f"DEBUG - stream_audio_from_video - Successfully extracted audio to: {audio_path}")
+                
+        except Exception as e:
+            print(f"ERROR - stream_audio_from_video - Exception during audio extraction: {str(e)}")
+            import traceback
+            print(f"ERROR - stream_audio_from_video - Traceback: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error extracting audio: {str(e)}"
+            )
     
     # Return the audio file as a streaming response
+    print(f"DEBUG - stream_audio_from_video - Streaming audio file: {audio_path}")
     return FileResponse(
         path=audio_path,
         media_type="audio/mpeg",
