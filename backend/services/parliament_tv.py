@@ -175,8 +175,111 @@ class ParliamentTVCapture:
             self.log_capture(db, db_capture.id, "info", f"Starting async capture for URL: {url}")
             self.log_capture(db, db_capture.id, "info", f"Direct stream URL: {direct_stream}")
             
-            # Start the capture thread
-            return self.start_capture_thread(db_capture, stream_info)
+            # Run the capture process directly instead of using a thread
+            print("DEBUG - Running capture process directly in start_capture_async")
+            
+            # CRITICAL FIX: Hard-code paths to ensure they're never None
+            self.temp_dir = Path("/app/data/temp")
+            self.media_dir = Path("/app/data/media")
+            
+            # Create directories if they don't exist
+            temp_dir_str = str(self.temp_dir)
+            media_dir_str = str(self.media_dir)
+            
+            os.makedirs(temp_dir_str, exist_ok=True)
+            os.makedirs(media_dir_str, exist_ok=True)
+            
+            # Define the output file path
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(temp_dir_str, f"parliament_capture_{capture_id}_{timestamp}.mp4")
+            
+            # Build a simple ffmpeg command to capture the stream
+            cmd = [
+                "ffmpeg",
+                "-y",  # Overwrite output file if it exists
+                "-i", direct_stream,  # Input stream URL
+                "-t", str(duration),  # Duration
+                "-c:v", "copy",  # Copy video codec
+                "-c:a", "copy",  # Copy audio codec
+                output_file  # Output file
+            ]
+            
+            print(f"DEBUG - start_capture_async - Command: {' '.join(cmd)}")
+            print(f"DEBUG - start_capture_async - Output file: {output_file}")
+            
+            try:
+                # Run the command
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    print(f"DEBUG - start_capture_async - Command succeeded")
+                    
+                    # Check if the output file exists and has content
+                    if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                        print(f"DEBUG - start_capture_async - Output file exists: {output_file}")
+                        
+                        # Update the capture with the output file path
+                        db_capture.output_file = output_file
+                        db_capture.status = "completed"
+                        db_capture.completed_at = datetime.now()
+                        db.commit()
+                        
+                        # Call the callback if provided
+                        if callback:
+                            callback({
+                                "success": True,
+                                "output_file": output_file,
+                                "capture_id": capture_id,
+                                "completed_at": datetime.now()
+                            })
+                        
+                        return True
+                    else:
+                        print(f"DEBUG - start_capture_async - Output file not found or empty: {output_file}")
+                        db_capture.status = "failed"
+                        db_capture.error = "Output file not found or empty"
+                        db.commit()
+                        
+                        if callback:
+                            callback({
+                                "success": False,
+                                "error": "Output file not found or empty",
+                                "capture_id": capture_id
+                            })
+                        
+                        return False
+                else:
+                    print(f"DEBUG - start_capture_async - Command failed with return code {result.returncode}")
+                    print(f"DEBUG - start_capture_async - Command output: {result.stdout}")
+                    print(f"DEBUG - start_capture_async - Command error: {result.stderr}")
+                    
+                    db_capture.status = "failed"
+                    db_capture.error = f"Command failed with return code {result.returncode}: {result.stderr}"
+                    db.commit()
+                    
+                    if callback:
+                        callback({
+                            "success": False,
+                            "error": f"Command failed with return code {result.returncode}: {result.stderr}",
+                            "capture_id": capture_id
+                        })
+                    
+                    return False
+            except Exception as e:
+                print(f"DEBUG - start_capture_async - Exception running command: {str(e)}")
+                
+                db_capture.status = "failed"
+                db_capture.error = f"Exception running command: {str(e)}"
+                db.commit()
+                
+                if callback:
+                    callback({
+                        "success": False,
+                        "error": f"Exception running command: {str(e)}",
+                        "capture_id": capture_id
+                    })
+                
+                return False
             
         except Exception as e:
             print(f"Unexpected error starting async capture: {str(e)}")
@@ -274,6 +377,7 @@ class ParliamentTVCapture:
             # Create directories if they don't exist
             temp_dir_str = str(self.temp_dir)
             media_dir_str = str(self.media_dir)
+            scripts_dir_str = str(self.scripts_dir)
             
             print(f"DEBUG - run_capture_process - Creating temp_dir: {temp_dir_str}")
             os.makedirs(temp_dir_str, exist_ok=True)
@@ -399,7 +503,15 @@ class ParliamentTVCapture:
                 print(f"DEBUG - run_capture_process - temp_dir: {temp_dir_str}, exists: {os.path.exists(temp_dir_str)}")
                 print(f"DEBUG - run_capture_process - media_dir: {media_dir_str}, exists: {os.path.exists(media_dir_str)}")
                 
-                # Build the command
+                # Build the command to call the parliament_capture_direct.py script directly
+                # Use the exact parameters that worked in the test
+                script_path = "/app/scripts/parliament_capture_direct.py"
+                python_executable = "/usr/local/bin/python3"
+                
+                # Define the output file path
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file = os.path.join(temp_dir_str, f"parliament_capture_{capture_id}_{timestamp}.mp4")
+                
                 cmd = [
                     python_executable,
                     script_path,
@@ -407,8 +519,12 @@ class ParliamentTVCapture:
                     "--capture-id", str(capture_id),
                     "--duration", str(duration),
                     "--temp-dir", temp_dir_str,
-                    "--media-dir", media_dir_str
+                    "--media-dir", media_dir_str,
+                    "--output", output_file
                 ]
+                
+                print(f"DEBUG - run_capture_process - Command: {' '.join(cmd)}")
+                print(f"DEBUG - run_capture_process - Output file: {output_file}")
                 print(f"DEBUG - run_capture_process - Command built successfully: {' '.join(cmd)}")
             except Exception as e:
                 print(f"ERROR - run_capture_process - Failed to build command: {str(e)}")
@@ -432,13 +548,8 @@ class ParliamentTVCapture:
             # Check if the capture was successful
             if result.returncode == 0:
                 print(f"DEBUG - run_capture_process - Command succeeded with output: {result.stdout}")
-                # Parse the output to get the output file path
-                output_file = None
-                for line in result.stdout.splitlines():
-                    if line.startswith("Output file:"):
-                        output_file = line.replace("Output file:", "").strip()
-                        print(f"DEBUG - run_capture_process - Found output file in stdout: {output_file}")
-                        break
+                # We already know the output file path since we defined it above
+                print(f"DEBUG - run_capture_process - Using predefined output file: {output_file}")
                 
                 if output_file:
                     print(f"DEBUG - run_capture_process - Checking if output file exists: {output_file}")
