@@ -4,12 +4,11 @@ import glob
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.db.database import get_db
-from backend.api.deps import get_current_active_user
+from backend.db.session import get_db
+from backend.core.security import get_current_active_user, has_permission
 from backend.core.config import settings
-from backend.models import models
-from backend.api.utils.auth import has_permission
-from backend.models.enums import UserRole
+from backend.db import models
+from backend.db.models.user import UserRole
 
 router = APIRouter()
 
