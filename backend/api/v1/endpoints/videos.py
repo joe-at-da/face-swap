@@ -1,8 +1,8 @@
 from typing import List, Dict, Optional
 import os
 import glob
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, UploadFile, File
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 
@@ -11,6 +11,7 @@ from backend.core.security import get_current_active_user, has_permission
 from backend.core.config import settings
 from backend.db import models
 from backend.db.models.user import UserRole
+from backend.services.video.processor import VideoProcessor
 
 # Custom dependency for token authentication via query parameter
 async def get_current_user_from_token_param(token: Optional[str] = None, db: Session = Depends(get_db)):
@@ -45,6 +46,9 @@ async def get_current_user_from_token_param(token: Optional[str] = None, db: Ses
     return user
 
 router = APIRouter()
+
+# Initialize the video processor
+video_processor = VideoProcessor()
 
 @router.get("", response_model=List[Dict])
 async def get_all_videos(
@@ -178,7 +182,7 @@ async def stream_video_with_token(
         )
 
 def stream_video_file(filename: str, db: Session):
-    
+    """Helper function to stream a video file."""
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
     
@@ -204,6 +208,91 @@ def stream_video_file(filename: str, db: Session):
         media_type="video/mp4",
         filename=os.path.basename(video_path)
     )
+
+@router.post("/combine-audio-video", response_model=None)
+async def combine_audio_video(
+    video_filename: str = Form(...),
+    audio_filename: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Combine separate audio and video files into a single file and return the combined file.
+    
+    This endpoint requires both video and audio filenames that exist in the data directory.
+    """
+    # Check user permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the data directory from environment variable
+    data_dir = os.getenv("DATA_DIR", "/app/data")
+    
+    # Find the video file
+    video_files = glob.glob(os.path.join(data_dir, "**", video_filename), recursive=True)
+    if not video_files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file {video_filename} not found"
+        )
+    
+    # Find the audio file
+    audio_files = glob.glob(os.path.join(data_dir, "**", audio_filename), recursive=True)
+    if not audio_files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Audio file {audio_filename} not found"
+        )
+    
+    try:
+        # Combine the audio and video files
+        combined_file_path = video_processor.combine_audio_video(
+            video_files[0],
+            audio_files[0]
+        )
+        
+        # Return the combined file
+        return FileResponse(
+            path=combined_file_path,
+            media_type="video/mp4",
+            filename=os.path.basename(combined_file_path)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to combine audio and video: {str(e)}"
+        )
+
+@router.get("/stream-combined/{filename}", response_model=None)
+async def stream_combined_video(
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user),
+):
+    """Stream a combined audio/video file by filename.
+    
+    This endpoint is for streaming files that have already been combined.
+    """
+    # Check user permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    return stream_video_file(filename, db)
+
+@router.get("/stream-combined-with-token/{filename}", response_model=None)
+async def stream_combined_video_with_token(
+    filename: str,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """Stream a combined audio/video file by filename using token authentication.
+    
+    This endpoint is for streaming combined files with token authentication.
+    """
+    # Validate the token and get the user
+    current_user = await get_user_from_token(token, db)
+    
+    # Check user permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    return stream_video_file(filename, db)
 
 
 @router.delete("/delete/{filename}")
