@@ -248,10 +248,10 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
     logger.info(f"Duration: {duration} seconds")
     
     try:
-        # Build ffmpeg command
-        cmd = ["ffmpeg", "-y", "-i", stream_url, "-c:v", "copy"]
+        # Create a temporary file for the initial download
+        temp_output_file = output_file + ".temp.mp4"
         
-        # Check if the stream has audio
+        # First, check if the stream has audio
         audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
         try:
             audio_check_result = subprocess.run(audio_check_cmd, capture_output=True, text=True, timeout=10)
@@ -259,29 +259,67 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
             logger.info(f"Stream has audio: {has_audio}")
         except Exception as e:
             logger.warning(f"Error checking for audio in stream: {str(e)}")
-            # Assume it has audio by default
-            has_audio = True
+            # Assume it doesn't have audio if we can't check
+            has_audio = False
         
+        # Build ffmpeg command for initial download
         if has_audio:
-            cmd.extend(["-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"])
+            # If stream has audio, use it
+            logger.info("Using stream's audio track")
+            cmd = [
+                "ffmpeg", "-y", "-i", stream_url,
+                "-c:v", "copy",
+                "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"
+            ]
         else:
-            # For streams without audio, we'll add silent audio after downloading the video
-            logger.warning("Stream does not have audio, will add silent audio after download")
-            # Just copy the video for now
-            # We'll add silent audio in a separate step after downloading
+            # For video-only streams, we'll add silent audio in a second pass
+            logger.warning("Stream appears to be video-only, will add silent audio track")
+            # First just download the video
+            cmd = [
+                "ffmpeg", "-y", "-i", stream_url,
+                "-c:v", "copy"
+            ]
         
         # Add duration limit if specified
         if duration and duration > 0:
             cmd.extend(["-t", str(duration)])
         
-        # Add output file
-        cmd.append(output_file)
+        # Add output file - use temp file first if we might need to add audio later
+        if not has_audio:
+            cmd.append(temp_output_file)
+        else:
+            cmd.append(output_file)
         
         # Run ffmpeg command
         logger.info(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
-        # Verify the output file exists and has content
+        # If we used a temp file because the stream didn't have audio, add silent audio now
+        if not has_audio and os.path.exists(temp_output_file) and os.path.getsize(temp_output_file) > 0:
+            logger.info("Adding silent audio track to video-only file")
+            silent_audio_cmd = [
+                "ffmpeg", "-y", 
+                "-i", temp_output_file, 
+                "-f", "lavfi", 
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-c:v", "copy", 
+                "-c:a", "aac", 
+                "-shortest", 
+                output_file
+            ]
+            
+            logger.info(f"Running silent audio command: {' '.join(silent_audio_cmd)}")
+            silent_result = subprocess.run(silent_audio_cmd, capture_output=True, text=True, check=True)
+            logger.info("Silent audio added successfully")
+            
+            # Remove the temporary file
+            try:
+                os.remove(temp_output_file)
+                logger.info(f"Removed temporary file: {temp_output_file}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary file {temp_output_file}: {str(e)}")
+        
+        # Verify the final output file exists and has content
         if os.path.exists(output_file):
             if os.path.getsize(output_file) > 0:
                 # Verify if the output file has audio
@@ -289,44 +327,51 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
                     audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", output_file]
                     audio_check_result = subprocess.run(audio_check_cmd, capture_output=True, text=True, timeout=10)
                     output_has_audio = "audio" in audio_check_result.stdout
-                    logger.info(f"Output file has audio: {output_has_audio}")
+                    logger.info(f"Final output file has audio: {output_has_audio}")
                     
                     if not output_has_audio:
-                        logger.warning("Output file does not have audio, adding silent audio track")
-                        # Add silent audio track in a separate command
-                        silent_audio_cmd = [
+                        logger.warning("Final output file still does not have audio, trying one more time")
+                        # Try one more time with a different approach
+                        final_audio_cmd = [
                             "ffmpeg", "-y", "-i", output_file, "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
                             "-c:v", "copy", "-c:a", "aac", "-shortest", output_file + ".with_audio.mp4"
                         ]
-                        print(f"DEBUG - Running silent audio command: {' '.join(silent_audio_cmd)}")
-                        subprocess.run(silent_audio_cmd, capture_output=True, text=True, check=True)
-                        # Replace original file with the one with audio
-                        os.replace(output_file + ".with_audio.mp4", output_file)
-                        logger.info("Added silent audio track to the output file")
-                    else:
-                        logger.info("Output file already has audio")
+                        
+                        logger.info(f"Running final audio command: {' '.join(final_audio_cmd)}")
+                        try:
+                            final_result = subprocess.run(final_audio_cmd, capture_output=True, text=True, check=True)
+                            logger.info("Final audio addition successful")
+                            
+                            # Replace the original file with the new one that has audio
+                            if os.path.exists(output_file + ".with_audio.mp4") and os.path.getsize(output_file + ".with_audio.mp4") > 0:
+                                os.replace(output_file + ".with_audio.mp4", output_file)
+                                logger.info(f"Replaced original file with audio-enhanced version")
+                            else:
+                                logger.error("Audio-enhanced file was not created or is empty")
+                        except Exception as e:
+                            logger.error(f"Failed to add audio in final attempt: {str(e)}")
+                            # Continue with the original file
+                        logger.info("Skipping redundant audio addition step")
                 except Exception as e:
-                    logger.warning(f"Error verifying audio in output file: {str(e)}")
+                    logger.warning(f"Error checking audio in final output: {str(e)}")
+                    # Continue with the file as-is
                 
                 logger.info(f"Download completed successfully: {output_file}")
                 return output_file
             else:
-                logger.error(f"Output file is empty: {output_file}")
+                logger.error(f"Output file exists but is empty: {output_file}")
                 return None
         else:
             logger.error(f"Output file does not exist: {output_file}")
-            print(f"DEBUG - Current directory contents: {os.listdir(os.path.dirname(output_file))}")
             return None
     except subprocess.CalledProcessError as e:
-        logger.error(f"ffmpeg command failed: {e}")
-        logger.error(f"STDOUT: {e.stdout}")
-        logger.error(f"STDERR: {e.stderr}")
-        print(f"DEBUG - ffmpeg error: {e.stderr}")
+        logger.error(f"ffmpeg command failed: {str(e)}")
+        logger.error(f"ffmpeg stderr: {e.stderr}")
         return None
     except Exception as e:
-        logger.error(f"Unexpected error during download: {e}")
-        print(f"DEBUG - Unexpected error: {str(e)}")
+        logger.error(f"Error downloading stream: {str(e)}")
         import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         print(f"DEBUG - Traceback: {traceback.format_exc()}")
         return None
 

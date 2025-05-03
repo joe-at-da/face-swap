@@ -123,13 +123,69 @@ def extract_direct_stream_url(url):
         format_result = subprocess.run(format_cmd, capture_output=True, text=True)
         logger.info(f"Available formats:\n{format_result.stdout}")
         
-        # Run yt-dlp to get the direct stream URL with best format that includes video and audio
+        # First, list all available formats to better understand what's available
+        format_cmd = [
+            "yt-dlp",
+            "--no-check-certificate",
+            "--list-formats",
+            url
+        ]
+        
+        logger.info(f"Listing all available formats: {' '.join(format_cmd)}")
+        format_result = subprocess.run(format_cmd, capture_output=True, text=True)
+        logger.info(f"Available formats:\n{format_result.stdout}")
+        
+        # Look for specific patterns in the format list that indicate audio+video formats
+        format_lines = format_result.stdout.splitlines()
+        best_format_id = None
+        
+        # Look for formats that explicitly mention both video and audio
+        # Parliament TV often has formats like 'vod-idx.ism/vod-idx.m3u8' which include both video and audio
+        for line in format_lines:
+            # Check for formats that explicitly mention both video and audio
+            if 'video+audio' in line.lower() or ('video' in line.lower() and 'audio' in line.lower()):
+                parts = line.split()
+                if len(parts) > 1:
+                    format_id = parts[0]
+                    logger.info(f"Found format with both video and audio: {line}")
+                    best_format_id = format_id
+                    break
+            
+            # Check for Parliament TV specific formats that typically include both video and audio
+            elif 'vod-idx.ism/vod-idx.m3u8' in line or 'master.m3u8' in line:
+                parts = line.split()
+                if len(parts) > 1:
+                    format_id = parts[0]
+                    logger.info(f"Found Parliament TV format that likely includes both video and audio: {line}")
+                    best_format_id = format_id
+                    break
+            
+            # Check for formats that don't explicitly mention 'video=' in the URL
+            # as those are often video-only streams in Parliament TV
+            elif '.m3u8' in line and 'video=' not in line:
+                parts = line.split()
+                if len(parts) > 1:
+                    format_id = parts[0]
+                    logger.info(f"Found potential combined stream format: {line}")
+                    if not best_format_id:  # Only set if we haven't found a better option
+                        best_format_id = format_id
+        
+        # If we found a specific format with both video and audio, use it
+        if best_format_id:
+            format_spec = best_format_id
+            logger.info(f"Using specific format ID: {format_spec}")
+        else:
+            # Otherwise use the default best format strategy
+            format_spec = "bestvideo+bestaudio/best"
+            logger.info(f"Using default format specification: {format_spec}")
+        
+        # Run yt-dlp to get the direct stream URL with the selected format
         cmd = [
             "yt-dlp",
             "--no-check-certificate",
             "--dump-json",
             "--no-playlist",
-            "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",  # Prioritize formats with video
+            "--format", format_spec,
             url
         ]
         
@@ -143,24 +199,41 @@ def extract_direct_stream_url(url):
             # Find the best format with both video and audio
             best_format = None
             
-            # First, try to find a format with both video and audio
+            # Log all available formats for debugging
+            logger.info(f"Available formats from JSON: {len(formats)}")
+            for i, fmt in enumerate(formats):
+                logger.info(f"Format {i}: vcodec={fmt.get('vcodec')}, acodec={fmt.get('acodec')}, url={fmt.get('url')}")
+            
+            # First priority: formats with both video and audio that are not audio-only
             for fmt in formats:
-                if fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none':
+                if (fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none' and 
+                    'audio_eng=64000.m3u8' not in fmt.get('url', '')):
                     best_format = fmt
+                    logger.info(f"Selected format with both video and audio: {fmt}")
                     break
             
-            # If no combined format found, try to find a video-only format
+            # Second priority: formats with both video and audio (any URL)
+            if not best_format:
+                for fmt in formats:
+                    if fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none':
+                        best_format = fmt
+                        logger.info(f"Selected format with both video and audio (fallback): {fmt}")
+                        break
+            
+            # Third priority: formats with video that might have audio
+            if not best_format:
+                for fmt in formats:
+                    if fmt.get('vcodec') != 'none' and 'video=' in fmt.get('url', ''):
+                        best_format = fmt
+                        logger.info(f"Selected video format that might have audio: {fmt}")
+                        break
+            
+            # Last resort: any format with video
             if not best_format:
                 for fmt in formats:
                     if fmt.get('vcodec') != 'none':
                         best_format = fmt
-                        break
-            
-            # If still no format found, try to get any format that's not audio-only
-            if not best_format:
-                for fmt in formats:
-                    if not fmt.get('url', '').endswith('audio_eng=64000.m3u8'):
-                        best_format = fmt
+                        logger.info(f"Selected video-only format (last resort): {fmt}")
                         break
             
             if best_format:
