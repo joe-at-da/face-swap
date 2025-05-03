@@ -120,8 +120,8 @@ const VideoGalleryPage: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Video Gallery</h1>
-          <Link href="/capture/new">
-            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Capture New Video</a>
+          <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+            Capture New Video
           </Link>
         </div>
 
@@ -129,8 +129,8 @@ const VideoGalleryPage: React.FC = () => {
           <div className="text-center py-8 bg-gray-50 rounded-lg">
             <p className="text-gray-500">No videos found.</p>
             <p className="mt-2">
-              <Link href="/capture/new">
-                <a className="text-blue-600 hover:text-blue-800">Capture a new video</a>
+              <Link href="/capture/new" className="text-blue-600 hover:text-blue-800">
+                Capture a new video
               </Link>
             </p>
           </div>
@@ -168,8 +168,8 @@ const VideoGalleryPage: React.FC = () => {
                   </div>
                   {video.capture_id && (
                     <div className="mt-3">
-                      <Link href={`/capture/${video.capture_id}`}>
-                        <a className="text-blue-600 hover:text-blue-800 text-sm">View Capture Details</a>
+                      <Link href={`/capture/${video.capture_id}`} className="text-blue-600 hover:text-blue-800 text-sm">
+                        View Capture Details
                       </Link>
                     </div>
                   )}
@@ -216,8 +216,8 @@ const VideoGalleryPage: React.FC = () => {
                   {selectedVideo.capture_id && (
                     <p>
                       <span className="font-medium">Capture ID:</span>{' '}
-                      <Link href={`/capture/${selectedVideo.capture_id}`}>
-                        <a className="text-blue-600 hover:text-blue-800">{selectedVideo.capture_id}</a>
+                      <Link href={`/capture/${selectedVideo.capture_id}`} className="text-blue-600 hover:text-blue-800">
+                        {selectedVideo.capture_id}
                       </Link>
                     </p>
                   )}
