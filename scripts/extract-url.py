@@ -204,15 +204,27 @@ def extract_direct_stream_url(url):
             for i, fmt in enumerate(formats):
                 logger.info(f"Format {i}: vcodec={fmt.get('vcodec')}, acodec={fmt.get('acodec')}, url={fmt.get('url')}")
             
-            # First priority: formats with both video and audio that are not audio-only
+            # First priority: Parliament TV master playlist or formats without 'video=' in URL
+            # These typically include both video and audio streams
             for fmt in formats:
-                if (fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none' and 
-                    'audio_eng=64000.m3u8' not in fmt.get('url', '')):
+                url = fmt.get('url', '')
+                if (fmt.get('vcodec') != 'none' and 
+                    ('vod-idx.ism/vod-idx.m3u8' in url or 'master.m3u8' in url or 
+                     (url.endswith('.m3u8') and 'video=' not in url))):
                     best_format = fmt
-                    logger.info(f"Selected format with both video and audio: {fmt}")
+                    logger.info(f"Selected Parliament TV master playlist format: {fmt}")
                     break
             
-            # Second priority: formats with both video and audio (any URL)
+            # Second priority: formats with both video and audio that are not audio-only
+            if not best_format:
+                for fmt in formats:
+                    if (fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none' and 
+                        'audio_eng=64000.m3u8' not in fmt.get('url', '')):
+                        best_format = fmt
+                        logger.info(f"Selected format with both video and audio: {fmt}")
+                        break
+            
+            # Third priority: formats with both video and audio (any URL)
             if not best_format:
                 for fmt in formats:
                     if fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none':
@@ -220,13 +232,15 @@ def extract_direct_stream_url(url):
                         logger.info(f"Selected format with both video and audio (fallback): {fmt}")
                         break
             
-            # Third priority: formats with video that might have audio
+            # Fourth priority: formats with highest resolution video that might have audio
             if not best_format:
-                for fmt in formats:
-                    if fmt.get('vcodec') != 'none' and 'video=' in fmt.get('url', ''):
-                        best_format = fmt
-                        logger.info(f"Selected video format that might have audio: {fmt}")
-                        break
+                # Sort formats by resolution (height) in descending order
+                video_formats = [fmt for fmt in formats if fmt.get('vcodec') != 'none']
+                video_formats.sort(key=lambda x: int(x.get('height', 0) or 0), reverse=True)
+                
+                if video_formats:
+                    best_format = video_formats[0]
+                    logger.info(f"Selected highest resolution video format: {best_format}")
             
             # Last resort: any format with video
             if not best_format:
@@ -236,16 +250,50 @@ def extract_direct_stream_url(url):
                         logger.info(f"Selected video-only format (last resort): {fmt}")
                         break
             
-            if best_format:
-                direct_url = best_format.get('url')
-                logger.info(f"Found direct stream URL: {direct_url}")
+            # Find the best video and audio formats separately
+            best_video_format = None
+            best_audio_format = None
+            
+            # Find best video format (highest resolution)
+            video_formats = [fmt for fmt in formats if fmt.get('vcodec') != 'none']
+            if video_formats:
+                # Sort by resolution
+                video_formats.sort(key=lambda x: int(x.get('height', 0) or 0), reverse=True)
+                best_video_format = video_formats[0]
+                logger.info(f"Best video format: {best_video_format.get('format_id')} - {best_video_format.get('resolution')}")
+            
+            # Find best audio format
+            audio_formats = [fmt for fmt in formats if fmt.get('acodec') != 'none']
+            if audio_formats:
+                # Sort by bitrate
+                audio_formats.sort(key=lambda x: int(x.get('abr', 0) or 0), reverse=True)
+                best_audio_format = audio_formats[0]
+                logger.info(f"Best audio format: {best_audio_format.get('format_id')} - {best_audio_format.get('abr')}kbps")
+            
+            # If we have both video and audio formats, return them both
+            if best_video_format and best_audio_format:
+                video_url = best_video_format.get('url')
+                audio_url = best_audio_format.get('url')
+                logger.info(f"Found separate video and audio URLs")
+                logger.info(f"Video URL: {video_url}")
+                logger.info(f"Audio URL: {audio_url}")
                 
-                # Check if it's an audio-only stream and try to convert to video stream
-                if 'audio_eng=64000.m3u8' in direct_url:
-                    # Try to replace audio stream with video stream
-                    video_url = direct_url.replace('audio_eng=64000.m3u8', 'video=3400000.m3u8')
-                    logger.info(f"Converted audio-only URL to video URL: {video_url}")
-                    return video_url
+                # Return both URLs in the result
+                return {
+                    "video_url": video_url,
+                    "audio_url": audio_url
+                }
+            
+            # If we only have a video format, return it
+            elif best_video_format:
+                direct_url = best_video_format.get('url')
+                logger.info(f"Found direct stream URL (video only): {direct_url}")
+                return direct_url
+            
+            # If we only have an audio format, return it
+            elif best_audio_format:
+                direct_url = best_audio_format.get('url')
+                logger.info(f"Found direct stream URL (audio only): {direct_url}")
                 return direct_url
             
             # If no suitable format found, try to get the URL from the main info

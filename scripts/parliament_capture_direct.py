@@ -199,7 +199,7 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
     Download a stream using ffmpeg.
     
     Args:
-        stream_url: URL of the stream to download
+        stream_url: URL of the stream to download or a dict with video_url and audio_url
         output_dir: Directory to save the output file
         capture_id: ID of the capture
         duration: Maximum duration to capture in seconds (default: 30 minutes)
@@ -214,10 +214,35 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
     print(f"DEBUG - capture_id: {capture_id}, type: {type(capture_id)}")
     print(f"DEBUG - duration: {duration}, type: {type(duration)}")
     
-    # Check if the stream URL is valid
-    if not stream_url or not isinstance(stream_url, str) or not stream_url.strip():
-        logger.error("Stream URL is None, empty, or not a string")
-        return None
+    # Check if we have separate video and audio URLs
+    video_url = None
+    audio_url = None
+    
+    if isinstance(stream_url, dict):
+        video_url = stream_url.get('video_url')
+        audio_url = stream_url.get('audio_url')
+        logger.info(f"Received separate video and audio URLs")
+        logger.info(f"Video URL: {video_url}")
+        logger.info(f"Audio URL: {audio_url}")
+        
+        # Check if we have both URLs
+        if not video_url or not audio_url:
+            logger.error("Missing video or audio URL in dictionary")
+            if video_url:
+                logger.info("Using video URL only")
+                stream_url = video_url
+            elif audio_url:
+                logger.info("Using audio URL only")
+                stream_url = audio_url
+            else:
+                logger.error("No valid URLs provided")
+                return None
+    
+    # If we're using a single URL, check if it's valid
+    if not isinstance(stream_url, dict):
+        if not stream_url or not isinstance(stream_url, str) or not stream_url.strip():
+            logger.error("Stream URL is None, empty, or not a string")
+            return None
     
     # Ensure output_dir is valid
     if output_dir is None or output_dir == "" or not isinstance(output_dir, (str, Path)):
@@ -251,34 +276,55 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
         # Create a temporary file for the initial download
         temp_output_file = output_file + ".temp.mp4"
         
-        # First, check if the stream has audio
-        audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
-        try:
-            audio_check_result = subprocess.run(audio_check_cmd, capture_output=True, text=True, timeout=10)
-            has_audio = "audio" in audio_check_result.stdout
-            logger.info(f"Stream has audio: {has_audio}")
-        except Exception as e:
-            logger.warning(f"Error checking for audio in stream: {str(e)}")
-            # Assume it doesn't have audio if we can't check
-            has_audio = False
-        
-        # Build ffmpeg command for initial download
-        if has_audio:
-            # If stream has audio, use it
-            logger.info("Using stream's audio track")
+        # Check if we have separate video and audio URLs
+        if isinstance(stream_url, dict) and stream_url.get('video_url') and stream_url.get('audio_url'):
+            # Use both video and audio URLs
+            video_url = stream_url.get('video_url')
+            audio_url = stream_url.get('audio_url')
+            logger.info("Using separate video and audio URLs with ffmpeg")
+            
+            # Build ffmpeg command to combine video and audio
             cmd = [
-                "ffmpeg", "-y", "-i", stream_url,
-                "-c:v", "copy",
-                "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"
+                "ffmpeg", "-y",
+                "-i", video_url,  # Video input
+                "-i", audio_url,  # Audio input
+                "-c:v", "copy",   # Copy video codec
+                "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental",  # Convert audio to AAC
+                "-map", "0:v:0",  # Use video from first input
+                "-map", "1:a:0"   # Use audio from second input
             ]
+            
+            # We know we have both video and audio
+            has_audio = True
         else:
-            # For video-only streams, we'll add silent audio in a second pass
-            logger.warning("Stream appears to be video-only, will add silent audio track")
-            # First just download the video
-            cmd = [
-                "ffmpeg", "-y", "-i", stream_url,
-                "-c:v", "copy"
-            ]
+            # We have a single URL, check if it has audio
+            audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
+            try:
+                audio_check_result = subprocess.run(audio_check_cmd, capture_output=True, text=True, timeout=10)
+                has_audio = "audio" in audio_check_result.stdout
+                logger.info(f"Stream has audio: {has_audio}")
+            except Exception as e:
+                logger.warning(f"Error checking for audio in stream: {str(e)}")
+                # Assume it doesn't have audio if we can't check
+                has_audio = False
+            
+            # Build ffmpeg command for initial download
+            if has_audio:
+                # If stream has audio, use it
+                logger.info("Using stream's audio track")
+                cmd = [
+                    "ffmpeg", "-y", "-i", stream_url,
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"
+                ]
+            else:
+                # For video-only streams, we'll add silent audio in a second pass
+                logger.warning("Stream appears to be video-only, will add silent audio track")
+                # First just download the video
+                cmd = [
+                    "ffmpeg", "-y", "-i", stream_url,
+                    "-c:v", "copy"
+                ]
         
         # Add duration limit if specified
         if duration and duration > 0:
