@@ -251,6 +251,22 @@ class ParliamentTVCapture:
         """Run the capture process and update the database with the capture status."""
         capture_id = None
         try:
+            # CRITICAL FIX: Hard-code paths to ensure they're never None
+            print("DEBUG - run_capture_process - Setting hard-coded paths to ensure they're never None")
+            self.temp_dir = Path("/app/data/temp")
+            self.media_dir = Path("/app/data/media")
+            self.scripts_dir = Path("/app/scripts")
+            
+            # Create directories if they don't exist
+            temp_dir_str = str(self.temp_dir)
+            media_dir_str = str(self.media_dir)
+            
+            print(f"DEBUG - run_capture_process - Creating temp_dir: {temp_dir_str}")
+            os.makedirs(temp_dir_str, exist_ok=True)
+            
+            print(f"DEBUG - run_capture_process - Creating media_dir: {media_dir_str}")
+            os.makedirs(media_dir_str, exist_ok=True)
+            
             # Get the capture ID and duration
             capture_id = db_capture.id
             duration = db_capture.duration or 1800  # Default to 30 minutes if None
@@ -347,25 +363,17 @@ class ParliamentTVCapture:
             
             # Ensure temp_dir and media_dir are set and exist
             try:
-                # Ensure all paths are valid strings
-                if self.temp_dir is None:
-                    print("ERROR - run_capture_process - temp_dir is None")
-                    self.temp_dir = Path("/app/data/temp")
-                    print(f"DEBUG - run_capture_process - Set default temp_dir to {self.temp_dir}")
+                # Variables already defined at the beginning of the method, but let's ensure they're still valid
+                if not temp_dir_str or not media_dir_str:
+                    print("WARNING - run_capture_process - temp_dir_str or media_dir_str is empty, recreating them")
+                    temp_dir_str = str(self.temp_dir)
+                    media_dir_str = str(self.media_dir)
                 
-                if self.media_dir is None:
-                    print("ERROR - run_capture_process - media_dir is None")
-                    self.media_dir = Path("/app/data/media")
-                    print(f"DEBUG - run_capture_process - Set default media_dir to {self.media_dir}")
-                
-                temp_dir_str = str(self.temp_dir)
-                media_dir_str = str(self.media_dir)
-                
-                # Create directories if they don't exist
-                print(f"DEBUG - run_capture_process - Creating temp_dir: {temp_dir_str}")
+                # Double-check directories exist
+                print(f"DEBUG - run_capture_process - Verifying temp_dir: {temp_dir_str}")
                 os.makedirs(temp_dir_str, exist_ok=True)
                 
-                print(f"DEBUG - run_capture_process - Creating media_dir: {media_dir_str}")
+                print(f"DEBUG - run_capture_process - Verifying media_dir: {media_dir_str}")
                 os.makedirs(media_dir_str, exist_ok=True)
                 
                 # Verify directories exist after creation
@@ -515,6 +523,15 @@ class ParliamentTVCapture:
         """Extract the direct stream URL from a Parliament TV event URL."""
         try:
             print(f"DEBUG - extract_stream_url - Extracting stream URL from: {url}")
+            
+            # Check if the URL is already a direct stream URL
+            if url and ('cdn.redbee.live' in url or '.m3u8' in url):
+                print(f"DEBUG - extract_stream_url - URL appears to be a direct stream URL already: {url}")
+                return {
+                    "direct_stream": url,
+                    "event_id": "direct",
+                    "time_marker": {"seconds": 0}
+                }
             
             # Ensure scripts_dir is set
             if self.scripts_dir is None:
