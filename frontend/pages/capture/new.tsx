@@ -11,10 +11,33 @@ import { api } from '../../utils/api';
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 
+// Helper function to check if source_url includes a string
+const sourceUrlIncludes = (url: string | { video_url: string; audio_url?: string }, searchString: string): boolean => {
+  if (typeof url === 'string') {
+    return url.includes(searchString);
+  } else if (url && typeof url === 'object' && 'video_url' in url) {
+    return url.video_url.includes(searchString);
+  }
+  return false;
+};
+
+// Helper function to get a string representation of source_url
+const getSourceUrlString = (url: string | { video_url: string; audio_url?: string }): string => {
+  if (typeof url === 'string') {
+    return url;
+  } else if (url && typeof url === 'object' && 'video_url' in url) {
+    return url.video_url;
+  }
+  return '';
+};
+
 interface CaptureFormData {
   title: string;
   description: string;
-  source_url: string;
+  source_url: string | {
+    video_url: string;
+    audio_url?: string;
+  };
   scheduled_start?: string;
   scheduled_end?: string;
   enable_facial_recognition?: boolean;
@@ -30,7 +53,11 @@ interface ValidationResult {
 }
 
 interface ExtractUrlResponse {
-  direct_stream: string;
+  direct_stream: {
+    video_url: string;
+    audio_url?: string;
+  } | string;
+  event_id?: string;
   time_marker?: {
     seconds: number;
   };
@@ -169,11 +196,30 @@ const NewCapturePage: React.FC = () => {
         return;
       }
       
+      // Prepare parameters for testing the stream URL
+      let params = {};
+      let streamUrl = '';
+      
+      // Handle both string and object formats for direct_stream
+      if (typeof extractResponse.data.direct_stream === 'string') {
+        streamUrl = extractResponse.data.direct_stream;
+        params = { url: streamUrl };
+      } else if (typeof extractResponse.data.direct_stream === 'object') {
+        // If it's an object with video_url and audio_url
+        streamUrl = extractResponse.data.direct_stream.video_url;
+        const audioUrl = extractResponse.data.direct_stream.audio_url || '';
+        
+        params = { video_url: streamUrl };
+        if (audioUrl) {
+          params = { ...params, audio_url: audioUrl };
+        }
+      }
+      
       // Now test if the stream URL is valid
       const testResponse = await axios.get<TestStreamResponse>(
         `${API_BASE_URL}/parliament-tv/test-url`,
         {
-          params: { url: extractResponse.data.direct_stream },
+          params,
           ...getAuthHeaders()
         }
       );
@@ -185,11 +231,11 @@ const NewCapturePage: React.FC = () => {
         setValidationResult({
           success: true,
           message: 'Stream URL is valid and ready for capture.',
-          streamUrl: extractResponse.data.direct_stream,
+          streamUrl: streamUrl,
           timeMarker: extractResponse.data.time_marker?.seconds || 0
         });
         
-        // Update form data with direct stream URL
+        // Update form data with direct stream URL - keep the original object structure
         setFormData(prev => ({
           ...prev,
           source_url: extractResponse.data.direct_stream
@@ -218,30 +264,43 @@ const NewCapturePage: React.FC = () => {
   // Start capture mutation
   const startCaptureMutation = useMutation({
     mutationFn: async (data: CaptureFormData) => {
-      // For Parliament TV captures, use the parliament-tv endpoint
-      if (data.source_url.includes('parliamentlive.tv')) {
-        const payload = {
-          url: data.source_url,
-          title: data.title,
-          description: data.description,
-          duration: data.duration,
-          enable_facial_recognition: data.enable_facial_recognition,
-          scheduled_start: data.scheduled_start,
-          scheduled_end: data.scheduled_end
+    // For Parliament TV captures, use the parliament-tv endpoint
+    if (sourceUrlIncludes(data.source_url, 'parliamentlive.tv')) {
+      // Prepare the URL parameter based on the source_url format
+      let urlParam: any;
+      
+      if (typeof data.source_url === 'string') {
+        urlParam = data.source_url;
+      } else if (typeof data.source_url === 'object') {
+        // If it's an object with video_url and audio_url, pass it directly
+        urlParam = {
+          video_url: data.source_url.video_url,
+          audio_url: data.source_url.audio_url
         };
-        
-        const response = await axios.post(
-          `${API_BASE_URL}/parliament-tv`,
-          payload,
-          getAuthHeaders()
-        );
-        
-        return response.data;
-      } else {
-        // For other captures, use the regular capture endpoint
-        return await api.post('/capture', data);
       }
-    },
+      
+      const payload = {
+        url: urlParam,
+        title: data.title,
+        description: data.description,
+        duration: data.duration,
+        enable_facial_recognition: data.enable_facial_recognition,
+        scheduled_start: data.scheduled_start,
+        scheduled_end: data.scheduled_end
+      };
+      
+      const response = await axios.post(
+        `${API_BASE_URL}/parliament-tv`,
+        payload,
+        getAuthHeaders()
+      );
+      
+      return response.data;
+    } else {
+      // For other captures, use the regular capture endpoint
+      return await api.post('/capture', data);
+    }
+  },
     onSuccess: (data) => {
       router.push(`/capture/${data.id}`);
     },
@@ -306,9 +365,9 @@ const NewCapturePage: React.FC = () => {
       newErrors.title = 'Title is required';
     }
     
-    if (!formData.source_url.trim()) {
+    if (!getSourceUrlString(formData.source_url).trim()) {
       newErrors.source_url = 'Source URL is required';
-    } else if (formData.source_url.includes('parliamentlive.tv') && !validationResult?.success) {
+    } else if (sourceUrlIncludes(formData.source_url, 'parliamentlive.tv') && !validationResult?.success) {
       newErrors.source_url = 'Please validate the Parliament TV URL first';
     }
     
@@ -454,14 +513,14 @@ const NewCapturePage: React.FC = () => {
                       id="source_url"
                       name="source_url"
                       placeholder="https://www.parliamentlive.tv/Event/Index/..."
-                      value={formData.source_url}
+                      value={getSourceUrlString(formData.source_url)}
                       onChange={handleInputChange}
                       className={`flex-1 form-input rounded-none rounded-l-md ${errors.source_url ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
                     />
                     <button
                       type="button"
                       onClick={validateUrl}
-                      disabled={isValidating || !formData.source_url.includes('parliamentlive.tv')}
+                      disabled={isValidating || !sourceUrlIncludes(formData.source_url, 'parliamentlive.tv')}
                       className="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
                       {isValidating ? 'Validating...' : 'Validate'}
@@ -481,7 +540,7 @@ const NewCapturePage: React.FC = () => {
                 </div>
                 
                 {/* Parliament TV specific options - only show if URL is from parliamentlive.tv */}
-                {formData.source_url.includes('parliamentlive.tv') && (
+                {sourceUrlIncludes(formData.source_url, 'parliamentlive.tv') && (
                   <div className="space-y-4 border-t border-gray-200 pt-4">
                     <h3 className="text-lg font-medium text-gray-900">Parliament TV Options</h3>
                     
@@ -646,7 +705,7 @@ const NewCapturePage: React.FC = () => {
               <div className="pt-4">
                 <button
                   type="submit"
-                  disabled={startCaptureMutation.isPending || (formData.source_url.includes('parliamentlive.tv') && !validationResult?.success)}
+                  disabled={startCaptureMutation.isPending || (sourceUrlIncludes(formData.source_url, 'parliamentlive.tv') && !validationResult?.success)}
                   className="w-full btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block disabled:opacity-50"
                 >
                   {startCaptureMutation.isPending ? 'Starting Capture...' : scheduleCapture ? 'Schedule Capture' : 'Start Capture Now'}

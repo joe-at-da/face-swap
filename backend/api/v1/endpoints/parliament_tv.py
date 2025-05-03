@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Response, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Response, File, UploadFile, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional, Any
@@ -379,6 +379,7 @@ async def extract_parliament_tv_url(
 
 @router.get("/test-url", response_model=Dict)
 async def test_stream_url(
+    request: Request,
     url: Optional[str] = None,
     video_url: Optional[str] = None,
     audio_url: Optional[str] = None,
@@ -392,6 +393,15 @@ async def test_stream_url(
     # Check if user has required permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
+    # Get all query parameters to handle different formats
+    query_params = dict(request.query_params)
+    print(f"Received test-url request with params: {query_params}")
+    
+    # Handle array-style parameters like url[video_url] and url[audio_url]
+    if not url and not video_url and 'url[video_url]' in query_params:
+        video_url = query_params.get('url[video_url]')
+        audio_url = query_params.get('url[audio_url]')
+    
     # Determine which URL to test
     test_url = None
     if url:
@@ -403,6 +413,8 @@ async def test_stream_url(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Either 'url' or 'video_url' must be provided"
         )
+    
+    print(f"Testing stream URL: {test_url}")
     
     # Test the stream URL
     is_valid = parliament_tv_service.test_stream_url(test_url)
