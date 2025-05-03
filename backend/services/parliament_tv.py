@@ -396,16 +396,6 @@ class ParliamentTVCapture:
                 print(f"ERROR - run_capture_process - direct_stream is None for capture {capture_id}")
                 self.capture_callback(db_capture, None, "Direct stream URL is None")
                 return
-                
-            if not isinstance(direct_stream, str):
-                print(f"ERROR - run_capture_process - direct_stream is not a string: {type(direct_stream)}")
-                try:
-                    direct_stream = str(direct_stream)
-                    print(f"DEBUG - run_capture_process - Converted direct_stream to string: {direct_stream}")
-                except Exception as e:
-                    print(f"ERROR - run_capture_process - Failed to convert direct_stream to string: {str(e)}")
-                    self.capture_callback(db_capture, None, f"Failed to convert direct_stream to string: {str(e)}")
-                    return
             
             # Get a database session
             db = next(get_db())

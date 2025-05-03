@@ -229,6 +229,7 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
     # Check if we have separate video and audio URLs
     video_url = None
     audio_url = None
+    has_separate_streams = False
     
     if isinstance(stream_url, dict):
         video_url = stream_url.get('video_url')
@@ -238,17 +239,18 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
         logger.info(f"Audio URL: {audio_url}")
         
         # Check if we have both URLs
-        if not video_url or not audio_url:
-            logger.error("Missing video or audio URL in dictionary")
-            if video_url:
-                logger.info("Using video URL only")
-                stream_url = video_url
-            elif audio_url:
-                logger.info("Using audio URL only")
-                stream_url = audio_url
-            else:
-                logger.error("No valid URLs provided")
-                return None
+        if video_url and audio_url:
+            logger.info("Using both video and audio URLs")
+            has_separate_streams = True
+        elif video_url:
+            logger.info("Using video URL only")
+            stream_url = video_url
+        elif audio_url:
+            logger.info("Using audio URL only")
+            stream_url = audio_url
+        else:
+            logger.error("No valid URLs provided")
+            return None
     
     # If we're using a single URL, check if it's valid
     if not isinstance(stream_url, dict):
@@ -289,10 +291,8 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
         temp_output_file = output_file + ".temp.mp4"
         
         # Check if we have separate video and audio URLs
-        if isinstance(stream_url, dict) and stream_url.get('video_url') and stream_url.get('audio_url'):
+        if has_separate_streams and video_url and audio_url:
             # Use both video and audio URLs
-            video_url = stream_url.get('video_url')
-            audio_url = stream_url.get('audio_url')
             logger.info("Using separate video and audio URLs with ffmpeg")
             
             # Build ffmpeg command to combine video and audio
@@ -303,21 +303,81 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
                 "-c:v", "copy",   # Copy video codec
                 "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental",  # Convert audio to AAC
                 "-map", "0:v:0",  # Use video from first input
-                "-map", "1:a:0"   # Use audio from second input
+                "-map", "1:a:0",  # Use audio from second input
+                "-shortest"       # End when the shortest input stream ends
             ]
             
             # We know we have both video and audio
             has_audio = True
+            
+            # Log the command for debugging
+            logger.info(f"Using ffmpeg command with separate streams: {' '.join(cmd)}")
+            print(f"DEBUG - Using ffmpeg command with separate streams: {' '.join(cmd)}")
+            print(f"DEBUG - Video URL: {video_url}")
+            print(f"DEBUG - Audio URL: {audio_url}")
         else:
             # We have a single URL, check if it has audio
-            audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
-            try:
-                audio_check_result = subprocess.run(audio_check_cmd, capture_output=True, text=True, timeout=10)
-                has_audio = "audio" in audio_check_result.stdout
-                logger.info(f"Stream has audio: {has_audio}")
-            except Exception as e:
-                logger.warning(f"Error checking for audio in stream: {str(e)}")
-                # Assume it doesn't have audio if we can't check
+            logger.info(f"Using single URL: {stream_url}")
+            print(f"DEBUG - Using single URL: {stream_url}")
+            
+            # Try to find a matching audio stream if this is a video-only stream
+            if isinstance(stream_url, str) and 'video' in stream_url and stream_url.endswith('.m3u8'):
+                # Try to construct an audio URL by replacing 'video' with 'audio'
+                potential_audio_url = stream_url.replace('video', 'audio')
+                if 'eng=' not in potential_audio_url:
+                    potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                
+                logger.info(f"Checking for potential audio URL: {potential_audio_url}")
+                print(f"DEBUG - Checking for potential audio URL: {potential_audio_url}")
+                
+                # Test if the audio URL exists
+                try:
+                    audio_test = subprocess.run(["ffprobe", "-v", "error", potential_audio_url], capture_output=True, text=True, timeout=5)
+                    if audio_test.returncode == 0:
+                        logger.info(f"Found valid audio URL: {potential_audio_url}")
+                        print(f"DEBUG - Found valid audio URL: {potential_audio_url}")
+                        
+                        # Use both video and audio URLs
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-i", stream_url,  # Video input
+                            "-i", potential_audio_url,  # Audio input
+                            "-c:v", "copy",   # Copy video codec
+                            "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental",  # Convert audio to AAC
+                            "-map", "0:v:0",  # Use video from first input
+                            "-map", "1:a:0",  # Use audio from second input
+                            "-shortest"       # End when the shortest input stream ends
+                        ]
+                        has_audio = True
+                        logger.info(f"Using ffmpeg command with separate streams: {' '.join(cmd)}")
+                        print(f"DEBUG - Using ffmpeg command with separate streams: {' '.join(cmd)}")
+                        print(f"DEBUG - Video URL: {stream_url}")
+                        print(f"DEBUG - Audio URL: {potential_audio_url}")
+                        
+                        # Skip the regular audio check since we're using a separate audio stream
+                        audio_check_cmd = None
+                    else:
+                        logger.warning(f"Audio URL test failed, using single URL")
+                        print(f"DEBUG - Audio URL test failed, using single URL")
+                        audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
+                except Exception as e:
+                    logger.warning(f"Error testing audio URL: {str(e)}")
+                    print(f"DEBUG - Error testing audio URL: {str(e)}")
+                    audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
+            else:
+                audio_check_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", stream_url]
+            
+            # Only run the audio check if we haven't already set up a command with separate streams
+            if audio_check_cmd:
+                try:
+                    audio_check_result = subprocess.run(audio_check_cmd, capture_output=True, text=True, timeout=10)
+                    has_audio = "audio" in audio_check_result.stdout
+                    logger.info(f"Stream has audio: {has_audio}")
+                    print(f"DEBUG - Stream has audio: {has_audio}")
+                except Exception as e:
+                    logger.warning(f"Error checking for audio in stream: {str(e)}")
+                    print(f"DEBUG - Error checking for audio in stream: {str(e)}")
+                    # Assume it doesn't have audio if we can't check
                 has_audio = False
             
             # Build ffmpeg command for initial download

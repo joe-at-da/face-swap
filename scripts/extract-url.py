@@ -405,10 +405,72 @@ def main():
     time_marker = extract_time_marker(args.url)
     
     # Create the result object
-    result = {
-        "direct_stream": direct_url,
-        "event_id": event_id
-    }
+    # Check if direct_url is a dictionary with video_url and audio_url
+    if isinstance(direct_url, dict) and 'video_url' in direct_url:
+        result = {
+            "direct_stream": {
+                "video_url": direct_url.get('video_url'),
+                "audio_url": direct_url.get('audio_url')
+            },
+            "event_id": event_id
+        }
+        logger.info(f"Returning separate video and audio URLs")
+    else:
+        # For backward compatibility, also try to extract separate streams
+        try:
+            # If we have a direct URL that's an m3u8 file, try to extract separate video and audio streams
+            if isinstance(direct_url, str) and direct_url.endswith('.m3u8'):
+                logger.info(f"Attempting to extract separate video and audio streams from {direct_url}")
+                # Extract the base URL
+                base_url = direct_url.rsplit('/', 1)[0]
+                # Try to find audio stream by replacing 'video' with 'audio' in the URL
+                if 'video' in direct_url:
+                    audio_url = direct_url.replace('video', 'audio')
+                    if 'eng=' not in audio_url:
+                        audio_url = audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                    
+                    # Test if the audio URL exists
+                    try:
+                        logger.info(f"Testing potential audio URL: {audio_url}")
+                        audio_test = subprocess.run(["ffprobe", "-v", "error", audio_url], capture_output=True, timeout=5)
+                        if audio_test.returncode == 0:
+                            logger.info(f"Found valid audio URL: {audio_url}")
+                            result = {
+                                "direct_stream": {
+                                    "video_url": direct_url,
+                                    "audio_url": audio_url
+                                },
+                                "event_id": event_id
+                            }
+                            logger.info(f"Returning separate video and audio URLs")
+                        else:
+                            logger.warning(f"Audio URL test failed, using single URL")
+                            result = {
+                                "direct_stream": direct_url,
+                                "event_id": event_id
+                            }
+                    except Exception as e:
+                        logger.warning(f"Error testing audio URL: {str(e)}")
+                        result = {
+                            "direct_stream": direct_url,
+                            "event_id": event_id
+                        }
+                else:
+                    result = {
+                        "direct_stream": direct_url,
+                        "event_id": event_id
+                    }
+            else:
+                result = {
+                    "direct_stream": direct_url,
+                    "event_id": event_id
+                }
+        except Exception as e:
+            logger.warning(f"Error extracting separate streams: {str(e)}")
+            result = {
+                "direct_stream": direct_url,
+                "event_id": event_id
+            }
     
     if time_marker:
         result["time_marker"] = {
