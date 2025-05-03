@@ -1,14 +1,47 @@
 from typing import List, Dict, Optional
 import os
 import glob
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+from jose import jwt, JWTError
 
 from backend.db.session import get_db
 from backend.core.security import get_current_active_user, has_permission
 from backend.core.config import settings
 from backend.db import models
 from backend.db.models.user import UserRole
+
+# Custom dependency for token authentication via query parameter
+async def get_current_user_from_token_param(token: Optional[str] = None, db: Session = Depends(get_db)):
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = db.query(models.User).filter(models.User.email == username).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 router = APIRouter()
 
@@ -76,12 +109,18 @@ async def get_all_videos(
     
     return video_files
 
-@router.get("/stream/{filename}")
+@router.get("/stream/{filename}", response_model=None)
 async def stream_video(
     filename: str,
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
-    """Stream a video file by filename."""
+    """Stream a video file by filename.
+    
+    Supports both standard authentication and token-based authentication via query parameter.
+    """
+    # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     # Get the data directory from environment variable

@@ -151,7 +151,7 @@ const VideoGalleryPage: React.FC = () => {
     
     setIsDeleting(true);
     try {
-      await axios.delete(`${API_BASE_URL}/videos/delete-all`, {
+      const response = await axios.delete<{status: string; deleted_count: number; errors: any[]}>(`${API_BASE_URL}/videos/delete-all`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -159,18 +159,17 @@ const VideoGalleryPage: React.FC = () => {
       
       // Clear the videos list
       setVideos([]);
-      toast.success('All videos deleted successfully');
+      const deletedCount = response.data?.deleted_count || 0;
+      toast.success(`${deletedCount} videos deleted successfully`);
       
       // Close the confirmation dialog
       closeDeleteAllConfirm();
       
-      // If a video is currently selected, close the modal
-      if (selectedVideo) {
-        closeVideoModal();
-      }
+      // Close the video modal if open
+      closeVideoModal();
     } catch (err) {
       console.error('Error deleting all videos:', err);
-      toast.error('Failed to delete all videos');
+      toast.error('Failed to delete videos');
     } finally {
       setIsDeleting(false);
     }
@@ -180,9 +179,7 @@ const VideoGalleryPage: React.FC = () => {
     return (
       <MainLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="flex justify-center items-center h-64">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-          </div>
+          <div className="text-center py-8">Loading videos...</div>
         </div>
       </MainLayout>
     );
@@ -217,17 +214,19 @@ const VideoGalleryPage: React.FC = () => {
               </button>
             )}
             <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-              New Capture
+              Capture New Video
             </Link>
           </div>
         </div>
 
         {videos.length === 0 ? (
-          <div className="bg-white rounded-lg shadow p-6 text-center">
-            <p className="text-gray-500">No videos available.</p>
-            <Link href="/capture/new" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
-              Start a new capture
-            </Link>
+          <div className="text-center py-8 bg-gray-50 rounded-lg">
+            <p className="text-gray-500">No videos found.</p>
+            <p className="mt-2">
+              <Link href="/capture/new" className="text-blue-600 hover:text-blue-800">
+                Capture a new video
+              </Link>
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -289,14 +288,15 @@ const VideoGalleryPage: React.FC = () => {
 
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && videoToDelete && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg max-w-md w-full p-6">
-              <h3 className="text-lg font-medium mb-4">Confirm Deletion</h3>
-              <p className="mb-4">Are you sure you want to delete the video "{videoToDelete.title || videoToDelete.filename}"?</p>
+              <h3 className="text-lg font-medium mb-4">Delete Video</h3>
+              <p className="mb-4">Are you sure you want to delete the video <strong>{videoToDelete.title || videoToDelete.filename}</strong>? This action cannot be undone.</p>
               <div className="flex justify-end space-x-2">
                 <button 
                   onClick={closeDeleteConfirm}
                   className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  disabled={isDeleting}
                 >
                   Cancel
                 </button>
@@ -314,14 +314,15 @@ const VideoGalleryPage: React.FC = () => {
 
         {/* Delete All Confirmation Modal */}
         {showDeleteAllConfirm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg max-w-md w-full p-6">
-              <h3 className="text-lg font-medium mb-4">Confirm Delete All</h3>
-              <p className="mb-4">Are you sure you want to delete all videos? This action cannot be undone.</p>
+              <h3 className="text-lg font-medium mb-4">Delete All Videos</h3>
+              <p className="mb-4">Are you sure you want to delete <strong>all {videos.length} videos</strong>? This action cannot be undone.</p>
               <div className="flex justify-end space-x-2">
                 <button 
                   onClick={closeDeleteAllConfirm}
                   className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  disabled={isDeleting}
                 >
                   Cancel
                 </button>
@@ -342,7 +343,7 @@ const VideoGalleryPage: React.FC = () => {
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg max-w-4xl w-full max-h-screen overflow-auto">
               <div className="p-4 border-b flex justify-between items-center">
-                <h3 className="text-lg font-medium">{selectedVideo.title || selectedVideo.filename}</h3>
+                <h3 className="text-lg font-medium">{selectedVideo.title}</h3>
                 <button 
                   onClick={closeVideoModal}
                   className="text-gray-500 hover:text-gray-700"
@@ -354,7 +355,7 @@ const VideoGalleryPage: React.FC = () => {
               </div>
               <div className="aspect-w-16 aspect-h-9">
                 <video 
-                  src={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}`} 
+                  src={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}?token=${token}`} 
                   controls 
                   className="w-full h-full object-contain"
                   autoPlay
@@ -396,7 +397,7 @@ const VideoGalleryPage: React.FC = () => {
                   </button>
                 )}
                 <a 
-                  href={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}`}
+                  href={`${API_BASE_URL}/videos/stream/${selectedVideo.filename}?token=${token}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
