@@ -442,9 +442,9 @@ const VideoGalleryPage: React.FC = () => {
                     Video File
                   </label>
                   <select
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-gray-100"
                     value={selectedVideoFile}
-                    onChange={(e) => setSelectedVideoFile(e.target.value)}
+                    disabled
                   >
                     <option value="">Select a video file</option>
                     {videos.map((video) => (
@@ -459,9 +459,9 @@ const VideoGalleryPage: React.FC = () => {
                     Audio File
                   </label>
                   <select
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-gray-100"
                     value={selectedAudioFile}
-                    onChange={(e) => setSelectedAudioFile(e.target.value)}
+                    disabled
                   >
                     <option value="">Select an audio file</option>
                     {videos.map((video) => (
@@ -579,6 +579,7 @@ const VideoGalleryPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setSelectedVideoFile(selectedVideo.filename);
+                    setSelectedAudioFile(selectedVideo.filename);
                     setShowCombineModal(true);
                   }}
                   className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
