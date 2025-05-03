@@ -44,6 +44,7 @@ const CaptureDetailPage: React.FC = () => {
   const { id } = router.query;
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
   
   // API base URL for streaming
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -275,48 +276,20 @@ const CaptureDetailPage: React.FC = () => {
   
   // Get video source URL based on capture type
   const getVideoSourceUrl = (capture: CaptureSession): string => {
-    if (!capture) return '';
-    
-    // For Parliament TV captures, use the streaming endpoint
-    if (isParliamentTVCapture(capture)) {
-      const streamUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
-      console.log('Using Parliament TV streaming URL:', streamUrl);
-      return streamUrl;
-    }
-    
-    // For regular captures, use the file path
-    if (capture.file_path) {
-      console.log('Using regular file path:', capture.file_path);
-      return capture.file_path;
-    }
-    
-    // Fallback to the Parliament TV streaming endpoint even if not detected as Parliament TV
-    // This increases our chances of finding the video
-    const fallbackUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
-    console.log('Using fallback streaming URL:', fallbackUrl);
-    return fallbackUrl;
+    // Always use the streaming endpoint for all captures
+    // This ensures we don't try to access container paths directly from the browser
+    const streamUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
+    console.log('Using streaming URL:', streamUrl);
+    return streamUrl;
   };
   
   // Handle video error
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
     console.error('Video playback error:', e);
-    const videoElement = e.currentTarget;
     
-    // Try the alternate source if the current one fails
-    if (videoElement.src.includes('/parliament-tv/')) {
-      // If Parliament TV streaming failed, try the file path directly
-      if (capture?.file_path) {
-        console.log('Trying direct file path after streaming error:', capture.file_path);
-        videoElement.src = capture.file_path;
-        videoElement.load();
-      }
-    } else if (capture) {
-      // If direct file path failed, try Parliament TV streaming
-      const streamUrl = `${API_BASE_URL}/parliament-tv/${capture.id}/stream`;
-      console.log('Trying Parliament TV streaming after direct path error:', streamUrl);
-      videoElement.src = streamUrl;
-      videoElement.load();
-    }
+    // Log the error but don't try to reload the video since we're already using the streaming endpoint
+    // This avoids an infinite loop of errors if the streaming endpoint is failing
+    setVideoError('Failed to load video. The video file may not be available yet or there might be an issue with the server.');
   };
   
   if (isLoading) {
@@ -526,17 +499,38 @@ const CaptureDetailPage: React.FC = () => {
                 </div>
                 
                 <div className="aspect-w-16 aspect-h-9 bg-black">
-                  <video
-                    ref={videoRef}
-                    key={`video-${capture.id}-${capture.updated_at}`}
-                    src={getVideoSourceUrl(capture)}
-                    controls
-                    className="w-full h-full object-contain"
-                    onError={handleVideoError}
-                    playsInline
-                    preload="auto"
-                    crossOrigin="anonymous"
-                  />
+                  {videoError ? (
+                    <div className="w-full h-full flex items-center justify-center bg-gray-900 text-white p-4">
+                      <div className="text-center">
+                        <div className="text-red-500 text-xl mb-4">⚠️ Video Playback Error</div>
+                        <p className="mb-4">{videoError}</p>
+                        <button 
+                          onClick={() => {
+                            setVideoError(null);
+                            if (videoRef.current) {
+                              videoRef.current.src = getVideoSourceUrl(capture);
+                              videoRef.current.load();
+                            }
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+                        >
+                          Try Again
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <video
+                      ref={videoRef}
+                      key={`video-${capture.id}-${capture.updated_at}`}
+                      src={getVideoSourceUrl(capture)}
+                      controls
+                      className="w-full h-full object-contain"
+                      onError={handleVideoError}
+                      playsInline
+                      preload="auto"
+                      crossOrigin="anonymous"
+                    />
+                  )}
                 </div>
                 <div className="p-4 text-sm">
                   <p>Having trouble playing the video? Try the direct link:</p>
@@ -548,6 +542,16 @@ const CaptureDetailPage: React.FC = () => {
                   >
                     Open video in new tab
                   </a>
+                  {videoError && (
+                    <div className="mt-2 p-2 bg-yellow-100 text-yellow-800 rounded">
+                      <p className="font-medium">Troubleshooting Tips:</p>
+                      <ul className="list-disc pl-5 mt-1">
+                        <li>The video may still be processing</li>
+                        <li>The capture may have failed to generate a valid video file</li>
+                        <li>Try refreshing the page after a few minutes</li>
+                      </ul>
+                    </div>
+                  )}
                   
                   {/* Debug info - helps diagnose video playback issues */}
                   <details className="mt-4 border p-2 rounded">

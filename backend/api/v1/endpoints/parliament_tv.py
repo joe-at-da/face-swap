@@ -404,10 +404,22 @@ async def test_stream_url(
     
     # Determine which URL to test
     test_url = None
+    response_url = None
+    
     if url:
         test_url = url
+        response_url = url
     elif video_url:
         test_url = video_url
+        
+        # If we have both video and audio URLs, return them as an object
+        if audio_url:
+            response_url = {
+                "video_url": video_url,
+                "audio_url": audio_url
+            }
+        else:
+            response_url = video_url
     else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -419,11 +431,18 @@ async def test_stream_url(
     # Test the stream URL
     is_valid = parliament_tv_service.test_stream_url(test_url)
     
+    # If we have audio_url but not in response_url (because we're using 'url' parameter),
+    # update response_url to be an object
+    if is_valid and audio_url and not isinstance(response_url, dict):
+        response_url = {
+            "video_url": test_url,
+            "audio_url": audio_url
+        }
+    
     return {
-        "url": test_url,
+        "url": response_url,
         "is_valid": is_valid,
-        "video_url": video_url,
-        "audio_url": audio_url
+        "message": "Stream URL is valid" if is_valid else "Stream URL is invalid or cannot be played"
     }
 
 @router.get("", response_model=List[Dict])

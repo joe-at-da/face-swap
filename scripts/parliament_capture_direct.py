@@ -226,35 +226,32 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
     print(f"DEBUG - capture_id: {capture_id}, type: {type(capture_id)}")
     print(f"DEBUG - duration: {duration}, type: {type(duration)}")
     
-    # Check if we have separate video and audio URLs
+    # Initialize variables
     video_url = None
     audio_url = None
     has_separate_streams = False
+    has_audio = False
     
+    # Handle both string and dict formats for stream_url
     if isinstance(stream_url, dict):
+        has_separate_streams = True
         video_url = stream_url.get('video_url')
         audio_url = stream_url.get('audio_url')
-        logger.info(f"Received separate video and audio URLs")
-        logger.info(f"Video URL: {video_url}")
-        logger.info(f"Audio URL: {audio_url}")
+        logger.info(f"Received separate video URL: {video_url} and audio URL: {audio_url}")
+        print(f"DEBUG - Received separate video URL: {video_url} and audio URL: {audio_url}")
         
-        # Check if we have both URLs
-        if video_url and audio_url:
-            logger.info("Using both video and audio URLs")
-            has_separate_streams = True
-        elif video_url:
-            logger.info("Using video URL only")
-            stream_url = video_url
-        elif audio_url:
-            logger.info("Using audio URL only")
-            stream_url = audio_url
-        else:
-            logger.error("No valid URLs provided")
+        # Check if we have valid URLs
+        if not video_url and not audio_url:
+            logger.error("No valid URLs provided in the dictionary")
             return None
-    
-    # If we're using a single URL, check if it's valid
-    if not isinstance(stream_url, dict):
-        if not stream_url or not isinstance(stream_url, str) or not stream_url.strip():
+    else:
+        # If it's a string, use it as the video URL
+        video_url = stream_url
+        logger.info(f"Received single stream URL: {video_url}")
+        print(f"DEBUG - Received single stream URL: {video_url}")
+        
+        # Check if the URL is valid
+        if not video_url or not isinstance(video_url, str) or not video_url.strip():
             logger.error("Stream URL is None, empty, or not a string")
             return None
     
@@ -378,7 +375,7 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
                     logger.warning(f"Error checking for audio in stream: {str(e)}")
                     print(f"DEBUG - Error checking for audio in stream: {str(e)}")
                     # Assume it doesn't have audio if we can't check
-                has_audio = False
+                    has_audio = False
             
             # Build ffmpeg command for initial download
             if has_audio:

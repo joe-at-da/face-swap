@@ -64,8 +64,12 @@ interface ExtractUrlResponse {
 }
 
 interface TestStreamResponse {
-  url: string;
+  url: string | {
+    video_url: string;
+    audio_url?: string;
+  };
   is_valid: boolean;
+  message?: string;
 }
 
 const NewCapturePage: React.FC = () => {
