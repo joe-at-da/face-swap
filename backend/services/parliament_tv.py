@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 class ParliamentTVCapture:
     def __init__(self):
         """Initialize the Parliament TV capture service."""
-        # Set up paths
+        # CRITICAL FIX: Hard-code paths to ensure they're never None
+        print("DEBUG - Setting hard-coded paths in __init__ to ensure they're never None")
+        self.temp_dir = Path("/app/data/temp")
+        self.media_dir = Path("/app/data/media")
+        self.scripts_dir = Path("/app/scripts")
         
         # Print debug info about paths
         print(f"Temp dir: {self.temp_dir}")
@@ -45,12 +49,6 @@ class ParliamentTVCapture:
         
         # Initialize active captures dictionary
         self.active_captures = {}
-        
-        # Create directories
-        if self.temp_dir:
-            os.makedirs(str(self.temp_dir), exist_ok=True)
-        if self.media_dir:
-            os.makedirs(str(self.media_dir), exist_ok=True)
 
     def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
         """
@@ -185,6 +183,20 @@ class ParliamentTVCapture:
             self.media_dir = Path("/app/data/media")
             self.scripts_dir = Path("/app/scripts")
             
+            # Create directories if they don't exist
+            print(f"DEBUG - Creating directories in start_capture_thread")
+            try:
+                os.makedirs(str(self.temp_dir), exist_ok=True)
+                print(f"DEBUG - Created temp_dir: {self.temp_dir}")
+            except Exception as e:
+                print(f"ERROR - Failed to create temp_dir: {str(e)}")
+                
+            try:
+                os.makedirs(str(self.media_dir), exist_ok=True)
+                print(f"DEBUG - Created media_dir: {self.media_dir}")
+            except Exception as e:
+                print(f"ERROR - Failed to create media_dir: {str(e)}")
+            
             capture_id = db_capture.id
             direct_stream = stream_info.get("direct_stream")
             print(f"DEBUG - direct_stream: {direct_stream}")
@@ -219,6 +231,10 @@ class ParliamentTVCapture:
             print(f"DEBUG - Before thread creation - temp_dir: {self.temp_dir}, exists: {os.path.exists(str(self.temp_dir)) if self.temp_dir else False}")
             print(f"DEBUG - Before thread creation - media_dir: {self.media_dir}, exists: {os.path.exists(str(self.media_dir)) if self.media_dir else False}")
             print(f"DEBUG - Before thread creation - scripts_dir: {self.scripts_dir}, exists: {os.path.exists(str(self.scripts_dir)) if self.scripts_dir else False}")
+            
+            # Check if script exists
+            script_path = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
+            print(f"DEBUG - Script path: {script_path}, exists: {os.path.exists(script_path)}")
             
             # Create a thread to run the capture process
             print(f"DEBUG - Creating capture thread with args: db_capture.id={db_capture.id}, direct_stream={direct_stream}")
@@ -304,14 +320,49 @@ class ParliamentTVCapture:
             # Run the improved capture script
             print("DEBUG - Building command")
             try:
+                # Ensure all paths are valid strings
+                temp_dir_str = str(self.temp_dir) if self.temp_dir else "/app/data/temp"
+                media_dir_str = str(self.media_dir) if self.media_dir else "/app/data/media"
+                
+                # Verify paths exist
+                print(f"DEBUG - Verifying paths: temp_dir={temp_dir_str}, exists={os.path.exists(temp_dir_str)}")
+                print(f"DEBUG - Verifying paths: media_dir={media_dir_str}, exists={os.path.exists(media_dir_str)}")
+                
+                # Create directories if they don't exist
+                os.makedirs(temp_dir_str, exist_ok=True)
+                os.makedirs(media_dir_str, exist_ok=True)
+                
+                # Verify script_path exists
+                print(f"DEBUG - Script path before command: {script_path}, exists: {os.path.exists(script_path)}")
+                if not os.path.exists(script_path):
+                    print(f"ERROR - Script not found at {script_path}, searching for alternatives")
+                    alt_paths = [
+                        "/app/scripts/parliament_capture_direct.py",
+                        "/app/backend/scripts/parliament_capture_direct.py",
+                        "/app/backend/scripts/extract-url.py"
+                    ]
+                    for alt_path in alt_paths:
+                        if os.path.exists(alt_path):
+                            script_path = alt_path
+                            print(f"DEBUG - Found script at alternative location: {script_path}")
+                            break
+                
+                # Verify direct_stream is a string
+                if not isinstance(direct_stream, str):
+                    print(f"ERROR - direct_stream is not a string: {direct_stream}, type: {type(direct_stream)}")
+                    direct_stream = str(direct_stream)
+                
+                # Verify sys.executable exists
+                print(f"DEBUG - sys.executable: {sys.executable}, exists: {os.path.exists(sys.executable)}")
+                
                 cmd = [
                     sys.executable,
                     script_path,
                     direct_stream,
                     "--capture-id", str(capture_id),
                     "--duration", str(duration),
-                    "--temp-dir", str(self.temp_dir),
-                    "--media-dir", str(self.media_dir)
+                    "--temp-dir", temp_dir_str,
+                    "--media-dir", media_dir_str
                 ]
                 print(f"DEBUG - Command built successfully: {' '.join(cmd)}")
             except Exception as e:

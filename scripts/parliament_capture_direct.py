@@ -220,9 +220,9 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
         return None
     
     # Ensure output_dir is valid
-    if output_dir is None or output_dir == "":
-        logger.error("Output directory is None or empty")
-        print(f"DEBUG - Output directory is None or empty, using /tmp")
+    if output_dir is None or output_dir == "" or not isinstance(output_dir, (str, Path)):
+        logger.error(f"Output directory is invalid: {output_dir}, type: {type(output_dir)}")
+        print(f"DEBUG - Output directory is invalid, using /tmp")
         output_dir = "/tmp"
         
     # Convert output_dir to string if it's a Path object
