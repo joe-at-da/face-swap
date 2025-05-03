@@ -35,6 +35,13 @@ const VideoGalleryPage: React.FC = () => {
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [videoToDelete, setVideoToDelete] = useState<VideoFile | null>(null);
+  
+  // State variables for audio/video combination
+  const [showCombineModal, setShowCombineModal] = useState(false);
+  const [selectedAudioFile, setSelectedAudioFile] = useState<string>('');
+  const [selectedVideoFile, setSelectedVideoFile] = useState<string>('');
+  const [isCombining, setIsCombining] = useState(false);
+  const [combinedVideoFilename, setCombinedVideoFilename] = useState<string | null>(null);
 
   useEffect(() => {
     fetchVideos();
@@ -173,6 +180,75 @@ const VideoGalleryPage: React.FC = () => {
       toast.error('Failed to delete all videos');
     } finally {
       setIsDeleting(false);
+    }
+  };
+  
+  // Function to handle combining audio and video files
+  const handleCombineAudioVideo = async () => {
+    if (!selectedVideoFile || !selectedAudioFile) {
+      toast.error('Please select both video and audio files');
+      return;
+    }
+    
+    setIsCombining(true);
+    
+    try {
+      // Create form data
+      const formData = new FormData();
+      formData.append('video_filename', selectedVideoFile);
+      formData.append('audio_filename', selectedAudioFile);
+      
+      // Make the request to combine the files
+      const response = await axios.post(
+        `${API_BASE_URL}/videos/combine-audio-video`,
+        formData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          },
+          responseType: 'blob'
+        }
+      );
+      
+      // Get the filename from the Content-Disposition header if available
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = 'combined_video.mp4';
+      
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/i);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create a URL for the blob
+      const url = window.URL.createObjectURL(new Blob([response.data as BlobPart]));
+      
+      // Create a temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      
+      // Clean up
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(link);
+      
+      // Store the combined filename for streaming
+      setCombinedVideoFilename(filename);
+      
+      toast.success('Audio and video combined successfully');
+      setShowCombineModal(false);
+      
+      // Refresh the video list
+      fetchVideos();
+    } catch (error) {
+      console.error('Error combining audio and video:', error);
+      toast.error('Failed to combine audio and video');
+    } finally {
+      setIsCombining(false);
     }
   };
 
@@ -337,6 +413,86 @@ const VideoGalleryPage: React.FC = () => {
           </div>
         )}
 
+        {/* Audio/Video Combination Modal */}
+        {showCombineModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+              <div className="flex justify-between items-center p-4 border-b">
+                <h2 className="text-xl font-semibold">Combine Audio and Video</h2>
+                <button 
+                  onClick={() => setShowCombineModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                    Video File
+                  </label>
+                  <select
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value={selectedVideoFile}
+                    onChange={(e) => setSelectedVideoFile(e.target.value)}
+                  >
+                    <option value="">Select a video file</option>
+                    {videos.map((video) => (
+                      <option key={video.filename} value={video.filename}>
+                        {video.filename}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                    Audio File
+                  </label>
+                  <select
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value={selectedAudioFile}
+                    onChange={(e) => setSelectedAudioFile(e.target.value)}
+                  >
+                    <option value="">Select an audio file</option>
+                    {videos.map((video) => (
+                      <option key={video.filename} value={video.filename}>
+                        {video.filename}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setShowCombineModal(false)}
+                    className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded mr-2"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCombineAudioVideo}
+                    disabled={isCombining || !selectedVideoFile || !selectedAudioFile}
+                    className={`${isCombining ? 'bg-green-400' : 'bg-green-600 hover:bg-green-700'} text-white font-bold py-2 px-4 rounded flex items-center`}
+                  >
+                    {isCombining ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Processing...
+                      </>
+                    ) : (
+                      'Combine Files'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Video Modal */}
         {selectedVideo && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
@@ -353,12 +509,21 @@ const VideoGalleryPage: React.FC = () => {
                 </button>
               </div>
               <div className="aspect-w-16 aspect-h-9">
-                <video 
-                  src={`${API_BASE_URL}/videos/stream-with-token/${selectedVideo.filename}?token=${token}`} 
-                  controls 
-                  className="w-full h-full object-contain"
-                  autoPlay
-                />
+                {combinedVideoFilename ? (
+                  <video 
+                    src={`${API_BASE_URL}/videos/stream-combined-with-token/${combinedVideoFilename}?token=${token}`} 
+                    controls 
+                    className="w-full h-full object-contain"
+                    autoPlay
+                  />
+                ) : (
+                  <video 
+                    src={`${API_BASE_URL}/videos/stream-with-token/${selectedVideo.filename}?token=${token}`} 
+                    controls 
+                    className="w-full h-full object-contain"
+                    autoPlay
+                  />
+                )}
               </div>
               <div className="p-4 grid grid-cols-2 gap-4 text-sm">
                 <div>
@@ -403,6 +568,15 @@ const VideoGalleryPage: React.FC = () => {
                 >
                   Download Video
                 </a>
+                <button
+                  onClick={() => {
+                    setSelectedVideoFile(selectedVideo.filename);
+                    setShowCombineModal(true);
+                  }}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
+                >
+                  Combine Audio/Video
+                </button>
                 <button 
                   onClick={closeVideoModal}
                   className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
