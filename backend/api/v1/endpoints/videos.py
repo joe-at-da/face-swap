@@ -110,52 +110,74 @@ async def get_all_videos(
     
     return video_files
 
-@router.get("/stream/{filename}")
+# Create a custom dependency for token authentication that doesn't raise exceptions
+def get_user_from_token(token: str = None, db: Session = Depends(get_db)):
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            return None
+        user = db.query(models.User).filter(models.User.email == username).first()
+        return user
+    except JWTError:
+        return None
+
+@router.get("/stream/{filename}", response_model=None)
 async def stream_video(
     filename: str,
-    token: str = None,
-    request: Request = None,
     db: Session = Depends(get_db),
-    current_user: models.User = None,
+    current_user: models.User = Depends(get_current_active_user),
 ):
     """Stream a video file by filename.
     
-    Supports authentication via JWT token or standard authentication.
+    Supports authentication via standard authentication.
     """
-    # Handle authentication - either via token or via current_user dependency
-    if current_user is None and token:
-        try:
-            # Validate token and get user
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-            username: str = payload.get("sub")
-            if username is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Could not validate credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            current_user = db.query(models.User).filter(models.User.email == username).first()
-            if current_user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="User not found",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-        except JWTError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    elif current_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    return stream_video_file(filename, db)
+
+@router.get("/stream-with-token/{filename}", response_model=None)
+async def stream_video_with_token(
+    filename: str,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """Stream a video file by filename using token authentication.
+    
+    This endpoint is specifically for clients that can't use cookie-based authentication.
+    """
+    # Validate token and get user
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+            )
+        
+        # Get user from database
+        user = db.query(models.User).filter(models.User.email == username).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
+            
+        # Check user permissions
+        has_permission(user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+        
+        return stream_video_file(filename, db)
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+def stream_video_file(filename: str, db: Session):
     
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
