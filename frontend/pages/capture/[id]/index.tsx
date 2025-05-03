@@ -550,13 +550,13 @@ const CaptureDetailPage: React.FC = () => {
                   <details className="mt-4 border p-2 rounded">
                     <summary className="font-medium cursor-pointer">Debug Info</summary>
                     <div className="mt-2 space-y-1 text-xs font-mono bg-gray-100 p-2 rounded overflow-auto max-h-48">
-                      <p>Capture ID: {capture.id}</p>
-                      <p>Status: {capture.status}</p>
-                      <p>Source URL: {capture.source_url}</p>
-                      <p>File Path: {capture.file_path || 'Not available'}</p>
-                      <p>Is Parliament TV: {isParliamentTVCapture(capture) ? 'Yes' : 'No'}</p>
-                      <p>Video Source: {getVideoSourceUrl(capture)}</p>
-                      <p>Metadata: {JSON.stringify(capture.metadata || {}, null, 2)}</p>
+                      <p key="debug-capture-id">Capture ID: {capture.id}</p>
+                      <p key="debug-status">Status: {capture.status}</p>
+                      <p key="debug-source-url">Source URL: {capture.source_url}</p>
+                      <p key="debug-file-path">File Path: {capture.file_path || 'Not available'}</p>
+                      <p key="debug-is-parliament">Is Parliament TV: {isParliamentTVCapture(capture) ? 'Yes' : 'No'}</p>
+                      <p key="debug-video-source">Video Source: {getVideoSourceUrl(capture)}</p>
+                      <p key="debug-metadata">Metadata: {JSON.stringify(capture.metadata || {}, null, 2)}</p>
                     </div>
                   </details>
                 </div>
