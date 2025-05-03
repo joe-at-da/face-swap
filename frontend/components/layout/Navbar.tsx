@@ -32,43 +32,24 @@ const Navbar: React.FC = () => {
                     height={40}
                   />
                   <span className="ml-2 text-lg font-semibold text-primary dark:text-blue-400 hidden md:block">
-                    Parliament Video Clip Manager
+                    The MP - Admin Tool
                   </span>
                 </div>
               </Link>
             </div>
-            
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link href="/dashboard">
-                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                  Dashboard
-                </span>
-              </Link>
-              
-              <Link href="/clips">
-                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                  Video Clips
-                </span>
-              </Link>
-              
-              <Link href="/capture">
-                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                  Capture
-                </span>
-              </Link>
-              
               <Link href="/parliament-tv/capture">
                 <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Parliament TV
                 </span>
               </Link>
               
-              <Link href="/social">
+              <Link href="/videos">
                 <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                  Social Media
+                  Video Gallery
                 </span>
               </Link>
-              
+
               {user?.role === UserRole.ADMIN && (
                 <Link href="/admin">
                   <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
@@ -204,6 +185,12 @@ const Navbar: React.FC = () => {
             <Link href="/parliament-tv/capture">
               <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                 Parliament TV
+              </span>
+            </Link>
+            
+            <Link href="/videos">
+              <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
+                Video Gallery
               </span>
             </Link>
             

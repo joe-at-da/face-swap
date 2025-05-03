@@ -317,6 +317,58 @@ def download_stream(stream_url, output_dir, capture_id, duration=1800):
             logger.info(f"Using single URL: {stream_url}")
             print(f"DEBUG - Using single URL: {stream_url}")
             
+            # Check if this is an audio-only stream and try to find matching video stream
+            if isinstance(stream_url, str) and ('audio' in stream_url or 'eng=' in stream_url) and stream_url.endswith('.m3u8'):
+                # Try to construct a video URL by replacing 'audio' with 'video' or removing the audio suffix
+                potential_video_url = None
+                
+                # Case 1: Replace audio with video
+                if 'audio' in stream_url:
+                    potential_video_url = stream_url.replace('audio', 'video')
+                
+                # Case 2: Remove audio suffix
+                if 'eng=' in stream_url:
+                    potential_video_url = stream_url.split('_eng=')[0] + '.m3u8'
+                
+                # Case 3: Try to find a video stream in the same location
+                if not potential_video_url and '/vod-idx.ism/' in stream_url:
+                    potential_video_url = stream_url.split('/vod-idx.ism/')[0] + '/vod-idx.ism/vod-idx-video=2000000.m3u8'
+                
+                if potential_video_url:
+                    logger.info(f"Detected audio-only stream, checking for matching video: {potential_video_url}")
+                    print(f"DEBUG - Detected audio-only stream, checking for matching video: {potential_video_url}")
+                    
+                    # Test if the video URL exists
+                    try:
+                        video_test = subprocess.run(["ffprobe", "-v", "error", potential_video_url], capture_output=True, text=True, timeout=5)
+                        if video_test.returncode == 0:
+                            logger.info(f"Found valid video URL: {potential_video_url}")
+                            print(f"DEBUG - Found valid video URL: {potential_video_url}")
+                            
+                            # Use both video and audio URLs
+                            cmd = [
+                                "ffmpeg", "-y",
+                                "-i", potential_video_url,  # Video input
+                                "-i", stream_url,  # Audio input
+                                "-c:v", "copy",   # Copy video codec
+                                "-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental",  # Convert audio to AAC
+                                "-map", "0:v:0",  # Use video from first input
+                                "-map", "1:a:0",  # Use audio from second input
+                                "-shortest"       # End when the shortest input stream ends
+                            ]
+                            has_audio = True
+                            logger.info(f"Using ffmpeg command with separate streams: {' '.join(cmd)}")
+                            print(f"DEBUG - Using ffmpeg command with separate streams: {' '.join(cmd)}")
+                            print(f"DEBUG - Video URL: {potential_video_url}")
+                            print(f"DEBUG - Audio URL: {stream_url}")
+                            
+                            # Skip the regular audio check since we're using a separate audio stream
+                            audio_check_cmd = None
+                            # Continue with this command
+                    except Exception as e:
+                        logger.warning(f"Error testing video URL: {str(e)}")
+                        print(f"DEBUG - Error testing video URL: {str(e)}")
+            
             # Try to find a matching audio stream if this is a video-only stream
             if isinstance(stream_url, str) and 'video' in stream_url and stream_url.endswith('.m3u8'):
                 # Try to construct an audio URL by replacing 'video' with 'audio'
