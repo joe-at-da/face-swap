@@ -201,9 +201,10 @@ const VideoGalleryPage: React.FC = () => {
       formData.append('audio_filename', selectedAudioFile);
       
       // Log the form data for debugging
-      for (let [key, value] of formData.entries()) {
+      // Use Array.from to avoid TypeScript downlevelIteration error
+      Array.from(formData.entries()).forEach(([key, value]) => {
         console.log(`${key}: ${value}`);
-      }
+      });
       
       // Make the request to combine the files
       const response = await axios.post(
@@ -446,11 +447,13 @@ const VideoGalleryPage: React.FC = () => {
                     onChange={(e) => setSelectedVideoFile(e.target.value)}
                   >
                     <option value="">Select a video file</option>
-                    {videos.map((video) => (
-                      <option key={video.filename} value={video.filename}>
-                        {video.filename}
-                      </option>
-                    ))}
+                    {videos
+                      .filter(video => !video.filename.includes('audio'))
+                      .map((video) => (
+                        <option key={video.filename} value={video.filename}>
+                          {video.filename}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div className="mb-4">
@@ -463,11 +466,13 @@ const VideoGalleryPage: React.FC = () => {
                     onChange={(e) => setSelectedAudioFile(e.target.value)}
                   >
                     <option value="">Select an audio file</option>
-                    {videos.map((video) => (
-                      <option key={video.filename} value={video.filename}>
-                        {video.filename}
-                      </option>
-                    ))}
+                    {videos
+                      .filter(video => video.filename.includes('audio'))
+                      .map((video) => (
+                        <option key={video.filename} value={video.filename}>
+                          {video.filename}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div className="flex justify-end">
