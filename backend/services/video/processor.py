@@ -92,24 +92,39 @@ class VideoProcessor:
         output_file = self.output_dir / f"combined_{timestamp}.{output_format}"
         
         try:
-            # Input video and audio streams
-            video_stream = ffmpeg.input(video_file)
-            audio_stream = ffmpeg.input(audio_file)
+            # Check if files exist
+            if not os.path.exists(video_file):
+                raise FileNotFoundError(f"Video file not found: {video_file}")
+            if not os.path.exists(audio_file):
+                raise FileNotFoundError(f"Audio file not found: {audio_file}")
+                
+            # Log the file paths
+            logger.info(f"Combining video: {video_file} with audio: {audio_file}")
             
-            # Combine streams
-            stream = ffmpeg.output(
-                video_stream,
-                audio_stream,
-                str(output_file),
-                vcodec='copy',  # Copy video codec to avoid re-encoding
-                acodec='aac',   # Use AAC for audio
-                strict='experimental'
+            # Use ffmpeg command with correct mapping
+            stream = (
+                ffmpeg
+                .input(video_file)
+                .input(audio_file)
+                .output(
+                    str(output_file),
+                    map='0:v:0',        # Map video from first input
+                    map='1:a:0',        # Map audio from second input
+                    vcodec='copy',      # Copy video codec to avoid re-encoding
+                    acodec='aac',       # Use AAC for audio
+                    strict='experimental'
+                )
             )
             
-            ffmpeg.run(stream, overwrite_output=True)
+            # Run the ffmpeg command
+            ffmpeg.run(stream, overwrite_output=True, quiet=False)
             logger.info(f"Created combined audio/video file: {output_file}")
             return str(output_file)
             
         except ffmpeg.Error as e:
-            logger.error(f"Failed to combine audio and video: {e.stderr.decode() if e.stderr else str(e)}")
+            error_message = e.stderr.decode() if e.stderr else str(e)
+            logger.error(f"Failed to combine audio and video: {error_message}")
+            raise Exception(f"FFmpeg error: {error_message}")
+        except Exception as e:
+            logger.error(f"Unexpected error combining audio and video: {str(e)}")
             raise
