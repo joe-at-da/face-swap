@@ -174,8 +174,24 @@ class ParliamentTVCapture:
                 print(f"Error: No direct stream URL found for capture {capture_id}")
                 return False
             
-            if not self.temp_dir or not self.media_dir or not self.scripts_dir:
-                print(f"Error: Invalid directories for capture {capture_id}")
+            # Ensure directories are valid
+            if self.temp_dir is None:
+                print(f"Warning: temp_dir is None, using default /tmp")
+                self.temp_dir = Path("/tmp")
+                os.makedirs(str(self.temp_dir), exist_ok=True)
+                
+            if self.media_dir is None:
+                print(f"Warning: media_dir is None, using default /tmp")
+                self.media_dir = Path("/tmp")
+                os.makedirs(str(self.media_dir), exist_ok=True)
+                
+            if self.scripts_dir is None:
+                print(f"Warning: scripts_dir is None, using default /app/scripts")
+                self.scripts_dir = Path("/app/scripts")
+                
+            # Validate directories after ensuring they exist
+            if not os.path.exists(str(self.temp_dir)) or not os.path.exists(str(self.media_dir)):
+                print(f"Error: Directories do not exist for capture {capture_id} even after creation attempt")
                 print(f"temp_dir: {self.temp_dir}, media_dir: {self.media_dir}, scripts_dir: {self.scripts_dir}")
                 return False
             
@@ -207,28 +223,39 @@ class ParliamentTVCapture:
     def run_capture_process(self, db_capture, direct_stream):
         """Run the capture process and update the database."""
         try:
+            # CRITICAL FIX: Hard-code paths to ensure they're never None
+            print("DEBUG - Setting hard-coded paths to ensure they're never None")
+            self.temp_dir = Path("/tmp")
+            self.media_dir = Path("/app/data/media")
+            self.scripts_dir = Path("/app/scripts")
+            
+            # Create directories if they don't exist
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            os.makedirs(str(self.media_dir), exist_ok=True)
+            
+            # Print debug info about paths
+            print(f"DEBUG - Using paths: temp_dir={self.temp_dir}, media_dir={self.media_dir}, scripts_dir={self.scripts_dir}")
+            
             capture_id = db_capture.id
             duration = db_capture.duration or 1800  # Default to 30 minutes
             
-            # Ensure paths are valid before using them
-            if self.temp_dir is None:
-                print(f"Warning: temp_dir is None, using default /tmp")
-                self.temp_dir = Path("/tmp")
-                os.makedirs(str(self.temp_dir), exist_ok=True)
-                
-            if self.media_dir is None:
-                print(f"Warning: media_dir is None, using default /tmp")
-                self.media_dir = Path("/tmp")
-                os.makedirs(str(self.media_dir), exist_ok=True)
-                
-            if self.scripts_dir is None:
-                print(f"Warning: scripts_dir is None, using default /app/scripts")
-                self.scripts_dir = Path("/app/scripts")
-                
+            # Verify script exists
+            script_path = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
+            print(f"DEBUG - Script path: {script_path}, exists: {os.path.exists(script_path)}")
+            
+            # If script doesn't exist in /app/scripts, try to find it elsewhere
+            if not os.path.exists(script_path):
+                print("DEBUG - Script not found in /app/scripts, searching in other locations")
+                # Try to find the script in the scripts directory
+                alt_script_path = "/Users/joebradley/Veedoo/Development/the-mp/scripts/parliament_capture_direct.py"
+                if os.path.exists(alt_script_path):
+                    script_path = alt_script_path
+                    print(f"DEBUG - Found script at: {script_path}")
+            
             # Run the improved capture script
             cmd = [
                 sys.executable,
-                os.path.join(str(self.scripts_dir), "parliament_capture_direct.py"),
+                script_path,
                 direct_stream,
                 "--capture-id", str(capture_id),
                 "--duration", str(duration),
