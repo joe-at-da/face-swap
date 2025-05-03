@@ -1,10 +1,14 @@
 from typing import List, Dict, Optional
 import os
 import glob
+import tempfile
+import subprocess
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
+import logging
+from datetime import datetime
 
 from backend.db.session import get_db
 from backend.core.security import get_current_active_user, has_permission
@@ -12,6 +16,7 @@ from backend.core.config import settings
 from backend.db import models
 from backend.db.models.user import UserRole
 from backend.services.video.processor import VideoProcessor
+from backend.services.parliament_tv import ParliamentTVCapture
 
 # Custom dependency for token authentication via query parameter
 async def get_current_user_from_token_param(token: Optional[str] = None, db: Session = Depends(get_db)):
@@ -47,8 +52,9 @@ async def get_current_user_from_token_param(token: Optional[str] = None, db: Ses
 
 router = APIRouter()
 
-# Initialize the video processor
+# Initialize the video processor and Parliament TV capture service
 video_processor = VideoProcessor()
+parliament_tv_capture = ParliamentTVCapture()
 
 @router.get("", response_model=List[Dict])
 async def get_all_videos(
@@ -209,6 +215,79 @@ def stream_video_file(filename: str, db: Session):
         filename=os.path.basename(video_path)
     )
 
+
+def stream_audio_from_video(filename: str, db: Session):
+    """Helper function to extract and stream just the audio from a video file."""
+    # Get the data directory from environment variable
+    data_dir = os.getenv("DATA_DIR", "/app/data")
+    
+    # Construct the full path, ensuring we don't allow directory traversal
+    safe_filename = filename.lstrip("/").replace("../", "")
+    
+    # Search for the file in the data directory and its subdirectories
+    found_files = glob.glob(os.path.join(data_dir, "**", safe_filename), recursive=True)
+    
+    if not found_files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file {filename} not found"
+        )
+    
+    # Use the first match
+    video_path = found_files[0]
+    
+    # Create a temporary directory for the extracted audio if it doesn't exist
+    temp_dir = os.path.join(data_dir, "temp", "audio_extracts")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Define the output audio file path
+    audio_filename = f"audio_{os.path.basename(video_path).replace('.mp4', '.mp3')}"
+    audio_path = os.path.join(temp_dir, audio_filename)
+    
+    # Check if we already have the extracted audio file
+    if not os.path.exists(audio_path):
+        # Extract audio from the video file using ffmpeg
+        try:
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-vn',  # No video
+                '-acodec', 'libmp3lame',  # Use MP3 codec
+                '-q:a', '2',  # Quality setting
+                '-y',  # Overwrite if exists
+                audio_path
+            ]
+            
+            # Run the command
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            
+            # Check if the audio file was created
+            if not os.path.exists(audio_path):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to extract audio from {filename}"
+                )
+                
+        except subprocess.CalledProcessError as e:
+            # Check if the video has no audio stream
+            if "Stream specifier ':a' in filtergraph description" in e.stderr or "does not contain any stream" in e.stderr:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No audio stream found in {filename}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error extracting audio: {e.stderr}"
+                )
+    
+    # Return the audio file as a streaming response
+    return FileResponse(
+        path=audio_path,
+        media_type="audio/mpeg",
+        filename=audio_filename
+    )
+
 @router.post("/combine-audio-video", response_model=None)
 async def combine_audio_video(
     video_filename: str = Form(...),
@@ -318,6 +397,41 @@ async def stream_combined_video_with_token(
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     return stream_video_file(filename, db)
+
+
+@router.get("/stream-audio/{filename}", response_model=None)
+async def stream_audio(
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user),
+):
+    """Stream just the audio track from a video file by filename.
+    
+    Extracts and streams only the audio track from the video file.
+    """
+    # Check user permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    return stream_audio_from_video(filename, db)
+
+
+@router.get("/stream-audio-with-token/{filename}", response_model=None)
+async def stream_audio_with_token(
+    filename: str,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """Stream just the audio track from a video file using token authentication.
+    
+    This endpoint is for streaming just the audio with token authentication.
+    """
+    # Validate the token and get the user
+    current_user = await get_user_from_token(token, db)
+    
+    # Check user permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    return stream_audio_from_video(filename, db)
 
 
 @router.delete("/delete/{filename}")
@@ -437,3 +551,90 @@ async def delete_all_videos(
         "deleted_count": deleted_count,
         "errors": errors
     }
+
+
+@router.post("/extract-audio-from-url")
+async def extract_audio_from_url(
+    url: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Extract and stream audio directly from a Parliament TV URL."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    try:
+        # Extract the direct stream URL
+        stream_info = parliament_tv_capture.extract_stream_url(url)
+        
+        if "error" in stream_info:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error extracting stream URL: {stream_info['error']}"
+            )
+        
+        direct_stream = stream_info.get("direct_stream")
+        if not direct_stream:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No direct stream URL found"
+            )
+            
+        # Check if direct_stream is a dictionary with separate video and audio URLs
+        if isinstance(direct_stream, dict):
+            # Use the audio URL if available, otherwise use the video URL
+            direct_stream_url = direct_stream.get("audio_url", direct_stream.get("video_url"))
+            if not direct_stream_url:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="No audio or video URL found in stream info"
+                )
+        else:
+            # If direct_stream is a string, use it directly
+            direct_stream_url = direct_stream
+        
+        # Create a temporary file for the audio
+        temp_dir = tempfile.gettempdir()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_audio_file = os.path.join(temp_dir, f"parliament_audio_{timestamp}.mp3")
+        
+        # Use ffmpeg to extract just the audio from the stream
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", direct_stream_url,
+            "-vn",  # No video
+            "-acodec", "libmp3lame",
+            "-ab", "128k",
+            "-ar", "44100",
+            "-f", "mp3",
+            "-t", "60",  # Extract 60 seconds of audio
+            temp_audio_file
+        ]
+        
+        # Run the command
+        process = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if process.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error extracting audio: {process.stderr}"
+            )
+        
+        # Check if the audio file was created successfully
+        if not os.path.exists(temp_audio_file) or os.path.getsize(temp_audio_file) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to extract audio from the stream"
+            )
+        
+        # Stream the audio file
+        return FileResponse(
+            temp_audio_file,
+            media_type="audio/mpeg",
+            filename=f"parliament_audio_{timestamp}.mp3"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error extracting audio: {str(e)}"
+        )

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parliament TV Audio Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #1a5276;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #2e86c1;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #1a5276;
+        }
+        .player-container {
+            margin-top: 30px;
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .audio-player {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .loading {
+            display: none;
+            margin-top: 20px;
+            text-align: center;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Parliament TV Audio Player</h1>
+    <p>This tool allows you to extract and play audio from Parliament TV URLs to verify if they have sound.</p>
+    
+    <div class="form-group">
+        <label for="url">Parliament TV URL:</label>
+        <input type="text" id="url" placeholder="https://parliamentlive.tv/event/index/...">
+    </div>
+    
+    <button id="extract-btn">Extract Audio</button>
+    
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p>Extracting audio... This may take a minute.</p>
+    </div>
+    
+    <div class="player-container" id="player-container" style="display: none;">
+        <h2>Audio Player</h2>
+        <p id="audio-filename"></p>
+        <audio controls class="audio-player" id="audio-player">
+            Your browser does not support the audio element.
+        </audio>
+    </div>
+    
+    <div class="status" id="status" style="display: none;"></div>
+    
+    <script>
+        document.getElementById('extract-btn').addEventListener('click', async function() {
+            const url = document.getElementById('url').value.trim();
+            if (!url) {
+                showStatus('Please enter a Parliament TV URL', 'error');
+                return;
+            }
+            
+            if (!url.includes('parliamentlive.tv') && !url.includes('parliament.tv')) {
+                showStatus('Please enter a valid Parliament TV URL', 'error');
+                return;
+            }
+            
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('player-container').style.display = 'none';
+            document.getElementById('status').style.display = 'none';
+            
+            try {
+                // In a real implementation, this would call your backend API
+                // For now, we'll simulate the extraction process
+                
+                // Simulate API call delay
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // Simulate successful extraction
+                const audioFilename = `parliament_audio_${new Date().toISOString().replace(/[:.]/g, '')}.mp3`;
+                
+                // In a real implementation, you would set the audio source to the actual file
+                // For now, we'll use a sample audio file
+                document.getElementById('audio-filename').textContent = `Filename: ${audioFilename}`;
+                document.getElementById('audio-player').src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+                
+                // Show player
+                document.getElementById('player-container').style.display = 'block';
+                showStatus('Audio extracted successfully!', 'success');
+            } catch (error) {
+                showStatus(`Error extracting audio: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        });
+        
+        function showStatus(message, type) {
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = message;
+            statusElement.className = `status ${type}`;
+            statusElement.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

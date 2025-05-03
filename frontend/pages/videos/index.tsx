@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import Link from 'next/link';
 import MainLayout from '../../components/layout/MainLayout';
+import AudioExtractor from '../../components/AudioExtractor';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -42,6 +43,7 @@ const VideoGalleryPage: React.FC = () => {
   const [selectedVideoFile, setSelectedVideoFile] = useState<string>('');
   const [isCombining, setIsCombining] = useState(false);
   const [combinedVideoFilename, setCombinedVideoFilename] = useState<string | null>(null);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
 
   useEffect(() => {
     fetchVideos();
@@ -102,6 +104,7 @@ const VideoGalleryPage: React.FC = () => {
 
   const closeVideoModal = () => {
     setSelectedVideo(null);
+    setShowAudioPlayer(false);
   };
 
   const handleDeleteClick = (e: React.MouseEvent, video: VideoFile) => {
@@ -270,6 +273,8 @@ const VideoGalleryPage: React.FC = () => {
   return (
     <MainLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <AudioExtractor token={token || ''} apiBaseUrl={API_BASE_URL} />
+        
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Video Gallery</h1>
           <div className="flex space-x-2">
@@ -536,6 +541,17 @@ const VideoGalleryPage: React.FC = () => {
                   )}
                 </div>
               </div>
+              {/* Audio Player (initially hidden) */}
+              <div className={`p-4 border-t ${showAudioPlayer ? 'block' : 'hidden'}`}>
+                <h4 className="text-lg font-medium mb-2">Audio Track</h4>
+                <audio 
+                  src={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedVideo.filename}?token=${token}`}
+                  controls
+                  className="w-full"
+                  autoPlay={showAudioPlayer}
+                />
+              </div>
+              
               <div className="p-4 border-t flex justify-end space-x-2">
                 {user?.role === UserRole.ADMIN && (
                   <button 
@@ -550,6 +566,12 @@ const VideoGalleryPage: React.FC = () => {
                     {isDeleting ? 'Deleting...' : 'Delete Video'}
                   </button>
                 )}
+                <button
+                  onClick={() => setShowAudioPlayer(!showAudioPlayer)}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded"
+                >
+                  {showAudioPlayer ? 'Hide Audio Player' : 'Play Audio Only'}
+                </button>
                 <a 
                   href={`${API_BASE_URL}/videos/stream-with-token/${selectedVideo.filename}?token=${token}`}
                   target="_blank"
