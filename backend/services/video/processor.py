@@ -83,75 +83,166 @@ class VideoProcessor:
             video_file: Path to the video file
             audio_file: Path to the audio file
             output_format: Output format (default: mp4)
-            
-        Returns:
-            Path to the combined output file
         """
-        # Create output filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = self.output_dir / f"combined_{timestamp}.{output_format}"
-        output_path = str(output_file)
-        
         try:
-            # Check if files exist
+            # Check if the video file exists
             if not os.path.exists(video_file):
                 raise FileNotFoundError(f"Video file not found: {video_file}")
+            
+            # Check if the audio file exists
             if not os.path.exists(audio_file):
                 raise FileNotFoundError(f"Audio file not found: {audio_file}")
-                
-            # Log the file paths
-            logger.info(f"Combining video: {video_file} with audio: {audio_file}")
             
-            # Use direct ffmpeg command execution instead of the Python wrapper
-            import subprocess
+            # Generate output filename
+            output_file = f"{os.path.splitext(os.path.basename(video_file))[0]}_combined.{output_format}"
+            output_path = os.path.join(os.path.dirname(video_file), output_file)
             
-            # First, check if the audio file has an audio stream
-            probe_cmd = [
+            # Log the files we're working with
+            logging.info(f"Video file: {video_file}")
+            logging.info(f"Audio file: {audio_file}")
+            logging.info(f"Output file: {output_path}")
+            
+            # Get stream information for both files
+            video_streams_cmd = [
                 'ffprobe', 
-                '-v', 'error',
-                '-select_streams', 'a:0',
-                '-show_entries', 'stream=codec_type',
-                '-of', 'csv=p=0',
+                '-v', 'error', 
+                '-show_entries', 'stream=index,codec_type,codec_name', 
+                '-of', 'json', 
+                video_file
+            ]
+            
+            audio_streams_cmd = [
+                'ffprobe', 
+                '-v', 'error', 
+                '-show_entries', 'stream=index,codec_type,codec_name', 
+                '-of', 'json', 
                 audio_file
             ]
             
-            probe_process = subprocess.run(
-                probe_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            video_streams_result = subprocess.run(video_streams_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            audio_streams_result = subprocess.run(audio_streams_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             
-            has_video = video_probe.stdout.strip() == 'video'
-            if not has_video:
-                raise Exception(f"No video stream found in the video file: {video_file}")
+            # Parse the stream information
+            video_streams = json.loads(video_streams_result.stdout) if video_streams_result.returncode == 0 else {"streams": []}
+            audio_streams = json.loads(audio_streams_result.stdout) if audio_streams_result.returncode == 0 else {"streams": []}
             
-            # Check if the audio file has an audio stream
-            audio_probe = subprocess.run(
-                ['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', audio_file],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            logging.info(f"Video file streams: {json.dumps(video_streams, indent=2)}")
+            logging.info(f"Audio file streams: {json.dumps(audio_streams, indent=2)}")
             
-            has_audio = audio_probe.stdout.strip() == 'audio'
-            if not has_audio:
-                raise Exception(f"No audio stream found in the audio file: {audio_file}")
+            # Find video stream in video file
+            video_stream_index = None
+            for i, stream in enumerate(video_streams.get("streams", [])):
+                if stream.get("codec_type") == "video":
+                    video_stream_index = stream.get("index")
+                    logging.info(f"Found video stream at index {video_stream_index} in {video_file}")
+                    break
             
-            logging.info(f"Combining video file: {video_file} with audio file: {audio_file}")
+            # Find audio stream in audio file
+            audio_stream_index = None
+            for i, stream in enumerate(audio_streams.get("streams", [])):
+                if stream.get("codec_type") == "audio":
+                    audio_stream_index = stream.get("index")
+                    logging.info(f"Found audio stream at index {audio_stream_index} in {audio_file}")
+                    break
             
-            # Combine video and audio using ffmpeg
+            # If no video stream found in video file, check if there's one in the audio file
+            if video_stream_index is None:
+                for i, stream in enumerate(audio_streams.get("streams", [])):
+                    if stream.get("codec_type") == "video":
+                        logging.info(f"Found video stream in audio file at index {stream.get('index')}")
+                        # Swap the files since the video stream is in the audio file
+                        video_file, audio_file = audio_file, video_file
+                        video_stream_index = stream.get("index")
+                        
+                        # Re-check for audio stream in the new audio file
+                        for j, astream in enumerate(video_streams.get("streams", [])):
+                            if astream.get("codec_type") == "audio":
+                                audio_stream_index = astream.get("index")
+                                logging.info(f"Found audio stream at index {audio_stream_index} in swapped audio file")
+                                break
+                        break
+            
+            # If still no video stream, raise an error
+            if video_stream_index is None:
+                raise Exception(f"No video stream found in either file")
+            
+            # If no audio stream found, check if there's one in the video file
+            if audio_stream_index is None:
+                for i, stream in enumerate(video_streams.get("streams", [])):
+                    if stream.get("codec_type") == "audio":
+                        logging.info(f"Found audio stream in video file at index {stream.get('index')}")
+                        audio_stream_index = stream.get("index")
+                        # Use the same file for both video and audio
+                        audio_file = video_file
+                        break
+            
+            # If still no audio stream, create a silent audio track
+            if audio_stream_index is None:
+                logging.warning("No audio stream found in either file. Creating a silent audio track.")
+                # Get video duration
+                duration_cmd = [
+                    'ffprobe', 
+                    '-v', 'error', 
+                    '-show_entries', 'format=duration', 
+                    '-of', 'csv=p=0', 
+                    video_file
+                ]
+                
+                duration_result = subprocess.run(duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if duration_result.returncode == 0:
+                    duration = float(duration_result.stdout.strip())
+                    logging.info(f"Video duration: {duration} seconds")
+                    
+                    # Create silent audio file
+                    silent_audio = os.path.join(os.path.dirname(output_path), "temp_silent.aac")
+                    silent_cmd = [
+                        'ffmpeg',
+                        '-f', 'lavfi',
+                        '-i', 'anullsrc=r=44100:cl=stereo',
+                        '-t', str(duration),
+                        '-c:a', 'aac',
+                        '-y',
+                        silent_audio
+                    ]
+                    
+                    silent_result = subprocess.run(silent_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if silent_result.returncode == 0:
+                        logging.info(f"Created silent audio track: {silent_audio}")
+                        audio_file = silent_audio
+                        audio_stream_index = 0
+                    else:
+                        logging.error(f"Failed to create silent audio: {silent_result.stderr}")
+                else:
+                    logging.error(f"Failed to get video duration: {duration_result.stderr}")
+            
+            # Build the ffmpeg command for combining
             cmd = [
                 'ffmpeg',
-                '-i', video_file,  # Input video file
-                '-i', audio_file,  # Input audio file
-                '-c:v', 'copy',    # Copy video codec
-                '-c:a', 'aac',     # Use AAC for audio
-                '-map', '0:v:0',   # Map video from first input
-                '-map', '1:a:0',   # Map audio from second input
-                '-shortest',       # End when shortest input ends
-                output_path
+                '-i', video_file,
+                '-i', audio_file
             ]
+            
+            # If the files are the same, we need a different mapping strategy
+            if video_file == audio_file:
+                cmd.extend([
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    '-map', f'0:{video_stream_index}',  # Map video stream
+                    '-map', f'0:{audio_stream_index}',  # Map audio stream from same file
+                    '-shortest',
+                    '-y',
+                    output_path
+                ])
+            else:
+                cmd.extend([
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    '-map', f'0:{video_stream_index}',  # Map video stream from first file
+                    '-map', f'1:{audio_stream_index}',  # Map audio stream from second file
+                    '-shortest',
+                    '-y',
+                    output_path
+                ])
             
             logging.info(f"Running ffmpeg command: {' '.join(cmd)}")
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -161,9 +252,13 @@ class VideoProcessor:
                 logging.error(error_msg)
                 raise Exception(error_msg)
             
+            # Clean up temporary files if created
+            if audio_file.endswith("temp_silent.aac") and os.path.exists(audio_file):
+                os.remove(audio_file)
+                logging.info(f"Removed temporary silent audio file: {audio_file}")
+            
             logging.info(f"Successfully combined audio and video to: {output_path}")
             return output_path
-            
         except Exception as e:
-            logger.error(f"Error combining audio and video: {str(e)}")
+            logging.error(f"Error in combine_audio_video: {str(e)}")
             raise

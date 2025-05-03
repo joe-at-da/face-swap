@@ -447,13 +447,11 @@ const VideoGalleryPage: React.FC = () => {
                     onChange={(e) => setSelectedVideoFile(e.target.value)}
                   >
                     <option value="">Select a video file</option>
-                    {videos
-                      .filter(video => !video.filename.includes('audio'))
-                      .map((video) => (
-                        <option key={video.filename} value={video.filename}>
-                          {video.filename}
-                        </option>
-                      ))}
+                    {videos.map((video) => (
+                      <option key={video.filename} value={video.filename}>
+                        {video.filename} (Video Track)
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="mb-4">
@@ -466,13 +464,11 @@ const VideoGalleryPage: React.FC = () => {
                     onChange={(e) => setSelectedAudioFile(e.target.value)}
                   >
                     <option value="">Select an audio file</option>
-                    {videos
-                      .filter(video => video.filename.includes('audio'))
-                      .map((video) => (
-                        <option key={video.filename} value={video.filename}>
-                          {video.filename}
-                        </option>
-                      ))}
+                    {videos.map((video) => (
+                      <option key={video.filename} value={video.filename}>
+                        {video.filename} (Audio Track)
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="flex justify-end">
