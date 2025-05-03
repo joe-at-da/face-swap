@@ -99,7 +99,21 @@ class ParliamentTVCapture:
             self.log_capture(db, db_capture.id, "info", f"Starting capture for URL: {url}")
             self.log_capture(db, db_capture.id, "info", f"Direct stream URL: {direct_stream}")
             
-            # Run the capture process
+            # Run the capture process directly instead of using a thread
+            print("DEBUG - Running capture process directly")
+            # Hard-code paths to ensure they're never None
+            self.temp_dir = Path("/app/data/temp")
+            self.media_dir = Path("/app/data/media")
+            self.scripts_dir = Path("/app/scripts")
+            
+            # Create directories if they don't exist
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            os.makedirs(str(self.media_dir), exist_ok=True)
+            
+            # Get the direct stream URL
+            direct_stream = stream_info.get("direct_stream")
+            
+            # Run the capture process directly
             result = self.run_capture_process(db_capture, direct_stream)
             
             return {"success": True, "message": "Capture started successfully", "capture_id": capture_id}
@@ -309,15 +323,9 @@ class ParliamentTVCapture:
                 self.scripts_dir = Path("/app/scripts")
                 print(f"DEBUG - run_capture_process - Set default scripts_dir to {self.scripts_dir}")
             
-            # Get the script path
-            script_path = None
-            try:
-                script_path = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
-                print(f"DEBUG - run_capture_process - script_path: {script_path}")
-            except Exception as e:
-                print(f"ERROR - run_capture_process - Failed to create script_path: {str(e)}")
-                script_path = "/app/scripts/parliament_capture_direct.py"
-                print(f"DEBUG - run_capture_process - Using fallback script_path: {script_path}")
+            # Hard-code the script path to ensure it's never None
+            script_path = "/app/scripts/parliament_capture_direct.py"
+            print(f"DEBUG - run_capture_process - Using script_path: {script_path}")
             
             # If script doesn't exist in scripts_dir, try to find it elsewhere
             if not os.path.exists(script_path):
@@ -533,21 +541,24 @@ class ParliamentTVCapture:
                     "time_marker": {"seconds": 0}
                 }
             
-            # Ensure scripts_dir is set
-            if self.scripts_dir is None:
-                print("ERROR - extract_stream_url - scripts_dir is None")
-                self.scripts_dir = Path("/app/scripts")
-                print(f"DEBUG - extract_stream_url - Set default scripts_dir to {self.scripts_dir}")
+            # CRITICAL FIX: Hard-code script path to ensure it's never None
+            script_path = "/app/scripts/extract-url.py"
+            print(f"DEBUG - extract_stream_url - script_path: {script_path}")
             
-            # Get the script path
-            script_path = None
-            try:
-                script_path = os.path.join(str(self.scripts_dir), "extract-url.py")
-                print(f"DEBUG - extract_stream_url - script_path: {script_path}")
-            except Exception as e:
-                print(f"ERROR - extract_stream_url - Failed to create script_path: {str(e)}")
-                script_path = "/app/scripts/extract-url.py"
-                print(f"DEBUG - extract_stream_url - Using fallback script_path: {script_path}")
+            # Verify the script exists
+            if not os.path.exists(script_path):
+                print(f"ERROR - extract_stream_url - Script not found at {script_path}, checking alternatives")
+                # Try alternative locations
+                alt_paths = [
+                    "/app/backend/scripts/extract-url.py",
+                    "/app/scripts/extract-url.py",
+                    "/Users/joebradley/Veedoo/Development/the-mp/scripts/extract-url.py"
+                ]
+                for alt_path in alt_paths:
+                    if os.path.exists(alt_path):
+                        script_path = alt_path
+                        print(f"DEBUG - extract_stream_url - Found script at: {script_path}")
+                        break
             
             # If script doesn't exist in scripts_dir, try to find it elsewhere
             if not os.path.exists(script_path):
