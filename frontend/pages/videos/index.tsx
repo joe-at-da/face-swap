@@ -193,10 +193,17 @@ const VideoGalleryPage: React.FC = () => {
     setIsCombining(true);
     
     try {
+      console.log('Combining files:', selectedVideoFile, selectedAudioFile);
+      
       // Create form data
       const formData = new FormData();
       formData.append('video_filename', selectedVideoFile);
       formData.append('audio_filename', selectedAudioFile);
+      
+      // Log the form data for debugging
+      for (let [key, value] of formData.entries()) {
+        console.log(`${key}: ${value}`);
+      }
       
       // Make the request to combine the files
       const response = await axios.post(
@@ -204,8 +211,8 @@ const VideoGalleryPage: React.FC = () => {
         formData,
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'multipart/form-data'
+            'Authorization': `Bearer ${token}`
+            // Let axios set the Content-Type with boundary automatically
           },
           responseType: 'blob'
         }

@@ -223,24 +223,44 @@ async def combine_audio_video(
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
+    print(f"Received request to combine video: {video_filename} with audio: {audio_filename}")
+    
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
+    temp_dir = os.path.join(data_dir, "temp")
+    media_dir = os.path.join(data_dir, "media")
+    
+    # Search in multiple directories
+    search_dirs = [temp_dir, media_dir, data_dir]
     
     # Find the video file
-    video_files = glob.glob(os.path.join(data_dir, "**", video_filename), recursive=True)
+    video_files = []
+    for search_dir in search_dirs:
+        found_files = glob.glob(os.path.join(search_dir, "**", video_filename), recursive=True)
+        video_files.extend(found_files)
+    
     if not video_files:
+        print(f"Video file {video_filename} not found in search directories")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Video file {video_filename} not found"
         )
     
     # Find the audio file
-    audio_files = glob.glob(os.path.join(data_dir, "**", audio_filename), recursive=True)
+    audio_files = []
+    for search_dir in search_dirs:
+        found_files = glob.glob(os.path.join(search_dir, "**", audio_filename), recursive=True)
+        audio_files.extend(found_files)
+    
     if not audio_files:
+        print(f"Audio file {audio_filename} not found in search directories")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Audio file {audio_filename} not found"
         )
+    
+    print(f"Found video file: {video_files[0]}")
+    print(f"Found audio file: {audio_files[0]}")
     
     try:
         # Combine the audio and video files
@@ -249,6 +269,8 @@ async def combine_audio_video(
             audio_files[0]
         )
         
+        print(f"Successfully combined files, result: {combined_file_path}")
+        
         # Return the combined file
         return FileResponse(
             path=combined_file_path,
@@ -256,6 +278,9 @@ async def combine_audio_video(
             filename=os.path.basename(combined_file_path)
         )
     except Exception as e:
+        print(f"Error combining files: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to combine audio and video: {str(e)}"

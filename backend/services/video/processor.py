@@ -90,6 +90,7 @@ class VideoProcessor:
         # Create output filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = self.output_dir / f"combined_{timestamp}.{output_format}"
+        output_path = str(output_file)
         
         try:
             # Check if files exist
@@ -101,30 +102,41 @@ class VideoProcessor:
             # Log the file paths
             logger.info(f"Combining video: {video_file} with audio: {audio_file}")
             
-            # Use ffmpeg command with correct mapping
-            stream = (
-                ffmpeg
-                .input(video_file)
-                .input(audio_file)
-                .output(
-                    str(output_file),
-                    map='0:v:0',        # Map video from first input
-                    map='1:a:0',        # Map audio from second input
-                    vcodec='copy',      # Copy video codec to avoid re-encoding
-                    acodec='aac',       # Use AAC for audio
-                    strict='experimental'
-                )
+            # Use direct ffmpeg command execution instead of the Python wrapper
+            import subprocess
+            
+            # Construct the ffmpeg command
+            cmd = [
+                'ffmpeg',
+                '-i', video_file,   # Video input
+                '-i', audio_file,   # Audio input
+                '-c:v', 'copy',     # Copy video codec
+                '-c:a', 'aac',      # Use AAC for audio
+                '-map', '0:v:0',    # Map video from first input
+                '-map', '1:a:0',    # Map audio from second input
+                '-strict', 'experimental',
+                '-y',               # Overwrite output file
+                output_path
+            ]
+            
+            # Run the command
+            logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
+            process = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False  # Don't raise exception, handle it manually
             )
             
-            # Run the ffmpeg command
-            ffmpeg.run(stream, overwrite_output=True, quiet=False)
-            logger.info(f"Created combined audio/video file: {output_file}")
-            return str(output_file)
+            # Check if the command was successful
+            if process.returncode != 0:
+                logger.error(f"FFmpeg error: {process.stderr}")
+                raise Exception(f"FFmpeg error: {process.stderr}")
             
-        except ffmpeg.Error as e:
-            error_message = e.stderr.decode() if e.stderr else str(e)
-            logger.error(f"Failed to combine audio and video: {error_message}")
-            raise Exception(f"FFmpeg error: {error_message}")
+            logger.info(f"Created combined audio/video file: {output_file}")
+            return output_path
+            
         except Exception as e:
-            logger.error(f"Unexpected error combining audio and video: {str(e)}")
+            logger.error(f"Error combining audio and video: {str(e)}")
             raise
