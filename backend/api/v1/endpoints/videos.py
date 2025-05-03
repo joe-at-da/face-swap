@@ -271,12 +271,12 @@ async def combine_audio_video(
         
         print(f"Successfully combined files, result: {combined_file_path}")
         
-        # Return the combined file
-        return FileResponse(
-            path=combined_file_path,
-            media_type="video/mp4",
-            filename=os.path.basename(combined_file_path)
-        )
+        # Return the filename instead of the file content
+        return {
+            "status": "success",
+            "filename": os.path.basename(combined_file_path),
+            "path": combined_file_path
+        }
     except Exception as e:
         print(f"Error combining files: {str(e)}")
         import traceback

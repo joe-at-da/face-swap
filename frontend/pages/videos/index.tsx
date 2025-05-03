@@ -214,35 +214,17 @@ const VideoGalleryPage: React.FC = () => {
           headers: {
             'Authorization': `Bearer ${token}`
             // Let axios set the Content-Type with boundary automatically
-          },
-          responseType: 'blob'
+          }
         }
       );
       
-      // Get the filename from the Content-Disposition header if available
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = 'combined_video.mp4';
-      
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/i);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1];
-        }
+      // Get the filename from the response
+      interface CombineResponse {
+        status: string;
+        filename: string;
+        path: string;
       }
-      
-      // Create a URL for the blob
-      const url = window.URL.createObjectURL(new Blob([response.data as BlobPart]));
-      
-      // Create a temporary link and trigger download
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      
-      // Clean up
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(link);
+      const { filename } = response.data as CombineResponse;
       
       // Store the combined filename for streaming
       setCombinedVideoFilename(filename);

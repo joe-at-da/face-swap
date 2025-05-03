@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import subprocess
+import glob
 from datetime import datetime, timedelta
 from pathlib import Path
 import ffmpeg
@@ -131,6 +132,16 @@ class VideoProcessor:
             logging.info(f"Video file streams: {json.dumps(video_streams, indent=2)}")
             logging.info(f"Audio file streams: {json.dumps(audio_streams, indent=2)}")
             
+            # More detailed logging for audio debugging
+            logging.info(f"Video file stderr: {video_streams_result.stderr}")
+            logging.info(f"Audio file stderr: {audio_streams_result.stderr}")
+            
+            # Check if there are any audio streams in either file
+            video_has_audio = any(stream.get("codec_type") == "audio" for stream in video_streams.get("streams", []))
+            audio_has_audio = any(stream.get("codec_type") == "audio" for stream in audio_streams.get("streams", []))
+            logging.info(f"Video file has audio: {video_has_audio}")
+            logging.info(f"Audio file has audio: {audio_has_audio}")
+            
             # Find video stream in video file
             video_stream_index = None
             for i, stream in enumerate(video_streams.get("streams", [])):
@@ -178,44 +189,82 @@ class VideoProcessor:
                         audio_file = video_file
                         break
             
-            # If still no audio stream, create a silent audio track
+            # If still no audio stream, try to find a Parliament TV capture with audio
             if audio_stream_index is None:
-                logging.warning("No audio stream found in either file. Creating a silent audio track.")
-                # Get video duration
-                duration_cmd = [
-                    'ffprobe', 
-                    '-v', 'error', 
-                    '-show_entries', 'format=duration', 
-                    '-of', 'csv=p=0', 
-                    video_file
-                ]
+                logging.warning("No audio stream found in either file. Searching for Parliament TV captures with audio...")
                 
-                duration_result = subprocess.run(duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                if duration_result.returncode == 0:
-                    duration = float(duration_result.stdout.strip())
-                    logging.info(f"Video duration: {duration} seconds")
+                # Get the data directory
+                data_dir = os.getenv("DATA_DIR", "/app/data")
+                temp_dir = os.path.join(data_dir, "temp")
+                
+                # Look for Parliament TV captures that might have audio
+                parliament_files = glob.glob(os.path.join(temp_dir, "parliament_*.mp4"))
+                
+                if parliament_files:
+                    logging.info(f"Found {len(parliament_files)} Parliament TV captures to check for audio")
                     
-                    # Create silent audio file
-                    silent_audio = os.path.join(os.path.dirname(output_path), "temp_silent.aac")
-                    silent_cmd = [
-                        'ffmpeg',
-                        '-f', 'lavfi',
-                        '-i', 'anullsrc=r=44100:cl=stereo',
-                        '-t', str(duration),
-                        '-c:a', 'aac',
-                        '-y',
-                        silent_audio
+                    # Try each file to find one with audio
+                    for parl_file in parliament_files:
+                        logging.info(f"Checking for audio in: {parl_file}")
+                        
+                        # Check if this file has audio
+                        audio_check_cmd = [
+                            'ffprobe', 
+                            '-v', 'error', 
+                            '-select_streams', 'a', 
+                            '-show_entries', 'stream=index,codec_type,codec_name', 
+                            '-of', 'json', 
+                            parl_file
+                        ]
+                        
+                        audio_check_result = subprocess.run(audio_check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        
+                        if audio_check_result.returncode == 0:
+                            audio_info = json.loads(audio_check_result.stdout)
+                            if audio_info.get("streams") and len(audio_info.get("streams")) > 0:
+                                logging.info(f"Found file with audio: {parl_file}")
+                                audio_file = parl_file
+                                audio_stream_index = audio_info["streams"][0]["index"]
+                                break
+                
+                # If still no audio found, fall back to creating a silent track
+                if audio_stream_index is None:
+                    logging.warning("No Parliament TV captures with audio found. Creating a silent audio track.")
+                    # Get video duration
+                    duration_cmd = [
+                        'ffprobe', 
+                        '-v', 'error', 
+                        '-show_entries', 'format=duration', 
+                        '-of', 'csv=p=0', 
+                        video_file
                     ]
                     
-                    silent_result = subprocess.run(silent_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                    if silent_result.returncode == 0:
-                        logging.info(f"Created silent audio track: {silent_audio}")
-                        audio_file = silent_audio
-                        audio_stream_index = 0
+                    duration_result = subprocess.run(duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if duration_result.returncode == 0:
+                        duration = float(duration_result.stdout.strip())
+                        logging.info(f"Video duration: {duration} seconds")
+                        
+                        # Create silent audio file
+                        silent_audio = os.path.join(os.path.dirname(output_path), "temp_silent.aac")
+                        silent_cmd = [
+                            'ffmpeg',
+                            '-f', 'lavfi',
+                            '-i', 'anullsrc=r=44100:cl=stereo',
+                            '-t', str(duration),
+                            '-c:a', 'aac',
+                            '-y',
+                            silent_audio
+                        ]
+                        
+                        silent_result = subprocess.run(silent_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        if silent_result.returncode == 0:
+                            logging.info(f"Created silent audio track: {silent_audio}")
+                            audio_file = silent_audio
+                            audio_stream_index = 0
+                        else:
+                            logging.error(f"Failed to create silent audio: {silent_result.stderr}")
                     else:
-                        logging.error(f"Failed to create silent audio: {silent_result.stderr}")
-                else:
-                    logging.error(f"Failed to get video duration: {duration_result.stderr}")
+                        logging.error(f"Failed to get video duration: {duration_result.stderr}")
             
             # Build the ffmpeg command for combining
             cmd = [
@@ -248,6 +297,8 @@ class VideoProcessor:
             
             logging.info(f"Running ffmpeg command: {' '.join(cmd)}")
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            logging.info(f"FFmpeg stdout: {result.stdout}")
+            logging.info(f"FFmpeg stderr: {result.stderr}")
             
             if result.returncode != 0:
                 error_msg = f"Error combining audio and video: {result.stderr}"
