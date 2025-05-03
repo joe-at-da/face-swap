@@ -24,19 +24,24 @@ class ParliamentTVCapture:
     def __init__(self):
         """Initialize the Parliament TV capture service."""
         # Set up paths
-        self.data_dir = os.environ.get("DATA_DIR", "/app/data")
-        self.temp_storage_path = os.environ.get("TEMP_STORAGE_PATH", "/app/data/temp")
-        self.media_storage_path = os.environ.get("MEDIA_STORAGE_PATH", "/app/data/media")
         
-        # Convert to Path objects for easier manipulation
-        self.temp_dir = Path(self.temp_storage_path) if self.temp_storage_path else None
-        self.media_dir = Path(self.media_storage_path) if self.media_storage_path else None
-        self.scripts_dir = Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-        
-        # Debug paths
+        # Print debug info about paths
         print(f"Temp dir: {self.temp_dir}")
         print(f"Media dir: {self.media_dir}")
         print(f"Scripts dir: {self.scripts_dir}")
+        
+        # Create directories if they don't exist
+        try:
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            print(f"Created temp_dir: {self.temp_dir}")
+        except Exception as e:
+            print(f"ERROR - Failed to create temp_dir: {str(e)}")
+            
+        try:
+            os.makedirs(str(self.media_dir), exist_ok=True)
+            print(f"Created media_dir: {self.media_dir}")
+        except Exception as e:
+            print(f"ERROR - Failed to create media_dir: {str(e)}")
         
         # Initialize active captures dictionary
         self.active_captures = {}
@@ -102,8 +107,11 @@ class ParliamentTVCapture:
             return {"success": True, "message": "Capture started successfully", "capture_id": capture_id}
             
         except Exception as e:
-            logger.exception(f"Error starting capture: {str(e)}")
-            return {"success": False, "error": f"Error starting capture: {str(e)}"}
+            print(f"Unexpected error starting capture: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
+            self.capture_callback(db_capture, None, f"Failed to start capture: {str(e)}")
+            return {"success": False, "error": f"Failed to start capture: {str(e)}"}
 
     def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, callback=None) -> bool:
         """
@@ -159,15 +167,27 @@ class ParliamentTVCapture:
             return self.start_capture_thread(db_capture, stream_info)
             
         except Exception as e:
-            logger.exception(f"Error starting async capture: {str(e)}")
+            print(f"Unexpected error starting async capture: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
             return False
 
     def start_capture_thread(self, db_capture, stream_info):
         """Start a thread to capture the Parliament TV stream."""
         try:
             print(f"Starting capture thread for {db_capture.id}")
+            print(f"DEBUG - db_capture type: {type(db_capture)}, id: {db_capture.id}")
+            print(f"DEBUG - stream_info type: {type(stream_info)}, content: {stream_info}")
+            
+            # CRITICAL FIX: Hard-code paths to ensure they're never None
+            print("DEBUG - Setting hard-coded paths in start_capture_thread to ensure they're never None")
+            self.temp_dir = Path("/app/data/temp")
+            self.media_dir = Path("/app/data/media")
+            self.scripts_dir = Path("/app/scripts")
+            
             capture_id = db_capture.id
             direct_stream = stream_info.get("direct_stream")
+            print(f"DEBUG - direct_stream: {direct_stream}")
             
             # Validate inputs
             if not direct_stream:
@@ -195,7 +215,13 @@ class ParliamentTVCapture:
                 print(f"temp_dir: {self.temp_dir}, media_dir: {self.media_dir}, scripts_dir: {self.scripts_dir}")
                 return False
             
+            # Debug directory paths before thread creation
+            print(f"DEBUG - Before thread creation - temp_dir: {self.temp_dir}, exists: {os.path.exists(str(self.temp_dir)) if self.temp_dir else False}")
+            print(f"DEBUG - Before thread creation - media_dir: {self.media_dir}, exists: {os.path.exists(str(self.media_dir)) if self.media_dir else False}")
+            print(f"DEBUG - Before thread creation - scripts_dir: {self.scripts_dir}, exists: {os.path.exists(str(self.scripts_dir)) if self.scripts_dir else False}")
+            
             # Create a thread to run the capture process
+            print(f"DEBUG - Creating capture thread with args: db_capture.id={db_capture.id}, direct_stream={direct_stream}")
             capture_thread = threading.Thread(
                 target=self.run_capture_process,
                 args=(db_capture, direct_stream),
@@ -215,33 +241,51 @@ class ParliamentTVCapture:
             print(f"Capture thread started for {capture_id}")
             return True
         except Exception as e:
-            print(f"Error starting capture thread: {str(e)}")
+            print(f"Unexpected error starting capture thread: {str(e)}")
             import traceback
-            print(traceback.format_exc())
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
             return False
 
     def run_capture_process(self, db_capture, direct_stream):
         """Run the capture process and update the database."""
         try:
+            print(f"DEBUG - run_capture_process started with db_capture.id={db_capture.id}, direct_stream={direct_stream}")
+            
             # CRITICAL FIX: Hard-code paths to ensure they're never None
             print("DEBUG - Setting hard-coded paths to ensure they're never None")
-            self.temp_dir = Path("/tmp")
+            self.temp_dir = Path("/app/data/temp")
             self.media_dir = Path("/app/data/media")
             self.scripts_dir = Path("/app/scripts")
             
             # Create directories if they don't exist
-            os.makedirs(str(self.temp_dir), exist_ok=True)
-            os.makedirs(str(self.media_dir), exist_ok=True)
+            print(f"DEBUG - Creating directories: {self.temp_dir}, {self.media_dir}")
+            try:
+                os.makedirs(str(self.temp_dir), exist_ok=True)
+                print(f"DEBUG - Created temp_dir: {self.temp_dir}")
+            except Exception as e:
+                print(f"ERROR - Failed to create temp_dir: {str(e)}")
+                
+            try:
+                os.makedirs(str(self.media_dir), exist_ok=True)
+                print(f"DEBUG - Created media_dir: {self.media_dir}")
+            except Exception as e:
+                print(f"ERROR - Failed to create media_dir: {str(e)}")
             
             # Print debug info about paths
             print(f"DEBUG - Using paths: temp_dir={self.temp_dir}, media_dir={self.media_dir}, scripts_dir={self.scripts_dir}")
             
             capture_id = db_capture.id
             duration = db_capture.duration or 1800  # Default to 30 minutes
+            print(f"DEBUG - capture_id={capture_id}, duration={duration}")
             
             # Verify script exists
-            script_path = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
-            print(f"DEBUG - Script path: {script_path}, exists: {os.path.exists(script_path)}")
+            try:
+                script_path = os.path.join(str(self.scripts_dir), "parliament_capture_direct.py")
+                print(f"DEBUG - Script path: {script_path}, exists: {os.path.exists(script_path)}")
+            except Exception as e:
+                print(f"ERROR - Failed to create script_path: {str(e)}")
+                script_path = "/app/scripts/parliament_capture_direct.py"
+                print(f"DEBUG - Using fallback script_path: {script_path}")
             
             # If script doesn't exist in /app/scripts, try to find it elsewhere
             if not os.path.exists(script_path):
@@ -251,20 +295,42 @@ class ParliamentTVCapture:
                 if os.path.exists(alt_script_path):
                     script_path = alt_script_path
                     print(f"DEBUG - Found script at: {script_path}")
+                else:
+                    print(f"ERROR - Could not find script at alternate location: {alt_script_path}")
+            
+            # Check if sys.executable is valid
+            print(f"DEBUG - sys.executable: {sys.executable}, exists: {os.path.exists(sys.executable)}")
             
             # Run the improved capture script
-            cmd = [
-                sys.executable,
-                script_path,
-                direct_stream,
-                "--capture-id", str(capture_id),
-                "--duration", str(duration),
-                "--temp-dir", str(self.temp_dir),
-                "--media-dir", str(self.media_dir)
-            ]
+            print("DEBUG - Building command")
+            try:
+                cmd = [
+                    sys.executable,
+                    script_path,
+                    direct_stream,
+                    "--capture-id", str(capture_id),
+                    "--duration", str(duration),
+                    "--temp-dir", str(self.temp_dir),
+                    "--media-dir", str(self.media_dir)
+                ]
+                print(f"DEBUG - Command built successfully: {' '.join(cmd)}")
+            except Exception as e:
+                print(f"ERROR - Failed to build command: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+                self.capture_callback(db_capture, None, f"Failed to build command: {str(e)}")
+                return
             
             print(f"Running capture command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                print(f"DEBUG - subprocess.run completed, returncode: {result.returncode}")
+            except Exception as e:
+                print(f"ERROR - Failed to run subprocess: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+                self.capture_callback(db_capture, None, f"Failed to run subprocess: {str(e)}")
+                return
             
             # Check if the capture was successful
             if result.returncode == 0:
@@ -289,7 +355,7 @@ class ParliamentTVCapture:
                 print(f"Command error: {result.stderr}")
                 self.capture_callback(db_capture, None, f"Capture failed: {result.stderr}")
         except Exception as e:
-            print(f"Error in capture process: {str(e)}")
+            print(f"Unexpected error in capture process: {str(e)}")
             import traceback
             print(traceback.format_exc())
             self.capture_callback(db_capture, None, f"Exception in capture process: {str(e)}")
@@ -366,7 +432,9 @@ class ParliamentTVCapture:
                 return {"success": True, "message": f"Capture {capture_id} marked as stopped in the database"}
                 
         except Exception as e:
-            logger.exception(f"Error stopping capture {capture_id}: {str(e)}")
+            print(f"Unexpected error stopping capture: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
             return {"success": False, "error": f"Error stopping capture: {str(e)}"}
 
     def get_active_captures(self) -> List[Dict]:
@@ -400,7 +468,9 @@ class ParliamentTVCapture:
             return captures
             
         except Exception as e:
-            logger.exception(f"Error getting active captures: {str(e)}")
+            print(f"Unexpected error getting active captures: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
             return []
 
     def extract_stream_url(self, url: str) -> Dict:
@@ -447,7 +517,9 @@ class ParliamentTVCapture:
                 return {}
                 
         except Exception as e:
-            logger.exception(f"Error extracting stream URL: {str(e)}")
+            print(f"Unexpected error extracting stream URL: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
             return {}
 
     def test_stream_url(self, url: str) -> Dict:
@@ -501,46 +573,63 @@ class ParliamentTVCapture:
             db.commit()
             
         except Exception as e:
-            logger.exception(f"Error logging capture message: {str(e)}")
+            print(f"Unexpected error logging capture message: {str(e)}")
+            import traceback
+            print(f"ERROR - Traceback: {traceback.format_exc()}")
 
-    def capture_callback(self, db_capture, output_file, error=None):
-        """
-        Callback function called when a capture is complete.
-        
-        Args:
-            db_capture: The capture database object
-            output_file: Path to the output file, or None if the capture failed
-            error: Error message if the capture failed
-        """
+    def capture_callback(self, db_capture, file_path, error_message=None):
+        """Callback function for when a capture is complete."""
         try:
-            # Get a database session
+            print(f"DEBUG - capture_callback called with db_capture.id={db_capture.id}, file_path={file_path}, error_message={error_message}")
+            
+            # Get a new session
             db = next(get_db())
             
-            # Get the capture from the database
+            # Get the capture session
             capture_id = db_capture.id
             db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
             
             if not db_capture:
-                print(f"Error: Capture {capture_id} not found in database")
+                print(f"Error: Capture session {capture_id} not found")
                 return
             
-            if error:
-                # Capture failed
-                db_capture.status = "failed"
-                db_capture.error_message = error
-                self.log_capture(db, capture_id, "error", error)
+            # Update the capture session
+            if error_message:
+                db_capture.status = "error"
+                db_capture.error_message = error_message
+                print(f"Error capturing stream: {error_message}")
+                
+                # Create a log entry for the error
+                log_entry = CaptureLog(
+                    capture_id=capture_id,
+                    message=f"Error: {error_message}",
+                    level="ERROR"
+                )
+                db.add(log_entry)
             else:
-                # Capture succeeded
                 db_capture.status = "completed"
-                db_capture.output_file = output_file
-                self.log_capture(db, capture_id, "info", f"Capture completed successfully, output file: {output_file}")
+                db_capture.file_path = file_path
+                print(f"Capture completed: {file_path}")
+                
+                # Create a log entry for the completion
+                log_entry = CaptureLog(
+                    capture_id=capture_id,
+                    message=f"Capture completed: {file_path}",
+                    level="INFO"
+                )
+                db.add(log_entry)
             
-            # Update the capture in the database
-            db_capture.completed_at = datetime.now()
+            # Remove the capture from the active_captures dictionary
+            if capture_id in self.active_captures:
+                del self.active_captures[capture_id]
+            
+            # Commit the changes
             db.commit()
             
         except Exception as e:
-            print(f"Error in capture_callback: {str(e)}")
+            print(f"Unexpected error in capture callback: {str(e)}")
+            import traceback
+            print(f"ERROR - Callback traceback: {traceback.format_exc()}")
             import traceback
             print(traceback.format_exc())
 
