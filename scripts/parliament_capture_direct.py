@@ -107,26 +107,38 @@ def check_command_exists(command):
         return False
 
 def extract_direct_stream_url(url):
-    """Extract the direct stream URL from a Parliament TV web page.
-    
-    Args:
-        url: URL of the Parliament TV event
-        
-    Returns:
-        Direct stream URL if successful, None otherwise
-    """
+    """Extract the direct stream URL using yt-dlp."""
     logger.info(f"Extracting direct stream URL from: {url}")
     
-    # Check if the URL is already a direct stream URL (ends with .m3u8)
-    if url.endswith('.m3u8'):
-        logger.info("URL appears to be a direct stream URL already")
-        return url
+    # Validate that the URL is a Parliament TV URL
+    if not url or not isinstance(url, str):
+        logger.error(f"Invalid URL provided: {url}")
+        return None
+        
+    # Strict validation for Parliament TV URLs
+    valid_domains = ["parliamentlive.tv", "parliament.tv"]
+    is_valid = False
     
-    # Use the extract_stream_url function to get the stream info
+    for domain in valid_domains:
+        if domain in url:
+            is_valid = True
+            break
+    
+    if not is_valid:
+        logger.error(f"URL does not appear to be a valid Parliament TV URL: {url}")
+        logger.error("Only URLs from parliamentlive.tv or parliament.tv are supported")
+        return None
+
     stream_info = extract_stream_url(url)
     
     if stream_info and 'direct_stream' in stream_info:
-        return stream_info['direct_stream']
+        # Check if direct_stream is a dictionary with video_url and audio_url
+        if isinstance(stream_info['direct_stream'], dict) and 'video_url' in stream_info['direct_stream'] and 'audio_url' in stream_info['direct_stream']:
+            logger.info("Found both video and audio URLs")
+            return stream_info['direct_stream']  # Return the dictionary with both URLs
+        else:
+            # Return just the direct stream URL
+            return stream_info['direct_stream']
     
     logger.error("Failed to extract direct stream URL")
     return None
@@ -150,7 +162,7 @@ def extract_stream_url(url, output_file=None):
     try:
         cmd = [
             sys.executable,
-            "scripts/extract_direct_stream.py",
+            "scripts/extract-url.py",
             url
         ]
         
