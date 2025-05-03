@@ -110,17 +110,50 @@ async def get_all_videos(
     
     return video_files
 
-@router.get("/stream/{filename}", response_model=None, response_class=FileResponse)
+@router.get("/stream/{filename}")
 async def stream_video(
     filename: str,
     token: str = None,
+    request: Request = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = None,
 ):
     """Stream a video file by filename.
     
-    Supports authentication via JWT token.
+    Supports authentication via JWT token or standard authentication.
     """
+    # Handle authentication - either via token or via current_user dependency
+    if current_user is None and token:
+        try:
+            # Validate token and get user
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            username: str = payload.get("sub")
+            if username is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            current_user = db.query(models.User).filter(models.User.email == username).first()
+            if current_user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        except JWTError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    elif current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
@@ -129,7 +162,7 @@ async def stream_video(
     
     # Construct the full path, ensuring we don't allow directory traversal
     # Strip any leading slashes or path components to ensure we stay within data_dir
-    safe_filename = filename.lstrip("/").replace("../", "").replace("..\\", "")
+    safe_filename = filename.lstrip("/").replace("../", "")
     
     # Search for the file in the data directory and its subdirectories
     found_files = glob.glob(os.path.join(data_dir, "**", safe_filename), recursive=True)
@@ -144,7 +177,11 @@ async def stream_video(
     video_path = found_files[0]
     
     # Return the file as a streaming response
-    return FileResponse(video_path, media_type="video/mp4")
+    return FileResponse(
+        path=video_path,
+        media_type="video/mp4",
+        filename=os.path.basename(video_path)
+    )
 
 
 @router.delete("/delete/{filename}")
