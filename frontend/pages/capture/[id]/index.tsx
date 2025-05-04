@@ -6,6 +6,7 @@ import MainLayout from '../../../components/layout/MainLayout';
 import { withAuth } from '../../../contexts/AuthContext';
 import { UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
+import AudioPlayer from '../../../components/AudioPlayer';
 
 interface CaptureSession {
   id: number;
@@ -308,7 +309,7 @@ const CaptureDetailPage: React.FC = () => {
     );
   }
   
-  if (isError || !capture) {
+  if (isError) {
     return (
       <MainLayout title="Capture Session | Parliament Video Clip Manager">
         <div className="page-container">
@@ -336,6 +337,16 @@ const CaptureDetailPage: React.FC = () => {
     );
   }
   
+  if (!capture) {
+    return (
+      <MainLayout title="Loading Capture | Parliament Video Clip Manager">
+        <div className="flex items-center justify-center h-screen">
+          <p className="text-xl">Loading capture details...</p>
+        </div>
+      </MainLayout>
+    );
+  }
+
   return (
     <MainLayout title={`${capture.title} | Capture Session | Parliament Video Clip Manager`}>
       <div className="page-container">
@@ -414,12 +425,15 @@ const CaptureDetailPage: React.FC = () => {
                     <p className="text-sm text-gray-500">Source URL</p>
                     <p className="text-sm text-gray-900 break-all">
                       <a href={capture.source_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
-                      
-                      <div>
-                        <dt className="text-sm font-medium text-gray-500">Scheduled End</dt>
-                        <dd className="mt-1 text-sm text-gray-900">{formatDate(capture.scheduled_end)}</dd>
-                      </div>
-                    </>
+                        {capture.source_url}
+                      </a>
+                    </p>
+                    
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Scheduled End</dt>
+                      <dd className="mt-1 text-sm text-gray-900">{formatDate(capture.scheduled_end)}</dd>
+                    </div>
+                  </div>
                   )}
                   
                   <div>
@@ -556,23 +570,13 @@ const CaptureDetailPage: React.FC = () => {
                           </button>
                           
                           {showAudioPlayer && (
-                            <div className="mt-2">
-                              <audio 
-                                ref={audioRef}
-                                controls 
-                                className="w-full" 
-                                src={`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}`}
-                                onError={(e) => {
-                                  console.error('Audio playback error:', e);
-                                  setAudioError('Failed to load audio. The audio file may not be available yet or there might be an issue with the server.');
-                                }}
-                              />
-                              {audioError && (
-                                <div className="mt-2 text-red-500 text-xs">{audioError}</div>
-                              )}
-                            </div>
+                            <AudioPlayer 
+                              audioUrl={`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}`}
+                              title="Capture Audio"
+                            />
                           )}
                         </div>
+                      )}
                       )}
                     </div>
                   </details>

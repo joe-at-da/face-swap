@@ -45,7 +45,7 @@ const AudioExtractor: React.FC<AudioExtractorProps> = ({ token, apiBaseUrl }) =>
       );
 
       // Create a URL for the audio blob
-      const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+      const audioBlob = new Blob([response.data as BlobPart], { type: 'audio/mpeg' });
       const url = URL.createObjectURL(audioBlob);
       setAudioUrl(url);
       toast.success('Audio extracted successfully');
