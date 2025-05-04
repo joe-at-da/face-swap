@@ -276,12 +276,37 @@ def stream_audio_from_video(filename: str, db: Session):
                 # Try to find the original Parliament TV URL for this video
                 # Extract capture ID from filename if possible
                 capture_id = None
-                if "_" in filename:
-                    parts = filename.split("_")
-                    for part in parts:
-                        if part.isdigit():
-                            capture_id = int(part)
-                            break
+                
+                # First, try to find the capture ID in the database by matching the filename
+                captures = db.query(models.CaptureSession).all()
+                for capture in captures:
+                    if capture.file_path and os.path.basename(capture.file_path) == filename:
+                        capture_id = capture.id
+                        print(f"DEBUG - stream_audio_from_video - Found capture ID from database: {capture_id}")
+                        break
+                
+                # If we couldn't find it in the database, try to extract it from the filename
+                if not capture_id and "_" in filename:
+                    # Try to extract capture ID from the filename
+                    # Format is typically capture_DATE_ID.mp4 or capture_DATE_TIME_ID.mp4
+                    try:
+                        # Split by underscore and remove the .mp4 extension from the last part
+                        parts = filename.replace('.mp4', '').split('_')
+                        
+                        # The capture ID is usually the last part that's a number
+                        # But we need to be careful not to confuse it with date/time parts
+                        if len(parts) >= 3 and parts[-1].isdigit() and len(parts[-1]) < 6:
+                            # If the last part is a short number, it's likely the ID
+                            capture_id = int(parts[-1])
+                            print(f"DEBUG - stream_audio_from_video - Extracted capture ID from filename: {capture_id}")
+                    except Exception as e:
+                        print(f"ERROR - stream_audio_from_video - Error extracting capture ID from filename: {str(e)}")
+                        # Fall back to looking for any numeric part
+                        for part in parts:
+                            if part.isdigit() and len(part) < 6:  # Avoid date/time parts which are longer
+                                capture_id = int(part)
+                                print(f"DEBUG - stream_audio_from_video - Found potential capture ID: {capture_id}")
+                                break
                 
                 if capture_id:
                     print(f"DEBUG - stream_audio_from_video - Found capture ID: {capture_id}")

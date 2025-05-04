@@ -123,13 +123,12 @@ def extract_direct_stream_url(url):
         format_result = subprocess.run(format_cmd, capture_output=True, text=True)
         logger.info(f"Available formats:\n{format_result.stdout}")
         
-        # Run yt-dlp to get the direct stream URL with best format that includes audio
+        # Get the best video and audio formats separately
         cmd = [
             "yt-dlp",
             "--no-check-certificate",
             "--dump-json",
             "--no-playlist",
-            "--format", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
             url
         ]
         
@@ -139,37 +138,82 @@ def extract_direct_stream_url(url):
         try:
             info = json.loads(result.stdout)
             
-            # Check if the URL is directly available
-            direct_url = info.get('url')
+            # Initialize variables for video and audio URLs
+            video_url = None
+            audio_url = None
+            combined_url = None
+            has_audio = False
             
-            if not direct_url:
-                # Try to get the manifest URL
-                direct_url = info.get('manifest_url')
-            
-            if not direct_url:
-                # Try to get the HLS URL
-                formats = info.get('formats', [])
-                for format_info in formats:
-                    if format_info.get('protocol') == 'm3u8_native':
-                        direct_url = format_info.get('url')
-                        break
-            
-            if direct_url:
-                logger.info(f"Found direct stream URL: {direct_url}")
-                
-                # Check if the stream has audio
-                has_audio = False
-                if info.get('requested_formats'):
-                    for format_info in info.get('requested_formats', []):
-                        if format_info.get('acodec') != 'none':
+            # Check if we have separate formats for video and audio
+            if info.get('requested_formats'):
+                logger.info("Found separate video and audio formats")
+                for format_info in info.get('requested_formats', []):
+                    if format_info.get('vcodec') != 'none' and format_info.get('acodec') == 'none':
+                        # This is a video-only format
+                        video_url = format_info.get('url')
+                        logger.info(f"Found video URL: {video_url}")
+                    elif format_info.get('acodec') != 'none':
+                        # This has audio
+                        if format_info.get('vcodec') == 'none':
+                            # Audio-only format
+                            audio_url = format_info.get('url')
+                            logger.info(f"Found audio-only URL: {audio_url}")
                             has_audio = True
-                            break
-                else:
-                    # Single format
-                    has_audio = info.get('acodec') != 'none'
+                        else:
+                            # Combined format with both video and audio
+                            combined_url = format_info.get('url')
+                            logger.info(f"Found combined audio/video URL: {combined_url}")
+                            has_audio = True
+            else:
+                # Single format
+                combined_url = info.get('url')
+                if not combined_url:
+                    combined_url = info.get('manifest_url')
                 
-                logger.info(f"Stream has audio: {has_audio}")
-                return direct_url
+                if combined_url:
+                    logger.info(f"Found single format URL: {combined_url}")
+                    has_audio = info.get('acodec') != 'none'
+                    logger.info(f"Single format has audio: {has_audio}")
+                
+                # If we don't have a combined URL yet, try to find one in the formats list
+                if not combined_url:
+                    formats = info.get('formats', [])
+                    for format_info in formats:
+                        if format_info.get('protocol') == 'm3u8_native':
+                            if format_info.get('acodec') != 'none' and format_info.get('vcodec') != 'none':
+                                combined_url = format_info.get('url')
+                                has_audio = True
+                                logger.info(f"Found HLS URL with audio: {combined_url}")
+                                break
+                            elif format_info.get('vcodec') != 'none' and not video_url:
+                                video_url = format_info.get('url')
+                                logger.info(f"Found HLS video URL: {video_url}")
+                            elif format_info.get('acodec') != 'none' and format_info.get('vcodec') == 'none' and not audio_url:
+                                audio_url = format_info.get('url')
+                                has_audio = True
+                                logger.info(f"Found HLS audio URL: {audio_url}")
+            
+            # Determine what to return based on what we found
+            if combined_url and has_audio:
+                # We have a single URL with both video and audio
+                logger.info(f"Returning combined URL with audio: {combined_url}")
+                return combined_url
+            elif video_url and audio_url:
+                # We have separate URLs for video and audio
+                logger.info(f"Returning separate video and audio URLs")
+                return {
+                    "video_url": video_url,
+                    "audio_url": audio_url,
+                    "original_url": url
+                }
+            elif combined_url:
+                # We have a combined URL but it might not have audio
+                logger.info(f"Returning combined URL (audio status: {has_audio}): {combined_url}")
+                return combined_url
+            elif video_url:
+                # We only have a video URL
+                logger.info(f"Returning video-only URL: {video_url}")
+                return video_url
             else:
                 logger.error("No direct stream URL found in yt-dlp output")
                 # For testing, return a dummy URL
@@ -257,9 +301,9 @@ def main():
     args = parser.parse_args()
     
     # Extract the direct stream URL
-    direct_url = extract_direct_stream_url(args.url)
+    stream_info = extract_direct_stream_url(args.url)
     
-    if not direct_url:
+    if not stream_info:
         logger.error("Failed to extract direct stream URL")
         return 1
     
@@ -268,10 +312,22 @@ def main():
     time_marker = extract_time_marker(args.url)
     
     # Create the result object
-    result = {
-        "direct_stream": direct_url,
-        "event_id": event_id
-    }
+    result = {}
+    
+    # Handle different return types from extract_direct_stream_url
+    if isinstance(stream_info, dict) and 'video_url' in stream_info and 'audio_url' in stream_info:
+        # We have separate video and audio URLs
+        result["direct_stream"] = {
+            "video_url": stream_info["video_url"],
+            "audio_url": stream_info["audio_url"],
+            "original_url": args.url
+        }
+    else:
+        # We have a single URL
+        result["direct_stream"] = stream_info
+    
+    result["event_id"] = event_id
+    result["original_url"] = args.url
     
     if time_marker:
         result["time_marker"] = {
