@@ -36,7 +36,9 @@ const ParliamentTVVideoDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deleteInProgress, setDeleteInProgress] = useState(false);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const videoUrl = video ? `${API_BASE_URL}/parliament-tv/${video.id}/stream` : '';
+  const audioUrl = video ? `${API_BASE_URL}/videos/static/audio/capture_${video.id.toString().padStart(4, '0')}.audio.mp3` : '';
 
   useEffect(() => {
     if (id && token) {
@@ -237,8 +239,36 @@ const ParliamentTVVideoDetail: React.FC = () => {
                 Your browser does not support the video tag.
               </video>
             </div>
+            
+            {/* Audio Player Section */}
+            <div className="mt-6">
+              <h4 className="text-lg font-medium text-gray-900 mb-2">Audio Track</h4>
+              <button
+                onClick={() => setShowAudioPlayer(!showAudioPlayer)}
+                className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-colors mb-2"
+              >
+                {showAudioPlayer ? 'Hide Audio Player' : 'Show Audio Player'}
+              </button>
+              
+              {showAudioPlayer && (
+                <div className="mt-2">
+                  <audio 
+                    controls 
+                    className="w-full" 
+                    src={audioUrl}
+                  >
+                    Your browser does not support the audio element.
+                  </audio>
+                  <div className="mt-2 text-xs text-gray-500">
+                    <p>Audio URL: {audioUrl}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            
             <div className="mt-4 text-sm text-gray-500">
-              <p>Note: If the video doesn't play, it may be in a format not supported by your browser or the file may not be accessible.</p>
+              <p>Note: If the video or audio doesn't play, it may be in a format not supported by your browser or the file may not be accessible.</p>
+              <p>For best results, play both the video and audio simultaneously.</p>
             </div>
           </div>
         </div>

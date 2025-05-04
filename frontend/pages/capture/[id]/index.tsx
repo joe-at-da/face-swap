@@ -38,6 +38,9 @@ const CaptureDetailPage = () => {
   const queryClient = useQueryClient();
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [audioFileExists, setAudioFileExists] = useState(false);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [syncedPlayback, setSyncedPlayback] = useState(false);
   
   // Always assume audio exists and use the ID-based URL
   useEffect(() => {
@@ -164,9 +167,37 @@ const CaptureDetailPage = () => {
                     controls 
                     className="w-full rounded" 
                     src={`${API_BASE_URL}/parliament-tv/${capture.id}/stream`}
+                    ref={(el) => setVideoElement(el)}
+                    onPlay={() => {
+                      if (syncedPlayback && audioElement) {
+                        audioElement.currentTime = videoElement?.currentTime || 0;
+                        audioElement.play();
+                      }
+                    }}
+                    onPause={() => {
+                      if (syncedPlayback && audioElement) {
+                        audioElement.pause();
+                      }
+                    }}
+                    onSeeked={() => {
+                      if (syncedPlayback && audioElement) {
+                        audioElement.currentTime = videoElement?.currentTime || 0;
+                      }
+                    }}
                   >
                     Your browser does not support the video tag.
                   </video>
+                  <div className="mt-2 text-xs text-gray-500">
+                    <label className="flex items-center">
+                      <input 
+                        type="checkbox" 
+                        checked={syncedPlayback} 
+                        onChange={(e) => setSyncedPlayback(e.target.checked)} 
+                        className="mr-2"
+                      />
+                      Synchronize audio and video playback
+                    </label>
+                  </div>
                 </div>
               )}
               
@@ -183,16 +214,34 @@ const CaptureDetailPage = () => {
                     >
                       {showAudioPlayer ? 'Hide Audio Player' : 'Show Audio Player'}
                     </button>
-                    
-                    {showAudioPlayer && (
+                                        {showAudioPlayer && (
                       <div>
-                        <AudioPlayer 
-                          audioUrl={`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}
-                          title="Capture Audio"
-                        />
-                        
-                        {/* Direct audio file links for testing */}
+                        <audio 
+                          controls 
+                          className="w-full" 
+                          src={`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}
+                          ref={(el) => setAudioElement(el)}
+                          onPlay={() => {
+                            if (syncedPlayback && videoElement) {
+                              videoElement.currentTime = audioElement?.currentTime || 0;
+                              videoElement.play();
+                            }
+                          }}
+                          onPause={() => {
+                            if (syncedPlayback && videoElement) {
+                              videoElement.pause();
+                            }
+                          }}
+                          onSeeked={() => {
+                            if (syncedPlayback && videoElement) {
+                              videoElement.currentTime = audioElement?.currentTime || 0;
+                            }
+                          }}
+                        >
+                          Your browser does not support the audio element.
+                        </audio>
                         <div className="mt-2 text-xs text-gray-500">
+                          <p>Audio URL: {`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
                           <p>Try alternative audio sources:</p>
                           <ul className="list-disc pl-5 mt-1">
                             {capture.audio_file_path && (
@@ -257,10 +306,9 @@ const CaptureDetailPage = () => {
                   <summary className="cursor-pointer font-semibold">Debug Information</summary>
                   <div className="mt-2 p-3 bg-gray-100 rounded">
                     <h4 className="font-semibold mb-2">Audio Information</h4>
-                    <p>Audio File Path: {capture.audio_file_path || 'Not available'}</p>
-                    <p>Audio File Name: {capture.audio_file_path ? capture.audio_file_path.split('/').pop() : 'Not available'}</p>
-                    <p>Audio Source URL: {capture.audio_file_path ? 
-                      `${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}` : 'Not available'}</p>
+                    <p>Audio File Path: {`/app/data/temp/audio_extracts/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
+                    <p>Audio File Name: {`capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
+                    <p>Audio Source URL: {`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
                     
                     <h4 className="font-semibold mt-3 mb-2">Video Information</h4>
                     <p>Video File Path: {capture.file_path || 'Not available'}</p>
@@ -273,10 +321,14 @@ const CaptureDetailPage = () => {
                     <p>Created At: {new Date(capture.created_at).toLocaleString()}</p>
                     <p>Metadata: {JSON.stringify(capture.metadata || {}, null, 2)}</p>
                     
-                    <h4 className="font-semibold mt-3 mb-2">Alternative Audio Paths</h4>
-                    <p>ID-based path: capture_{capture.id.toString().padStart(4, '0')}.audio.mp3</p>
-                    <p>Full ID-based URL: {`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
-                    <p>Sample Audio URL: {`${API_BASE_URL}/videos/static/audio/sample1.mp3`}</p>
+                    {capture.audio_file_path && (
+                      <>
+                        <h4 className="font-semibold mt-3 mb-2">Legacy Audio Information</h4>
+                        <p>Legacy path: {capture.audio_file_path}</p>
+                        <p>Legacy filename: {capture.audio_file_path.split('/').pop()}</p>
+                        <p>Legacy URL: {`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}`}</p>
+                      </>
+                    )}
                   </div>
                 </details>
               </div>
