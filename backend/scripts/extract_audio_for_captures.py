@@ -24,14 +24,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import database models
 try:
     # Try direct imports first (for running inside Docker)
-    from db.session import SessionLocal
-    from models import CaptureSession
-    from core.config import settings
-except ImportError:
-    # Fall back to backend prefixed imports (for running outside Docker)
     from backend.db.session import SessionLocal
-    from backend.models import CaptureSession
+    from backend.db.models.capture import CaptureSession
     from backend.core.config import settings
+except ImportError:
+    # Fall back to absolute imports (for running outside Docker)
+    from db.session import SessionLocal
+    from db.models.capture import CaptureSession
+    from core.config import settings
 
 # Configure logging
 logging.basicConfig(
@@ -136,9 +136,10 @@ def process_captures():
     logger.info("Processing captures")
     
     # Create audio directory if it doesn't exist
-    audio_dir = os.path.join(settings.DATA_DIR, "temp", "audio_extracts")
+    audio_dir = "/app/data/temp/audio_extracts"
     if not os.path.exists(audio_dir):
         os.makedirs(audio_dir, exist_ok=True)
+    logger.info(f"Created audio directory: {audio_dir}")
     
     # Create a database session
     db = SessionLocal()

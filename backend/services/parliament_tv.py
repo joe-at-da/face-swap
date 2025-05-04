@@ -394,6 +394,12 @@ class ParliamentTVCapture:
             # Create directories if they don't exist
             temp_dir_str = str(self.temp_dir)
             media_dir_str = str(self.media_dir)
+            
+            # Create audio_extracts directory in temp_dir
+            audio_extracts_dir = os.path.join(temp_dir_str, "audio_extracts")
+            os.makedirs(audio_extracts_dir, exist_ok=True)
+            print(f"DEBUG - run_capture_process - Created audio_extracts directory: {audio_extracts_dir}")
+            
             scripts_dir_str = str(self.scripts_dir)
             
             print(f"DEBUG - run_capture_process - Creating temp_dir: {temp_dir_str}")
@@ -519,6 +525,9 @@ class ParliamentTVCapture:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_file = os.path.join(temp_dir_str, f"parliament_capture_{capture_id}_{timestamp}.mp4")
                 
+                # Define the audio output file path for later use in capture_callback
+                audio_output_file = os.path.join(temp_dir_str, "audio_extracts", f"capture_{capture_id}_audio.mp3")
+                
                 cmd = [
                     python_executable,
                     script_path,
@@ -622,91 +631,143 @@ class ParliamentTVCapture:
             if error:
                 print(f"DEBUG - capture_callback - Capture {capture_id} failed with error: {error}")
                 db_capture.status = "failed"
-                db_capture.error_message = error
+                db_capture.error = error
+                db_capture.stopped_at = datetime.now()
                 self.log_capture(db, capture_id, "error", f"Capture failed: {error}")
-            elif output_file:
-                print(f"DEBUG - capture_callback - Capture {capture_id} completed successfully with output file: {output_file}")
+            else:
+                print(f"DEBUG - capture_callback - Capture {capture_id} completed successfully")
                 db_capture.status = "completed"
-                db_capture.file_path = output_file
-                db_capture.end_time = datetime.now()
+                db_capture.stopped_at = datetime.now()
+                db_capture.output_file = output_file
+                self.log_capture(db, capture_id, "info", "Capture completed successfully")
                 
-                # Check for audio file - first try the ID-based path in audio_extracts directory
-                capture_id_str = str(capture_id).zfill(4)
-                audio_extracts_dir = os.path.join(self.temp_dir, "audio_extracts")
-                id_based_audio_path = os.path.join(audio_extracts_dir, f"capture_{capture_id_str}.audio.mp3")
-                
-                # Make sure the audio_extracts directory exists
-                os.makedirs(audio_extracts_dir, exist_ok=True)
-                
-                # Check if the audio file exists in the ID-based path
-                if os.path.exists(id_based_audio_path):
-                    print(f"DEBUG - capture_callback - Found ID-based audio file: {id_based_audio_path}")
-                    # Check if the model has the audio_file_path attribute
-                    if hasattr(db_capture, 'audio_file_path'):
-                        db_capture.audio_file_path = id_based_audio_path
-                        self.log_capture(db, capture_id, "info", f"Audio file saved: {id_based_audio_path}")
-                    else:
-                        print(f"WARNING - capture_callback - CaptureSession model doesn't have audio_file_path attribute")
-                        # Try to store it in metadata
-                        if not hasattr(db_capture, 'metadata') or db_capture.metadata is None:
-                            db_capture.metadata = {}
-                        if isinstance(db_capture.metadata, dict):
-                            db_capture.metadata['audio_file_path'] = id_based_audio_path
-                            self.log_capture(db, capture_id, "info", f"Audio file path stored in metadata: {id_based_audio_path}")
-                else:
-                    # Try the old path format
+                # Check if the output file exists
+                if output_file and os.path.exists(output_file):
+                    print(f"DEBUG - capture_callback - Output file exists: {output_file}")
+                    
+                    # Create an ID-based audio file path
                     audio_file_path = f"{output_file}.audio.mp3"
+                    print(f"DEBUG - capture_callback - Checking for audio file: {audio_file_path}")
+                    
+                    # Define Docker container paths
+                    docker_audio_extracts_dir = "/app/data/temp/audio_extracts"
+                    
+                    # Ensure the audio extracts directory exists in the Docker container
+                    os.makedirs(docker_audio_extracts_dir, exist_ok=True)
+                    print(f"DEBUG - capture_callback - Created Docker audio extracts directory: {docker_audio_extracts_dir}")
+                    
+                    # Create an ID-based audio file name for Docker container
+                    id_based_audio_path = os.path.join(docker_audio_extracts_dir, f"capture_{capture_id}_audio.mp3")
+                    print(f"DEBUG - capture_callback - Docker ID-based audio path: {id_based_audio_path}")
+                    
+                    # Check if the audio file exists
                     if os.path.exists(audio_file_path):
-                        print(f"DEBUG - capture_callback - Found audio file with old format: {audio_file_path}")
-                        # Move the audio file to the ID-based path
+                        print(f"DEBUG - capture_callback - Audio file exists: {audio_file_path}")
+                        
+                        # Copy the audio file to the ID-based path in Docker container
                         try:
                             shutil.copy2(audio_file_path, id_based_audio_path)
-                            print(f"DEBUG - capture_callback - Copied audio file to ID-based path: {id_based_audio_path}")
+                            print(f"DEBUG - capture_callback - Copied audio file to Docker ID-based path: {id_based_audio_path}")
+                            
+                            # Save the audio file path in the database
+                            print(f"DEBUG - capture_callback - Saving audio file path: {id_based_audio_path}")
+                            # Check if the model has the audio_file_path attribute
                             if hasattr(db_capture, 'audio_file_path'):
                                 db_capture.audio_file_path = id_based_audio_path
-                                self.log_capture(db, capture_id, "info", f"Audio file copied to ID-based path: {id_based_audio_path}")
+                                self.log_capture(db, db_capture.id, "info", f"Audio file saved: {id_based_audio_path}")
+                            else:
+                                print(f"WARNING - capture_callback - CaptureSession model does not have audio_file_path attribute")
                         except Exception as e:
                             print(f"ERROR - capture_callback - Failed to copy audio file: {str(e)}")
-                            if hasattr(db_capture, 'audio_file_path'):
-                                db_capture.audio_file_path = audio_file_path
-                                self.log_capture(db, capture_id, "info", f"Using original audio file path: {audio_file_path}")
                     else:
-                        print(f"DEBUG - capture_callback - No audio file found at standard paths")
-                        # Try alternative naming patterns
+                        print(f"DEBUG - capture_callback - Audio file not found: {audio_file_path}")
+                        
+                        # Try to find the audio file with alternative patterns
+                        print(f"DEBUG - capture_callback - Trying alternative patterns for audio file")
                         alt_patterns = [
-                            f"{os.path.splitext(output_file)[0]}.audio.mp3",
-                            f"audio_{os.path.basename(output_file)}",
+                            os.path.join(os.path.dirname(output_file), f"capture_{capture_id}_audio.mp3"),
+                            os.path.join(os.path.dirname(output_file), f"parliament_capture_{capture_id}_*.mp3"),
+                            f"{os.path.splitext(output_file)[0]}.mp3",
                             f"audio_{os.path.splitext(os.path.basename(output_file))[0]}.mp3"
                         ]
+                        
+                        # Also check in the Docker container's temp directory
+                        docker_temp_dir = "/app/data/temp"
+                        alt_patterns.extend([
+                            os.path.join(docker_temp_dir, f"capture_{capture_id}_audio.mp3"),
+                            os.path.join(docker_temp_dir, f"parliament_capture_{capture_id}_*.mp3")
+                        ])
+                        
                         for pattern in alt_patterns:
+                            # Handle glob patterns
+                            if '*' in pattern:
+                                import glob
+                                matching_files = glob.glob(pattern)
+                                if matching_files:
+                                    pattern = matching_files[0]  # Use the first match
+                                    print(f"DEBUG - capture_callback - Found matching file with glob pattern: {pattern}")
+                            
                             if os.path.exists(pattern):
                                 print(f"DEBUG - capture_callback - Found audio file with alternative pattern: {pattern}")
                                 try:
                                     shutil.copy2(pattern, id_based_audio_path)
-                                    print(f"DEBUG - capture_callback - Copied audio file to ID-based path: {id_based_audio_path}")
+                                    print(f"DEBUG - capture_callback - Copied audio file to Docker ID-based path: {id_based_audio_path}")
+                                    
+                                    # Save the audio file path in the database
+                                    print(f"DEBUG - capture_callback - Saving audio file path: {id_based_audio_path}")
                                     if hasattr(db_capture, 'audio_file_path'):
                                         db_capture.audio_file_path = id_based_audio_path
-                                        self.log_capture(db, capture_id, "info", f"Audio file copied to ID-based path: {id_based_audio_path}")
+                                        self.log_capture(db, db_capture.id, "info", f"Audio file saved: {id_based_audio_path}")
+                                    else:
+                                        print(f"WARNING - capture_callback - CaptureSession model does not have audio_file_path attribute")
                                     break
                                 except Exception as e:
                                     print(f"ERROR - capture_callback - Failed to copy audio file: {str(e)}")
+                        else:
+                            # If no audio file was found, try to extract audio from the video file
+                            print(f"DEBUG - capture_callback - Attempting to extract audio from video file: {output_file}")
+                            try:
+                                # Make sure the audio_extracts directory exists
+                                audio_extracts_dir = "/app/data/temp/audio_extracts"
+                                os.makedirs(audio_extracts_dir, exist_ok=True)
+                                print(f"DEBUG - capture_callback - Created audio extracts directory: {audio_extracts_dir}")
+                                
+                                # Create an ID-based audio file name
+                                id_based_audio_path = os.path.join(audio_extracts_dir, f"capture_{capture_id}_audio.mp3")
+                                print(f"DEBUG - capture_callback - ID-based audio path: {id_based_audio_path}")
+                                
+                                # Extract audio using ffmpeg
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", output_file, "-vn", "-acodec", "libmp3lame", "-ab", "192k",
+                                    "-ar", "44100", id_based_audio_path
+                                ]
+                                print(f"DEBUG - capture_callback - Running ffmpeg command: {' '.join(cmd)}")
+                                result = subprocess.run(cmd, capture_output=True, text=True)
+                                
+                                if result.returncode == 0 and os.path.exists(id_based_audio_path):
+                                    print(f"DEBUG - capture_callback - Successfully extracted audio to: {id_based_audio_path}")
+                                    # Save the audio file path in the database
                                     if hasattr(db_capture, 'audio_file_path'):
-                                        db_capture.audio_file_path = pattern
-                                        self.log_capture(db, capture_id, "info", f"Using original audio file path: {pattern}")
-                                    break
-                self.log_capture(db, capture_id, "info", f"Capture completed successfully with output file: {output_file}")
-            else:
-                print(f"DEBUG - capture_callback - Capture {capture_id} completed but no output file was provided")
-                db_capture.status = "failed"
-                db_capture.error = "No output file was provided"
-                self.log_capture(db, capture_id, "error", "Capture completed but no output file was provided")
-            
+                                        db_capture.audio_file_path = id_based_audio_path
+                                        self.log_capture(db, db_capture.id, "info", f"Audio extracted from video: {id_based_audio_path}")
+                                    else:
+                                        print(f"WARNING - capture_callback - CaptureSession model does not have audio_file_path attribute")
+                                else:
+                                    print(f"WARNING - capture_callback - Failed to extract audio from video: {result.stderr}")
+                                    self.log_capture(db, db_capture.id, "warning", "Failed to extract audio from video")
+                            except Exception as e:
+                                print(f"ERROR - capture_callback - Failed to extract audio from video: {str(e)}")
+                                self.log_capture(db, db_capture.id, "warning", f"Failed to extract audio: {str(e)}")
+                else:
+                    print(f"WARNING - capture_callback - Output file does not exist: {output_file}")
+                    self.log_capture(db, db_capture.id, "warning", "Output file does not exist")
+        
             # Commit the changes to the database
             db.commit()
             print(f"DEBUG - capture_callback - Database updated for capture {capture_id}")
-            
+        
         except Exception as e:
-            print(f"ERROR - capture_callback - Unexpected error: {str(e)}")
+            print(f"ERROR - capture_callback - Failed to update database: {str(e)}")
             import traceback
             print(f"ERROR - capture_callback - Traceback: {traceback.format_exc()}")
     
