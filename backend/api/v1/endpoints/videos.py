@@ -211,23 +211,21 @@ def stream_video_file(filename: str, db: Session):
     # Return the file as a streaming response
     return FileResponse(
         path=video_path,
-        media_type="video/mp4",
-        filename=os.path.basename(video_path)
+        media_type="video/mp4"
     )
 
-
 def stream_audio_from_video(filename: str, db: Session):
-    """Helper function to extract and stream just the audio from a video file."""
+    """Helper function to find and stream the audio file associated with a video."""
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
     
-    print(f"DEBUG - stream_audio_from_video - Extracting audio from video: {filename}")
+    print(f"DEBUG - stream_audio_from_video - Looking for audio file for video: {filename}")
     print(f"DEBUG - stream_audio_from_video - Data directory: {data_dir}")
     
     # Construct the full path, ensuring we don't allow directory traversal
     safe_filename = filename.lstrip("/").replace("../", "")
     
-    # Search for the file in the data directory and its subdirectories
+    # Search for the video file in the data directory and its subdirectories
     found_files = glob.glob(os.path.join(data_dir, "**", safe_filename), recursive=True)
     
     if not found_files:
@@ -241,142 +239,120 @@ def stream_audio_from_video(filename: str, db: Session):
     video_path = found_files[0]
     print(f"DEBUG - stream_audio_from_video - Found video file: {video_path}")
     
-    # Create a temporary directory for the extracted audio if it doesn't exist
-    temp_dir = os.path.join(data_dir, "temp", "audio_extracts")
-    os.makedirs(temp_dir, exist_ok=True)
-    print(f"DEBUG - stream_audio_from_video - Audio extract directory: {temp_dir}")
+    # Get the video file's directory and base name
+    video_dir = os.path.dirname(video_path)
+    video_basename = os.path.basename(video_path)
+    video_name_without_ext = os.path.splitext(video_basename)[0]
     
-    # Define the output audio file path
-    audio_filename = f"audio_{os.path.basename(video_path).replace('.mp4', '.mp3')}"
-    audio_path = os.path.join(temp_dir, audio_filename)
-    print(f"DEBUG - stream_audio_from_video - Audio output path: {audio_path}")
+    # Define possible audio file patterns
+    audio_patterns = [
+        f"{video_name_without_ext}.audio.mp3",  # capture_20250503_210552.audio.mp3
+        f"{video_name_without_ext}.audio.*",    # Any extension
+        f"{video_name_without_ext}*.audio.*",  # Any suffix and extension
+        f"audio_{video_basename}",             # audio_capture_20250503_210552.mp4
+        f"audio_{video_name_without_ext}.*"    # audio_capture_20250503_210552.* (any extension)
+    ]
     
-    # Check if we already have the extracted audio file
-    if os.path.exists(audio_path):
-        print(f"DEBUG - stream_audio_from_video - Audio file already exists: {audio_path}")
-    else:
-        print(f"DEBUG - stream_audio_from_video - Extracting audio from video...")
-        # First, check if the video has an audio stream
-        probe_cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", 
-            "stream=codec_type", "-of", "json", video_path
-        ]
-        
+    # Look for audio files in the same directory as the video
+    audio_path = None
+    for pattern in audio_patterns:
+        matching_files = glob.glob(os.path.join(video_dir, pattern))
+        if matching_files:
+            audio_path = matching_files[0]
+            print(f"DEBUG - stream_audio_from_video - Found audio file in video directory: {audio_path}")
+            break
+    
+    # If not found in the video directory, look in the temp/audio_extracts directory
+    if not audio_path:
+        audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+        for pattern in audio_patterns:
+            matching_files = glob.glob(os.path.join(audio_extracts_dir, pattern))
+            if matching_files:
+                audio_path = matching_files[0]
+                print(f"DEBUG - stream_audio_from_video - Found audio file in audio extracts directory: {audio_path}")
+                break
+    
+    # If still not found, look for any audio file with a similar name pattern anywhere in the data directory
+    if not audio_path:
+        for pattern in audio_patterns:
+            matching_files = glob.glob(os.path.join(data_dir, "**", pattern), recursive=True)
+            if matching_files:
+                audio_path = matching_files[0]
+                print(f"DEBUG - stream_audio_from_video - Found audio file elsewhere: {audio_path}")
+                break
+    
+    # If we found an audio file, return it
+    if audio_path and os.path.exists(audio_path):
+        print(f"DEBUG - stream_audio_from_video - Streaming existing audio file: {audio_path}")
+        audio_filename = os.path.basename(audio_path)
+        return FileResponse(
+            path=audio_path,
+            media_type="audio/mpeg",
+            filename=audio_filename
+        )
+    
+    # If no audio file found, check the CaptureSession record
+    print("DEBUG - stream_audio_from_video - No audio file found by pattern matching. Checking database...")
+    
+    # Try to find the capture ID from the filename
+    capture_id = None
+    
+    # First, try to find the capture ID in the database by matching the filename
+    captures = db.query(models.CaptureSession).all()
+    for capture in captures:
+        if capture.file_path and os.path.basename(capture.file_path) == filename:
+            capture_id = capture.id
+            print(f"DEBUG - stream_audio_from_video - Found capture ID from database: {capture_id}")
+            break
+    
+    # If we couldn't find it in the database, try to extract it from the filename
+    if not capture_id and "_" in filename:
         try:
-            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-            print(f"DEBUG - stream_audio_from_video - ffprobe result: {probe_result.stdout}")
+            # Split by underscore and remove the .mp4 extension from the last part
+            parts = filename.replace('.mp4', '').split('_')
             
-            import json
-            probe_data = json.loads(probe_result.stdout)
-            has_audio = len(probe_data.get("streams", [])) > 0
+            # The capture ID is usually the last part that's a number
+            # But we need to be careful not to confuse it with date/time parts
+            if len(parts) >= 3 and parts[-1].isdigit() and len(parts[-1]) < 6:
+                # If the last part is a short number, it's likely the ID
+                capture_id = int(parts[-1])
+                print(f"DEBUG - stream_audio_from_video - Extracted capture ID from filename: {capture_id}")
             
-            if not has_audio:
-                print(f"ERROR - stream_audio_from_video - No audio stream found in video: {video_path}")
+            # Now that we have a capture ID, look up the capture session
+            if capture_id:
+                capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
                 
-                # Try to find the original Parliament TV URL for this video
-                # Extract capture ID from filename if possible
-                capture_id = None
-                
-                # First, try to find the capture ID in the database by matching the filename
-                captures = db.query(models.CaptureSession).all()
-                for capture in captures:
-                    if capture.file_path and os.path.basename(capture.file_path) == filename:
-                        capture_id = capture.id
-                        print(f"DEBUG - stream_audio_from_video - Found capture ID from database: {capture_id}")
-                        break
-                
-                # If we couldn't find it in the database, try to extract it from the filename
-                if not capture_id and "_" in filename:
-                    # Try to extract capture ID from the filename
-                    # Format is typically capture_DATE_ID.mp4 or capture_DATE_TIME_ID.mp4
-                    try:
-                        # Split by underscore and remove the .mp4 extension from the last part
-                        parts = filename.replace('.mp4', '').split('_')
+                if capture:
+                    print(f"DEBUG - stream_audio_from_video - Found capture session with ID: {capture_id}")
+                    
+                    # Check if the capture has an audio_file_path
+                    if hasattr(capture, 'audio_file_path') and capture.audio_file_path:
+                        audio_path = capture.audio_file_path
+                        print(f"DEBUG - stream_audio_from_video - Using audio_file_path from capture: {audio_path}")
                         
-                        # The capture ID is usually the last part that's a number
-                        # But we need to be careful not to confuse it with date/time parts
-                        if len(parts) >= 3 and parts[-1].isdigit() and len(parts[-1]) < 6:
-                            # If the last part is a short number, it's likely the ID
-                            capture_id = int(parts[-1])
-                            print(f"DEBUG - stream_audio_from_video - Extracted capture ID from filename: {capture_id}")
-                    except Exception as e:
-                        print(f"ERROR - stream_audio_from_video - Error extracting capture ID from filename: {str(e)}")
-                        # Fall back to looking for any numeric part
-                        for part in parts:
-                            if part.isdigit() and len(part) < 6:  # Avoid date/time parts which are longer
-                                capture_id = int(part)
-                                print(f"DEBUG - stream_audio_from_video - Found potential capture ID: {capture_id}")
-                                break
+                        # Verify the file exists
+                        if os.path.exists(audio_path):
+                            print(f"DEBUG - stream_audio_from_video - Audio file exists, streaming it")
+                            audio_filename = os.path.basename(audio_path)
+                            return FileResponse(
+                                path=audio_path,
+                                media_type="audio/mpeg",
+                                filename=audio_filename
+                            )
+                        else:
+                            print(f"WARNING - stream_audio_from_video - Audio file in database doesn't exist: {audio_path}")
+            
+            # If we still don't have a valid audio path, create one in the temp directory
+            if not audio_path or not os.path.exists(audio_path):
+                # Create a directory for audio extracts if it doesn't exist
+                audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+                os.makedirs(audio_extracts_dir, exist_ok=True)
                 
-                if capture_id:
-                    print(f"DEBUG - stream_audio_from_video - Found capture ID: {capture_id}")
-                    # Look up the capture in the database
-                    capture = db.query(models.CaptureSession).filter(
-                        models.CaptureSession.id == capture_id
-                    ).first()
-                    
-                    if capture and capture.url:
-                        print(f"DEBUG - stream_audio_from_video - Found original URL: {capture.url}")
-                        # Try to extract audio from the original URL
-                        try:
-                            # Initialize the Parliament TV capture service
-                            from backend.services.parliament_tv import ParliamentTVCapture
-                            parliament_tv = ParliamentTVCapture()
-                            
-                            # Extract the stream URL
-                            stream_info = parliament_tv.extract_stream_url(capture.url)
-                            
-                            if "error" not in stream_info:
-                                direct_stream = stream_info.get("direct_stream")
-                                audio_url = None
-                                
-                                # Check if direct_stream is a dictionary with separate audio URL
-                                if isinstance(direct_stream, dict) and "audio_url" in direct_stream:
-                                    audio_url = direct_stream["audio_url"]
-                                    print(f"DEBUG - stream_audio_from_video - Found audio URL: {audio_url}")
-                                elif isinstance(direct_stream, str):
-                                    audio_url = direct_stream
-                                
-                                if audio_url:
-                                    # Extract audio from the URL
-                                    audio_cmd = [
-                                        'ffmpeg',
-                                        '-i', audio_url,
-                                        '-vn',  # No video
-                                        '-acodec', 'libmp3lame',
-                                        '-q:a', '2',
-                                        '-y',
-                                        audio_path
-                                    ]
-                                    
-                                    audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
-                                    
-                                    if audio_result.returncode == 0 and os.path.exists(audio_path):
-                                        print(f"DEBUG - stream_audio_from_video - Successfully extracted audio from original URL: {audio_path}")
-                                        has_audio = True
-                                    else:
-                                        print(f"ERROR - stream_audio_from_video - Failed to extract audio from URL: {audio_url}")
-                                        print(f"ERROR - stream_audio_from_video - ffmpeg stderr: {audio_result.stderr}")
-                        except Exception as e:
-                            print(f"ERROR - stream_audio_from_video - Error extracting audio from original URL: {str(e)}")
+                # Define the audio path
+                audio_filename = f"{video_name_without_ext}.audio.mp3"
+                audio_path = os.path.join(audio_extracts_dir, audio_filename)
+                print(f"DEBUG - stream_audio_from_video - Will extract audio to: {audio_path}")
                 
-                # If we still don't have audio, create a silent track
-                if not has_audio or not os.path.exists(audio_path):
-                    print(f"DEBUG - stream_audio_from_video - Creating silent audio file as fallback")
-                    silent_cmd = [
-                        'ffmpeg',
-                        '-f', 'lavfi',
-                        '-i', 'anullsrc=r=44100:cl=stereo',
-                        '-t', '10',  # 10 seconds of silence
-                        '-acodec', 'libmp3lame',
-                        '-q:a', '2',
-                        '-y',
-                        audio_path
-                    ]
-                    
-                    silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
-                    print(f"DEBUG - stream_audio_from_video - Created silent audio file: {audio_path}")
-            else:
                 # Extract audio from the video file using ffmpeg
                 cmd = [
                     'ffmpeg',
@@ -396,12 +372,47 @@ def stream_audio_from_video(filename: str, db: Session):
                 if not os.path.exists(audio_path):
                     print(f"ERROR - stream_audio_from_video - Failed to create audio file: {audio_path}")
                     print(f"ERROR - stream_audio_from_video - ffmpeg stderr: {result.stderr}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Failed to extract audio from {filename}"
-                    )
+                    
+                    # Create a silent audio file as fallback
+                    print(f"DEBUG - stream_audio_from_video - Creating silent audio file as fallback")
+                    silent_cmd = [
+                        'ffmpeg',
+                        '-f', 'lavfi',
+                        '-i', 'anullsrc=r=44100:cl=stereo',
+                        '-t', '10',  # 10 seconds of silence
+                        '-acodec', 'libmp3lame',
+                        '-q:a', '2',
+                        '-y',
+                        audio_path
+                    ]
+                    
+                    silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
+                    
+                    if silent_result.returncode != 0 or not os.path.exists(audio_path):
+                        print(f"ERROR - stream_audio_from_video - Failed to create silent audio file: {silent_result.stderr}")
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Failed to extract audio from {filename}"
+                        )
+                    
+                    print(f"DEBUG - stream_audio_from_video - Created silent audio file: {audio_path}")
                 else:
                     print(f"DEBUG - stream_audio_from_video - Successfully extracted audio to: {audio_path}")
+                
+                # Update the capture session with the audio file path if we have a capture_id
+                if capture_id:
+                    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+                    if capture and hasattr(capture, 'audio_file_path'):
+                        capture.audio_file_path = audio_path
+                        db.commit()
+                        print(f"DEBUG - stream_audio_from_video - Updated capture session with audio_file_path: {audio_path}")
+                
+                # Return the audio file
+                return FileResponse(
+                    path=audio_path,
+                    media_type="audio/mpeg",
+                    filename=audio_filename
+                )
                 
         except Exception as e:
             print(f"ERROR - stream_audio_from_video - Exception during audio extraction: {str(e)}")
@@ -412,12 +423,10 @@ def stream_audio_from_video(filename: str, db: Session):
                 detail=f"Error extracting audio: {str(e)}"
             )
     
-    # Return the audio file as a streaming response
-    print(f"DEBUG - stream_audio_from_video - Streaming audio file: {audio_path}")
-    return FileResponse(
-        path=audio_path,
-        media_type="audio/mpeg",
-        filename=audio_filename
+    # If we get here, we couldn't find or create an audio file
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Could not find or create audio for {filename}"
     )
 
 @router.post("/combine-audio-video", response_model=None)
