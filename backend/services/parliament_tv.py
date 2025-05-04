@@ -2,9 +2,11 @@ import os
 import sys
 import json
 import time
+import shutil
 import logging
-import threading
+import tempfile
 import subprocess
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
@@ -833,7 +835,17 @@ class ParliamentTVCapture:
                 main_url = video_url
                 
                 # Download the audio and video separately and then combine them
-                temp_audio_file = f"{output_path}.audio.mp3"
+                # Extract capture ID from output path filename if possible
+                output_filename = os.path.basename(output_path)
+                capture_id_match = re.search(r'capture_(\d+)', output_filename)
+                
+                if capture_id_match:
+                    capture_id = capture_id_match.group(1)
+                    # Create ID-based audio filename
+                    temp_audio_file = os.path.join(os.path.dirname(output_path), f"capture_{capture_id.zfill(4)}.audio.mp3")
+                    print(f"DEBUG - download_stream - Using ID-based audio filename: {temp_audio_file}")
+                else:
+                    temp_audio_file = f"{output_path}.audio.mp3"
                 
                 # Download the audio first
                 audio_cmd = [

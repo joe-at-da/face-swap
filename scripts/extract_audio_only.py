@@ -28,14 +28,32 @@ logging.basicConfig(
 logger = logging.getLogger('extract-audio-only')
 
 def extract_audio(url, output_file):
-    """Extract audio from a Parliament TV URL and save it as an MP3 file."""
+    """Extract audio from a Parliament TV URL or direct stream URL and save it as an MP3 file."""
     logger.info(f"Extracting audio from: {url}")
     
+    # Check if the URL is a direct stream URL (contains .m3u8)
+    if ".m3u8" in url:
+        logger.info(f"Detected direct stream URL: {url}")
+        # For direct stream URLs, we can try to extract audio directly
+        # First, check if it's a video URL and try to find the corresponding audio URL
+        if "video=" in url:
+            # Try to construct the audio URL by replacing video= with audio_eng=
+            audio_url = url.replace("video=", "audio_eng=").replace("=3000000", "=64000")
+            logger.info(f"Constructed audio URL: {audio_url}")
+            
+            # Use ffmpeg to extract audio directly
+            return extract_audio_with_ffmpeg(audio_url, output_file)
+        else:
+            # If it's not clearly a video URL, try to extract audio directly from the provided URL
+            return extract_audio_with_ffmpeg(url, output_file)
+    
+    # For Parliament TV URLs, use the extract-url.py script
     # Find the extract-url.py script
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extract-url.py")
     if not os.path.exists(script_path):
         logger.error(f"Could not find extract-url.py at {script_path}")
-        return False
+        # Use the extract_audio_with_ffmpeg function
+        return extract_audio_with_ffmpeg(url, output_file)
     
     # Run the extract-url.py script to get stream info
     extract_cmd = [sys.executable, script_path, url]
@@ -47,7 +65,9 @@ def extract_audio(url, output_file):
         if extract_result.returncode != 0:
             logger.error(f"extract-url.py failed with return code {extract_result.returncode}")
             logger.error(f"extract-url.py error: {extract_result.stderr}")
-            return False
+            # Try to extract audio directly as a fallback
+            logger.info(f"Trying to extract audio directly as a fallback")
+            return extract_audio_with_ffmpeg(url, output_file)
         
         # Parse the JSON output
         stream_info = json.loads(extract_result.stdout)
@@ -107,20 +127,37 @@ def extract_audio(url, output_file):
         logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
+def extract_audio_with_ffmpeg(audio_url, output_file):
+    """Extract audio from a direct stream URL using ffmpeg."""
+    # Use ffmpeg to extract the audio
+    ffmpeg_cmd = ["ffmpeg", "-y", "-i", audio_url, "-vn", "-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100", "-f", "mp3", output_file]
+    logger.info(f"Running ffmpeg: {' '.join(ffmpeg_cmd)}")
+    
+    ffmpeg_result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+    
+    if ffmpeg_result.returncode != 0:
+        logger.error(f"ffmpeg failed with return code {ffmpeg_result.returncode}")
+        logger.error(f"ffmpeg error: {ffmpeg_result.stderr}")
+        return False
+    
+    logger.info(f"Successfully extracted audio to: {output_file}")
+    return True
+
 def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <parliament_tv_url> <output_file>")
-        return 1
+    """Main function."""
+    if len(sys.argv) != 3:
+        print(f"Usage: {sys.argv[0]} <parliament_tv_url_or_direct_stream_url> <output_file>")
+        sys.exit(1)
     
     url = sys.argv[1]
     output_file = sys.argv[2]
     
     if extract_audio(url, output_file):
         print(f"Successfully extracted audio to: {output_file}")
-        return 0
+        sys.exit(0)
     else:
         print("Failed to extract audio")
-        return 1
+        sys.exit(1)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

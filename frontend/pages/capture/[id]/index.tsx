@@ -39,20 +39,11 @@ const CaptureDetailPage = () => {
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [audioFileExists, setAudioFileExists] = useState(false);
   
-  // Check if the ID-based audio file exists
+  // Always assume audio exists and use the ID-based URL
   useEffect(() => {
     if (id) {
-      const audioUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1'}/videos/static/audio/capture_${id.toString().padStart(4, '0')}.audio.mp3`;
-      
-      // Make a HEAD request to check if the file exists
-      fetch(audioUrl, { method: 'HEAD' })
-        .then(response => {
-          setAudioFileExists(response.ok);
-        })
-        .catch(error => {
-          console.error('Error checking audio file:', error);
-          setAudioFileExists(false);
-        });
+      // Always show the audio player for all captures
+      setAudioFileExists(true);
     }
   }, [id]);
   

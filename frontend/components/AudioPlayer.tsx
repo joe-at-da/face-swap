@@ -20,7 +20,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, title }) => {
 
   const handleError = (e: React.SyntheticEvent<HTMLAudioElement, Event>) => {
     console.error('Audio playback error:', e);
-    setError('Failed to load audio. The audio file may not be available yet or there might be an issue with the server.');
+    setError('Audio file not available yet. It may still be processing or not extracted for this capture.');
   };
 
   return (
