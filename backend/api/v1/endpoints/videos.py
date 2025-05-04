@@ -56,6 +56,47 @@ router = APIRouter()
 video_processor = VideoProcessor()
 parliament_tv_capture = ParliamentTVCapture()
 
+# Create a static file route for audio files
+@router.get("/static/audio/{filename}")
+async def get_static_audio_file(filename: str):
+    """Serve a static audio file directly.
+    
+    This endpoint is for direct access to audio files for debugging purposes.
+    """
+    # Get the data directory from environment variable
+    data_dir = os.getenv("DATA_DIR", "/app/data")
+    
+    # Look for the audio file in common locations
+    possible_locations = [
+        os.path.join(data_dir, "temp", "audio_extracts", filename),
+        os.path.join(data_dir, filename),
+        os.path.join(data_dir, "**", filename)
+    ]
+    
+    # Try to find the file
+    for location in possible_locations:
+        # For the wildcard path, use glob
+        if "**" in location:
+            matching_files = glob.glob(location, recursive=True)
+            if matching_files:
+                return FileResponse(
+                    path=matching_files[0],
+                    media_type="audio/mpeg",
+                    filename=filename
+                )
+        elif os.path.exists(location):
+            return FileResponse(
+                path=location,
+                media_type="audio/mpeg",
+                filename=filename
+            )
+    
+    # If we couldn't find the file
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Audio file {filename} not found"
+    )
+
 @router.get("", response_model=List[Dict])
 async def get_all_videos(
     db: Session = Depends(get_db),
@@ -214,7 +255,7 @@ def stream_video_file(filename: str, db: Session):
         media_type="video/mp4"
     )
 
-def stream_audio_from_video(filename: str, db: Session):
+def stream_audio_from_video(filename: str, db: Session, debug: bool = False):
     """Helper function to find and stream the audio file associated with a video."""
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
@@ -285,6 +326,23 @@ def stream_audio_from_video(filename: str, db: Session):
     if audio_path and os.path.exists(audio_path):
         print(f"DEBUG - stream_audio_from_video - Streaming existing audio file: {audio_path}")
         audio_filename = os.path.basename(audio_path)
+        
+        # If debug mode is enabled, return debugging information instead of the file
+        if debug:
+            return {
+                "status": "success",
+                "message": "Audio file found",
+                "audio_path": audio_path,
+                "audio_filename": audio_filename,
+                "video_path": video_path,
+                "video_filename": os.path.basename(video_path),
+                "exists": os.path.exists(audio_path),
+                "size": os.path.getsize(audio_path) if os.path.exists(audio_path) else 0,
+                "data_dir": data_dir,
+                "audio_url": f"/api/v1/videos/stream-audio/{filename}",
+                "direct_audio_url": f"/api/v1/files/static/audio/{audio_filename}"
+            }
+        
         return FileResponse(
             path=audio_path,
             media_type="audio/mpeg",
@@ -334,6 +392,22 @@ def stream_audio_from_video(filename: str, db: Session):
                         if os.path.exists(audio_path):
                             print(f"DEBUG - stream_audio_from_video - Audio file exists, streaming it")
                             audio_filename = os.path.basename(audio_path)
+                            
+                            if debug:
+                                return {
+                                    "status": "success",
+                                    "message": "Audio file found in database",
+                                    "audio_path": audio_path,
+                                    "audio_filename": audio_filename,
+                                    "video_path": video_path,
+                                    "video_filename": os.path.basename(video_path),
+                                    "exists": os.path.exists(audio_path),
+                                    "size": os.path.getsize(audio_path) if os.path.exists(audio_path) else 0,
+                                    "data_dir": data_dir,
+                                    "capture_id": capture_id,
+                                    "source": "database_record"
+                                }
+                            
                             return FileResponse(
                                 path=audio_path,
                                 media_type="audio/mpeg",
@@ -407,7 +481,23 @@ def stream_audio_from_video(filename: str, db: Session):
                         db.commit()
                         print(f"DEBUG - stream_audio_from_video - Updated capture session with audio_file_path: {audio_path}")
                 
-                # Return the audio file
+                # Return the audio file or debug info
+                if debug:
+                    return {
+                        "status": "success",
+                        "message": "Audio file extracted from video",
+                        "audio_path": audio_path,
+                        "audio_filename": audio_filename,
+                        "video_path": video_path,
+                        "video_filename": os.path.basename(video_path),
+                        "exists": os.path.exists(audio_path),
+                        "size": os.path.getsize(audio_path) if os.path.exists(audio_path) else 0,
+                        "data_dir": data_dir,
+                        "audio_url": f"/api/v1/videos/stream-audio/{filename}",
+                        "direct_audio_url": f"/api/v1/files/static/audio/{audio_filename}",
+                        "capture_id": capture_id
+                    }
+                
                 return FileResponse(
                     path=audio_path,
                     media_type="audio/mpeg",
@@ -424,6 +514,17 @@ def stream_audio_from_video(filename: str, db: Session):
             )
     
     # If we get here, we couldn't find or create an audio file
+    if debug:
+        return {
+            "status": "error",
+            "message": f"Could not find or create audio for {filename}",
+            "video_filename": filename,
+            "data_dir": data_dir,
+            "search_patterns": audio_patterns,
+            "video_path": video_path if 'video_path' in locals() else None,
+            "capture_id": capture_id if 'capture_id' in locals() else None
+        }
+    
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Could not find or create audio for {filename}"
@@ -540,9 +641,10 @@ async def stream_combined_video_with_token(
     return stream_video_file(filename, db)
 
 
-@router.get("/stream-audio/{filename}", response_model=None)
+@router.get("/stream-audio/{filename}")
 async def stream_audio(
     filename: str,
+    debug: bool = False,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ):
@@ -550,29 +652,33 @@ async def stream_audio(
     
     Extracts and streams only the audio track from the video file.
     """
-    # Check user permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
-    
-    return stream_audio_from_video(filename, db)
+    return stream_audio_from_video(filename, db, debug=debug)
 
 
-@router.get("/stream-audio-with-token/{filename}", response_model=None)
+@router.get("/stream-audio-with-token/{filename}")
 async def stream_audio_with_token(
     filename: str,
     token: str,
+    debug: bool = False,
     db: Session = Depends(get_db)
 ):
     """Stream just the audio track from a video file using token authentication.
     
     This endpoint is for streaming just the audio with token authentication.
     """
-    # Validate the token and get the user
-    current_user = get_user_from_token(token, db)
+    # Authenticate the user using the token
+    user = get_user_from_token(token, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token"
+        )
     
     # Check user permissions
-    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    has_permission(user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
-    return stream_audio_from_video(filename, db)
+    return stream_audio_from_video(filename, db, debug=debug)
 
 
 @router.delete("/delete/{filename}")

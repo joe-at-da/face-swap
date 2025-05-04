@@ -550,6 +550,15 @@ const VideoGalleryPage: React.FC = () => {
                   className="w-full"
                   autoPlay={showAudioPlayer}
                 />
+                
+                {/* Debug Information */}
+                <div className="mt-4 p-3 bg-gray-100 rounded text-sm">
+                  <h5 className="font-medium mb-2">Debug Information</h5>
+                  <p className="mb-1"><span className="font-medium">Audio URL:</span> <a href={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedVideo.filename}?token=${token}&debug=true`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{`${API_BASE_URL}/videos/stream-audio-with-token/${selectedVideo.filename}?token=${token}&debug=true`}</a></p>
+                  <p className="mb-1"><span className="font-medium">Video Path:</span> {selectedVideo.path}</p>
+                  <p className="mb-1"><span className="font-medium">Try Direct Audio:</span> <a href={`${API_BASE_URL}/videos/static/audio/${selectedVideo.filename.replace('.mp4', '.audio.mp3')}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">MP3 Version</a></p>
+                  <p className="mb-1"><span className="font-medium">Alternative:</span> <a href={`${API_BASE_URL}/videos/static/audio/audio_${selectedVideo.filename.replace('.mp4', '.mp3')}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Audio Prefix Version</a></p>
+                </div>
               </div>
               
               <div className="p-4 border-t flex justify-end space-x-2">
