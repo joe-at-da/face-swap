@@ -66,6 +66,10 @@ async def get_static_audio_file(filename: str):
     # Get the data directory from environment variable
     data_dir = os.getenv("DATA_DIR", "/app/data")
     
+    # Add debug logging
+    print(f"DEBUG: Requested audio file: {filename}")
+    print(f"DEBUG: Data directory: {data_dir}")
+    
     # Look for the audio file in common locations
     possible_locations = [
         os.path.join(data_dir, "temp", "audio_extracts", filename),
@@ -75,21 +79,37 @@ async def get_static_audio_file(filename: str):
     
     # Try to find the file
     for location in possible_locations:
+        print(f"DEBUG: Checking location: {location}")
+        
         # For the wildcard path, use glob
         if "**" in location:
+            print(f"DEBUG: Using glob to search recursively")
             matching_files = glob.glob(location, recursive=True)
             if matching_files:
+                print(f"DEBUG: Found files with glob: {matching_files}")
                 return FileResponse(
                     path=matching_files[0],
                     media_type="audio/mpeg",
                     filename=filename
                 )
+            else:
+                print("DEBUG: No files found with glob")
         elif os.path.exists(location):
+            print(f"DEBUG: File exists at: {location}")
             return FileResponse(
                 path=location,
                 media_type="audio/mpeg",
                 filename=filename
             )
+        else:
+            print(f"DEBUG: File does not exist at: {location}")
+    
+    # List all files in the audio_extracts directory
+    audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+    if os.path.exists(audio_extracts_dir):
+        print(f"DEBUG: Listing all files in {audio_extracts_dir}:")
+        for file in os.listdir(audio_extracts_dir):
+            print(f"DEBUG:   - {file}")
     
     # If we couldn't find the file
     raise HTTPException(

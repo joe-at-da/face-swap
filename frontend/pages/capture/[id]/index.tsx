@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -37,6 +37,24 @@ const CaptureDetailPage = () => {
   const { id } = router.query;
   const queryClient = useQueryClient();
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [audioFileExists, setAudioFileExists] = useState(false);
+  
+  // Check if the ID-based audio file exists
+  useEffect(() => {
+    if (id) {
+      const audioUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1'}/videos/static/audio/capture_${id.toString().padStart(4, '0')}.audio.mp3`;
+      
+      // Make a HEAD request to check if the file exists
+      fetch(audioUrl, { method: 'HEAD' })
+        .then(response => {
+          setAudioFileExists(response.ok);
+        })
+        .catch(error => {
+          console.error('Error checking audio file:', error);
+          setAudioFileExists(false);
+        });
+    }
+  }, [id]);
   
   // API base URL for streaming
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -165,7 +183,8 @@ const CaptureDetailPage = () => {
               <div className="mb-6">
                 <h3 className="text-lg font-medium mb-2">Audio</h3>
                 
-                {capture.audio_file_path ? (
+                {audioFileExists ? (
+                  // Audio file exists, show the player
                   <>
                     <button
                       onClick={() => setShowAudioPlayer(!showAudioPlayer)}
@@ -177,7 +196,7 @@ const CaptureDetailPage = () => {
                     {showAudioPlayer && (
                       <div>
                         <AudioPlayer 
-                          audioUrl={`${API_BASE_URL}/static/audio/${capture.audio_file_path.split('/').pop()}`}
+                          audioUrl={`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}
                           title="Capture Audio"
                         />
                         
@@ -185,19 +204,21 @@ const CaptureDetailPage = () => {
                         <div className="mt-2 text-xs text-gray-500">
                           <p>Try alternative audio sources:</p>
                           <ul className="list-disc pl-5 mt-1">
+                            {capture.audio_file_path && (
+                              <li>
+                                <a 
+                                  href={`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-500 hover:underline"
+                                >
+                                  Database audio file link
+                                </a>
+                              </li>
+                            )}
                             <li>
                               <a 
-                                href={`${API_BASE_URL}/static/audio/${capture.audio_file_path.split('/').pop()}`} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-blue-500 hover:underline"
-                              >
-                                Direct audio file link
-                              </a>
-                            </li>
-                            <li>
-                              <a 
-                                href={`${API_BASE_URL}/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`} 
+                                href={`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`} 
                                 target="_blank" 
                                 rel="noopener noreferrer"
                                 className="text-blue-500 hover:underline"
@@ -207,7 +228,7 @@ const CaptureDetailPage = () => {
                             </li>
                             <li>
                               <a 
-                                href={`${API_BASE_URL}/static/audio/sample1.mp3`} 
+                                href={`${API_BASE_URL}/videos/static/audio/sample1.mp3`} 
                                 target="_blank" 
                                 rel="noopener noreferrer"
                                 className="text-blue-500 hover:underline"
@@ -221,6 +242,7 @@ const CaptureDetailPage = () => {
                     )}
                   </>
                 ) : (
+                  // No audio file available, show warning
                   <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
                     <div className="flex">
                       <div className="flex-shrink-0">
@@ -247,7 +269,7 @@ const CaptureDetailPage = () => {
                     <p>Audio File Path: {capture.audio_file_path || 'Not available'}</p>
                     <p>Audio File Name: {capture.audio_file_path ? capture.audio_file_path.split('/').pop() : 'Not available'}</p>
                     <p>Audio Source URL: {capture.audio_file_path ? 
-                      `${API_BASE_URL}/static/audio/${capture.audio_file_path.split('/').pop()}` : 'Not available'}</p>
+                      `${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}` : 'Not available'}</p>
                     
                     <h4 className="font-semibold mt-3 mb-2">Video Information</h4>
                     <p>Video File Path: {capture.file_path || 'Not available'}</p>
@@ -262,8 +284,8 @@ const CaptureDetailPage = () => {
                     
                     <h4 className="font-semibold mt-3 mb-2">Alternative Audio Paths</h4>
                     <p>ID-based path: capture_{capture.id.toString().padStart(4, '0')}.audio.mp3</p>
-                    <p>Full ID-based URL: {`${API_BASE_URL}/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
-                    <p>Sample Audio URL: {`${API_BASE_URL}/static/audio/sample1.mp3`}</p>
+                    <p>Full ID-based URL: {`${API_BASE_URL}/videos/static/audio/capture_${capture.id.toString().padStart(4, '0')}.audio.mp3`}</p>
+                    <p>Sample Audio URL: {`${API_BASE_URL}/videos/static/audio/sample1.mp3`}</p>
                   </div>
                 </details>
               </div>
