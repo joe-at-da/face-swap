@@ -531,85 +531,6 @@ const CaptureDetailPage: React.FC = () => {
                     </div>
                   )}
                   
-                  {/* Audio Player Section */}
-                  {capture.audio_file_path && (
-                    <div className="mt-4 border-t border-gray-200 pt-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="font-medium">Audio Track</p>
-                        <button 
-                          onClick={() => setShowAudioPlayer(!showAudioPlayer)}
-                          className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-full flex items-center"
-                        >
-                          <span className="mr-1">{showAudioPlayer ? 'Hide Player' : 'Show Player'}</span>
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" />
-                          </svg>
-                        </button>
-                      </div>
-                      
-                      <p className="text-xs text-gray-500 mb-2 break-all">
-                        Audio file: {capture.audio_file_path}
-                      </p>
-                      
-                      {showAudioPlayer && (
-                        <div className="mt-2">
-                          <audio 
-                            ref={audioRef}
-                            controls 
-                            className="w-full" 
-                            src={`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path ? 
-                              capture.audio_file_path.split('/').pop() : ''}`}
-                            onError={(e) => {
-                              console.error('Audio playback error:', e);
-                              setAudioError('Failed to load audio file. The file may not exist or may be in an unsupported format.');
-                            }}
-                          />
-                          {audioError && (
-                            <div className="mt-2 text-sm text-red-600">{audioError}</div>
-                          )}
-                          
-                          {/* Audio Debug Links */}
-                          <div className="mt-2 text-xs text-gray-500">
-                            <p>Try alternative audio sources:</p>
-                            <ul className="list-disc pl-5 mt-1">
-                              <li>
-                                <a 
-                                  href={`${API_BASE_URL}/videos/static/audio/${capture.file_path ? 
-                                    capture.file_path.split('/').pop()?.replace('.mp4', '.audio.mp3') : ''}`} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:underline"
-                                >
-                                  Standard Audio Format
-                                </a>
-                              </li>
-                              <li>
-                                <a 
-                                  href={`${API_BASE_URL}/videos/stream-audio-with-token/${capture.id}`} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:underline"
-                                >
-                                  Stream Audio with Token
-                                </a>
-                              </li>
-                              <li>
-                                <a 
-                                  href={`${API_BASE_URL}/videos/stream-audio-with-token/${capture.id}?debug=true`} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:underline"
-                                >
-                                  Debug Audio Info
-                                </a>
-                              </li>
-                            </ul>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  
                   {/* Debug info - helps diagnose video playback issues */}
                   <details className="mt-4 border p-2 rounded">
                     <summary className="font-medium cursor-pointer">Debug Info</summary>
@@ -618,12 +539,41 @@ const CaptureDetailPage: React.FC = () => {
                       <p key="debug-status">Status: {capture.status}</p>
                       <p key="debug-source-url">Source URL: {capture.source_url}</p>
                       <p key="debug-file-path">File Path: {capture.file_path || 'Not available'}</p>
-                      <p key="debug-audio-path">Audio File Path: {capture.audio_file_path || 'Not available'}</p>
                       <p key="debug-is-parliament">Is Parliament TV: {isParliamentTVCapture(capture) ? 'Yes' : 'No'}</p>
                       <p key="debug-video-source">Video Source: {getVideoSourceUrl(capture)}</p>
                       <p key="debug-audio-source">Audio Source: {capture.audio_file_path ? 
                         `${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}` : 'Not available'}</p>
                       <p key="debug-metadata">Metadata: {JSON.stringify(capture.metadata || {}, null, 2)}</p>
+                      
+                      {/* Audio Player */}
+                      {capture.audio_file_path && (
+                        <div className="mt-4">
+                          <button
+                            onClick={() => setShowAudioPlayer(!showAudioPlayer)}
+                            className="px-3 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 transition-colors"
+                          >
+                            {showAudioPlayer ? 'Hide Audio Player' : 'Show Audio Player'}
+                          </button>
+                          
+                          {showAudioPlayer && (
+                            <div className="mt-2">
+                              <audio 
+                                ref={audioRef}
+                                controls 
+                                className="w-full" 
+                                src={`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}`}
+                                onError={(e) => {
+                                  console.error('Audio playback error:', e);
+                                  setAudioError('Failed to load audio. The audio file may not be available yet or there might be an issue with the server.');
+                                }}
+                              />
+                              {audioError && (
+                                <div className="mt-2 text-red-500 text-xs">{audioError}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </details>
                 </div>
