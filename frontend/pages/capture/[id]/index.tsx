@@ -18,6 +18,7 @@ interface CaptureSession {
   scheduled_start: string | null;
   scheduled_end: string | null;
   file_path: string | null;
+  audio_file_path: string | null;
   file_size: number | null;
   duration: number | null;
   created_by_id: number;
@@ -44,7 +45,10 @@ const CaptureDetailPage: React.FC = () => {
   const { id } = router.query;
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
   
   // API base URL for streaming
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -405,37 +409,11 @@ const CaptureDetailPage: React.FC = () => {
               </div>
               
               <div className="p-6">
-                <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-6">
+                <div className="grid grid-cols-2 gap-4 mt-4">
                   <div>
-                    <dt className="text-sm font-medium text-gray-500">Status</dt>
-                    <dd className="mt-1 text-sm text-gray-900">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeClass(capture.status)}`}>
-                        {capture.status.charAt(0).toUpperCase() + capture.status.slice(1)}
-                      </span>
-                    </dd>
-                  </div>
-                  
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Duration</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{getCaptureDuration()}</dd>
-                  </div>
-                  
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Started</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{formatDate(capture.start_time)}</dd>
-                  </div>
-                  
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Ended</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{formatDate(capture.end_time)}</dd>
-                  </div>
-                  
-                  {(capture.scheduled_start || capture.scheduled_end) && (
-                    <>
-                      <div>
-                        <dt className="text-sm font-medium text-gray-500">Scheduled Start</dt>
-                        <dd className="mt-1 text-sm text-gray-900">{formatDate(capture.scheduled_start)}</dd>
-                      </div>
+                    <p className="text-sm text-gray-500">Source URL</p>
+                    <p className="text-sm text-gray-900 break-all">
+                      <a href={capture.source_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
                       
                       <div>
                         <dt className="text-sm font-medium text-gray-500">Scheduled End</dt>
@@ -553,6 +531,85 @@ const CaptureDetailPage: React.FC = () => {
                     </div>
                   )}
                   
+                  {/* Audio Player Section */}
+                  {capture.audio_file_path && (
+                    <div className="mt-4 border-t border-gray-200 pt-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="font-medium">Audio Track</p>
+                        <button 
+                          onClick={() => setShowAudioPlayer(!showAudioPlayer)}
+                          className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-full flex items-center"
+                        >
+                          <span className="mr-1">{showAudioPlayer ? 'Hide Player' : 'Show Player'}</span>
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" />
+                          </svg>
+                        </button>
+                      </div>
+                      
+                      <p className="text-xs text-gray-500 mb-2 break-all">
+                        Audio file: {capture.audio_file_path}
+                      </p>
+                      
+                      {showAudioPlayer && (
+                        <div className="mt-2">
+                          <audio 
+                            ref={audioRef}
+                            controls 
+                            className="w-full" 
+                            src={`${API_BASE_URL}/videos/static/audio/${capture.audio_file_path ? 
+                              capture.audio_file_path.split('/').pop() : ''}`}
+                            onError={(e) => {
+                              console.error('Audio playback error:', e);
+                              setAudioError('Failed to load audio file. The file may not exist or may be in an unsupported format.');
+                            }}
+                          />
+                          {audioError && (
+                            <div className="mt-2 text-sm text-red-600">{audioError}</div>
+                          )}
+                          
+                          {/* Audio Debug Links */}
+                          <div className="mt-2 text-xs text-gray-500">
+                            <p>Try alternative audio sources:</p>
+                            <ul className="list-disc pl-5 mt-1">
+                              <li>
+                                <a 
+                                  href={`${API_BASE_URL}/videos/static/audio/${capture.file_path ? 
+                                    capture.file_path.split('/').pop()?.replace('.mp4', '.audio.mp3') : ''}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  Standard Audio Format
+                                </a>
+                              </li>
+                              <li>
+                                <a 
+                                  href={`${API_BASE_URL}/videos/stream-audio-with-token/${capture.id}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  Stream Audio with Token
+                                </a>
+                              </li>
+                              <li>
+                                <a 
+                                  href={`${API_BASE_URL}/videos/stream-audio-with-token/${capture.id}?debug=true`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  Debug Audio Info
+                                </a>
+                              </li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
                   {/* Debug info - helps diagnose video playback issues */}
                   <details className="mt-4 border p-2 rounded">
                     <summary className="font-medium cursor-pointer">Debug Info</summary>
@@ -561,8 +618,11 @@ const CaptureDetailPage: React.FC = () => {
                       <p key="debug-status">Status: {capture.status}</p>
                       <p key="debug-source-url">Source URL: {capture.source_url}</p>
                       <p key="debug-file-path">File Path: {capture.file_path || 'Not available'}</p>
+                      <p key="debug-audio-path">Audio File Path: {capture.audio_file_path || 'Not available'}</p>
                       <p key="debug-is-parliament">Is Parliament TV: {isParliamentTVCapture(capture) ? 'Yes' : 'No'}</p>
                       <p key="debug-video-source">Video Source: {getVideoSourceUrl(capture)}</p>
+                      <p key="debug-audio-source">Audio Source: {capture.audio_file_path ? 
+                        `${API_BASE_URL}/videos/static/audio/${capture.audio_file_path.split('/').pop()}` : 'Not available'}</p>
                       <p key="debug-metadata">Metadata: {JSON.stringify(capture.metadata || {}, null, 2)}</p>
                     </div>
                   </details>

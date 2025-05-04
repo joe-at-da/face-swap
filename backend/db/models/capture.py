@@ -15,6 +15,7 @@ class CaptureSession(Base):
     status = Column(String(50), index=True)  # active, scheduled, completed, failed, processing
     error_message = Column(String(255), nullable=True)
     file_path = Column(String(255), nullable=True)
+    audio_file_path = Column(String(255), nullable=True)  # Path to the audio file
     file_size = Column(BigInteger, nullable=True)  # in bytes
     duration = Column(Integer, nullable=True)  # in seconds
     scheduled_start = Column(DateTime(timezone=True), nullable=True)

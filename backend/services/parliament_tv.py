@@ -208,34 +208,49 @@ class ParliamentTVCapture:
             print(f"DEBUG - start_capture_async - Output file: {output_file}")
             
             try:
-                # Run the command
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                # Run the download process
+                download_result = self.download_stream(direct_stream, output_file, duration)
                 
-                if result.returncode == 0:
-                    print(f"DEBUG - start_capture_async - Command succeeded")
+                if download_result.get("success"):
+                    print(f"DEBUG - run_capture_process - Download successful: {output_file}")
                     
-                    # Check if the output file exists and has content
-                    if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                        print(f"DEBUG - start_capture_async - Output file exists: {output_file}")
-                        
-                        # Update the capture with the output file path
-                        db_capture.output_file = output_file
+                    # Get a new database session
+                    db = next(get_db())
+                    
+                    # Get the capture from the database
+                    db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+                    if db_capture:
+                        # Update the capture with the file path and status
+                        db_capture.file_path = output_file
                         db_capture.status = "completed"
-                        db_capture.completed_at = datetime.now()
+                        db_capture.end_time = datetime.now()
+                        
+                        # Save the audio file path if available
+                        audio_file_path = download_result.get("audio_file_path")
+                        if audio_file_path and os.path.exists(audio_file_path):
+                            print(f"DEBUG - run_capture_process - Saving audio file path: {audio_file_path}")
+                            # Check if the model has the audio_file_path attribute
+                            if hasattr(db_capture, 'audio_file_path'):
+                                db_capture.audio_file_path = audio_file_path
+                                self.log_capture(db, db_capture.id, "info", f"Audio file saved: {audio_file_path}")
+                            else:
+                                print(f"WARNING - run_capture_process - CaptureSession model doesn't have audio_file_path attribute")
+                                # Try to store it in metadata
+                                if not hasattr(db_capture, 'metadata') or db_capture.metadata is None:
+                                    db_capture.metadata = {}
+                                if isinstance(db_capture.metadata, dict):
+                                    db_capture.metadata['audio_file_path'] = audio_file_path
+                                    self.log_capture(db, db_capture.id, "info", f"Audio file path stored in metadata: {audio_file_path}")
+                        
                         db.commit()
                         
-                        # Call the callback if provided
-                        if callback:
-                            callback({
-                                "success": True,
-                                "output_file": output_file,
-                                "capture_id": capture_id,
-                                "completed_at": datetime.now()
-                            })
+                        # Log the success
+                        self.log_capture(db, db_capture.id, "info", f"Capture completed successfully: {output_file}")
                         
-                        return True
+                        # Call the callback if provided
+                        self.capture_callback(db_capture, output_file)
                     else:
-                        print(f"DEBUG - start_capture_async - Output file not found or empty: {output_file}")
+                        print(f"ERROR - run_capture_process - Capture {capture_id} not found in database after download")
                         db_capture.status = "failed"
                         db_capture.error = "Output file not found or empty"
                         db.commit()
@@ -605,13 +620,45 @@ class ParliamentTVCapture:
             if error:
                 print(f"DEBUG - capture_callback - Capture {capture_id} failed with error: {error}")
                 db_capture.status = "failed"
-                db_capture.error = error
+                db_capture.error_message = error
                 self.log_capture(db, capture_id, "error", f"Capture failed: {error}")
             elif output_file:
                 print(f"DEBUG - capture_callback - Capture {capture_id} completed successfully with output file: {output_file}")
                 db_capture.status = "completed"
-                db_capture.output_file = output_file
-                db_capture.completed_at = datetime.now()
+                db_capture.file_path = output_file
+                db_capture.end_time = datetime.now()
+                
+                # Check for audio file
+                audio_file_path = f"{output_file}.audio.mp3"
+                if os.path.exists(audio_file_path):
+                    print(f"DEBUG - capture_callback - Found audio file: {audio_file_path}")
+                    # Check if the model has the audio_file_path attribute
+                    if hasattr(db_capture, 'audio_file_path'):
+                        db_capture.audio_file_path = audio_file_path
+                        self.log_capture(db, capture_id, "info", f"Audio file saved: {audio_file_path}")
+                    else:
+                        print(f"WARNING - capture_callback - CaptureSession model doesn't have audio_file_path attribute")
+                        # Try to store it in metadata
+                        if not hasattr(db_capture, 'metadata') or db_capture.metadata is None:
+                            db_capture.metadata = {}
+                        if isinstance(db_capture.metadata, dict):
+                            db_capture.metadata['audio_file_path'] = audio_file_path
+                            self.log_capture(db, capture_id, "info", f"Audio file path stored in metadata: {audio_file_path}")
+                else:
+                    print(f"DEBUG - capture_callback - No audio file found at {audio_file_path}")
+                    # Try alternative naming patterns
+                    alt_patterns = [
+                        f"{os.path.splitext(output_file)[0]}.audio.mp3",
+                        f"audio_{os.path.basename(output_file)}",
+                        f"audio_{os.path.splitext(os.path.basename(output_file))[0]}.mp3"
+                    ]
+                    for pattern in alt_patterns:
+                        if os.path.exists(pattern):
+                            print(f"DEBUG - capture_callback - Found audio file with alternative pattern: {pattern}")
+                            if hasattr(db_capture, 'audio_file_path'):
+                                db_capture.audio_file_path = pattern
+                                self.log_capture(db, capture_id, "info", f"Audio file saved with alternative pattern: {pattern}")
+                                break
                 self.log_capture(db, capture_id, "info", f"Capture completed successfully with output file: {output_file}")
             else:
                 print(f"DEBUG - capture_callback - Capture {capture_id} completed but no output file was provided")
@@ -918,7 +965,18 @@ class ParliamentTVCapture:
                 except Exception as e:
                     print(f"WARNING - download_stream - Failed to verify audio in output: {str(e)}")
                 
-                return {"success": True, "output_file": output_path, "has_audio": has_audio}
+                # Return audio file path if available
+                audio_file_path = None
+                if has_audio and temp_audio_file and os.path.exists(temp_audio_file):
+                    audio_file_path = temp_audio_file
+                    print(f"DEBUG - download_stream - Returning audio file path: {audio_file_path}")
+                
+                return {
+                    "success": True, 
+                    "output_file": output_path, 
+                    "has_audio": has_audio,
+                    "audio_file_path": audio_file_path
+                }
             else:
                 print(f"ERROR - download_stream - ffmpeg failed with return code {result.returncode}")
                 print(f"ERROR - download_stream - ffmpeg error: {result.stderr}")
