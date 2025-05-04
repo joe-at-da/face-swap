@@ -8,7 +8,7 @@ const AudioTestPage: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState<string>('');
   
   // API base URL for streaming
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
   
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setAudioUrl(e.target.value);
@@ -59,19 +59,21 @@ const AudioTestPage: React.FC = () => {
           <ul className="space-y-2">
             <li>
               <button
-                onClick={() => setAudioUrl(`${API_BASE_URL}/videos/static/audio/sample1.mp3`)}
+                onClick={() => setAudioUrl(`${API_BASE_URL}/static/audio/sample1.mp3`)}
                 className="text-blue-600 hover:text-blue-800"
               >
                 Sample 1
               </button>
+              <span className="text-xs text-gray-500 ml-2">(From audio_extracts folder)</span>
             </li>
             <li>
               <button
-                onClick={() => setAudioUrl(`${API_BASE_URL}/videos/static/audio/sample2.mp3`)}
+                onClick={() => setAudioUrl(`${API_BASE_URL}/static/audio/sample2.mp3`)}
                 className="text-blue-600 hover:text-blue-800"
               >
                 Sample 2
               </button>
+              <span className="text-xs text-gray-500 ml-2">(From audio_extracts folder)</span>
             </li>
             <li>
               <button
