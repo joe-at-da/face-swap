@@ -210,8 +210,14 @@ class ParliamentTVCapture:
             print(f"DEBUG - start_capture_async - Output file: {output_file}")
             
             try:
-                # Run the download process
-                download_result = self.download_stream(direct_stream, output_file, duration)
+                # Run the download process with the original URL and stream info
+                # This allows download_stream to properly extract audio URLs
+                stream_dict = {
+                    'direct_stream': direct_stream,
+                    'original_url': url
+                }
+                print(f"DEBUG - start_capture_async - Passing stream info to download_stream: {stream_dict}")
+                download_result = self.download_stream(stream_dict, output_file, duration)
                 
                 if download_result.get("success"):
                     print(f"DEBUG - run_capture_process - Download successful: {output_file}")
@@ -645,57 +651,56 @@ class ParliamentTVCapture:
                 if output_file and os.path.exists(output_file):
                     print(f"DEBUG - capture_callback - Output file exists: {output_file}")
                     
-                    # Create an ID-based audio file path
-                    audio_file_path = f"{output_file}.audio.mp3"
-                    print(f"DEBUG - capture_callback - Checking for audio file: {audio_file_path}")
-                    
                     # Define Docker container paths
                     docker_audio_extracts_dir = "/app/data/temp/audio_extracts"
-                    
+                
                     # Ensure the audio extracts directory exists in the Docker container
                     os.makedirs(docker_audio_extracts_dir, exist_ok=True)
                     print(f"DEBUG - capture_callback - Created Docker audio extracts directory: {docker_audio_extracts_dir}")
                     
-                    # Create an ID-based audio file name for Docker container
-                    id_based_audio_path = os.path.join(docker_audio_extracts_dir, f"capture_{capture_id}_audio.mp3")
-                    print(f"DEBUG - capture_callback - Docker ID-based audio path: {id_based_audio_path}")
+                    # Create the correctly formatted audio file path
+                    # Format should be: capture_XXXX.audio.mp3 where XXXX is the zero-padded capture ID
+                    padded_capture_id = str(capture_id).zfill(4)
+                    audio_file_path = os.path.join(docker_audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
+                    print(f"DEBUG - capture_callback - Docker ID-based audio path: {audio_file_path}")
                     
                     # Check if the audio file exists
                     if os.path.exists(audio_file_path):
                         print(f"DEBUG - capture_callback - Audio file exists: {audio_file_path}")
                         
-                        # Copy the audio file to the ID-based path in Docker container
-                        try:
-                            shutil.copy2(audio_file_path, id_based_audio_path)
-                            print(f"DEBUG - capture_callback - Copied audio file to Docker ID-based path: {id_based_audio_path}")
-                            
-                            # Save the audio file path in the database
-                            print(f"DEBUG - capture_callback - Saving audio file path: {id_based_audio_path}")
-                            # Check if the model has the audio_file_path attribute
-                            if hasattr(db_capture, 'audio_file_path'):
-                                db_capture.audio_file_path = id_based_audio_path
-                                self.log_capture(db, db_capture.id, "info", f"Audio file saved: {id_based_audio_path}")
-                            else:
-                                print(f"WARNING - capture_callback - CaptureSession model does not have audio_file_path attribute")
-                        except Exception as e:
-                            print(f"ERROR - capture_callback - Failed to copy audio file: {str(e)}")
+                        # The audio file is already at the correct path, just save it in the database
+                        print(f"DEBUG - capture_callback - Saving audio file path: {audio_file_path}")
+                        
+                        # Check if the model has the audio_file_path attribute
+                        if hasattr(db_capture, 'audio_file_path'):
+                            db_capture.audio_file_path = audio_file_path
+                            self.log_capture(db, db_capture.id, "info", f"Audio file saved: {audio_file_path}")
+                        else:
+                            print(f"WARNING - capture_callback - CaptureSession model does not have audio_file_path attribute")
                     else:
                         print(f"DEBUG - capture_callback - Audio file not found: {audio_file_path}")
                         
                         # Try to find the audio file with alternative patterns
                         print(f"DEBUG - capture_callback - Trying alternative patterns for audio file")
+                        # Get padded capture ID (e.g., 0093)
+                        padded_capture_id = str(capture_id).zfill(4)
+                        
                         alt_patterns = [
-                            os.path.join(os.path.dirname(output_file), f"capture_{capture_id}_audio.mp3"),
-                            os.path.join(os.path.dirname(output_file), f"parliament_capture_{capture_id}_*.mp3"),
-                            f"{os.path.splitext(output_file)[0]}.mp3",
-                            f"audio_{os.path.splitext(os.path.basename(output_file))[0]}.mp3"
+                            # Primary pattern we want: capture_XXXX.audio.mp3
+                            os.path.join(docker_audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3"),
+                            
+                            # Alternative patterns that might exist
+                            os.path.join(docker_audio_extracts_dir, f"capture_{capture_id}.audio.mp3"),
+                            os.path.join(docker_audio_extracts_dir, f"capture_{capture_id}_audio.mp3"),
+                            os.path.join(os.path.dirname(output_file), f"capture_{padded_capture_id}.audio.mp3"),
+                            f"{output_file}.audio.mp3"
                         ]
                         
                         # Also check in the Docker container's temp directory
                         docker_temp_dir = "/app/data/temp"
                         alt_patterns.extend([
-                            os.path.join(docker_temp_dir, f"capture_{capture_id}_audio.mp3"),
-                            os.path.join(docker_temp_dir, f"parliament_capture_{capture_id}_*.mp3")
+                            os.path.join(docker_temp_dir, f"capture_{padded_capture_id}.audio.mp3"),
+                            os.path.join(docker_temp_dir, f"capture_{capture_id}.audio.mp3")
                         ])
                         
                         for pattern in alt_patterns:
@@ -915,154 +920,152 @@ class ParliamentTVCapture:
             has_audio = False
             main_url = None
             audio_url = None
-            temp_audio_file = None
             
-            # Create an ID-based audio file path
-            id_based_audio_path = os.path.join(audio_extracts_dir, f"capture_{capture_id}_audio.mp3")
-            print(f"DEBUG - download_stream - ID-based audio path: {id_based_audio_path}")
+            # Create an ID-based audio file path with the correct format
+            # Format should be: capture_XXXX.audio.mp3 where XXXX is the zero-padded capture ID
+            padded_capture_id = capture_id.zfill(4) if capture_id.isdigit() else capture_id
+            audio_file_path = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
+            print(f"DEBUG - download_stream - Audio file path: {audio_file_path}")
             
-            # Check if the URL is a dictionary with separate video and audio URLs
+            # Determine the video and audio URLs
             if isinstance(stream_url, dict):
-                if 'video_url' in stream_url:
+                # Handle dictionary input (from extract_stream_url)
+                if 'video_url' in stream_url and stream_url.get('video_url'):
                     # We have separate video and audio URLs
                     print(f"DEBUG - download_stream - Using separate video and audio URLs")
                     main_url = stream_url.get('video_url')
                     audio_url = stream_url.get('audio_url')
-                    
-                    # Validate URLs
-                    if not main_url:
-                        print("ERROR - download_stream - video_url is empty")
-                        return {"success": False, "error": "Video URL is empty"}
-                    
-                    # Download audio separately if available
-                    if audio_url:
-                        print(f"DEBUG - download_stream - Downloading audio from: {audio_url}")
-                        
-                        # Download audio directly to the audio_extracts directory
-                        audio_cmd = ["ffmpeg", "-y", "-i", audio_url, "-vn", "-acodec", "libmp3lame", "-ab", "192k", "-ar", "44100", "-t", str(duration), id_based_audio_path]
-                        print(f"DEBUG - download_stream - Audio command: {' '.join(audio_cmd)}")
-                        audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
-                        
-                        if audio_result.returncode == 0 and os.path.exists(id_based_audio_path):
-                            print(f"DEBUG - download_stream - Successfully downloaded audio to: {id_based_audio_path}")
-                            has_audio = True
-                        else:
-                            print(f"ERROR - download_stream - Failed to download audio: {audio_result.stderr}")
+                elif 'direct_stream' in stream_url:
+                    # We have a direct stream URL
+                    direct_stream = stream_url.get('direct_stream')
+                    if isinstance(direct_stream, dict):
+                        # Dictionary with separate video and audio URLs
+                        main_url = direct_stream.get('video_url')
+                        audio_url = direct_stream.get('audio_url')
+                    else:
+                        # Single URL for video
+                        main_url = direct_stream
                 elif 'original_url' in stream_url:
-                    # We have an original URL, try to extract audio from it
-                    original_url = stream_url['original_url']
-                    main_url = stream_url.get('direct_stream', original_url)
+                    # We have an original URL, need to extract stream info
+                    original_url = stream_url.get('original_url')
                     print(f"DEBUG - download_stream - Using original URL: {original_url}")
-                    print(f"DEBUG - download_stream - Using main URL: {main_url}")
                     
-                    # Try to extract audio from the original URL
-                    try:
-                        # Extract the stream info from the original URL
-                        script_path = os.path.join(self.scripts_dir, "extract-url.py")
-                        if os.path.exists(script_path):
-                            print(f"DEBUG - download_stream - Using extract-url.py at: {script_path}")
-                            
-                            # Run the extract-url.py script
-                            extract_cmd = [sys.executable, script_path, original_url]
-                            print(f"DEBUG - download_stream - Running extract-url.py: {' '.join(extract_cmd)}")
-                            extract_result = subprocess.run(extract_cmd, capture_output=True, text=True)
-                            
-                            if extract_result.returncode == 0:
-                                # Parse the JSON output
-                                try:
-                                    stream_info = json.loads(extract_result.stdout)
-                                    print(f"DEBUG - download_stream - Parsed stream info: {stream_info}")
-                                    
-                                    # Check if we have separate audio and video URLs
-                                    if isinstance(stream_info.get('direct_stream'), dict) and 'audio_url' in stream_info['direct_stream']:
-                                        audio_url = stream_info['direct_stream']['audio_url']
-                                        print(f"DEBUG - download_stream - Found separate audio URL: {audio_url}")
-                                        
-                                        # Download audio directly to the audio_extracts directory
-                                        audio_cmd = ["ffmpeg", "-y", "-i", audio_url, "-vn", "-acodec", "libmp3lame", "-ab", "192k", "-ar", "44100", "-t", str(duration), id_based_audio_path]
-                                        print(f"DEBUG - download_stream - Audio command: {' '.join(audio_cmd)}")
-                                        audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
-                                        
-                                        if audio_result.returncode == 0 and os.path.exists(id_based_audio_path):
-                                            print(f"DEBUG - download_stream - Successfully downloaded audio to: {id_based_audio_path}")
-                                            has_audio = True
-                                        else:
-                                            print(f"ERROR - download_stream - Failed to download audio: {audio_result.stderr}")
-                                except json.JSONDecodeError as e:
-                                    print(f"ERROR - download_stream - Failed to parse JSON output: {str(e)}")
-                            else:
-                                print(f"ERROR - download_stream - extract-url.py failed with return code {extract_result.returncode}")
+                    # Extract stream info using extract-url.py
+                    script_path = os.path.join(self.scripts_dir, "extract-url.py")
+                    if os.path.exists(script_path):
+                        print(f"DEBUG - download_stream - Using extract-url.py at: {script_path}")
+                        extract_cmd = [sys.executable, script_path, original_url]
+                        print(f"DEBUG - download_stream - Running extract-url.py: {' '.join(extract_cmd)}")
+                        extract_result = subprocess.run(extract_cmd, capture_output=True, text=True)
+                        
+                        if extract_result.returncode == 0:
+                            try:
+                                stream_info = json.loads(extract_result.stdout)
+                                print(f"DEBUG - download_stream - Parsed stream info: {stream_info}")
+                                
+                                direct_stream = stream_info.get('direct_stream')
+                                if isinstance(direct_stream, dict):
+                                    # Dictionary with separate video and audio URLs
+                                    main_url = direct_stream.get('video_url')
+                                    audio_url = direct_stream.get('audio_url')
+                                else:
+                                    # Single URL for video
+                                    main_url = direct_stream
+                            except json.JSONDecodeError as e:
+                                print(f"ERROR - download_stream - Failed to parse JSON output: {str(e)}")
                         else:
-                            print(f"ERROR - download_stream - extract-url.py not found at: {script_path}")
-                    except Exception as e:
-                        print(f"ERROR - download_stream - Failed to extract audio from original URL: {str(e)}")
-                else:
-                    # Just use the stream_url as is
-                    main_url = stream_url
+                            print(f"ERROR - download_stream - extract-url.py failed with return code {extract_result.returncode}")
+                    else:
+                        print(f"ERROR - download_stream - extract-url.py not found at: {script_path}")
             else:
-                # Single URL
+                # Single URL string
                 main_url = stream_url
-                
-                # Try to derive an audio URL from the video URL
-                if isinstance(main_url, str) and 'video=' in main_url:
+            
+            # If we don't have an audio URL but have a video URL, try to derive the audio URL
+            if not audio_url and main_url and isinstance(main_url, str):
+                if 'video=' in main_url:
+                    # Parliament TV format: replace video= with audio=
                     audio_url = main_url.replace('video=', 'audio=')
+                    # Make sure we have the right audio format
                     if not audio_url.endswith('_eng=64000.m3u8'):
                         audio_url = audio_url.replace('.m3u8', '_eng=64000.m3u8')
                     print(f"DEBUG - download_stream - Derived audio URL from video URL: {audio_url}")
-                    
-                    # Download audio directly to the audio_extracts directory
-                    audio_cmd = ["ffmpeg", "-y", "-i", audio_url, "-vn", "-acodec", "libmp3lame", "-ab", "192k", "-ar", "44100", "-t", str(duration), id_based_audio_path]
-                    print(f"DEBUG - download_stream - Audio command: {' '.join(audio_cmd)}")
-                    audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
-                    
-                    if audio_result.returncode == 0 and os.path.exists(id_based_audio_path):
-                        print(f"DEBUG - download_stream - Successfully downloaded audio to: {id_based_audio_path}")
-                        has_audio = True
-                    else:
-                        print(f"ERROR - download_stream - Failed to download audio: {audio_result.stderr}")
+                elif 'parliamentlive.tv' in main_url or 'www.parliamentlive.tv' in main_url:
+                    # Try to extract stream info using extract-url.py
+                    script_path = os.path.join(self.scripts_dir, "extract-url.py")
+                    if os.path.exists(script_path):
+                        extract_cmd = [sys.executable, script_path, main_url]
+                        extract_result = subprocess.run(extract_cmd, capture_output=True, text=True)
+                        
+                        if extract_result.returncode == 0:
+                            try:
+                                stream_info = json.loads(extract_result.stdout)
+                                direct_stream = stream_info.get('direct_stream')
+                                if isinstance(direct_stream, dict) and 'audio_url' in direct_stream:
+                                    audio_url = direct_stream.get('audio_url')
+                                    print(f"DEBUG - download_stream - Found audio URL from extract-url.py: {audio_url}")
+                            except json.JSONDecodeError:
+                                pass
             
             # Ensure main_url is valid
             if not main_url:
-                print("ERROR - download_stream - No valid main URL found")
-                return {"success": False, "error": "No valid main URL found"}
+                print("ERROR - download_stream - No valid video URL found")
+                return {"success": False, "error": "No valid video URL found"}
+            
+            # Download audio if available
+            if audio_url:
+                print(f"DEBUG - download_stream - Downloading audio from: {audio_url}")
+                audio_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", audio_url,
+                    "-vn",  # No video
+                    "-acodec", "libmp3lame",
+                    "-ab", "128k",
+                    "-ar", "44100",
+                    "-f", "mp3",
+                    "-t", str(duration),
+                    audio_file_path
+                ]
+                print(f"DEBUG - download_stream - Audio command: {' '.join(audio_cmd)}")
+                audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
+                
+                if audio_result.returncode == 0 and os.path.exists(audio_file_path) and os.path.getsize(audio_file_path) > 0:
+                    print(f"DEBUG - download_stream - Successfully downloaded audio to: {audio_file_path}")
+                    has_audio = True
+                    
+                    # No need to create a separate copy since we're already using the correct naming convention
+                    # The audio file is already at the expected path: /app/data/temp/audio_extracts/capture_XXXX.audio.mp3
+                    # Just log that we have the audio file at the correct location
+                    print(f"DEBUG - download_stream - Audio file is at the correct path: {audio_file_path}")
+                else:
+                    print(f"ERROR - download_stream - Failed to download audio: {audio_result.stderr}")
             
             # Download the video
             print(f"DEBUG - download_stream - Downloading video from: {main_url}")
+            video_cmd = [
+                "ffmpeg", "-y",
+                "-i", main_url,
+                "-c:v", "copy",  # Copy video codec
+                "-an",  # No audio - we download it separately
+                "-t", str(duration),
+                output_path
+            ]
+            print(f"DEBUG - download_stream - Video command: {' '.join(video_cmd)}")
+            video_result = subprocess.run(video_cmd, capture_output=True, text=True)
             
-            # Build the ffmpeg command
-            cmd = ["ffmpeg", "-y", "-i", main_url, "-c:v", "copy"]
-            
-            # Add audio options if the stream has audio
-            if has_audio:
-                cmd.extend(["-c:a", "aac", "-ac", "2", "-ar", "44100", "-strict", "experimental"])
-            
-            # Add duration limit
-            cmd.extend(["-t", str(duration)])
-            
-            # Add output file
-            cmd.append(output_path)
-            
-            # Run the command
-            print(f"DEBUG - download_stream - Video command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode == 0 and os.path.exists(output_path):
+            if video_result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                 print(f"DEBUG - download_stream - Successfully downloaded video to: {output_path}")
                 
-                # Copy the audio file to the expected location for the UI
-                if has_audio and os.path.exists(id_based_audio_path):
-                    audio_file_path = f"{output_path}.audio.mp3"
-                    try:
-                        shutil.copy(id_based_audio_path, audio_file_path)
-                        print(f"DEBUG - download_stream - Copied audio to: {audio_file_path}")
-                    except Exception as e:
-                        print(f"ERROR - download_stream - Failed to copy audio file: {str(e)}")
-                
-                # Return success
-                return {"success": True, "output_file": output_path, "has_audio": has_audio}
+                # Return success with audio info
+                return {
+                    "success": True,
+                    "output_file": output_path,
+                    "has_audio": has_audio,
+                    "audio_file_path": audio_file_path if has_audio else None
+                }
             else:
-                print(f"ERROR - download_stream - Failed to download video: {result.stderr}")
-                return {"success": False, "error": f"Failed to download video: {result.stderr}"}
+                print(f"ERROR - download_stream - Failed to download video: {video_result.stderr}")
+                return {"success": False, "error": f"Failed to download video: {video_result.stderr}"}
             
         except Exception as e:
             print(f"ERROR - download_stream - Unexpected error: {str(e)}")
