@@ -984,12 +984,17 @@ class ParliamentTVCapture:
             # If we don't have an audio URL but have a video URL, try to derive the audio URL
             if not audio_url and main_url and isinstance(main_url, str):
                 if 'video=' in main_url:
-                    # Parliament TV format: replace video= with audio=
-                    audio_url = main_url.replace('video=', 'audio=')
-                    # Make sure we have the right audio format
-                    if not audio_url.endswith('_eng=64000.m3u8'):
-                        audio_url = audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                    # Parliament TV format: replace video= with audio_eng=
+                    audio_url = main_url.replace('video=', 'audio_eng=')
+                    # Make sure we have the right audio format and bitrate
+                    audio_url = audio_url.replace('3000000', '64000')
                     print(f"DEBUG - download_stream - Derived audio URL from video URL: {audio_url}")
+                elif 'vod-idx-video=' in main_url:
+                    # Parliament TV format: vod-idx-video=3000000.m3u8 -> vod-idx-audio_eng=64000.m3u8
+                    audio_url = main_url.replace('vod-idx-video=', 'vod-idx-audio_eng=')
+                    # Make sure we have the right audio bitrate
+                    audio_url = audio_url.replace('3000000', '64000')
+                    print(f"DEBUG - download_stream - Derived audio URL from Parliament TV URL: {audio_url}")
                 elif 'parliamentlive.tv' in main_url or 'www.parliamentlive.tv' in main_url:
                     # Try to extract stream info using extract-url.py
                     script_path = os.path.join(self.scripts_dir, "extract-url.py")
