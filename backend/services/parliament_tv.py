@@ -652,6 +652,22 @@ class ParliamentTVCapture:
             logger.error(f"Unexpected error: {str(e)}")
             return {"error": f"Unexpected error: {str(e)}"}
 
+    def log_capture(self, db: Session, capture_id: int, level: str, message: str):
+        """Log a message for a capture."""
+        try:
+            # Create a new log entry
+            log = CaptureLog(
+                capture_id=capture_id,
+                level=level,
+                message=message,
+                timestamp=datetime.now()
+            )
+            db.add(log)
+            db.commit()
+            logger.debug(f"Added log for capture {capture_id}: [{level}] {message}")
+        except Exception as e:
+            logger.error(f"Failed to add log for capture {capture_id}: {str(e)}")
+            # Don't raise the exception, just log it
 
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from a video file or directly from the stream URL"""
