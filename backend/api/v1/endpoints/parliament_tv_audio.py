@@ -5,10 +5,13 @@ import os
 import subprocess
 import shlex
 import logging
+from fastapi import APIRouter, Depends, Path, HTTPException
+import json
 
 from backend.api.deps import get_db
 from backend.core.security import get_current_active_user, has_permission, UserRole
 from backend.db import models
+from backend.services.parliament_tv import extract_stream_url
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -27,71 +30,99 @@ async def extract_audio_for_capture(
         # Check if user has required permissions
         has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
         
+        logger.info(f"Starting audio extraction for capture {capture_id}")
+        
         # Get the capture session from the database
         capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
         if not capture:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f'Capture session with ID {capture_id} not found'
-            )
-        
-        # Check if the capture is completed or active
-        if capture.status not in ['completed', 'active']:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Capture session with ID {capture_id} is not completed or active (status: {capture.status})'
-            )
-        
-        # Check if we have source URL and metadata with audio URL
-        source_url = capture.source_url
-        audio_url = None
-        
-        if capture.metadata and isinstance(capture.metadata, dict):
-            audio_url = capture.metadata.get('audio_url')
-        
-        if not source_url and not audio_url:
+            logger.error(f"Capture session {capture_id} not found")
             return {
                 'success': False,
-                'error': 'No source URL or audio URL available for this capture'
+                'error': f'Capture session {capture_id} not found'
             }
-            
-        # Define the output file path
-        audio_extracts_dir = '/app/data/temp/audio_extracts'
-        os.makedirs(audio_extracts_dir, exist_ok=True)
         
-        # Format capture ID with leading zeros
+        # Check if the capture is in a valid state
+        if capture.status not in ['completed', 'active', 'stopped']:
+            logger.error(f"Capture session {capture_id} is not in a valid state for audio extraction: {capture.status}")
+            return {
+                'success': False,
+                'error': f'Capture session {capture_id} is not in a valid state for audio extraction: {capture.status}'
+            }
+        
+        # Format the capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
-        output_file = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
         
-        # If we have a direct audio URL, use it
-        if audio_url:
-            logger.info(f"Using audio URL from metadata: {audio_url}")
-            input_url = audio_url
-        else:
-            # If no audio URL in metadata, try to extract from source URL
-            logger.info(f"Extracting audio URL from source URL: {source_url}")
-            
-            # Import the extract_stream_url function from the service module
-            from backend.services.parliament_tv import parliament_tv_capture
-            
-            try:
-                # Extract stream info to get audio URL
-                stream_info = parliament_tv_capture.extract_stream_url(source_url)
-                fresh_audio_url = stream_info.get("audio_url")
-                
-                if fresh_audio_url and isinstance(fresh_audio_url, str):
-                    logger.info(f"Found audio URL: {fresh_audio_url}")
-                    input_url = fresh_audio_url
+        # Define the output audio file path
+        audio_dir = os.path.join('/app/data/temp', "audio_extracts")
+        os.makedirs(audio_dir, exist_ok=True)
+        output_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
+        
+        # Get the source URL and metadata from the capture
+        source_url = capture.source_url
+        metadata = capture.metadata
+        
+        logger.info(f"Source URL: {source_url}")
+        
+        # Handle metadata serialization safely
+        try:
+            metadata_str = 'None'
+            if metadata:
+                # Convert metadata to a serializable format
+                if hasattr(metadata, '__dict__'):
+                    metadata_dict = metadata.__dict__
+                    metadata_str = str(metadata_dict)
                 else:
-                    # If no audio URL found, use the video URL
-                    video_url = stream_info.get("video_url")
-                    if video_url and isinstance(video_url, str):
-                        logger.info(f"No audio URL found, using video URL: {video_url}")
-                        input_url = video_url
+                    metadata_str = str(metadata)
+            logger.info(f"Metadata: {metadata_str}")
+        except Exception as e:
+            logger.warning(f"Could not serialize metadata: {str(e)}")
+            logger.info(f"Metadata: [non-serializable object]")
+
+        
+        # Determine the input URL for audio extraction
+        input_url = None
+        
+        # First, check if we have a dedicated audio URL in metadata
+        if metadata and isinstance(metadata, dict) and 'audio_url' in metadata:
+            audio_url = metadata.get('audio_url')
+            if audio_url and isinstance(audio_url, str):
+                logger.info(f"Using dedicated audio URL from metadata: {audio_url}")
+                input_url = audio_url
+            else:
+                logger.warning(f"Invalid audio URL in metadata: {audio_url}")
+        
+        # If no valid audio URL in metadata, try to extract from source URL
+        if not input_url and source_url:
+            logger.info(f"No valid audio URL in metadata, extracting from source URL: {source_url}")
+            try:
+                # Extract stream info to get fresh audio URL
+                stream_info = extract_stream_url(source_url)
+                
+                # Handle stream_info serialization safely
+                try:
+                    stream_info_str = 'None'
+                    if stream_info:
+                        # Convert stream_info to a serializable format
+                        if hasattr(stream_info, '__dict__'):
+                            stream_info_dict = stream_info.__dict__
+                            stream_info_str = str(stream_info_dict)
+                        else:
+                            stream_info_str = str(stream_info)
+                    logger.info(f"Stream info: {stream_info_str}")
+                except Exception as e:
+                    logger.warning(f"Could not serialize stream_info: {str(e)}")
+                    logger.info(f"Stream info: [non-serializable object]")
+
+                
+                if stream_info and isinstance(stream_info, dict) and 'audio_url' in stream_info:
+                    audio_url = stream_info.get('audio_url')
+                    if audio_url and isinstance(audio_url, str):
+                        logger.info(f"Using audio URL from stream info: {audio_url}")
+                        input_url = audio_url
                     else:
-                        # If no video URL found, use the source URL
-                        logger.info(f"No video URL found, using source URL: {source_url}")
-                        input_url = source_url
+                        logger.warning(f"Invalid audio URL in stream info: {audio_url}")
+                else:
+                    logger.warning(f"No audio URL found in stream info: {stream_info}")
             except Exception as e:
                 logger.error(f"Error extracting stream URL: {str(e)}")
                 return {
@@ -99,75 +130,73 @@ async def extract_audio_for_capture(
                     'error': f'Error extracting stream URL: {str(e)}'
                 }
         
-        # Use ffmpeg directly with the HLS stream
-        # For HLS streams, we need to use ffmpeg with special options
-        logger.info(f"Processing HLS audio stream: {input_url}")
+        if not input_url:
+            logger.error("No valid input URL found for audio extraction")
+            return {
+                'success': False,
+                'error': 'No valid input URL found for audio extraction'
+            }
+            
+        logger.info(f"Final input URL for audio extraction: {input_url}")
         
+        # Create a Python list for the ffmpeg command
+        # This avoids any shell parsing issues with special characters in URLs
+        cmd = [
+            "ffmpeg", "-y",
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-http_persistent", "0",
+            "-allowed_extensions", "ALL",
+            "-i", input_url,
+            "-vn",
+            "-c:a", "libmp3lame",
+            "-q:a", "2",
+            output_file
+        ]
+        
+        logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
+        
+        # Run the command with subprocess.run and shell=False
+        # This ensures no shell parsing of special characters in URLs
         try:
-            # Define the temporary directory
-            temp_dir = '/app/data/temp'
-            os.makedirs(temp_dir, exist_ok=True)
+            process = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                shell=False  # CRITICAL: Avoid shell parsing issues with URLs
+            )
             
-            # Create a command that properly handles HLS streams
-            cmd = [
-                "ffmpeg", "-y",
-                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-                "-http_persistent", "0",  # Disable persistent connections
-                "-allowed_extensions", "ALL",
-                "-i", input_url,
-                "-vn",  # No video
-                "-c:a", "libmp3lame",
-                "-q:a", "2",
-                output_file
-            ]
+            # Log the command output
+            logger.info(f"Command stdout: {process.stdout}")
+            logger.info(f"Command stderr: {process.stderr}")
             
-            logger.info(f"Using direct ffmpeg command for HLS stream to: {output_file}")
-            logger.info(f"Command: {' '.join(cmd)}")
+            # Check if the command was successful
+            if process.returncode != 0:
+                logger.error(f"Audio extraction failed with return code {process.returncode}")
+                return {
+                    'success': False,
+                    'error': f'Audio extraction failed: {process.stderr}'
+                }
+                
+            # Audio extraction completed successfully
+            logger.info(f"Audio extraction completed successfully: {output_file}")
             
-            # We'll use a direct approach without shell=True to avoid shell parsing issues
+            # Update the database
+            capture.audio_file_path = output_file
+            db.commit()
             
-            logger.info(f"Converting downloaded audio to MP3: {output_file}")
+            return {
+                'success': True,
+                'message': 'Audio extraction completed successfully',
+                'output_file': output_file
+            }
         except Exception as e:
-            logger.error(f"Error downloading audio: {str(e)}")
+            logger.error(f"Error executing ffmpeg command: {str(e)}")
             return {
                 'success': False,
-                'error': f'Error downloading audio: {str(e)}'
+                'error': f'Error executing ffmpeg command: {str(e)}'
             }
-        
-        # Log the command
-        logger.info(f"Running ffmpeg command to extract audio directly from URL")
-        
-        # Run the command
-        # Explicitly set shell=False to avoid shell parsing issues with URLs containing special characters
-        process = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            shell=False  # Explicitly set shell=False to avoid syntax errors with special characters
-        )
-        
-        # Check if the command was successful
-        if process.returncode != 0:
-            logger.error(f"Audio extraction failed: {process.stderr}")
-            return {
-                'success': False,
-                'error': f'Audio extraction failed: {process.stderr}'
-            }
-            
-        # Audio extraction completed successfully
-        logger.info(f"Audio extraction completed successfully: {output_file}")
-        
-        # Update the database
-        capture.audio_file_path = output_file
-        db.commit()
-        
-        return {
-            'success': True,
-            'message': 'Audio extraction completed successfully',
-            'output_file': output_file
-        }
     except Exception as e:
         logger.error(f'Error extracting audio: {str(e)}')
         return {

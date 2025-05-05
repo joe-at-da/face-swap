@@ -451,13 +451,27 @@ class ParliamentTVCapture:
                 logger.info(f"Stream URL is accessible, starting capture process")
                 logger.info(f"Full command: {' '.join(cmd)}")
                 
-                # Use a different approach to run ffmpeg - run in the background with nohup
-                # This prevents zombie processes and ensures the process continues even if the parent exits
-                background_cmd = f"nohup {' '.join(cmd)} > {log_file_path} 2>&1 &"
-                logger.info(f"Running background command: {background_cmd}")
+                # Use a different approach to run ffmpeg in the background without shell=True
+                # We'll use subprocess.Popen with preexec_fn to detach the process
+                import os
+                import signal
                 
-                # Run the command in a shell to use nohup properly
-                subprocess.run(background_cmd, shell=True)
+                # Open log file for the process
+                log_file = open(log_file_path, 'w')
+                
+                # Log what we're about to do
+                logger.info(f"Starting ffmpeg process with command: {' '.join(cmd)}")
+                logger.info(f"Redirecting output to: {log_file_path}")
+                
+                # Start the process in the background with process group detached
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    preexec_fn=os.setpgrp,  # This detaches the process from the parent
+                    close_fds=True,         # Close file descriptors
+                    shell=False             # CRITICAL: Avoid shell parsing issues with URLs
+                )
                 
                 logger.info(f"Started ffmpeg process for capture {capture_id} in the background")
                 
