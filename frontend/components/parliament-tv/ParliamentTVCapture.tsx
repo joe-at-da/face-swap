@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { extractAudioForCapture } from '../../utils/extractAudio';
 
 // API base URL
 const API_BASE_URL = 'http://localhost:8000/api/v1';
@@ -356,6 +357,19 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       setDescription('');
       setDuration(300);
       setEnableFacialRecognition(true);
+      
+      // Extract audio for this capture
+      if (response.data && typeof response.data === 'object' && 'id' in response.data) {
+        const captureId = response.data.id as number;
+        console.log('Starting audio extraction for capture ID:', captureId);
+        extractAudioForCapture(captureId)
+          .then(success => {
+            console.log('Audio extraction initiated:', success ? 'success' : 'failed');
+          })
+          .catch(err => {
+            console.error('Error initiating audio extraction:', err);
+          });
+      }
       
       // Call onSuccess callback if provided
       if (onSuccess) {

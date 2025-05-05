@@ -241,12 +241,51 @@ class ParliamentTVCapture:
                             if hasattr(db_capture, 'audio_file_path'):
                                 db_capture.audio_file_path = audio_file_path
                                 self.log_capture(db, db_capture.id, "info", f"Audio file saved: {audio_file_path}")
-                            else:
-                                print(f"WARNING - run_capture_process - CaptureSession model doesn't have audio_file_path attribute")
-                                # Try to store it in metadata
-                                if not hasattr(db_capture, 'metadata') or db_capture.metadata is None:
+                        else:
+                            # Run the extract_audio_for_capture.py script to extract audio
+                            try:
+                                # Find the extract_audio_for_capture.py script
+                                script_path = os.path.join(self.scripts_dir, "extract_audio_for_capture.py")
+                                if os.path.exists(script_path):
+                                    print(f"DEBUG - start_capture_async - Extracting audio for capture {capture_id}")
+                                    # Run the script in a non-blocking way
+                                    cmd = [sys.executable, script_path, str(capture_id)]
+                                    subprocess.Popen(cmd)
+                                    print(f"DEBUG - start_capture_async - Audio extraction started for capture {capture_id}")
+                                    self.log_capture(db, db_capture.id, "info", "Audio extraction started")
+                                else:
+                                    print(f"DEBUG - start_capture_async - Audio extraction script not found: {script_path}")
+                            except Exception as e:
+                                print(f"DEBUG - start_capture_async - Error extracting audio: {str(e)}")
+                                import traceback
+                                print(f"DEBUG - start_capture_async - Traceback: {traceback.format_exc()}")
+                        else:
+                            # Run the extract_audio_for_capture.py script to extract audio
+                            try:
+                                # Find the extract_audio_for_capture.py script
+                                script_path = os.path.join(self.scripts_dir, "extract_audio_for_capture.py")
+                                if os.path.exists(script_path):
+                                    print(f"DEBUG - start_capture_async - Extracting audio for capture {capture_id}")
+                                    # Run the script in a non-blocking way
+                                    cmd = [sys.executable, script_path, str(capture_id)]
+                                    subprocess.Popen(cmd)
+                                    print(f"DEBUG - start_capture_async - Audio extraction started for capture {capture_id}")
+                                    self.log_capture(db, db_capture.id, "info", "Audio extraction started")
+                                else:
+                                    print(f"DEBUG - start_capture_async - Audio extraction script not found: {script_path}")
+                            except Exception as e:
+                                print(f"DEBUG - start_capture_async - Error extracting audio: {str(e)}")
+                                import traceback
+                                print(f"DEBUG - start_capture_async - Traceback: {traceback.format_exc()}")
+                            
+                        # Check if the model has the audio_file_path attribute
+                        if not hasattr(db_capture, 'audio_file_path'):
+                            print(f"WARNING - run_capture_process - CaptureSession model doesn't have audio_file_path attribute")
+                            # Try to store it in metadata
+                            if hasattr(db_capture, 'metadata'):
+                                if db_capture.metadata is None:
                                     db_capture.metadata = {}
-                                if isinstance(db_capture.metadata, dict):
+                                if isinstance(db_capture.metadata, dict) and audio_file_path:
                                     db_capture.metadata['audio_file_path'] = audio_file_path
                                     self.log_capture(db, db_capture.id, "info", f"Audio file path stored in metadata: {audio_file_path}")
                         
@@ -638,25 +677,13 @@ class ParliamentTVCapture:
                 print(f"DEBUG - capture_callback - Capture {capture_id} failed with error: {error}")
                 db_capture.status = "failed"
                 db_capture.error = error
-                db_capture.stopped_at = datetime.now()
-                self.log_capture(db, capture_id, "error", f"Capture failed: {error}")
-            else:
-                print(f"DEBUG - capture_callback - Capture {capture_id} completed successfully")
-                db_capture.status = "completed"
-                db_capture.stopped_at = datetime.now()
-                db_capture.output_file = output_file
-                self.log_capture(db, capture_id, "info", "Capture completed successfully")
                 
-                # Check if the output file exists
-                if output_file and os.path.exists(output_file):
-                    print(f"DEBUG - capture_callback - Output file exists: {output_file}")
-                    
-                    # Define Docker container paths
-                    docker_audio_extracts_dir = "/app/data/temp/audio_extracts"
-                
-                    # Ensure the audio extracts directory exists in the Docker container
-                    os.makedirs(docker_audio_extracts_dir, exist_ok=True)
-                    print(f"DEBUG - capture_callback - Created Docker audio extracts directory: {docker_audio_extracts_dir}")
+                # Define Docker container paths
+                docker_audio_extracts_dir = "/app/data/temp/audio_extracts"
+            
+                # Ensure the audio extracts directory exists in the Docker container
+                os.makedirs(docker_audio_extracts_dir, exist_ok=True)
+                print(f"DEBUG - capture_callback - Created Docker audio extracts directory: {docker_audio_extracts_dir}")
                     
                     # Create the correctly formatted audio file path
                     # Format should be: capture_XXXX.audio.mp3 where XXXX is the zero-padded capture ID
