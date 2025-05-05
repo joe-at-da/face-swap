@@ -90,8 +90,10 @@ class ParliamentTVCapture:
                 ps_result = subprocess.run(ps_cmd, capture_output=True, text=True)
                 
                 # Look for ffmpeg processes with this capture ID
+                # Format the capture ID with leading zeros (e.g., 0096)
+                padded_capture_id = str(capture_id).zfill(4)
                 for line in ps_result.stdout.splitlines():
-                    if f"parliament_capture_{capture_id}" in line and "ffmpeg" in line:
+                    if f"capture_{padded_capture_id}" in line and "ffmpeg" in line:
                         print(f"DEBUG - stop_capture - Found ffmpeg process for capture {capture_id}: {line}")
                         # Extract PID (second column in ps output)
                         parts = line.split()
@@ -271,6 +273,94 @@ class ParliamentTVCapture:
             import traceback
             print(f"ERROR - test_stream_url - Traceback: {traceback.format_exc()}")
             return {"success": False, "error": f"Unexpected error: {str(e)}"}
+    
+    def extract_stream_url(self, url: str) -> Dict:
+        """Extract the direct stream URL from a Parliament TV event URL."""
+        try:
+            print(f"DEBUG - extract_stream_url - Extracting stream URL from: {url}")
+            
+            # Check if the URL is already a direct stream URL
+            if url and ('cdn.redbee.live' in url or '.m3u8' in url):
+                print(f"DEBUG - extract_stream_url - URL appears to be a direct stream URL already: {url}")
+                return {
+                    "direct_stream": url,
+                    "event_id": "direct",
+                    "time_marker": {"seconds": 0},
+                    "original_url": url
+                }
+            
+            # CRITICAL FIX: Hard-code script path to ensure it's never None
+            script_path = "/app/scripts/extract-url.py"
+            print(f"DEBUG - extract_stream_url - script_path: {script_path}")
+            
+            # Verify the script exists
+            if not os.path.exists(script_path):
+                print(f"ERROR - extract_stream_url - Script not found at {script_path}, checking alternatives")
+                # Try alternative locations
+                alt_paths = [
+                    "/app/backend/scripts/extract-url.py",
+                    "/app/scripts/extract-url.py",
+                    "/Users/joebradley/Veedoo/Development/the-mp/scripts/extract-url.py"
+                ]
+                for alt_path in alt_paths:
+                    if os.path.exists(alt_path):
+                        script_path = alt_path
+                        print(f"DEBUG - extract_stream_url - Found script at: {script_path}")
+                        break
+                else:
+                    print("ERROR - extract_stream_url - Could not find extract-url.py in any location")
+                    return {"error": "Could not find extract-url.py script"}
+            
+            # Check if Python executable is valid
+            python_executable = sys.executable
+            if not os.path.exists(python_executable):
+                print(f"ERROR - extract_stream_url - Python executable not found: {python_executable}")
+                # Try to find python executable
+                alt_python_paths = [
+                    "/usr/bin/python3",
+                    "/usr/bin/python",
+                    "/usr/local/bin/python3",
+                    "/usr/local/bin/python"
+                ]
+                for alt_path in alt_python_paths:
+                    if os.path.exists(alt_path):
+                        python_executable = alt_path
+                        print(f"DEBUG - extract_stream_url - Found Python at: {python_executable}")
+                        break
+                else:
+                    print("ERROR - extract_stream_url - Could not find Python executable")
+                    return {"error": "Could not find Python executable"}
+            
+            # Build the command
+            cmd = [python_executable, script_path, url]
+            print(f"DEBUG - extract_stream_url - Command: {' '.join(cmd)}")
+            
+            # Run the command
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            print(f"DEBUG - extract_stream_url - Command returned with code: {result.returncode}")
+            
+            # Check if the command was successful
+            if result.returncode == 0:
+                print(f"DEBUG - extract_stream_url - Command output: {result.stdout}")
+                try:
+                    # Parse the JSON output
+                    stream_info = json.loads(result.stdout)
+                    print(f"DEBUG - extract_stream_url - Parsed stream info: {stream_info}")
+                    return stream_info
+                except json.JSONDecodeError as e:
+                    print(f"ERROR - extract_stream_url - Failed to parse JSON output: {str(e)}")
+                    return {"error": f"Failed to parse JSON output: {str(e)}"}
+            else:
+                print(f"ERROR - extract_stream_url - Command failed with return code {result.returncode}")
+                print(f"ERROR - extract_stream_url - Command output: {result.stdout}")
+                print(f"ERROR - extract_stream_url - Command error: {result.stderr}")
+                return {"error": f"Command failed with return code {result.returncode}: {result.stderr}"}
+                
+        except Exception as e:
+            print(f"ERROR - extract_stream_url - Unexpected error: {str(e)}")
+            import traceback
+            print(f"ERROR - extract_stream_url - Traceback: {traceback.format_exc()}")
+            return {"error": f"Unexpected error: {str(e)}"}
 
 
 # Initialize the Parliament TV capture service
