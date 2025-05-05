@@ -610,9 +610,45 @@ async def stop_parliament_tv_capture(
         db.commit()
         db.refresh(capture)
         
+        # Extract audio from the video file if it exists
+        if capture.file_path and os.path.exists(capture.file_path):
+            print(f"Extracting audio from video file: {capture.file_path}")
+            try:
+                # Define paths
+                audio_extracts_dir = "/app/data/temp/audio_extracts"
+                os.makedirs(audio_extracts_dir, exist_ok=True)
+                
+                # Create the audio file path - format: capture_XXXX.audio.mp3
+                padded_capture_id = str(capture.id).zfill(4)
+                audio_file_path = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
+                
+                # Extract audio using ffmpeg
+                cmd = [
+                    "ffmpeg", "-y", "-i", capture.file_path, "-vn", "-acodec", "libmp3lame", "-ab", "192k",
+                    "-ar", "44100", audio_file_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0 and os.path.exists(audio_file_path):
+                    print(f"Successfully extracted audio to: {audio_file_path}")
+                    # Save the audio file path in the database
+                    if hasattr(capture, 'audio_file_path'):
+                        capture.audio_file_path = audio_file_path
+                        capture.metadata = capture.metadata or {}
+                        if isinstance(capture.metadata, dict):
+                            capture.metadata['audio_file_path'] = audio_file_path
+                        db.commit()
+                        print(f"Saved audio_file_path to database: {audio_file_path}")
+                    else:
+                        print(f"CaptureSession model does not have audio_file_path attribute")
+                else:
+                    print(f"Failed to extract audio from video: {result.stderr}")
+            except Exception as e:
+                print(f"Failed to extract audio from video: {str(e)}")
+        else:
+            print(f"Output file does not exist: {capture.file_path}")
+        
         # Attempt to stop the actual capture process
-        # This is implementation-dependent and may need to be adapted
-        # to your specific capture service
         try:
             parliament_tv_service.stop_capture(capture_id)
         except Exception as e:

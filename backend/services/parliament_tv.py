@@ -660,6 +660,9 @@ class ParliamentTVCapture:
     def capture_callback(self, db_capture, output_file, error=None):
         """Callback function for when a capture completes or fails."""
         capture_id = db_capture.id
+        print("#"*80)
+        print(f"AUDIO EXTRACTION FIX - CAPTURE_CALLBACK CALLED FOR CAPTURE {capture_id}")
+        print("#"*80)
         print(f"DEBUG - capture_callback - capture_id: {capture_id}, output_file: {output_file}, error: {error}")
         
         # Get a database session
@@ -1057,6 +1060,9 @@ class ParliamentTVCapture:
     
     def stop_capture(self, capture_id: int) -> Dict:
         """Stop a running capture."""
+        print("*"*80)
+        print(f"AUDIO EXTRACTION FIX - STOP_CAPTURE CALLED FOR CAPTURE {capture_id}")
+        print("*"*80)
         logger.info(f"Stopping capture {capture_id}")
         
         try:
