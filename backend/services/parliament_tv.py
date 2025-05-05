@@ -668,6 +668,47 @@ class ParliamentTVCapture:
         except Exception as e:
             logger.error(f"Failed to add log for capture {capture_id}: {str(e)}")
             # Don't raise the exception, just log it
+            
+    def test_stream_url(self, url: str) -> bool:
+        """Test if a stream URL is valid and accessible.
+        
+        Args:
+            url: The URL to test
+            
+        Returns:
+            bool: True if the URL is valid and accessible, False otherwise
+        """
+        try:
+            # Use ffprobe to check if the stream is valid
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                url
+            ]
+            
+            # Run the command with a timeout
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5  # 5 second timeout
+            )
+            
+            # Check if the command was successful
+            if result.returncode == 0:
+                return True
+            else:
+                logger.warning(f"Stream URL test failed: {url}. Error: {result.stderr}")
+                return False
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Stream URL test timed out: {url}")
+            return False
+        except Exception as e:
+            logger.error(f"Error testing stream URL: {url}. Error: {str(e)}")
+            return False
 
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from a video file or directly from the stream URL"""
