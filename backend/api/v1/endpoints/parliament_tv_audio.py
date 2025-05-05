@@ -64,122 +64,117 @@ async def extract_audio_for_capture(
                 'error': f'Capture session {capture_id} is not in a valid state for audio extraction: {capture.status}'
             }
         
-        # Format the capture ID with leading zeros
-        padded_capture_id = str(capture_id).zfill(4)
-        
-        # Define the output audio file path
-        audio_dir = os.path.join('/app/data/temp', "audio_extracts")
-        os.makedirs(audio_dir, exist_ok=True)
-        output_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
-        
-        # Get the source URL and metadata from the capture
-        source_url = capture.source_url
+        # Get the metadata from the capture
         metadata = capture.metadata
-        
-        logger.info(f"Source URL: {source_url}")
         
         # Handle metadata serialization safely
         try:
             metadata_str = 'None'
             if metadata:
                 # Convert metadata to a serializable format
-                if hasattr(metadata, '__dict__'):
-                    metadata_dict = metadata.__dict__
-                    metadata_str = str(metadata_dict)
-                else:
-                    metadata_str = str(metadata)
+                serializable_metadata = make_json_serializable(metadata)
+                metadata_str = str(serializable_metadata)
             logger.info(f"Metadata: {metadata_str}")
         except Exception as e:
             logger.warning(f"Could not serialize metadata: {str(e)}")
             logger.info(f"Metadata: [non-serializable object]")
-
         
-        # Determine the input URL for audio extraction
-        input_url = None
-        
-        # First, check if we have a dedicated audio URL in metadata
-        if metadata and isinstance(metadata, dict) and 'audio_url' in metadata:
-            audio_url = metadata.get('audio_url')
-            if audio_url and isinstance(audio_url, str):
-                logger.info(f"Using dedicated audio URL from metadata: {audio_url}")
-                input_url = audio_url
-            else:
-                logger.warning(f"Invalid audio URL in metadata: {audio_url}")
-        
-        # If no valid audio URL in metadata, try to extract from source URL
-        if not input_url and source_url:
-            logger.info(f"No valid audio URL in metadata, extracting from source URL: {source_url}")
+        # Get the video file path from the capture
+        video_file_path = capture.file_path
+        if not video_file_path:
+            # Try to extract the stream URL from the metadata
             try:
-                # Extract stream info to get fresh audio URL
-                stream_info = extract_stream_url(source_url)
-                
-                # Handle stream_info serialization safely
-                try:
-                    stream_info_str = 'None'
-                    if stream_info:
-                        # Convert stream_info to a serializable format
-                        if hasattr(stream_info, '__dict__'):
-                            stream_info_dict = stream_info.__dict__
-                            stream_info_str = str(stream_info_dict)
-                        else:
-                            stream_info_str = str(stream_info)
-                    logger.info(f"Stream info: {stream_info_str}")
-                except Exception as e:
-                    logger.warning(f"Could not serialize stream_info: {str(e)}")
-                    logger.info(f"Stream info: [non-serializable object]")
-
-                
-                if stream_info and isinstance(stream_info, dict) and 'audio_url' in stream_info:
-                    audio_url = stream_info.get('audio_url')
-                    if audio_url and isinstance(audio_url, str):
-                        logger.info(f"Using audio URL from stream info: {audio_url}")
-                        input_url = audio_url
+                if metadata and hasattr(metadata, 'stream_url'):
+                    input_url = metadata.stream_url
+                    logger.info(f"Using stream URL from metadata: {input_url}")
+                elif metadata and hasattr(metadata, 'url'):
+                    # Extract the stream URL from the Parliament TV URL
+                    original_url = metadata.url
+                    logger.info(f"Extracting stream URL from original URL: {original_url}")
+                    
+                    # Extract the stream URL
+                    stream_info = extract_stream_url(original_url)
+                    
+                    # Handle stream_info serialization safely
+                    try:
+                        stream_info_str = 'None'
+                        if stream_info:
+                            # Convert stream_info to a serializable format
+                            serializable_stream_info = make_json_serializable(stream_info)
+                            stream_info_str = str(serializable_stream_info)
+                        logger.info(f"Stream info: {stream_info_str}")
+                    except Exception as e:
+                        logger.warning(f"Could not serialize stream_info: {str(e)}")
+                        logger.info(f"Stream info: [non-serializable object]")
+                    
+                    # Get the audio URL from the stream info
+                    if stream_info and hasattr(stream_info, 'audio_url'):
+                        input_url = stream_info.audio_url
+                        logger.info(f"Using audio URL from stream info: {input_url}")
+                    elif stream_info and hasattr(stream_info, 'video_url'):
+                        input_url = stream_info.video_url
+                        logger.info(f"Using video URL from stream info: {input_url}")
                     else:
-                        logger.warning(f"Invalid audio URL in stream info: {audio_url}")
+                        return {
+                            'success': False,
+                            'error': "Could not extract stream URL from metadata"
+                        }
                 else:
-                    logger.warning(f"No audio URL found in stream info: {stream_info}")
+                    return {
+                        'success': False,
+                        'error': "No video file path or stream URL available"
+                    }
             except Exception as e:
                 logger.error(f"Error extracting stream URL: {str(e)}")
                 return {
                     'success': False,
-                    'error': f'Error extracting stream URL: {str(e)}'
+                    'error': f"Error extracting stream URL: {str(e)}"
                 }
+        else:
+            # Use the video file path as the input URL
+            input_url = video_file_path
+            logger.info(f"Using video file path: {input_url}")
         
-        if not input_url:
-            logger.error("No valid input URL found for audio extraction")
-            return {
-                'success': False,
-                'error': 'No valid input URL found for audio extraction'
-            }
-            
-        logger.info(f"Final input URL for audio extraction: {input_url}")
+        # Create the output file path
+        output_file = f"/app/data/temp/audio_extracts/capture_{capture_id:04d}.audio.mp3"
+        logger.info(f"Output file: {output_file}")
         
-        # Create a Python list for the ffmpeg command
-        # This avoids any shell parsing issues with special characters in URLs
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
+        # Create a Python list for the ffmpeg command with all arguments as strings
+        # This completely avoids any shell parsing issues
         cmd = [
-            "ffmpeg", "-y",
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            "-http_persistent", "0",
-            "-allowed_extensions", "ALL",
-            "-i", input_url,
+            "ffmpeg",
+            "-y",
+            "-protocol_whitelist",
+            "file,http,https,tcp,tls,crypto",
+            "-http_persistent",
+            "0",
+            "-allowed_extensions",
+            "ALL",
+            "-i",
+            str(input_url),  # Explicitly convert to string
             "-vn",
-            "-c:a", "libmp3lame",
-            "-q:a", "2",
-            output_file
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            str(output_file)  # Explicitly convert to string
         ]
         
-        logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
+        # Log the command for debugging without joining (to avoid any string formatting issues)
+        logger.info(f"Running ffmpeg command with arguments: {cmd}")
         
-        # Run the command with subprocess.run and shell=False
-        # This ensures no shell parsing of special characters in URLs
         try:
+            # Use subprocess.run with shell=False to avoid shell parsing issues
             process = subprocess.run(
-                cmd,
+                cmd,  # Use the list directly
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
-                shell=False  # CRITICAL: Avoid shell parsing issues with URLs
+                shell=False  # CRITICAL: Avoid shell parsing issues
             )
             
             # Log the command output
@@ -188,10 +183,11 @@ async def extract_audio_for_capture(
             
             # Check if the command was successful
             if process.returncode != 0:
-                logger.error(f"Audio extraction failed with return code {process.returncode}")
+                error_message = process.stderr if process.stderr else "Unknown error"
+                logger.error(f"Audio extraction failed with return code {process.returncode}: {error_message}")
                 return {
                     'success': False,
-                    'error': f'Audio extraction failed: {process.stderr}'
+                    'error': f'Audio extraction failed: {error_message}'
                 }
                 
             # Audio extraction completed successfully
