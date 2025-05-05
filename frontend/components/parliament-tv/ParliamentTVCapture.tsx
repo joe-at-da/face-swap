@@ -65,6 +65,9 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
   const [isStoppingCapture, setIsStoppingCapture] = useState(false);
   const [currentCaptureId, setCurrentCaptureId] = useState<number | null>(null);
   const [showStatusIndicator, setShowStatusIndicator] = useState(false);
+  const [timeMarker, setTimeMarker] = useState<number | null>(null);
+  const [scheduledStart, setScheduledStart] = useState<string>('');
+  const [scheduledEnd, setScheduledEnd] = useState<string>('');
 
   // Configure axios with authentication headers
   const getAuthHeaders = () => {
@@ -212,13 +215,36 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       console.log('Test response status:', testResponse.status);
       console.log('Test response data:', testResponse.data);
 
+      // Get the time marker from the response
+      const extractedTimeMarker = extractResponse.data.time_marker?.seconds || 0;
+      setTimeMarker(extractedTimeMarker);
+      
+      // Calculate scheduled start and end times based on the time marker
+      const startDate = new Date();
+      if (extractedTimeMarker > 0) {
+        // If we have a time marker, set the start time to that point in the video
+        startDate.setSeconds(startDate.getSeconds() - extractedTimeMarker);
+      }
+      
+      // Calculate end time (10 minutes from now by default)
+      const endDate = new Date();
+      endDate.setMinutes(endDate.getMinutes() + 10);
+      
+      // Format dates for datetime-local input
+      const formatDateForInput = (date: Date) => {
+        return date.toISOString().slice(0, 16);
+      };
+      
+      setScheduledStart(formatDateForInput(startDate));
+      setScheduledEnd(formatDateForInput(endDate));
+      
       setValidationResult({
         success: testResponse.data?.is_valid,
         message: testResponse.data?.is_valid 
-          ? 'Stream URL is valid and ready for capture.' 
+          ? `Stream URL is valid and ready for capture. Time marker: ${extractedTimeMarker} seconds` 
           : 'Stream URL was extracted but could not be validated. Capture may still work.',
         streamUrl: videoUrl,
-        timeMarker: extractResponse.data.time_marker?.seconds
+        timeMarker: extractedTimeMarker
       });
       } else {
         setValidationResult({
@@ -329,7 +355,9 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         title,
         description,
         duration,
-        enable_facial_recognition: enableFacialRecognition
+        enable_facial_recognition: enableFacialRecognition,
+        scheduled_start: scheduledStart ? new Date(scheduledStart).toISOString() : null,
+        scheduled_end: scheduledEnd ? new Date(scheduledEnd).toISOString() : null
       };
       
       // Add the direct_stream data if available
@@ -361,6 +389,9 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       setDescription('');
       setDuration(300);
       setEnableFacialRecognition(true);
+      setScheduledStart('');
+      setScheduledEnd('');
+      setTimeMarker(null);
       
       // Extract audio for this capture and show status indicator
       if (response.data && typeof response.data === 'object' && 'id' in response.data) {
@@ -580,18 +611,47 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
           />
         </div>
         
-        <div>
-          <label htmlFor="duration" className="block text-sm font-medium text-gray-700 mb-1">
-            Maximum Duration (seconds)
-          </label>
+        <div className="mb-4">
+          <label htmlFor="scheduledStart" className="block text-sm font-medium text-gray-700">Scheduled Start Time</label>
+          <input
+            type="datetime-local"
+            id="scheduledStart"
+            name="scheduledStart"
+            value={scheduledStart}
+            onChange={(e) => setScheduledStart(e.target.value)}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+          <p className="mt-1 text-sm text-gray-500">
+            {timeMarker && timeMarker > 0 ? 
+              `Automatically set to ${timeMarker} seconds into the stream based on the URL` : 
+              'Start time for the capture'}
+          </p>
+        </div>
+
+        <div className="mb-4">
+          <label htmlFor="scheduledEnd" className="block text-sm font-medium text-gray-700">Scheduled End Time</label>
+          <input
+            type="datetime-local"
+            id="scheduledEnd"
+            name="scheduledEnd"
+            value={scheduledEnd}
+            onChange={(e) => setScheduledEnd(e.target.value)}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+          <p className="mt-1 text-sm text-gray-500">End time for the capture (defaults to 10 minutes from now)</p>
+        </div>
+
+        <div className="mb-4">
+          <label htmlFor="duration" className="block text-sm font-medium text-gray-700">Max Duration (seconds)</label>
           <input
             type="number"
             id="duration"
+            name="duration"
             value={duration}
-            onChange={(e) => setDuration(parseInt(e.target.value))}
-            min={10}
-            max={3600}
-            className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+            onChange={(e) => setDuration(parseInt(e.target.value) || 300)}
+            min="60"
+            max="3600"
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
             required
           />
           <p className="mt-1 text-sm text-gray-500">
