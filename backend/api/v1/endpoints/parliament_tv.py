@@ -854,7 +854,7 @@ async def stream_parliament_tv_video(
         probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
         audio_info = json.loads(probe_result.stdout)
         if not audio_info.get("streams"):
-            print(f"WARNING: Video file does not have audio: {video_file}")
+            print(f"EXPECTED: Video file does not have audio: {video_file}")
     except Exception as e:
         print(f"Error checking audio streams: {str(e)}")
     
