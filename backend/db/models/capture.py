@@ -11,7 +11,7 @@ class CaptureSession(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
-    source_url = Column(String(255), nullable=True)
+    source_url = Column(Text, nullable=True)  # Using Text type to handle longer URLs
     status = Column(String(50), index=True)  # active, scheduled, completed, failed, processing
     error_message = Column(String(255), nullable=True)
     file_path = Column(String(255), nullable=True)

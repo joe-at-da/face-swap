@@ -93,7 +93,7 @@ async def start_parliament_tv_capture(
         scheduled_end=capture_request.scheduled_end,
         # Store Parliament TV specific fields in metadata
         metadata={
-            "parliament_tv_url": capture_request.url,
+            "original_url": capture_request.url,  # The URL entered by the user with time marker
             "duration": capture_request.duration,
             "enable_facial_recognition": capture_request.enable_facial_recognition,
             # Store time marker information if available
@@ -291,8 +291,7 @@ async def start_parliament_tv_capture(
                 capture_id=db_capture.id,  # Pass the capture ID for proper file naming
                 duration=capture_request.duration,
                 scheduled_start=scheduled_start,
-                scheduled_end=scheduled_end,
-                callback=capture_callback
+                scheduled_end=scheduled_end
             )
             print(f"Capture process started successfully for ID: {db_capture.id}")
         except Exception as e:

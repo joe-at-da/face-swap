@@ -134,28 +134,45 @@ class ParliamentTVCapture:
                 audio_file_path = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
                 
                 try:
-                    # Get the original URL from the capture metadata
+                    # Get all URLs from the capture metadata
                     original_url = None
-                    if hasattr(db_capture, 'metadata') and db_capture.metadata:
-                        if isinstance(db_capture.metadata, dict) and 'original_url' in db_capture.metadata:
-                            original_url = db_capture.metadata['original_url']
+                    video_url = None
+                    audio_url = None
                     
-                    # If original_url is not in metadata, use source_url
+                    if hasattr(db_capture, 'metadata') and db_capture.metadata and isinstance(db_capture.metadata, dict):
+                        # Get the original URL (the URL entered by the user with time marker)
+                        if 'original_url' in db_capture.metadata:
+                            original_url = db_capture.metadata['original_url']
+                        
+                        # Get the direct video and audio URLs if already stored in metadata
+                        if 'video_url' in db_capture.metadata:
+                            video_url = db_capture.metadata['video_url']
+                        
+                        if 'audio_url' in db_capture.metadata:
+                            audio_url = db_capture.metadata['audio_url']
+                    
+                    # If original_url is not in metadata, use source_url as fallback
                     if not original_url and hasattr(db_capture, 'source_url') and db_capture.source_url:
                         original_url = db_capture.source_url
                     
-                    # If we have an original URL, extract the audio URL
-                    if original_url:
+                    # If we don't already have an audio URL from metadata, try to extract it
+                    if not audio_url and original_url:
                         # Extract the stream URLs from the original URL
                         logger.info(f"Extracting stream URLs from original URL: {original_url}")
                         stream_info = self.extract_stream_url(original_url)
                         
                         # Check if we have separate audio URL
-                        audio_url = None
                         if "direct_stream" in stream_info:
                             direct_stream = stream_info["direct_stream"]
-                            if isinstance(direct_stream, dict) and "audio_url" in direct_stream:
-                                audio_url = direct_stream["audio_url"]
+                            if isinstance(direct_stream, dict):
+                                # Extract both video and audio URLs if available
+                                if "audio_url" in direct_stream:
+                                    audio_url = direct_stream["audio_url"]
+                                    logger.info(f"Extracted audio URL: {audio_url}")
+                                
+                                if not video_url and "video_url" in direct_stream:
+                                    video_url = direct_stream["video_url"]
+                                    logger.info(f"Extracted video URL: {video_url}")
                         
                         # If we have an audio URL, download it
                         if audio_url:
@@ -206,7 +223,11 @@ class ParliamentTVCapture:
                                         db_capture.metadata = {}
                                     
                                     if isinstance(db_capture.metadata, dict):
-                                        db_capture.metadata["audio_file_path"] = audio_file_path
+                                        # Store all URLs and file paths in metadata for reference
+                                        db_capture.metadata["original_url"] = original_url  # The URL entered by the user
+                                        db_capture.metadata["video_url"] = video_url  # The direct video stream URL
+                                        db_capture.metadata["audio_url"] = audio_url  # The direct audio stream URL
+                                        db_capture.metadata["audio_file_path"] = audio_file_path  # Path to downloaded audio file
                                         
                                         # Ensure audio file has same scheduling info as video
                                         if "scheduled_start" in db_capture.metadata:
@@ -475,6 +496,9 @@ class ParliamentTVCapture:
             # Update the database
             db_capture.status = "active"
             db_capture.file_path = output_file
+            
+            # Always store the original URL in source_url
+            # For Parliament TV URLs, this is the URL with the time marker (e.g., https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30)
             db_capture.source_url = url
             
             # Store the URLs and scheduling info in metadata
@@ -482,10 +506,11 @@ class ParliamentTVCapture:
                 db_capture.metadata = {}
             
             if isinstance(db_capture.metadata, dict):
-                db_capture.metadata["video_url"] = video_url
+                # Store all three URLs in metadata for reference
+                db_capture.metadata["original_url"] = url  # The URL entered by the user (with time marker if present)
+                db_capture.metadata["video_url"] = video_url  # The direct video stream URL
                 if audio_url:
-                    db_capture.metadata["audio_url"] = audio_url
-                db_capture.metadata["original_url"] = url
+                    db_capture.metadata["audio_url"] = audio_url  # The direct audio stream URL (if available)
                 
                 # Store scheduling information
                 if scheduled_start:

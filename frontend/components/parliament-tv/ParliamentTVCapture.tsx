@@ -49,7 +49,7 @@ interface ValidationResult {
 const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, onError }) => {
   const router = useRouter();
   const { token } = useAuth();
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState('https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [duration, setDuration] = useState(300); // Default 5 minutes
