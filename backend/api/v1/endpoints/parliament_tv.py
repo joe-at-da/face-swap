@@ -969,6 +969,46 @@ async def delete_parliament_tv_capture(
         "files_deleted": files_deleted
     }
 
+@router.post("/audio-extraction/{capture_id}")
+async def extract_audio_from_capture(
+    capture_id: int = Path(..., description="ID of the capture to extract audio from"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Extract audio from a Parliament TV capture session."""
+    # Check if user has required permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the specified capture session
+    capture = db.query(models.CaptureSession).filter(
+        models.CaptureSession.id == capture_id
+    ).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Import the extract_audio function from the service module
+    from backend.services.parliament_tv import extract_audio
+    
+    # Call the extract_audio function
+    result = extract_audio(db, capture_id)
+    
+    if not result.get("success", False):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.get("error", "Failed to extract audio")
+        )
+    
+    return {
+        "message": "Audio extracted successfully",
+        "audio_file": result.get("audio_file"),
+        "capture_id": capture_id
+    }
+
+
 @router.post("/cleanup")
 async def cleanup_temporary_files(
     current_user: models.User = Depends(get_current_active_user)

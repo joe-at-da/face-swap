@@ -461,8 +461,9 @@ class ParliamentTVCapture:
             # Start the ffmpeg process to capture the video
             cmd = ["ffmpeg", "-y"]
             
-            # Add options for better handling of HLS streams
-            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls"])
+            # Add essential options for HLS streams
+            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            cmd.extend(["-http_persistent", "1"])
             cmd.extend(["-allowed_extensions", "ALL"])
             
             # Check if we have a time marker in the scheduled start time
@@ -476,21 +477,28 @@ class ParliamentTVCapture:
             elif scheduled_start:
                 logger.info(f"Using scheduled start time but no time marker found")
             
-            # Add input options
+            # Add seek option to start at the specified position
             if start_position:
-                # Add seek option to start at the specified position
                 # For ffmpeg, it's more efficient to put -ss BEFORE -i for seeking
                 cmd.extend(["-ss", str(start_position)])
             
-            # Add input file with appropriate options
             # Make sure video_url is a string, not a dict
-            if isinstance(video_url, dict) and "video_url" in video_url:
-                actual_video_url = video_url["video_url"]
-                logger.info(f"Extracted video_url from dict: {actual_video_url}")
+            actual_video_url = None
+            if isinstance(video_url, dict):
+                if "video_url" in video_url:
+                    actual_video_url = str(video_url["video_url"])
+                    logger.info(f"Extracted video_url from dict: {actual_video_url}")
             else:
                 actual_video_url = str(video_url)
                 logger.info(f"Using video_url directly: {actual_video_url}")
                 
+            if not actual_video_url or not isinstance(actual_video_url, str):
+                error_msg = f"Invalid video URL: {video_url}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+                
+            # Add input file
             cmd.extend(["-i", actual_video_url])
             
             # Add additional options for better handling of streams
@@ -512,14 +520,28 @@ class ParliamentTVCapture:
             # Add output file
             cmd.append(output_file)
             
-            logger.info(f"Running ffmpeg to capture video: {output_file}")
-            logger.info(f"ffmpeg command: {' '.join(cmd)}")
-            
             # Log the full command for debugging
             logger.info(f"Full ffmpeg command: {' '.join(cmd)}")
             
+            # Create the output directory if it doesn't exist
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            
             # Start the ffmpeg process with better error handling
             try:
+                # First, test if the stream is accessible
+                test_cmd = ["ffmpeg", "-protocol_whitelist", "file,http,https,tcp,tls,crypto", "-i", actual_video_url, "-t", "1", "-f", "null", "-"]
+                logger.info(f"Testing stream accessibility with command: {' '.join(test_cmd)}")
+                test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+                
+                if test_result.returncode != 0:
+                    error_msg = f"Stream URL is not accessible: {test_result.stderr}"
+                    logger.error(error_msg)
+                    self.log_capture(db, capture_id, "error", error_msg)
+                    return {"success": False, "error": error_msg}
+                
+                logger.info(f"Stream URL is accessible, starting capture process")
+                
+                # Start the actual capture process
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -527,6 +549,11 @@ class ParliamentTVCapture:
                     universal_newlines=True
                 )
                 logger.info(f"Started ffmpeg process for capture {capture_id} with PID: {process.pid}")
+            except subprocess.TimeoutExpired:
+                error_msg = "Timeout while testing stream URL"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
             except Exception as e:
                 error_msg = f"Failed to start ffmpeg process: {str(e)}"
                 logger.error(error_msg)
@@ -546,6 +573,7 @@ class ParliamentTVCapture:
             # Update the database
             db_capture.status = "active"
             db_capture.file_path = output_file
+            db_capture.video_file = output_file
             
             # Always store a string in source_url, never a dict or object
             # For Parliament TV URLs, this should be the URL with the time marker (e.g., https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30)
@@ -649,12 +677,22 @@ class ParliamentTVCapture:
             logger.info(f"Extracting stream URL from: {url}")
             
             # Validate URL
-            if not url or not isinstance(url, str):
+            if not url:
                 logger.error(f"Invalid URL provided: {url}")
                 return {"error": f"Invalid URL provided: {url}"}
                 
+            # Check if the URL is already a dictionary with direct stream URLs
+            if isinstance(url, dict) and "video_url" in url:
+                logger.info(f"Direct stream URL is not a string: {url}, type: {type(url)}")
+                return {
+                    "direct_stream": url,
+                    "event_id": "direct",
+                    "time_marker": {"seconds": 0},
+                    "original_url": url.get("original_url", "Direct Stream")
+                }
+            
             # Check if the URL is already a direct stream URL
-            if 'cdn.redbee.live' in url or '.m3u8' in url:
+            if isinstance(url, str) and ('.m3u8' in url or 'cdn.redbee.live' in url):
                 logger.info("URL appears to be a direct stream URL already")
                 
                 # Determine if this is a video or audio URL
@@ -767,6 +805,129 @@ class ParliamentTVCapture:
             return {"error": f"Unexpected error: {str(e)}"}
 
 
+    def extract_audio(self, db: Session, capture_id: int) -> Dict:
+        """Extract audio from a video file or directly from the stream URL"""
+        logger.info(f"Extracting audio for capture {capture_id}")
+        
+        # Get the capture from the database
+        db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+        if not db_capture:
+            error_msg = f"Capture {capture_id} not found"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        
+        # Check if we have a video file or need to use the source URL
+        video_file = db_capture.video_file
+        source_url = db_capture.source_url
+        
+        # Define the output file path
+        output_dir = os.path.join(settings.DATA_DIR, "audio")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Generate a unique filename based on the capture ID and timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        padded_capture_id = str(capture_id).zfill(4)
+        output_file = os.path.join(output_dir, f"capture_{padded_capture_id}_{timestamp}.mp3")
+        
+        # Start the ffmpeg process to extract the audio
+        cmd = ["ffmpeg", "-y"]
+        
+        if video_file and os.path.exists(video_file):
+            # Use the video file if it exists
+            logger.info(f"Extracting audio from video file: {video_file}")
+            cmd.extend(["-i", video_file])
+        elif source_url:
+            # Try to extract the stream URL if we don't have a video file
+            logger.info(f"Extracting audio directly from source URL: {source_url}")
+            
+            try:
+                # Extract the stream URL
+                stream_info = self.extract_stream_url(source_url)
+                
+                # Check if we have an audio URL
+                if "audio_url" in stream_info and stream_info["audio_url"]:
+                    audio_url = stream_info["audio_url"]
+                    logger.info(f"Using dedicated audio URL: {audio_url}")
+                    cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+                    cmd.extend(["-http_persistent", "1"])
+                    cmd.extend(["-i", audio_url])
+                elif "video_url" in stream_info and stream_info["video_url"]:
+                    # If no dedicated audio URL, use the video URL
+                    video_url = stream_info["video_url"]
+                    logger.info(f"Using video URL for audio extraction: {video_url}")
+                    cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+                    cmd.extend(["-http_persistent", "1"])
+                    cmd.extend(["-i", video_url])
+                else:
+                    error_msg = f"No valid stream URL found in {stream_info}"
+                    logger.error(error_msg)
+                    self.log_capture(db, capture_id, "error", error_msg)
+                    return {"success": False, "error": error_msg}
+            except Exception as e:
+                error_msg = f"Failed to extract stream URL: {str(e)}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+        else:
+            error_msg = "No video file or source URL available for audio extraction"
+            logger.error(error_msg)
+            self.log_capture(db, capture_id, "error", error_msg)
+            return {"success": False, "error": error_msg}
+        
+        # Add audio encoding options
+        cmd.extend(["-vn", "-acodec", "libmp3lame", "-ab", "128k", output_file])
+        
+        # Log the full command for debugging
+        logger.info(f"Full ffmpeg command for audio extraction: {' '.join(cmd)}")
+        
+        try:
+            # Create the output directory if it doesn't exist
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            
+            # Start the process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            logger.info(f"Started ffmpeg process for audio extraction with PID: {process.pid}")
+            
+            # Wait for the process to complete
+            stdout, stderr = process.communicate()
+            
+            # Check if the process completed successfully
+            if process.returncode != 0:
+                error_msg = f"Failed to extract audio: {stderr}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Check if the output file was created
+            if not os.path.exists(output_file):
+                error_msg = f"Audio file was not created at {output_file}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Update the capture in the database
+            db_capture.audio_file = output_file
+            db.commit()
+            
+            # Log the success
+            self.log_capture(db, capture_id, "info", f"Audio extracted to {output_file}")
+            
+            return {
+                "success": True,
+                "audio_file": output_file
+            }
+        except Exception as e:
+            error_msg = f"Error during audio extraction: {str(e)}"
+            logger.error(error_msg)
+            self.log_capture(db, capture_id, "error", error_msg)
+            return {"success": False, "error": error_msg}
+
+
 # Initialize the Parliament TV capture service
 parliament_tv_capture = ParliamentTVCapture()
 
@@ -805,3 +966,8 @@ def extract_stream_url(url: str) -> Dict:
 def test_stream_url(url: str) -> Dict:
     """Test if a stream URL is valid and accessible."""
     return parliament_tv_capture.test_stream_url(url)
+
+
+def extract_audio(db: Session, capture_id: int) -> Dict:
+    """Extract audio from a video file or directly from the stream URL."""
+    return parliament_tv_capture.extract_audio(db, capture_id)
