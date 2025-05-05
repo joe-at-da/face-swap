@@ -136,10 +136,58 @@ class ParliamentTVCapture:
             if os.path.exists(output_file):
                 print(f"DEBUG - stop_capture - Output file exists: {output_file}")
                 
-                # Call capture_callback to extract audio
-                print(f"DEBUG - stop_capture - Calling capture_callback to extract audio")
-                self.capture_callback(db_capture, output_file)
-                print(f"DEBUG - stop_capture - Audio extraction completed")
+                # Extract audio directly from the video file
+                print(f"DEBUG - stop_capture - Extracting audio from video file")
+                
+                # Define paths
+                audio_extracts_dir = "/app/data/temp/audio_extracts"
+                os.makedirs(audio_extracts_dir, exist_ok=True)
+                print(f"DEBUG - stop_capture - Created audio extracts directory: {audio_extracts_dir}")
+                
+                # Create the audio file path - format: capture_XXXX.audio.mp3
+                padded_capture_id = str(capture_id).zfill(4)
+                audio_file_path = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
+                print(f"DEBUG - stop_capture - Audio file path: {audio_file_path}")
+                
+                try:
+                    # Extract audio using ffmpeg
+                    cmd = [
+                        "ffmpeg", "-y", "-i", output_file, "-vn", "-acodec", "libmp3lame", "-ab", "192k",
+                        "-ar", "44100", audio_file_path
+                    ]
+                    print(f"DEBUG - stop_capture - Running ffmpeg command: {' '.join(cmd)}")
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    
+                    if result.returncode == 0 and os.path.exists(audio_file_path):
+                        print(f"DEBUG - stop_capture - Successfully extracted audio to: {audio_file_path}")
+                        # Save the audio file path in the database
+                        if hasattr(db_capture, 'audio_file_path'):
+                            print(f"DEBUG - stop_capture - Saving audio_file_path to database: {audio_file_path}")
+                            db_capture.audio_file_path = audio_file_path
+                            
+                            # Initialize metadata if needed
+                            print(f"DEBUG - stop_capture - Current metadata: {db_capture.metadata}")
+                            db_capture.metadata = db_capture.metadata or {}
+                            
+                            if isinstance(db_capture.metadata, dict):
+                                db_capture.metadata['audio_file_path'] = audio_file_path
+                                print(f"DEBUG - stop_capture - Updated metadata: {db_capture.metadata}")
+                            else:
+                                print(f"WARNING - stop_capture - Metadata is not a dict: {type(db_capture.metadata)}")
+                                
+                            self.log_capture(db, db_capture.id, "info", f"Audio extracted from video: {audio_file_path}")
+                            print(f"DEBUG - stop_capture - Successfully saved audio_file_path to database")
+                            db.commit()
+                        else:
+                            print(f"WARNING - stop_capture - CaptureSession model does not have audio_file_path attribute")
+                    else:
+                        print(f"WARNING - stop_capture - Failed to extract audio from video: {result.stderr}")
+                        self.log_capture(db, db_capture.id, "warning", "Failed to extract audio from video")
+                except Exception as e:
+                    print(f"ERROR - stop_capture - Failed to extract audio from video: {str(e)}")
+                    self.log_capture(db, db_capture.id, "warning", f"Failed to extract audio: {str(e)}")
+                    
+                print(f"DEBUG - stop_capture - Audio extraction process completed")
             else:
                 print(f"ERROR - stop_capture - Output file does not exist: {output_file}")
                 self.log_capture(db, capture_id, "error", f"Output file does not exist: {output_file}")
