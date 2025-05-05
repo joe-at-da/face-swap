@@ -50,7 +50,7 @@ def get_recent_captures(db, minutes=60):
     try:
         # Query for recent captures that are completed but don't have audio
         query = text("""
-            SELECT c.id, c.source_url, c.file_path, c.status, c.metadata
+            SELECT c.id, c.url, c.file_path, c.status, c.metadata
             FROM capture_sessions c
             WHERE c.status = 'completed'
             AND c.created_at > :since
