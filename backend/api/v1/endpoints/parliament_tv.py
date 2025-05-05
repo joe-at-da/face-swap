@@ -123,6 +123,7 @@ async def start_parliament_tv_capture(
         # Get video_url from the standardized format
         video_url = stream_info.get("video_url")
         audio_url = stream_info.get("audio_url")
+        time_marker = stream_info.get("time_marker", {}).get("seconds", 0)
         
         if not video_url:
             print("No video_url found in stream_info, using original URL")
@@ -131,13 +132,18 @@ async def start_parliament_tv_capture(
         print(f"Video stream URL: {video_url}")
         if audio_url:
             print(f"Audio stream URL: {audio_url}")
+        print(f"Time marker: {time_marker} seconds")
+        
+        # Update the capture session metadata with time marker
+        db_capture.metadata = {
+            **db_capture.metadata,
+            "time_marker": {"seconds": time_marker},
+            "video_url": video_url,
+            "audio_url": audio_url
+        }
+        db.commit()
         
         # Validate the video stream URL
-        if not isinstance(video_url, str):
-            print(f"Video stream URL is not a string: {video_url}, type: {type(video_url)}")
-            video_url = str(video_url) if video_url is not None else capture_request.url
-            
-        # Test if the video stream URL is valid
         is_valid = parliament_tv_service.test_stream_url(video_url)
         if not is_valid:
             print(f"Video stream URL is not valid: {video_url}")

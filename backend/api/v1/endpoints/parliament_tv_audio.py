@@ -42,8 +42,9 @@ async def extract_audio_for_capture(
                 detail=f'Capture session with ID {capture_id} is not completed or active (status: {capture.status})'
             )
         
-        # Call the stop_capture method to extract audio
-        result = parliament_tv_service.stop_capture(capture_id)
+        # Call the extract_audio method to extract audio
+        from backend.services.parliament_tv import extract_audio
+        result = extract_audio(db, capture_id)
         
         if result.get('success', False):
             return {

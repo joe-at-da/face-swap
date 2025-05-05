@@ -4,6 +4,7 @@ import json
 import time
 import signal
 import logging
+import shlex
 import threading
 import subprocess
 import shutil
@@ -466,9 +467,16 @@ class ParliamentTVCapture:
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
             
-            # Create the output directory if it doesn't exist
+            # Create the output directory if it doesn't exist and ensure it has proper permissions
             os.makedirs(str(self.temp_dir), exist_ok=True)
             
+            # Ensure the directory has proper permissions
+            try:
+                os.chmod(str(self.temp_dir), 0o777)  # rwx for all users
+                logger.info(f"Set permissions on directory: {self.temp_dir}")
+            except Exception as e:
+                logger.warning(f"Could not set permissions on directory: {e}")
+                
             # Create the video file path
             padded_capture_id = str(capture_id).zfill(4)
             output_filename = f"capture_{padded_capture_id}.mp4"
@@ -485,20 +493,38 @@ class ParliamentTVCapture:
             
             # Check if we have a time marker in the scheduled start time
             start_position = None
-            if "time_marker" in db_capture.metadata:
+        
+            # First check if time_marker is in the stream_info
+            if "time_marker" in stream_info and stream_info["time_marker"] and "seconds" in stream_info["time_marker"]:
+                time_marker_seconds = stream_info["time_marker"]["seconds"]
+                if time_marker_seconds > 0:
+                    start_position = time_marker_seconds
+                    logger.info(f"Using time marker from stream_info: {start_position} seconds")
+                    
+                    # Update the metadata in the database
+                    if not db_capture.metadata:
+                        db_capture.metadata = {}
+                    db_capture.metadata["time_marker"] = {"seconds": time_marker_seconds}
+                    db_capture.metadata["video_url"] = video_url
+                    db_capture.metadata["audio_url"] = audio_url
+                    db.commit()
+                    logger.info(f"Updated metadata in database with time marker: {time_marker_seconds}")
+            # Fall back to metadata if not in stream_info
+            elif db_capture.metadata and "time_marker" in db_capture.metadata:
                 time_marker_seconds = db_capture.metadata.get("time_marker", {}).get("seconds", 0)
                 if time_marker_seconds > 0:
                     # If we have a time marker, use it as the start position
                     start_position = time_marker_seconds
-                    logger.info(f"Using time marker as start position: {start_position} seconds")
+                    logger.info(f"Using time marker from metadata: {start_position} seconds")
             elif scheduled_start:
                 logger.info(f"Using scheduled start time but no time marker found")
-            
+        
             # Add seek option to start at the specified position
             if start_position:
                 # For ffmpeg, it's more efficient to put -ss BEFORE -i for seeking
                 cmd.extend(["-ss", str(start_position)])
-            
+                logger.info(f"Added seek option to ffmpeg command: -ss {start_position}")
+                
             # Ensure video_url is a valid string
             if not video_url or not isinstance(video_url, str):
                 error_msg = f"Invalid or missing video URL: {video_url}"
@@ -519,8 +545,20 @@ class ParliamentTVCapture:
             cmd.extend(["-reconnect_delay_max", "5"])
             cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
                 
-            # Add input file
+            # Add input file for video
             cmd.extend(["-i", actual_video_url])
+            
+            # For HLS streams, it's better to use a single input with both video and audio
+            # This avoids synchronization issues and HTTP 415 errors
+            logger.info(f"Using video URL for both video and audio: {actual_video_url}")
+            
+            # Add options to handle HLS streams better
+            cmd.extend(["-live_start_index", "0"])
+            cmd.extend(["-avoid_negative_ts", "make_zero"])
+            cmd.extend(["-correct_ts_overflow", "1"])
+            
+            # Try to use the audio from the video stream if available
+            logger.info("Using audio from video stream if available")
             
             # Add additional options for better handling of streams
             cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
@@ -529,8 +567,13 @@ class ParliamentTVCapture:
             cmd.extend(["-hls_allow_cache", "1"])
             cmd.extend(["-http_persistent", "1"])
             
-            # Add codec options - use copy mode for speed
-            cmd.extend(["-c", "copy"])
+            # Add codec options - use copy mode for video and aac for audio
+            # This ensures we have audio in the output file
+            cmd.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "128k"])
+            
+            # Add options to create a proper mp4 file
+            cmd.extend(["-movflags", "+faststart"])
+            cmd.extend(["-max_muxing_queue_size", "9999"])
             
             # Add duration limit
             # For recorded streams with a time marker, this is the exact duration to capture
@@ -561,25 +604,41 @@ class ParliamentTVCapture:
                 
                 logger.info(f"Stream URL test successful: {test_result.get('message', '')}")
                 
+                # Log the time marker if available
+                if start_position:
+                    logger.info(f"Using time marker for seeking: {start_position} seconds")
+                
+                # Create a log file for ffmpeg output
+                log_file_path = os.path.join(self.temp_dir, f"ffmpeg_log_{capture_id}.txt")
                 
                 logger.info(f"Stream URL is accessible, starting capture process")
+                logger.info(f"Full command: {' '.join(cmd)}")
                 
-                # Start the actual capture process
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True
-                )
-                logger.info(f"Started ffmpeg process for capture {capture_id} with PID: {process.pid}")
+                # Use a different approach to run ffmpeg - run in the background with nohup
+                # This prevents zombie processes and ensures the process continues even if the parent exits
+                background_cmd = f"nohup {' '.join(cmd)} > {log_file_path} 2>&1 &"
+                logger.info(f"Running background command: {background_cmd}")
                 
-                # Store the process in the active_captures dictionary
+                # Run the command in a shell to use nohup properly
+                subprocess.run(background_cmd, shell=True)
+                
+                logger.info(f"Started ffmpeg process for capture {capture_id} in the background")
+                
+                # Store information in the active_captures dictionary
                 self.active_captures[capture_id] = {
-                    "process": process,
                     "start_time": datetime.now(),
                     "scheduled_end": scheduled_end,
                     "output_file": str(output_path)
                 }
+                
+                # Touch the output file to ensure it exists with proper permissions
+                try:
+                    with open(output_path, 'w') as f:
+                        pass
+                    os.chmod(output_path, 0o666)  # rw for all users
+                    logger.info(f"Created empty output file with proper permissions: {output_path}")
+                except Exception as e:
+                    logger.warning(f"Could not create empty output file: {e}")
                 
                 # Update the database
                 db_capture.video_file = str(output_path)
@@ -899,17 +958,24 @@ class ParliamentTVCapture:
             # Create the output directory if it doesn't exist
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             
-            # Start the process
-            process = subprocess.Popen(
+            # Use a more reliable approach to run ffmpeg
+            # Convert the command list to a string with proper escaping
+            cmd_str = ' '.join([shlex.quote(str(arg)) for arg in cmd])
+            logger.info(f"Running command: {cmd_str}")
+            
+            # Run the command with shell=False to avoid shell syntax issues
+            process = subprocess.run(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                text=True,
+                check=False
             )
-            logger.info(f"Started ffmpeg process for audio extraction with PID: {process.pid}")
+            logger.info(f"Completed ffmpeg process for audio extraction with return code: {process.returncode}")
             
-            # Wait for the process to complete
-            stdout, stderr = process.communicate()
+            # Get stdout and stderr
+            stdout = process.stdout
+            stderr = process.stderr
             
             # Check if the process completed successfully
             if process.returncode != 0:

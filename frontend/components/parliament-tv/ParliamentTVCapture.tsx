@@ -11,14 +11,13 @@ const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 // Define types for API responses
 interface ExtractUrlResponse {
-  direct_stream: {
-    video_url: string;
-    audio_url?: string;
-  } | string;
+  video_url: string;
+  audio_url?: string;
   event_id?: string;
   time_marker?: {
     seconds: number;
   };
+  original_url?: string;
 }
 
 interface TestStreamResponse {
@@ -167,29 +166,18 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       console.log('Extract response status:', extractResponse.status);
       console.log('Extract response data:', extractResponse.data);
 
-      if (extractResponse.data?.direct_stream) {
+      if (extractResponse.data?.video_url) {
       // Then test if the stream URL is valid
       console.log('Extract URL response:', extractResponse.data);
       
-      let videoUrl = '';
-      let audioUrl = '';
+      let videoUrl = extractResponse.data.video_url;
+      let audioUrl = extractResponse.data.audio_url || '';
       let params = {};
       
-      // Handle both string and object formats for direct_stream
-      if (typeof extractResponse.data.direct_stream === 'string') {
-        // If it's a string, use it as the video URL
-        videoUrl = extractResponse.data.direct_stream;
-        console.log(`Testing stream URL (string format): ${videoUrl}`);
-        params = { url: videoUrl };
-      } else if (typeof extractResponse.data.direct_stream === 'object') {
-        // If it's an object with video_url and audio_url, use those
-        videoUrl = extractResponse.data.direct_stream.video_url;
-        audioUrl = extractResponse.data.direct_stream.audio_url || '';
-        console.log(`Testing stream URL (object format):\nVideo URL: ${videoUrl}\nAudio URL: ${audioUrl}`);
-        params = { video_url: videoUrl };
-        if (audioUrl) {
-          params = { ...params, audio_url: audioUrl };
-        }
+      console.log(`Testing stream URL:\nVideo URL: ${videoUrl}\nAudio URL: ${audioUrl}`);
+      params = { video_url: videoUrl };
+      if (audioUrl) {
+        params = { ...params, audio_url: audioUrl };
       }
       
       if (!videoUrl) {
@@ -249,7 +237,7 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       } else {
         setValidationResult({
           success: false,
-          message: 'Could not extract stream URL from Parliament TV page.'
+          message: 'Could not extract stream URL from Parliament TV page. No video_url found in response.'
         });
       }
     } catch (error: any) {
