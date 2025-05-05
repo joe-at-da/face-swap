@@ -120,25 +120,27 @@ async def start_parliament_tv_capture(
         if not stream_info:
             stream_info = {}
             
-        # Ensure direct_stream exists and is a string
-        direct_stream = stream_info.get("direct_stream")
-        if not direct_stream:
-            print("No direct_stream found in stream_info, using original URL")
-            direct_stream = capture_request.url
-            stream_info["direct_stream"] = direct_stream
+        # Get video_url from the standardized format
+        video_url = stream_info.get("video_url")
+        audio_url = stream_info.get("audio_url")
         
-        print(f"Direct stream URL: {direct_stream}")
+        if not video_url:
+            print("No video_url found in stream_info, using original URL")
+            video_url = capture_request.url
         
-        # Validate the direct stream URL
-        if not isinstance(direct_stream, str):
-            print(f"Direct stream URL is not a string: {direct_stream}, type: {type(direct_stream)}")
-            direct_stream = str(direct_stream) if direct_stream is not None else capture_request.url
-            stream_info["direct_stream"] = direct_stream
+        print(f"Video stream URL: {video_url}")
+        if audio_url:
+            print(f"Audio stream URL: {audio_url}")
+        
+        # Validate the video stream URL
+        if not isinstance(video_url, str):
+            print(f"Video stream URL is not a string: {video_url}, type: {type(video_url)}")
+            video_url = str(video_url) if video_url is not None else capture_request.url
             
-        # Test if the direct stream URL is valid
-        is_valid = parliament_tv_service.test_stream_url(direct_stream)
+        # Test if the video stream URL is valid
+        is_valid = parliament_tv_service.test_stream_url(video_url)
         if not is_valid:
-            print(f"Direct stream URL is not valid: {direct_stream}")
+            print(f"Video stream URL is not valid: {video_url}")
             # Update the capture session status to failed
             db_capture.status = "failed"
             db_capture.metadata = {
@@ -274,57 +276,50 @@ async def start_parliament_tv_capture(
                     callback_db.close()
             except Exception as e:
                 print(f"Unexpected error in capture callback: {str(e)}")
-                import traceback
-                traceback.print_exc()
+        # Update metadata with stream information
+        if 'original_url' not in db_capture.metadata and capture_request.url:
+            db_capture.metadata['original_url'] = capture_request.url
+            
+        # Store the video and audio URLs in metadata
+        db_capture.metadata['video_url'] = video_url
+        if audio_url:
+            db_capture.metadata['audio_url'] = audio_url
+            
+        # Store event_id and time_marker if available
+        if 'event_id' in stream_info:
+            db_capture.metadata['event_id'] = stream_info['event_id']
+        if 'time_marker' in stream_info:
+            db_capture.metadata['time_marker'] = stream_info['time_marker']
+            
+        # Commit the metadata updates
+        db.commit()
         
-        # Start the capture process asynchronously
-        print(f"Starting capture with direct_stream: {direct_stream}")
         print(f"Capture ID: {db_capture.id}, Duration: {capture_request.duration}")
+        print(f"Starting capture with scheduled_start: {capture_request.scheduled_start}, scheduled_end: {capture_request.scheduled_end}")
         
         try:
-            # Extract scheduled start and end times from the request
-            scheduled_start = capture_request.scheduled_start.isoformat() if capture_request.scheduled_start else None
-            scheduled_end = capture_request.scheduled_end.isoformat() if capture_request.scheduled_end else None
+            # Start the capture process asynchronously
+            success = parliament_tv_service.start_capture_async(
+                video_url,
+                db_capture.id,
+                capture_request.duration,
+                capture_request.scheduled_start,
+                capture_request.scheduled_end
+            )
             
-            print(f"Starting capture with scheduled_start: {scheduled_start}, scheduled_end: {scheduled_end}")
-            
-            # Check if direct_stream is a dictionary with video_url and audio_url
-            if isinstance(direct_stream, dict) and 'video_url' in direct_stream:
-                print(f"Starting capture with direct_stream: {direct_stream}")
-                # Store the original URL in metadata if not already there
-                if 'original_url' not in db_capture.metadata and capture_request.url:
-                    db_capture.metadata['original_url'] = capture_request.url
-                
-                # Update the metadata with the direct stream URLs
-                db_capture.metadata['video_url'] = direct_stream.get('video_url')
-                if 'audio_url' in direct_stream:
-                    db_capture.metadata['audio_url'] = direct_stream.get('audio_url')
-                
-                # Commit the metadata updates
-                db.commit()
-                
-                # Start the capture with the video URL
-                parliament_tv_service.start_capture_async(
-                    url=capture_request.url,  # Use the original URL, not the direct stream object
-                    capture_id=db_capture.id,  # Pass the capture ID for proper file naming
-                    duration=capture_request.duration,
-                    scheduled_start=scheduled_start,
-                    scheduled_end=scheduled_end
-                )
-            else:
-                # If direct_stream is a string or other format, use it directly
-                parliament_tv_service.start_capture_async(
-                    url=direct_stream,
-                    capture_id=db_capture.id,
-                    duration=capture_request.duration,
-                    scheduled_start=scheduled_start,
-                    scheduled_end=scheduled_end
-                )
             print(f"Capture process started successfully for ID: {db_capture.id}")
         except Exception as e:
             print(f"Error starting capture process: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
+            
+            # Update the capture session status to failed
+            db_capture.status = "failed"
+            db_capture.metadata = {
+                **db_capture.metadata,
+                "error": f"Failed to start capture: {str(e)}"
+            }
+            db.commit()
             
             # Update the capture session status to failed
             db_capture.status = "failed"

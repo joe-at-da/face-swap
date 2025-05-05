@@ -431,9 +431,24 @@ class ParliamentTVCapture:
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
             
-            # Get video and audio URLs directly from the standardized format
+            # Get the video and audio URLs
             video_url = stream_info.get("video_url")
             audio_url = stream_info.get("audio_url")
+            
+            logger.info(f"Stream info: {stream_info}")
+            
+            # Verify we have a valid video URL
+            if not video_url:
+                # If we don't have a video URL but we have the original URL, try to use that
+                if "original_url" in stream_info and stream_info["original_url"]:
+                    logger.warning(f"No video_url found in stream_info, using original URL")
+                    video_url = stream_info["original_url"]
+                else:
+                    logger.error(f"No valid video URL found in stream_info")
+                    error_msg = "No valid video stream URL found"
+                    logger.error(error_msg)
+                    self.log_capture(db, capture_id, "error", error_msg)
+                    return {"success": False, "error": error_msg}
             
             if video_url and audio_url:
                 logger.info(f"Found separate video and audio URLs for capture {capture_id}")
@@ -535,15 +550,17 @@ class ParliamentTVCapture:
             # Start the ffmpeg process with better error handling
             try:
                 # First, test if the stream is accessible
-                test_cmd = ["ffmpeg", "-protocol_whitelist", "file,http,https,tcp,tls,crypto", "-i", actual_video_url, "-t", "1", "-f", "null", "-"]
-                logger.info(f"Testing stream accessibility with command: {' '.join(test_cmd)}")
-                test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+                logger.info(f"Testing stream accessibility for URL: {actual_video_url}")
+                test_result = self.test_stream_url(actual_video_url)
                 
-                if test_result.returncode != 0:
-                    error_msg = f"Stream URL is not accessible: {test_result.stderr}"
+                if not test_result.get("success", False):
+                    error_msg = f"Stream URL is not accessible: {test_result.get('error', 'Unknown error')}"
                     logger.error(error_msg)
                     self.log_capture(db, capture_id, "error", error_msg)
                     return {"success": False, "error": error_msg}
+                
+                logger.info(f"Stream URL test successful: {test_result.get('message', '')}")
+                
                 
                 logger.info(f"Stream URL is accessible, starting capture process")
                 
@@ -743,28 +760,30 @@ class ParliamentTVCapture:
                     stream_info = json.loads(result.stdout)
                     logger.info(f"Successfully extracted stream URL: {stream_info}")
                     
-                    # Standardize the output format
+                    # Convert old format to new format if needed
                     if "direct_stream" in stream_info:
+                        logger.info(f"Converting old format with direct_stream to new format")
                         direct_stream = stream_info["direct_stream"]
                         if isinstance(direct_stream, dict) and "video_url" in direct_stream:
                             # Extract video_url and audio_url from nested dict
-                            video_url = direct_stream.get("video_url")
-                            audio_url = direct_stream.get("audio_url")
+                            return {
+                                "video_url": direct_stream.get("video_url"),
+                                "audio_url": direct_stream.get("audio_url"),
+                                "event_id": stream_info.get("event_id"),
+                                "time_marker": stream_info.get("time_marker"),
+                                "original_url": stream_info.get("original_url")
+                            }
                         else:
                             # If direct_stream is a string, it's the video URL
-                            video_url = direct_stream
-                            audio_url = None
-                            
-                        # Create a standardized response
-                        return {
-                            "video_url": video_url,
-                            "audio_url": audio_url,
-                            "event_id": stream_info.get("event_id"),
-                            "time_marker": stream_info.get("time_marker"),
-                            "original_url": stream_info.get("original_url")
-                        }
+                            return {
+                                "video_url": direct_stream if isinstance(direct_stream, str) else None,
+                                "audio_url": None,
+                                "event_id": stream_info.get("event_id"),
+                                "time_marker": stream_info.get("time_marker"),
+                                "original_url": stream_info.get("original_url")
+                            }
                     else:
-                        # If the structure is different, try to extract what we can
+                        # Already in the new format or different structure
                         return {
                             "video_url": stream_info.get("video_url") or stream_info.get("url"),
                             "audio_url": stream_info.get("audio_url"),
