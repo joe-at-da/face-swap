@@ -10,6 +10,7 @@ import subprocess
 import shutil
 import tempfile
 import re
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
@@ -453,8 +454,6 @@ class ParliamentTVCapture:
                 
                 # Use a different approach to run ffmpeg in the background without shell=True
                 # We'll use subprocess.Popen with preexec_fn to detach the process
-                import os
-                import signal
                 
                 # Open log file for the process
                 log_file = open(log_file_path, 'w')
