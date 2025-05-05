@@ -3,6 +3,8 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { extractAudioForCapture } from '../../utils/extractAudio';
+import CaptureStatusIndicator from './CaptureStatusIndicator';
+import { CombinedStatus } from '../../utils/captureStatus';
 
 // API base URL
 const API_BASE_URL = 'http://localhost:8000/api/v1';
@@ -61,6 +63,8 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
   const [success, setSuccess] = useState(false);
   const [activeCapture, setActiveCapture] = useState<{id: number, started_by: string, started_at: string} | null>(null);
   const [isStoppingCapture, setIsStoppingCapture] = useState(false);
+  const [currentCaptureId, setCurrentCaptureId] = useState<number | null>(null);
+  const [showStatusIndicator, setShowStatusIndicator] = useState(false);
 
   // Configure axios with authentication headers
   const getAuthHeaders = () => {
@@ -358,10 +362,16 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       setDuration(300);
       setEnableFacialRecognition(true);
       
-      // Extract audio for this capture
+      // Extract audio for this capture and show status indicator
       if (response.data && typeof response.data === 'object' && 'id' in response.data) {
         const captureId = response.data.id as number;
         console.log('Starting audio extraction for capture ID:', captureId);
+        
+        // Set the current capture ID and show the status indicator
+        setCurrentCaptureId(captureId);
+        setShowStatusIndicator(true);
+        
+        // Start audio extraction
         extractAudioForCapture(captureId)
           .then(success => {
             console.log('Audio extraction initiated:', success ? 'success' : 'failed');
@@ -474,9 +484,31 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     }
   };
 
+  // Handle when both video and audio are ready
+  const handleCaptureComplete = (status: CombinedStatus) => {
+    console.log('Capture complete!', status);
+    // You could show a notification or redirect to the capture page
+  };
+
   return (
     <div className="bg-white shadow-md rounded-lg p-6 max-w-2xl mx-auto">
       <h2 className="text-2xl font-bold mb-6">Parliament TV Capture</h2>
+      
+      {/* Show status indicator when a capture is in progress */}
+      {showStatusIndicator && currentCaptureId && (
+        <div className="mb-6">
+          <CaptureStatusIndicator 
+            captureId={currentCaptureId} 
+            onComplete={handleCaptureComplete} 
+          />
+          <button
+            onClick={() => setShowStatusIndicator(false)}
+            className="mt-2 text-sm text-gray-500 hover:text-gray-700"
+          >
+            Hide Status
+          </button>
+        </div>
+      )}
       
       <form onSubmit={startCapture} className="space-y-4">
         <div>
