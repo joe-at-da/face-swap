@@ -148,9 +148,11 @@ class ParliamentTVCapture:
                         # Get the direct video and audio URLs if already stored in metadata
                         if 'video_url' in db_capture.metadata:
                             video_url = db_capture.metadata['video_url']
+                            logger.info(f"Found video URL in metadata: {video_url}")
                         
                         if 'audio_url' in db_capture.metadata:
                             audio_url = db_capture.metadata['audio_url']
+                            logger.info(f"Found audio URL in metadata: {audio_url}")
                     
                     # If original_url is not in metadata, use source_url as fallback
                     if not original_url and hasattr(db_capture, 'source_url') and db_capture.source_url:
@@ -459,6 +461,10 @@ class ParliamentTVCapture:
             # Start the ffmpeg process to capture the video
             cmd = ["ffmpeg", "-y"]
             
+            # Add options for better handling of HLS streams
+            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls"])
+            cmd.extend(["-allowed_extensions", "ALL"])
+            
             # Check if we have a time marker in the scheduled start time
             start_position = None
             if "time_marker" in db_capture.metadata:
@@ -477,12 +483,24 @@ class ParliamentTVCapture:
                 cmd.extend(["-ss", str(start_position)])
             
             # Add input file with appropriate options
-            cmd.extend(["-i", video_url])
+            # Make sure video_url is a string, not a dict
+            if isinstance(video_url, dict) and "video_url" in video_url:
+                actual_video_url = video_url["video_url"]
+                logger.info(f"Extracted video_url from dict: {actual_video_url}")
+            else:
+                actual_video_url = str(video_url)
+                logger.info(f"Using video_url directly: {actual_video_url}")
+                
+            cmd.extend(["-i", actual_video_url])
             
             # Add additional options for better handling of streams
             cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
             
-            # Add codec options
+            # Add HLS-specific options
+            cmd.extend(["-hls_allow_cache", "1"])
+            cmd.extend(["-http_persistent", "1"])
+            
+            # Add codec options - use copy mode for speed
             cmd.extend(["-c", "copy"])
             
             # Add duration limit
@@ -566,10 +584,17 @@ class ParliamentTVCapture:
                 else:
                     db_capture.metadata["original_url"] = str(url)  # The URL entered by the user (with time marker if present)
                 
-                # Store video and audio URLs
-                db_capture.metadata["video_url"] = video_url  # The direct video stream URL
-                if audio_url:
-                    db_capture.metadata["audio_url"] = audio_url  # The direct audio stream URL (if available)
+                # Store video and audio URLs as strings
+                if isinstance(video_url, dict) and "video_url" in video_url:
+                    db_capture.metadata["video_url"] = str(video_url["video_url"])
+                else:
+                    db_capture.metadata["video_url"] = str(video_url)  # The direct video stream URL
+                
+                # Store audio URL if available
+                if isinstance(audio_url, dict) and "audio_url" in audio_url:
+                    db_capture.metadata["audio_url"] = str(audio_url["audio_url"])
+                elif audio_url:
+                    db_capture.metadata["audio_url"] = str(audio_url)  # The direct audio stream URL (if available)
                 
                 # Store scheduling information
                 if scheduled_start:
