@@ -678,6 +678,9 @@ class ParliamentTVCapture:
                 print(f"DEBUG - capture_callback - Capture {capture_id} failed with error: {error}")
                 db_capture.status = "failed"
                 db_capture.error = error
+            else:
+                print(f"DEBUG - capture_callback - Capture {capture_id} completed successfully")
+                db_capture.status = "completed"
                 
                 # If the output file exists, check if it has an audio file
             if os.path.exists(output_file):
@@ -708,11 +711,21 @@ class ParliamentTVCapture:
                         print(f"DEBUG - capture_callback - Successfully extracted audio to: {audio_file_path}")
                         # Save the audio file path in the database
                         if hasattr(db_capture, 'audio_file_path'):
+                            print(f"DEBUG - capture_callback - Saving audio_file_path to database: {audio_file_path}")
                             db_capture.audio_file_path = audio_file_path
+                            
+                            # Initialize metadata if needed
+                            print(f"DEBUG - capture_callback - Current metadata: {db_capture.metadata}")
                             db_capture.metadata = db_capture.metadata or {}
+                            
                             if isinstance(db_capture.metadata, dict):
                                 db_capture.metadata['audio_file_path'] = audio_file_path
+                                print(f"DEBUG - capture_callback - Updated metadata: {db_capture.metadata}")
+                            else:
+                                print(f"WARNING - capture_callback - Metadata is not a dict: {type(db_capture.metadata)}")
+                                
                             self.log_capture(db, db_capture.id, "info", f"Audio extracted from video: {audio_file_path}")
+                            print(f"DEBUG - capture_callback - Successfully saved audio_file_path to database")
                         else:
                             print(f"WARNING - capture_callback - CaptureSession model does not have audio_file_path attribute")
                     else:
@@ -1068,6 +1081,22 @@ class ParliamentTVCapture:
             
             # Log the stop
             self.log_capture(db, capture_id, "info", "Capture stopped by user")
+            
+            # Get the output file path from the database
+            output_file = db_capture.file_path
+            print(f"DEBUG - stop_capture - Output file path: {output_file}")
+            
+            # Check if the output file exists
+            if os.path.exists(output_file):
+                print(f"DEBUG - stop_capture - Output file exists: {output_file}")
+                
+                # Call capture_callback to extract audio
+                print(f"DEBUG - stop_capture - Calling capture_callback to extract audio")
+                self.capture_callback(db_capture, output_file)
+                print(f"DEBUG - stop_capture - Audio extraction completed")
+            else:
+                print(f"ERROR - stop_capture - Output file does not exist: {output_file}")
+                self.log_capture(db, capture_id, "error", f"Output file does not exist: {output_file}")
             
             # Remove from active_captures
             del self.active_captures[capture_id]
