@@ -468,7 +468,8 @@ async def test_stream_url(
     print(f"Testing stream URL: {test_url}")
     
     # Test the stream URL
-    is_valid = parliament_tv_service.test_stream_url(test_url)
+    test_result = parliament_tv_service.test_stream_url(test_url)
+    is_valid = test_result.get("success", False)
     
     # If we have audio_url but not in response_url (because we're using 'url' parameter),
     # update response_url to be an object

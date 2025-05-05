@@ -56,7 +56,7 @@ async def extract_audio_for_capture(
         
         # Format capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
-        output_file = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.mp3")
+        output_file = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
         
         # Create the ffmpeg command
         cmd = [

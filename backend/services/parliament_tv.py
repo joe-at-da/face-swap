@@ -669,14 +669,14 @@ class ParliamentTVCapture:
             logger.error(f"Failed to add log for capture {capture_id}: {str(e)}")
             # Don't raise the exception, just log it
             
-    def test_stream_url(self, url: str) -> bool:
+    def test_stream_url(self, url: str) -> Dict:
         """Test if a stream URL is valid and accessible.
         
         Args:
             url: The URL to test
             
         Returns:
-            bool: True if the URL is valid and accessible, False otherwise
+            Dict: Dictionary with success status and optional error message
         """
         try:
             # Use ffprobe to check if the stream is valid
@@ -699,16 +699,19 @@ class ParliamentTVCapture:
             
             # Check if the command was successful
             if result.returncode == 0:
-                return True
+                return {"success": True}
             else:
-                logger.warning(f"Stream URL test failed: {url}. Error: {result.stderr}")
-                return False
+                error_msg = f"Stream URL test failed: {url}. Error: {result.stderr}"
+                logger.warning(error_msg)
+                return {"success": False, "error": error_msg}
         except subprocess.TimeoutExpired:
-            logger.warning(f"Stream URL test timed out: {url}")
-            return False
+            error_msg = f"Stream URL test timed out: {url}"
+            logger.warning(error_msg)
+            return {"success": False, "error": error_msg}
         except Exception as e:
-            logger.error(f"Error testing stream URL: {url}. Error: {str(e)}")
-            return False
+            error_msg = f"Error testing stream URL: {url}. Error: {str(e)}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
 
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from a video file or directly from the stream URL"""
@@ -734,7 +737,8 @@ class ParliamentTVCapture:
         
         # Format capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
-        output_file = os.path.join(output_dir, f"capture_{padded_capture_id}.mp3")
+        # Ensure we're using the audio_file_path with .audio.mp3 extension to distinguish it from video files
+        output_file = os.path.join(output_dir, f"capture_{padded_capture_id}.audio.mp3")
         
         # Start the ffmpeg process to extract the audio
         cmd = ["ffmpeg", "-y"]
@@ -848,7 +852,7 @@ class ParliamentTVCapture:
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
             
-            # Update the capture in the database
+            # Update the capture in the database with the correct audio file path
             db_capture.audio_file_path = output_file
             db.commit()
             logger.info(f"Updated database with audio file path: {output_file}")
