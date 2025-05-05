@@ -659,11 +659,12 @@ class ParliamentTVCapture:
                 
     def capture_callback(self, db_capture, output_file, error=None):
         """Callback function for when a capture completes or fails."""
+        capture_id = db_capture.id
+        print(f"DEBUG - capture_callback - capture_id: {capture_id}, output_file: {output_file}, error: {error}")
+        
+        # Get a database session
+        db = None
         try:
-            capture_id = db_capture.id
-            print(f"DEBUG - capture_callback - capture_id: {capture_id}, output_file: {output_file}, error: {error}")
-            
-            # Get a database session
             db = next(get_db())
             
             # Get the capture from the database

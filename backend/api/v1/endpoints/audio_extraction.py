@@ -15,7 +15,6 @@ def extract_audio_for_capture(
     capture_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_active_user),
 ):
     """
     Extract audio for a specific capture ID.
@@ -46,7 +45,6 @@ def extract_audio_for_capture(
 def check_audio_status(
     capture_id: int,
     db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_active_user),
 ):
     """
     Check if audio extraction is complete for a specific capture ID.
