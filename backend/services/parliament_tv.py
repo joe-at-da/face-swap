@@ -320,12 +320,12 @@ class ParliamentTVCapture:
             status = {
                 "id": db_capture.id,
                 "status": db_capture.status,
-                "started_at": db_capture.started_at.isoformat() if db_capture.started_at else None,
-                "completed_at": db_capture.completed_at.isoformat() if db_capture.completed_at else None,
-                "stopped_at": db_capture.stopped_at.isoformat() if db_capture.stopped_at else None,
+                "started_at": db_capture.start_time.isoformat() if db_capture.start_time else None,
+                "completed_at": db_capture.end_time.isoformat() if db_capture.end_time else None,
                 "duration": db_capture.duration,
-                "error": db_capture.error,
-                "output_file": db_capture.output_file,
+                "error": db_capture.error_message,
+                "output_file": db_capture.file_path,
+                "audio_file": db_capture.audio_file_path,
                 "is_active": is_active
             }
             
@@ -567,13 +567,22 @@ class ParliamentTVCapture:
             cmd.extend(["-hls_allow_cache", "1"])
             cmd.extend(["-http_persistent", "1"])
             
-            # Add codec options - use copy mode for video and aac for audio
-            # This ensures we have audio in the output file
-            cmd.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "128k"])
+            # Use proper codec options to ensure we have a valid MP4 file
+            # Instead of just copying the video stream, use a specific codec to ensure compatibility
+            cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "22"])
+            cmd.extend(["-c:a", "aac", "-b:a", "128k"])
             
-            # Add options to create a proper mp4 file
-            cmd.extend(["-movflags", "+faststart"])
+            # Add options to create a proper mp4 file with the moov atom at the beginning
+            # This is critical for proper playback without having to download the entire file
+            cmd.extend(["-movflags", "faststart+frag_keyframe+empty_moov"])
             cmd.extend(["-max_muxing_queue_size", "9999"])
+            
+            # Add options to ensure the file is properly finalized even if the process is terminated
+            cmd.extend(["-fflags", "genpts"])
+            
+            # Add options to ensure proper MP4 file creation
+            cmd.extend(["-f", "mp4"])
+            cmd.extend(["-avoid_negative_ts", "make_zero"])
             
             # Add duration limit
             # For recorded streams with a time marker, this is the exact duration to capture
@@ -874,8 +883,11 @@ class ParliamentTVCapture:
             return {"success": False, "error": error_msg}
         
         # Check if we have a video file or need to use the source URL
-        video_file = db_capture.video_file
+        video_file = db_capture.file_path
         source_url = db_capture.source_url
+        
+        logger.info(f"Video file path: {video_file}")
+        logger.info(f"Source URL: {source_url}")
         
         # Define the output file path - use the audio_extracts_dir
         output_dir = str(self.audio_extracts_dir)
@@ -948,8 +960,14 @@ class ParliamentTVCapture:
             self.log_capture(db, capture_id, "error", error_msg)
             return {"success": False, "error": error_msg}
         
-        # Add audio encoding options
-        cmd.extend(["-vn", "-acodec", "libmp3lame", "-ab", "128k", output_file])
+        # Add audio extraction options
+        cmd.extend(["-vn", "-acodec", "libmp3lame", "-ab", "128k"])
+        
+        # Ensure we're creating an MP3 file
+        cmd.extend(["-f", "mp3"])
+        
+        # Add the output file
+        cmd.append(output_file)
         
         # Log the full command for debugging
         logger.info(f"Full ffmpeg command for audio extraction: {' '.join(cmd)}")
@@ -992,8 +1010,9 @@ class ParliamentTVCapture:
                 return {"success": False, "error": error_msg}
             
             # Update the capture in the database
-            db_capture.audio_file = output_file
+            db_capture.audio_file_path = output_file
             db.commit()
+            logger.info(f"Updated database with audio file path: {output_file}")
             
             # Log the success
             self.log_capture(db, capture_id, "info", f"Audio extracted to {output_file}")
