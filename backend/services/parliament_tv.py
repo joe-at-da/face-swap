@@ -111,56 +111,50 @@ class ParliamentTVCapture:
             except Exception as proc_err:
                 logger.error(f"Error finding/killing ffmpeg processes: {str(proc_err)}")
             
-            # Get the temp file path from active_captures
-            capture_info = self.active_captures.get(capture_id, {})
-            temp_file = capture_info.get("temp_file")
-            
             # Format the capture ID with leading zeros
             padded_capture_id = str(capture_id).zfill(4)
             
             # Define the output file path
             output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
             
-            # Convert the temporary TS file to a properly finalized MP4 file if it exists
-            if temp_file and os.path.exists(temp_file):
-                logger.info(f"Converting temporary TS file to MP4: {temp_file} -> {output_file}")
+            # Check if the MP4 file exists
+            if os.path.exists(output_file):
+                logger.info(f"Found MP4 file: {output_file}")
                 
-                # Create the ffmpeg command to convert TS to MP4
-                convert_cmd = [
-                    "ffmpeg", "-y",
-                    "-i", temp_file,
-                    "-c:v", "copy", "-c:a", "copy",
-                    "-movflags", "faststart",  # This ensures the moov atom is at the beginning
+                # Verify the MP4 file is valid
+                verify_cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_name",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
                     output_file
                 ]
                 
-                # Run the command
                 try:
-                    convert_process = subprocess.run(
-                        convert_cmd,
+                    verify_process = subprocess.run(
+                        verify_cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
                         check=False
                     )
                     
-                    if convert_process.returncode == 0:
-                        logger.info(f"Successfully converted to MP4: {output_file}")
-                        
-                        # Update the file path in the database
-                        db_capture.file_path = output_file
-                        
-                        # Clean up the temporary file
-                        try:
-                            os.remove(temp_file)
-                            logger.info(f"Removed temporary file: {temp_file}")
-                        except Exception as e:
-                            logger.warning(f"Failed to remove temporary file: {str(e)}")
+                    if verify_process.returncode == 0:
+                        logger.info(f"MP4 file is valid: {output_file}")
                     else:
-                        logger.error(f"Failed to convert to MP4: {convert_process.stderr}")
+                        logger.warning(f"MP4 file may not be valid: {verify_process.stderr}")
                 except Exception as e:
-                    logger.error(f"Error during conversion: {str(e)}")
-            
+                    logger.error(f"Error verifying MP4 file: {str(e)}")
+            else:
+                logger.warning(f"MP4 file not found: {output_file}")
+                
+            # Update the file path in the database if it's not already set
+            if not db_capture.file_path:
+                db_capture.file_path = output_file
+                db.commit()
+                logger.info(f"Updated database with file path: {output_file}")
+                
             # Update the capture in the database
             db_capture.status = "completed"
             db_capture.end_time = datetime.now()
@@ -352,18 +346,19 @@ class ParliamentTVCapture:
             cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "22"])
             cmd.extend(["-c:a", "aac", "-b:a", "128k"])
             
-            # Use a simpler approach for initial capture - just save to a temporary TS file
-            # We'll convert this to a proper MP4 later
-            temp_ts_file = os.path.join(str(self.temp_dir), f"temp_capture_{padded_capture_id}.ts")
+            # Use a direct approach to create an MP4 file with the moov atom at the beginning
+            output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
             
-            # Use TS format for initial capture as it's more resilient to interruptions
-            cmd.extend(["-f", "mpegts"])
-            cmd.append(temp_ts_file)
+            # Use MP4 format with faststart to ensure the moov atom is at the beginning
+            cmd.extend(["-f", "mp4"])
+            cmd.extend(["-movflags", "+faststart"])
+            cmd.append(output_file)
             
-            # Store the temp file path in the capture info for later processing
-            self.active_captures[capture_id]["temp_file"] = temp_ts_file
+            # Store the output file path in the database
+            db_capture.file_path = output_file
+            db.commit()
             
-            # We'll convert this to MP4 in the stop_capture method
+            # Avoid negative timestamps
             cmd.extend(["-avoid_negative_ts", "make_zero"])
             
             # Add duration limit
@@ -668,7 +663,6 @@ class ParliamentTVCapture:
         except Exception as e:
             logger.error(f"Failed to add log for capture {capture_id}: {str(e)}")
             # Don't raise the exception, just log it
-            
     def test_stream_url(self, url: str) -> Dict:
         """Test if a stream URL is valid and accessible.
         
@@ -712,86 +706,69 @@ class ParliamentTVCapture:
             error_msg = f"Error testing stream URL: {url}. Error: {str(e)}"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
-
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
-        """Extract audio from a video file or directly from the stream URL"""
+        """Extract audio from a capture session"""
         logger.info(f"Extracting audio for capture {capture_id}")
         
-        # Get the capture from the database
-        db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+        # Get the capture session from the database
+        db_capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
         if not db_capture:
-            error_msg = f"Capture {capture_id} not found"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg}
+            logger.error(f"Capture session {capture_id} not found")
+            return {"success": False, "error": f"Capture session {capture_id} not found"}
         
-        # Check if we have a video file or need to use the source URL
+        # Get the video file path from the database
         video_file = db_capture.file_path
         source_url = db_capture.source_url
         
-        logger.info(f"Video file path: {video_file}")
-        logger.info(f"Source URL: {source_url}")
-        
-        # Define the output file path - use the audio_extracts_dir
-        output_dir = str(self.audio_extracts_dir)
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Format capture ID with leading zeros
+        # Format the capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
-        # Ensure we're using the audio_file_path with .audio.mp3 extension to distinguish it from video files
-        output_file = os.path.join(output_dir, f"capture_{padded_capture_id}.audio.mp3")
         
-        # Start the ffmpeg process to extract the audio
+        # Define the output audio file path
+        audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
+        os.makedirs(audio_dir, exist_ok=True)
+        audio_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
+        
+        # Create the ffmpeg command
         cmd = ["ffmpeg", "-y"]
         
+        # Add input file or URL
         if video_file and os.path.exists(video_file):
-            # Use the video file if it exists
-            logger.info(f"Extracting audio from video file: {video_file}")
-            cmd.extend(["-i", video_file])
-        elif source_url:
-            # Try to extract the stream URL if we don't have a video file
-            logger.info(f"Extracting audio directly from source URL: {source_url}")
+            # Check if the MP4 file is valid
+            verify_cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_file
+            ]
             
             try:
-                # Extract the stream URL
-                stream_info = self.extract_stream_url(source_url)
+                verify_process = subprocess.run(
+                    verify_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
                 
-                # Get audio and video URLs directly from the standardized format
-                audio_url = stream_info.get("audio_url")
-                video_url = stream_info.get("video_url")
-                
-                # Log what we found
-                if audio_url:
-                    logger.info(f"Found dedicated audio URL: {audio_url}")
-                if video_url:
-                    logger.info(f"Found video URL: {video_url}")
-                    
-                # Use audio URL if available
-                if audio_url and isinstance(audio_url, str):
-                    logger.info(f"Using dedicated audio URL: {audio_url}")
-                    cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
-                    cmd.extend(["-http_persistent", "1"])
-                    cmd.extend(["-allowed_extensions", "ALL"])
-                    cmd.extend(["-reconnect", "1"])
-                    cmd.extend(["-reconnect_streamed", "1"])
-                    cmd.extend(["-reconnect_delay_max", "5"])
-                    cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-                    cmd.extend(["-i", audio_url])
-                # Fall back to video URL if no audio URL
-                elif video_url and isinstance(video_url, str):
-                    logger.info(f"Using video URL for audio extraction: {video_url}")
-                    cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
-                    cmd.extend(["-http_persistent", "1"])
-                    cmd.extend(["-allowed_extensions", "ALL"])
-                    cmd.extend(["-reconnect", "1"])
-                    cmd.extend(["-reconnect_streamed", "1"])
-                    cmd.extend(["-reconnect_delay_max", "5"])
-                    cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-                    cmd.extend(["-i", video_url])
+                if verify_process.returncode == 0:
+                    logger.info(f"MP4 file has valid audio stream: {video_file}")
+                    cmd.extend(["-i", video_file])
                 else:
-                    error_msg = f"No valid stream URL found in {stream_info}"
-                    logger.error(error_msg)
-                    self.log_capture(db, capture_id, "error", error_msg)
-                    return {"success": False, "error": error_msg}
+                    logger.warning(f"MP4 file may not have valid audio: {verify_process.stderr}")
+                    if source_url:
+                        logger.info(f"Falling back to source URL: {source_url}")
+                        # Test the stream URL first
+                        stream_test = self.test_stream_url(source_url)
+                        if stream_test.get("success", False):
+                            cmd.extend(["-i", source_url])
+                        else:
+                            logger.error(f"Stream URL test failed: {stream_test.get('error', 'Unknown error')}")
+                            return {"success": False, "error": f"Stream URL test failed: {stream_test.get('error', 'Unknown error')}"}
+                    else:
+                        logger.error("No valid audio source available")
+                        return {"success": False, "error": "No valid audio source available"}
             except Exception as e:
                 error_msg = f"Failed to extract stream URL: {str(e)}"
                 logger.error(error_msg)
@@ -804,70 +781,40 @@ class ParliamentTVCapture:
             return {"success": False, "error": error_msg}
         
         # Add audio extraction options
-        cmd.extend(["-vn", "-acodec", "libmp3lame", "-ab", "128k"])
-        
-        # Ensure we're creating an MP3 file
-        cmd.extend(["-f", "mp3"])
-        
-        # Add the output file
-        cmd.append(output_file)
+        cmd.extend(["-vn"])  # Disable video
+        cmd.extend(["-c:a", "libmp3lame", "-q:a", "2"])  # Use MP3 codec with good quality
+        cmd.append(audio_file)
         
         # Log the full command for debugging
         logger.info(f"Full ffmpeg command for audio extraction: {' '.join(cmd)}")
         
         try:
             # Create the output directory if it doesn't exist
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            os.makedirs(os.path.dirname(audio_file), exist_ok=True)
             
-            # Use a more reliable approach to run ffmpeg
-            # Convert the command list to a string with proper escaping
-            cmd_str = ' '.join([shlex.quote(str(arg)) for arg in cmd])
-            logger.info(f"Running command: {cmd_str}")
+            # Run the command
+            process = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             
-            # Run the command with shell=False to avoid shell syntax issues
-            process = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
-            logger.info(f"Completed ffmpeg process for audio extraction with return code: {process.returncode}")
-            
-            # Get stdout and stderr
-            stdout = process.stdout
-            stderr = process.stderr
-            
-            # Check if the process completed successfully
-            if process.returncode != 0:
-                error_msg = f"Failed to extract audio: {stderr}"
+            # Check if the command was successful
+            if process.returncode == 0:
+                logger.info(f"Audio extraction successful. Output file: {audio_file}")
+                
+                # Update the database with the audio file path
+                db_capture.audio_file_path = audio_file
+                db.commit()
+                
+                return {"success": True, "audio_file": audio_file}
+            else:
+                error_msg = f"Audio extraction failed: {process.stderr}"
                 logger.error(error_msg)
-                self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
-            
-            # Check if the output file was created
-            if not os.path.exists(output_file):
-                error_msg = f"Audio file was not created at {output_file}"
-                logger.error(error_msg)
-                self.log_capture(db, capture_id, "error", error_msg)
-                return {"success": False, "error": error_msg}
-            
-            # Update the capture in the database with the correct audio file path
-            db_capture.audio_file_path = output_file
-            db.commit()
-            logger.info(f"Updated database with audio file path: {output_file}")
-            
-            # Log the success
-            self.log_capture(db, capture_id, "info", f"Audio extracted to {output_file}")
-            
-            return {
-                "success": True,
-                "audio_file": output_file
-            }
+        except subprocess.TimeoutExpired:
+            error_msg = f"Audio extraction timed out"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
         except Exception as e:
             error_msg = f"Error during audio extraction: {str(e)}"
             logger.error(error_msg)
-            self.log_capture(db, capture_id, "error", error_msg)
             return {"success": False, "error": error_msg}
 
 

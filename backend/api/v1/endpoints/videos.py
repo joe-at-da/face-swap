@@ -448,12 +448,15 @@ def stream_audio_from_video(filename: str, db: Session, debug: bool = False):
                 print(f"DEBUG - stream_audio_from_video - Will extract audio to: {audio_path}")
                 
                 # Extract audio from the video file using ffmpeg
+                # Adding more robust options to handle potentially corrupted MP4 files
                 cmd = [
                     'ffmpeg',
+                    '-err_detect', 'ignore_err',  # Ignore errors in the input
                     '-i', video_path,
                     '-vn',  # No video
                     '-acodec', 'libmp3lame',  # Use MP3 codec
                     '-q:a', '2',  # Quality setting
+                    '-f', 'mp3',  # Explicitly specify MP3 format
                     '-y',  # Overwrite if exists
                     audio_path
                 ]
