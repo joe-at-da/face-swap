@@ -276,10 +276,18 @@ async def start_parliament_tv_capture(
         print(f"Capture ID: {db_capture.id}, Duration: {capture_request.duration}")
         
         try:
+            # Extract scheduled start and end times from the request
+            scheduled_start = capture_request.scheduled_start.isoformat() if capture_request.scheduled_start else None
+            scheduled_end = capture_request.scheduled_end.isoformat() if capture_request.scheduled_end else None
+            
+            print(f"Starting capture with scheduled_start: {scheduled_start}, scheduled_end: {scheduled_end}")
+            
             parliament_tv_service.start_capture_async(
                 url=direct_stream,  # Use the validated direct_stream variable
                 capture_id=db_capture.id,  # Pass the capture ID for proper file naming
                 duration=capture_request.duration,
+                scheduled_start=scheduled_start,
+                scheduled_end=scheduled_end,
                 callback=capture_callback
             )
             print(f"Capture process started successfully for ID: {db_capture.id}")

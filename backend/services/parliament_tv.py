@@ -161,6 +161,9 @@ class ParliamentTVCapture:
                         if audio_url:
                             # Use ffmpeg to download the audio
                             cmd = ["ffmpeg", "-y", "-i", audio_url, "-c:a", "copy", audio_file_path]
+            
+                            # Log the command
+                            logger.info(f"Audio download command: {' '.join(cmd)}")
                             
                             logger.info(f"Running ffmpeg to download audio: {audio_file_path}")
                             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -176,6 +179,12 @@ class ParliamentTVCapture:
                                     
                                     if isinstance(db_capture.metadata, dict):
                                         db_capture.metadata["audio_file_path"] = audio_file_path
+                                        
+                                        # Ensure audio file has same scheduling info as video
+                                        if "scheduled_start" in db_capture.metadata:
+                                            logger.info(f"Using same scheduled start for audio: {db_capture.metadata['scheduled_start']}")
+                                        if "scheduled_end" in db_capture.metadata:
+                                            logger.info(f"Using same scheduled end for audio: {db_capture.metadata['scheduled_end']}")
                                     
                                     # Save to database
                                     db_capture.audio_file_path = audio_file_path
@@ -332,9 +341,10 @@ class ParliamentTVCapture:
             logger.error(f"Unexpected error testing stream: {str(e)}")
             return {"success": False, "error": f"Unexpected error: {str(e)}"}
     
-    def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
+    def start_capture(self, url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> Dict:
         """Start capturing a Parliament TV stream."""
         logger.info(f"Starting capture for URL: {url}, capture_id: {capture_id}")
+        logger.info(f"Scheduled start: {scheduled_start}, Scheduled end: {scheduled_end}")
         
         try:
             # Get a database session
@@ -383,12 +393,22 @@ class ParliamentTVCapture:
             logger.info(f"Output file path: {output_file}")
             
             # Start the ffmpeg process to capture the video
-            cmd = [
-                "ffmpeg", "-y", "-i", video_url,
-                "-c", "copy", "-t", str(duration),
-                output_file
-            ]
+            cmd = ["ffmpeg", "-y"]
+            
+            # Add input options
+            cmd.extend(["-i", video_url])
+            
+            # Add codec options
+            cmd.extend(["-c", "copy"])
+            
+            # Add duration limit (as a safety measure)
+            cmd.extend(["-t", str(duration)])
+            
+            # Add output file
+            cmd.append(output_file)
+            
             logger.info(f"Running ffmpeg to capture video: {output_file}")
+            logger.info(f"ffmpeg command: {' '.join(cmd)}")
             
             # Start the ffmpeg process
             process = subprocess.Popen(
@@ -413,7 +433,7 @@ class ParliamentTVCapture:
             db_capture.file_path = output_file
             db_capture.source_url = url
             
-            # Store the URLs in metadata
+            # Store the URLs and scheduling info in metadata
             if not db_capture.metadata:
                 db_capture.metadata = {}
             
@@ -422,6 +442,12 @@ class ParliamentTVCapture:
                 if audio_url:
                     db_capture.metadata["audio_url"] = audio_url
                 db_capture.metadata["original_url"] = url
+                
+                # Store scheduling information
+                if scheduled_start:
+                    db_capture.metadata["scheduled_start"] = scheduled_start
+                if scheduled_end:
+                    db_capture.metadata["scheduled_end"] = scheduled_end
             
             db.commit()
             
@@ -440,7 +466,7 @@ class ParliamentTVCapture:
             logger.error(f"Failed to start capture: {str(e)}")
             return {"success": False, "error": f"Failed to start capture: {str(e)}"}
     
-    def start_capture_async(self, url: str, capture_id: int, duration: int = 1800) -> bool:
+    def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> bool:
         """Start capturing a Parliament TV stream asynchronously."""
         logger.info(f"Starting async capture for URL: {url}, capture_id: {capture_id}")
         
@@ -448,7 +474,7 @@ class ParliamentTVCapture:
             # Start the capture in a separate thread
             thread = threading.Thread(
                 target=self.start_capture,
-                args=(url, capture_id, duration)
+                args=(url, capture_id, duration, scheduled_start, scheduled_end)
             )
             thread.daemon = True
             thread.start()
@@ -550,14 +576,14 @@ parliament_tv_capture = ParliamentTVCapture()
 
 
 # Module-level functions for API endpoints
-def start_capture(url: str, capture_id: int, duration: int = 1800) -> Dict:
+def start_capture(url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> Dict:
     """Start capturing a Parliament TV stream."""
-    return parliament_tv_capture.start_capture(url, capture_id, duration)
+    return parliament_tv_capture.start_capture(url, capture_id, duration, scheduled_start, scheduled_end)
 
 
-def start_capture_async(url: str, capture_id: int, duration: int = 1800) -> bool:
+def start_capture_async(url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> bool:
     """Start capturing a Parliament TV stream asynchronously."""
-    return parliament_tv_capture.start_capture_async(url, capture_id, duration)
+    return parliament_tv_capture.start_capture_async(url, capture_id, duration, scheduled_start, scheduled_end)
 
 
 def stop_capture(capture_id: int) -> Dict:
