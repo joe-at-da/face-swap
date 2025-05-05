@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Path
 from sqlalchemy.orm import Session
-from typing import Dict
+from typing import Dict, Any
 import os
 import subprocess
 import shlex
@@ -15,6 +15,21 @@ from backend.services.parliament_tv import extract_stream_url
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Helper function to safely convert objects to JSON serializable format
+def make_json_serializable(obj: Any) -> Any:
+    """Convert any object to a JSON serializable format"""
+    if hasattr(obj, '__dict__'):
+        return {k: make_json_serializable(v) for k, v in obj.__dict__.items() 
+                if not k.startswith('_')}
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        return str(obj)
 
 @router.post('/{capture_id}', response_model=Dict)
 async def extract_audio_for_capture(

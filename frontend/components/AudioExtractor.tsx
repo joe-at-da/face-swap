@@ -32,6 +32,8 @@ const AudioExtractor: React.FC<AudioExtractorProps> = ({ token, apiBaseUrl }) =>
       const formData = new FormData();
       formData.append('url', parliamentTvUrl);
 
+      console.log('Extracting audio from URL:', parliamentTvUrl);
+      
       // Make the request to extract audio
       const response = await axios.post(
         `${apiBaseUrl}/videos/extract-audio-from-url`,
@@ -40,19 +42,60 @@ const AudioExtractor: React.FC<AudioExtractorProps> = ({ token, apiBaseUrl }) =>
           headers: {
             'Authorization': `Bearer ${token}`
           },
-          responseType: 'blob'
+          responseType: 'blob',
+          timeout: 60000 // 60 second timeout to prevent UI hanging
         }
       );
 
+      // Check if we received valid audio data
+      const responseData = response.data as Blob;
+      if (responseData.size === 0) {
+        throw new Error('Received empty audio file');
+      }
+      
       // Create a URL for the audio blob
       const audioBlob = new Blob([response.data as BlobPart], { type: 'audio/mpeg' });
       const url = URL.createObjectURL(audioBlob);
       setAudioUrl(url);
       toast.success('Audio extracted successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error extracting audio:', error);
-      setError('Failed to extract audio from the URL');
-      toast.error('Failed to extract audio');
+      
+      // Try to extract a more specific error message if available
+      let errorMessage = 'Failed to extract audio from the URL';
+      
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        if (error.response.data) {
+          try {
+            // Try to parse the error response if it's not a blob
+            if (error.response.data instanceof Blob) {
+              const text = await error.response.data.text();
+              try {
+                const jsonError = JSON.parse(text);
+                errorMessage = jsonError.detail || jsonError.error || jsonError.message || errorMessage;
+              } catch (e) {
+                // If it's not JSON, use the text directly
+                errorMessage = text || errorMessage;
+              }
+            } else if (typeof error.response.data === 'object') {
+              errorMessage = error.response.data.detail || error.response.data.error || error.response.data.message || errorMessage;
+            }
+          } catch (e) {
+            console.error('Error parsing error response:', e);
+          }
+        }
+      } else if (error.request) {
+        // The request was made but no response was received
+        errorMessage = 'No response received from server. The request may have timed out.';
+      } else if (error.message) {
+        // Something happened in setting up the request that triggered an Error
+        errorMessage = error.message;
+      }
+      
+      setError(errorMessage);
+      toast.error(`Failed to extract audio: ${errorMessage}`);
     } finally {
       setIsExtracting(false);
     }

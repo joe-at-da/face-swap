@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { extractAudioForCapture } from '../../utils/extractAudio';
 import CaptureStatusIndicator from './CaptureStatusIndicator';
 import { CombinedStatus } from '../../utils/captureStatus';
+import { toast } from 'react-toastify';
 
 // API base URL
 const API_BASE_URL = 'http://localhost:8000/api/v1';
@@ -18,6 +19,7 @@ interface ExtractUrlResponse {
     seconds: number;
   };
   original_url?: string;
+  direct_stream?: string;
 }
 
 interface TestStreamResponse {
@@ -273,8 +275,9 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       const authHeaders = getAuthHeaders();
       const token = authHeaders.headers.Authorization.split(' ')[1];
       
+      // Use the correct endpoint for stopping captures
       const response = await axios.post(
-        `${API_BASE_URL}/parliament-tv/${activeCapture.id}/stop`,
+        `${API_BASE_URL}/capture/${activeCapture.id}/stop`,
         {},
         {
           headers: {
@@ -396,11 +399,19 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         
         // Start audio extraction
         extractAudioForCapture(captureId)
-          .then(success => {
-            console.log('Audio extraction initiated:', success ? 'success' : 'failed');
+          .then(result => {
+            console.log('Audio extraction result:', result);
+            if (result.success) {
+              console.log('Audio extraction successful, output file:', result.output_file);
+              toast.success('Audio extraction started successfully');
+            } else {
+              console.error('Audio extraction failed:', result.error || result.message);
+              toast.error(`Audio extraction failed: ${result.error || result.message}`);
+            }
           })
           .catch(err => {
             console.error('Error initiating audio extraction:', err);
+            toast.error('Error initiating audio extraction');
           });
       }
       
