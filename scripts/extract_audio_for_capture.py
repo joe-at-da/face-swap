@@ -255,8 +255,8 @@ def main():
     
     logger.info(f"Capture {capture_id} has source URL: {source_url}")
     
-    # Generate the output file path - ensure we're using the Docker container path
-    audio_file = f"/app/data/audio/capture_{capture_id:04d}.audio.mp3"
+    # Generate the output file path - use temp/audio_extracts as expected by the frontend
+    audio_file = f"/app/data/temp/audio_extracts/capture_{capture_id:04d}.audio.mp3"
     
     # Extract the audio
     if extract_audio(source_url, audio_file):
