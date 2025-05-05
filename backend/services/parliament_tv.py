@@ -27,38 +27,25 @@ logger = logging.getLogger(__name__)
 class ParliamentTVCapture:
     def __init__(self):
         """Initialize the Parliament TV capture service."""
-        # CRITICAL FIX: Hard-code paths to ensure they're never None
-        print("DEBUG - Setting hard-coded paths in __init__ to ensure they're never None")
+        # Define standard paths
         self.temp_dir = Path("/app/data/temp")
         self.media_dir = Path("/app/data/media")
         self.scripts_dir = Path("/app/scripts")
         
-        # Print debug info about paths
-        print(f"Temp dir: {self.temp_dir}")
-        print(f"Media dir: {self.media_dir}")
-        print(f"Scripts dir: {self.scripts_dir}")
+        logger.info(f"Initialized with paths: temp={self.temp_dir}, media={self.media_dir}, scripts={self.scripts_dir}")
         
         # Create directories if they don't exist
         try:
             os.makedirs(str(self.temp_dir), exist_ok=True)
-            print(f"Created temp_dir: {self.temp_dir}")
-        except Exception as e:
-            print(f"ERROR - Failed to create temp_dir: {str(e)}")
-            
-        try:
             os.makedirs(str(self.media_dir), exist_ok=True)
-            print(f"Created media_dir: {self.media_dir}")
         except Exception as e:
-            print(f"ERROR - Failed to create media_dir: {str(e)}")
+            logger.error(f"Failed to create directories: {str(e)}")
         
         # Initialize active captures dictionary
         self.active_captures = {}
 
     def stop_capture(self, capture_id: int) -> Dict:
-        """Stop a running capture."""
-        print("*"*80)
-        print(f"AUDIO EXTRACTION FIX - STOP_CAPTURE CALLED FOR CAPTURE {capture_id}")
-        print("*"*80)
+        """Stop a running capture and download the separate audio stream."""
         logger.info(f"Stopping capture {capture_id}")
         
         try:
@@ -77,161 +64,151 @@ class ParliamentTVCapture:
                 return {"success": False, "error": f"Capture {capture_id} not found in database"}
             
             # Find and terminate the ffmpeg process
-            print(f"DEBUG - stop_capture - Attempting to terminate capture process for {capture_id}")
+            logger.info(f"Terminating capture process for {capture_id}")
             
             # Get the thread from active_captures
             capture_info = self.active_captures.get(capture_id, {})
-            capture_thread = capture_info.get("thread")
             
             # Find and terminate any running ffmpeg processes for this capture
             try:
+                # Format the capture ID with leading zeros (e.g., 0096)
+                padded_capture_id = str(capture_id).zfill(4)
+                
                 # Use ps to find ffmpeg processes containing the capture ID
                 ps_cmd = ["ps", "-ef"]
                 ps_result = subprocess.run(ps_cmd, capture_output=True, text=True)
                 
                 # Look for ffmpeg processes with this capture ID
-                # Format the capture ID with leading zeros (e.g., 0096)
-                padded_capture_id = str(capture_id).zfill(4)
                 for line in ps_result.stdout.splitlines():
                     if f"capture_{padded_capture_id}" in line and "ffmpeg" in line:
-                        print(f"DEBUG - stop_capture - Found ffmpeg process for capture {capture_id}: {line}")
                         # Extract PID (second column in ps output)
                         parts = line.split()
                         if len(parts) > 1:
                             try:
                                 pid = int(parts[1])
-                                print(f"DEBUG - stop_capture - Terminating process with PID {pid}")
-                                # Try to terminate gracefully first
+                                logger.info(f"Terminating process with PID {pid}")
+                                # First try to terminate gracefully
                                 os.kill(pid, signal.SIGTERM)
                                 # Give it a moment to terminate
                                 time.sleep(1)
                                 # Check if it's still running
                                 try:
-                                    os.kill(pid, 0)  # This will raise an error if process doesn't exist
-                                    print(f"DEBUG - stop_capture - Process {pid} still running, sending SIGKILL")
-                                    # If still running, force kill
+                                    os.kill(pid, 0)  # This will raise an error if the process is gone
+                                    # If we get here, the process is still running, so force kill it
                                     os.kill(pid, signal.SIGKILL)
+                                    time.sleep(0.5)  # Give it a moment to die
                                 except OSError:
-                                    print(f"DEBUG - stop_capture - Process {pid} terminated successfully")
+                                    # Process is already gone
+                                    pass
                             except ValueError:
-                                print(f"DEBUG - stop_capture - Could not parse PID from: {parts[1]}")
-                            except OSError as e:
-                                print(f"DEBUG - stop_capture - Error killing process {pid}: {str(e)}")
+                                logger.warning(f"Could not parse PID from: {parts[1]}")
+                            except Exception as e:
+                                logger.error(f"Error killing process: {str(e)}")
             except Exception as proc_err:
-                print(f"DEBUG - stop_capture - Error finding/killing ffmpeg processes: {str(proc_err)}")
+                logger.error(f"Error finding/killing ffmpeg processes: {str(proc_err)}")
             
-            # Update the capture status
-            db_capture.status = "stopped"
-            db_capture.stopped_at = datetime.now()
+            # Update the database
+            db_capture.status = "completed"
+            db_capture.end_time = datetime.now()
             db.commit()
             
-            # Log the stop
+            # Log the capture stop
             self.log_capture(db, capture_id, "info", "Capture stopped by user")
             
             # Get the output file path from the database
             output_file = db_capture.file_path
-            print(f"DEBUG - stop_capture - Output file path: {output_file}")
             
             # Check if the output file exists
             if os.path.exists(output_file):
-                print(f"DEBUG - stop_capture - Output file exists: {output_file}")
+                logger.info(f"Output file exists: {output_file}")
                 
                 # Download the separate audio stream
-                print(f"DEBUG - stop_capture - Downloading separate audio stream")
+                logger.info(f"Downloading separate audio stream for capture {capture_id}")
                 
                 # Define paths
                 audio_extracts_dir = "/app/data/temp/audio_extracts"
                 os.makedirs(audio_extracts_dir, exist_ok=True)
-                print(f"DEBUG - stop_capture - Created audio extracts directory: {audio_extracts_dir}")
                 
                 # Create the audio file path - format: capture_XXXX.audio.mp3
                 padded_capture_id = str(capture_id).zfill(4)
                 audio_file_path = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
-                print(f"DEBUG - stop_capture - Audio file path: {audio_file_path}")
                 
                 try:
                     # Get the original URL from the capture metadata
                     original_url = None
                     if hasattr(db_capture, 'metadata') and db_capture.metadata:
-                        if isinstance(db_capture.metadata, dict):
-                            original_url = db_capture.metadata.get('original_url')
-                            print(f"DEBUG - stop_capture - Found original URL in metadata: {original_url}")
+                        if isinstance(db_capture.metadata, dict) and 'original_url' in db_capture.metadata:
+                            original_url = db_capture.metadata['original_url']
                     
-                    if not original_url and hasattr(db_capture, 'source_url'):
+                    # If original_url is not in metadata, use source_url
+                    if not original_url and hasattr(db_capture, 'source_url') and db_capture.source_url:
                         original_url = db_capture.source_url
-                        print(f"DEBUG - stop_capture - Using source_url as original URL: {original_url}")
                     
-                    if not original_url:
-                        print(f"WARNING - stop_capture - No original URL found in metadata or source_url")
-                        self.log_capture(db, db_capture.id, "warning", "No original URL found for audio download")
-                    else:
-                        # Extract the stream URLs again to get the audio URL
-                        print(f"DEBUG - stop_capture - Extracting stream URLs from original URL: {original_url}")
+                    # If we have an original URL, extract the audio URL
+                    if original_url:
+                        # Extract the stream URLs from the original URL
+                        logger.info(f"Extracting stream URLs from original URL: {original_url}")
                         stream_info = self.extract_stream_url(original_url)
                         
-                        if stream_info and isinstance(stream_info, dict):
-                            # Check if we have separate video and audio URLs
-                            direct_stream = stream_info.get('direct_stream', {})
+                        # Check if we have separate audio URL
+                        audio_url = None
+                        if "direct_stream" in stream_info:
+                            direct_stream = stream_info["direct_stream"]
+                            if isinstance(direct_stream, dict) and "audio_url" in direct_stream:
+                                audio_url = direct_stream["audio_url"]
+                        
+                        # If we have an audio URL, download it
+                        if audio_url:
+                            # Use ffmpeg to download the audio
+                            cmd = ["ffmpeg", "-y", "-i", audio_url, "-c:a", "copy", audio_file_path]
                             
-                            if isinstance(direct_stream, dict) and 'audio_url' in direct_stream:
-                                audio_url = direct_stream.get('audio_url')
-                                print(f"DEBUG - stop_capture - Found separate audio URL: {audio_url}")
+                            logger.info(f"Running ffmpeg to download audio: {audio_file_path}")
+                            result = subprocess.run(cmd, capture_output=True, text=True)
+                            
+                            if result.returncode == 0:
+                                logger.info(f"Successfully downloaded audio to: {audio_file_path}")
                                 
-                                # Download the audio stream using ffmpeg
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", audio_url, "-c:a", "libmp3lame", "-ab", "192k",
-                                    "-ar", "44100", audio_file_path
-                                ]
-                                print(f"DEBUG - stop_capture - Running ffmpeg command to download audio: {' '.join(cmd)}")
-                                result = subprocess.run(cmd, capture_output=True, text=True)
-                                
-                                if result.returncode == 0 and os.path.exists(audio_file_path):
-                                    print(f"DEBUG - stop_capture - Successfully downloaded audio to: {audio_file_path}")
-                                    # Save the audio file path in the database
-                                    if hasattr(db_capture, 'audio_file_path'):
-                                        print(f"DEBUG - stop_capture - Saving audio_file_path to database: {audio_file_path}")
-                                        db_capture.audio_file_path = audio_file_path
-                                        
-                                        # Initialize metadata if needed
-                                        db_capture.metadata = db_capture.metadata or {}
-                                        
-                                        if isinstance(db_capture.metadata, dict):
-                                            db_capture.metadata['audio_file_path'] = audio_file_path
-                                            db_capture.metadata['audio_url'] = audio_url
-                                            print(f"DEBUG - stop_capture - Updated metadata: {db_capture.metadata}")
-                                        else:
-                                            print(f"WARNING - stop_capture - Metadata is not a dict: {type(db_capture.metadata)}")
-                                            
-                                        self.log_capture(db, db_capture.id, "info", f"Audio downloaded to: {audio_file_path}")
-                                        print(f"DEBUG - stop_capture - Successfully saved audio_file_path to database")
-                                        db.commit()
-                                    else:
-                                        print(f"WARNING - stop_capture - CaptureSession model does not have audio_file_path attribute")
-                                else:
-                                    print(f"WARNING - stop_capture - Failed to download audio: {result.stderr}")
-                                    self.log_capture(db, db_capture.id, "warning", "Failed to download audio stream")
+                                # Save the audio file path to the database
+                                try:
+                                    # Update the metadata
+                                    if not db_capture.metadata:
+                                        db_capture.metadata = {}
+                                    
+                                    if isinstance(db_capture.metadata, dict):
+                                        db_capture.metadata["audio_file_path"] = audio_file_path
+                                    
+                                    # Save to database
+                                    db_capture.audio_file_path = audio_file_path
+                                    db.commit()
+                                    
+                                    logger.info("Successfully saved audio_file_path to database")
+                                except Exception as db_err:
+                                    logger.error(f"Failed to save audio file path to database: {str(db_err)}")
+                                    self.log_capture(db, capture_id, "error", f"Failed to save audio file path to database: {str(db_err)}")
                             else:
-                                print(f"WARNING - stop_capture - No separate audio URL found in stream info")
-                                self.log_capture(db, db_capture.id, "warning", "No separate audio URL found in stream info")
+                                logger.error(f"Failed to download audio: {result.stderr}")
+                                self.log_capture(db, capture_id, "error", f"Failed to download audio: {result.stderr}")
                         else:
-                            print(f"WARNING - stop_capture - Failed to extract stream URLs: {stream_info}")
-                            self.log_capture(db, db_capture.id, "warning", "Failed to extract stream URLs for audio")
+                            logger.error("No audio URL found in stream info")
+                            self.log_capture(db, capture_id, "error", "No audio URL found in stream info")
+                    else:
+                        logger.error("No original URL found for capture")
+                        self.log_capture(db, capture_id, "error", "No original URL found for capture")
                 except Exception as e:
-                    print(f"ERROR - stop_capture - Failed to download audio: {str(e)}")
-                    self.log_capture(db, db_capture.id, "warning", f"Failed to download audio: {str(e)}")
-                    
-                print(f"DEBUG - stop_capture - Audio download process completed")
+                    logger.error(f"Failed to extract audio: {str(e)}")
+                    self.log_capture(db, capture_id, "error", f"Failed to extract audio: {str(e)}")
+                
+                # Remove the capture from active_captures
+                if capture_id in self.active_captures:
+                    del self.active_captures[capture_id]
+                
+                return {"success": True, "message": f"Capture {capture_id} stopped successfully", "output_file": output_file}
             else:
-                print(f"ERROR - stop_capture - Output file does not exist: {output_file}")
+                logger.error(f"Output file does not exist: {output_file}")
                 self.log_capture(db, capture_id, "error", f"Output file does not exist: {output_file}")
-            
-            # Remove from active_captures
-            del self.active_captures[capture_id]
-            
-            return {"success": True, "message": f"Capture {capture_id} stopped successfully"}
-            
+                return {"success": False, "error": f"Output file does not exist: {output_file}"}
         except Exception as e:
-            logger.error(f"Failed to stop capture {capture_id}: {str(e)}")
+            logger.error(f"Failed to stop capture: {str(e)}")
             return {"success": False, "error": f"Failed to stop capture: {str(e)}"}
     
     def log_capture(self, db: Session, capture_id: int, level: str, message: str):
@@ -313,51 +290,51 @@ class ParliamentTVCapture:
     def test_stream_url(self, url: str) -> Dict:
         """Test if a stream URL is valid and accessible."""
         try:
-            print(f"DEBUG - test_stream_url - Testing stream URL: {url}")
+            logger.info(f"Testing stream URL: {url}")
             
-            # Check if ffprobe is installed
-            try:
-                result = subprocess.run(["which", "ffprobe"], capture_output=True, text=True)
-                if result.returncode != 0:
-                    print("ERROR - test_stream_url - ffprobe not found")
+            # Check if ffprobe is available
+            ffprobe_path = shutil.which("ffprobe")
+            if not ffprobe_path:
+                # Try some common locations
+                common_paths = [
+                    "/usr/bin/ffprobe",
+                    "/usr/local/bin/ffprobe",
+                    "/opt/homebrew/bin/ffprobe"
+                ]
+                for path in common_paths:
+                    if os.path.exists(path):
+                        ffprobe_path = path
+                        logger.info(f"ffprobe found at: {ffprobe_path}")
+                        break
+                else:
                     return {"success": False, "error": "ffprobe not found"}
-                ffprobe_path = result.stdout.strip()
-                print(f"DEBUG - test_stream_url - ffprobe found at: {ffprobe_path}")
-            except Exception as e:
-                print(f"ERROR - test_stream_url - Failed to check for ffprobe: {str(e)}")
-                return {"success": False, "error": f"Failed to check for ffprobe: {str(e)}"}
             
-            # Build the ffprobe command
-            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", url]
-            print(f"DEBUG - test_stream_url - ffprobe command: {' '.join(cmd)}")
+            # Build the command
+            cmd = [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of", "json", url]
             
             # Run the command with a timeout
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                print(f"DEBUG - test_stream_url - ffprobe returned with code: {result.returncode}")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 
-                # Check if the command was successful
                 if result.returncode == 0:
-                    print(f"DEBUG - test_stream_url - Stream URL is valid: {url}")
+                    # Stream is valid
+                    logger.info(f"Stream URL is valid: {url}")
                     return {"success": True, "message": "Stream URL is valid"}
                 else:
-                    print(f"ERROR - test_stream_url - ffprobe failed with return code {result.returncode}")
-                    print(f"ERROR - test_stream_url - ffprobe output: {result.stdout}")
-                    print(f"ERROR - test_stream_url - ffprobe error: {result.stderr}")
+                    # Stream is invalid
+                    logger.warning(f"Stream URL is invalid: {result.stderr}")
                     return {"success": False, "error": f"Stream URL is invalid: {result.stderr}"}
             except subprocess.TimeoutExpired:
-                print("ERROR - test_stream_url - ffprobe timed out")
+                logger.warning("Timeout while testing stream URL")
                 return {"success": False, "error": "Timeout while testing stream URL"}
-                
+            
         except Exception as e:
-            print(f"ERROR - test_stream_url - Unexpected error: {str(e)}")
-            import traceback
-            print(f"ERROR - test_stream_url - Traceback: {traceback.format_exc()}")
+            logger.error(f"Unexpected error testing stream: {str(e)}")
             return {"success": False, "error": f"Unexpected error: {str(e)}"}
     
     def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
         """Start capturing a Parliament TV stream."""
-        print(f"DEBUG - start_capture - Starting capture for URL: {url}, capture_id: {capture_id}")
+        logger.info(f"Starting capture for URL: {url}, capture_id: {capture_id}")
         
         try:
             # Get a database session
@@ -386,11 +363,10 @@ class ParliamentTVCapture:
             if isinstance(direct_stream, dict) and "video_url" in direct_stream:
                 video_url = direct_stream.get("video_url")
                 audio_url = direct_stream.get("audio_url")
-                print(f"DEBUG - start_capture - Found separate video URL: {video_url}")
-                print(f"DEBUG - start_capture - Found separate audio URL: {audio_url}")
+                logger.info(f"Found separate video and audio URLs for capture {capture_id}")
             else:
                 video_url = direct_stream if isinstance(direct_stream, str) else None
-                print(f"DEBUG - start_capture - Using single stream URL: {video_url}")
+                logger.info(f"Using single stream URL for capture {capture_id}")
             
             if not video_url:
                 error_msg = "No valid video stream URL found"
@@ -404,7 +380,7 @@ class ParliamentTVCapture:
             # Create the video file path - format: capture_XXXX.mp4
             padded_capture_id = str(capture_id).zfill(4)
             output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
-            print(f"DEBUG - start_capture - Output file path: {output_file}")
+            logger.info(f"Output file path: {output_file}")
             
             # Start the ffmpeg process to capture the video
             cmd = [
@@ -412,7 +388,7 @@ class ParliamentTVCapture:
                 "-c", "copy", "-t", str(duration),
                 output_file
             ]
-            print(f"DEBUG - start_capture - Running ffmpeg command: {' '.join(cmd)}")
+            logger.info(f"Running ffmpeg to capture video: {output_file}")
             
             # Start the ffmpeg process
             process = subprocess.Popen(
@@ -466,7 +442,7 @@ class ParliamentTVCapture:
     
     def start_capture_async(self, url: str, capture_id: int, duration: int = 1800) -> bool:
         """Start capturing a Parliament TV stream asynchronously."""
-        print(f"DEBUG - start_capture_async - Starting async capture for URL: {url}, capture_id: {capture_id}")
+        logger.info(f"Starting async capture for URL: {url}, capture_id: {capture_id}")
         
         try:
             # Start the capture in a separate thread
@@ -491,11 +467,11 @@ class ParliamentTVCapture:
     def extract_stream_url(self, url: str) -> Dict:
         """Extract the direct stream URL from a Parliament TV event URL."""
         try:
-            print(f"DEBUG - extract_stream_url - Extracting stream URL from: {url}")
+            logger.info(f"Extracting stream URL from: {url}")
             
             # Check if the URL is already a direct stream URL
             if url and ('cdn.redbee.live' in url or '.m3u8' in url):
-                print(f"DEBUG - extract_stream_url - URL appears to be a direct stream URL already: {url}")
+                logger.info("URL appears to be a direct stream URL already")
                 return {
                     "direct_stream": url,
                     "event_id": "direct",
@@ -503,13 +479,12 @@ class ParliamentTVCapture:
                     "original_url": url
                 }
             
-            # CRITICAL FIX: Hard-code script path to ensure it's never None
+            # Set script path
             script_path = "/app/scripts/extract-url.py"
-            print(f"DEBUG - extract_stream_url - script_path: {script_path}")
             
             # Verify the script exists
             if not os.path.exists(script_path):
-                print(f"ERROR - extract_stream_url - Script not found at {script_path}, checking alternatives")
+                logger.warning(f"Script not found at {script_path}, checking alternatives")
                 # Try alternative locations
                 alt_paths = [
                     "/app/backend/scripts/extract-url.py",
@@ -519,16 +494,16 @@ class ParliamentTVCapture:
                 for alt_path in alt_paths:
                     if os.path.exists(alt_path):
                         script_path = alt_path
-                        print(f"DEBUG - extract_stream_url - Found script at: {script_path}")
+                        logger.info(f"Found script at: {script_path}")
                         break
                 else:
-                    print("ERROR - extract_stream_url - Could not find extract-url.py in any location")
+                    logger.error("Could not find extract-url.py in any location")
                     return {"error": "Could not find extract-url.py script"}
             
             # Check if Python executable is valid
             python_executable = sys.executable
             if not os.path.exists(python_executable):
-                print(f"ERROR - extract_stream_url - Python executable not found: {python_executable}")
+                logger.warning(f"Python executable not found: {python_executable}")
                 # Try to find python executable
                 alt_python_paths = [
                     "/usr/bin/python3",
@@ -539,41 +514,34 @@ class ParliamentTVCapture:
                 for alt_path in alt_python_paths:
                     if os.path.exists(alt_path):
                         python_executable = alt_path
-                        print(f"DEBUG - extract_stream_url - Found Python at: {python_executable}")
+                        logger.info(f"Found Python at: {python_executable}")
                         break
                 else:
-                    print("ERROR - extract_stream_url - Could not find Python executable")
+                    logger.error("Could not find Python executable")
                     return {"error": "Could not find Python executable"}
             
-            # Build the command
+            # Build and run the command
             cmd = [python_executable, script_path, url]
-            print(f"DEBUG - extract_stream_url - Command: {' '.join(cmd)}")
+            logger.info(f"Running extract-url command for: {url}")
             
-            # Run the command
             result = subprocess.run(cmd, capture_output=True, text=True)
-            print(f"DEBUG - extract_stream_url - Command returned with code: {result.returncode}")
             
             # Check if the command was successful
             if result.returncode == 0:
-                print(f"DEBUG - extract_stream_url - Command output: {result.stdout}")
                 try:
                     # Parse the JSON output
                     stream_info = json.loads(result.stdout)
-                    print(f"DEBUG - extract_stream_url - Parsed stream info: {stream_info}")
+                    logger.info("Successfully extracted stream URL")
                     return stream_info
                 except json.JSONDecodeError as e:
-                    print(f"ERROR - extract_stream_url - Failed to parse JSON output: {str(e)}")
+                    logger.error(f"Failed to parse JSON output: {str(e)}")
                     return {"error": f"Failed to parse JSON output: {str(e)}"}
             else:
-                print(f"ERROR - extract_stream_url - Command failed with return code {result.returncode}")
-                print(f"ERROR - extract_stream_url - Command output: {result.stdout}")
-                print(f"ERROR - extract_stream_url - Command error: {result.stderr}")
+                logger.error(f"Command failed with return code {result.returncode}: {result.stderr}")
                 return {"error": f"Command failed with return code {result.returncode}: {result.stderr}"}
                 
         except Exception as e:
-            print(f"ERROR - extract_stream_url - Unexpected error: {str(e)}")
-            import traceback
-            print(f"ERROR - extract_stream_url - Traceback: {traceback.format_exc()}")
+            logger.error(f"Unexpected error: {str(e)}")
             return {"error": f"Unexpected error: {str(e)}"}
 
 
