@@ -646,20 +646,48 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         </div>
 
         <div className="mb-4">
-          <label htmlFor="duration" className="block text-sm font-medium text-gray-700">Max Duration (seconds)</label>
-          <input
-            type="number"
-            id="duration"
-            name="duration"
-            value={duration}
-            onChange={(e) => setDuration(parseInt(e.target.value) || 300)}
-            min="60"
-            max="3600"
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            required
-          />
+          <label htmlFor="duration" className="block text-sm font-medium text-gray-700">Capture Duration</label>
+          
+          <div className="mt-2 grid grid-cols-5 gap-2">
+            <button type="button" onClick={() => setDuration(60)} 
+              className={`px-2 py-1 text-sm rounded ${duration === 60 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
+              1 minute
+            </button>
+            <button type="button" onClick={() => setDuration(300)} 
+              className={`px-2 py-1 text-sm rounded ${duration === 300 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
+              5 minutes
+            </button>
+            <button type="button" onClick={() => setDuration(600)} 
+              className={`px-2 py-1 text-sm rounded ${duration === 600 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
+              10 minutes
+            </button>
+            <button type="button" onClick={() => setDuration(900)} 
+              className={`px-2 py-1 text-sm rounded ${duration === 900 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
+              15 minutes
+            </button>
+            <button type="button" onClick={() => setDuration(1800)} 
+              className={`px-2 py-1 text-sm rounded ${duration === 1800 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
+              30 minutes
+            </button>
+          </div>
+          
+          <div className="mt-3 flex items-center">
+            <input
+              type="number"
+              id="duration"
+              name="duration"
+              value={duration}
+              onChange={(e) => setDuration(parseInt(e.target.value) || 300)}
+              min="60"
+              max="3600"
+              className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              required
+            />
+            <span className="ml-2 text-sm text-gray-500">seconds</span>
+          </div>
+          
           <p className="mt-1 text-sm text-gray-500">
-            Capture will stop after this duration or when facial recognition detects the speaker is no longer present.
+            For recorded streams, this is the exact duration that will be captured starting from the time marker.
           </p>
         </div>
         

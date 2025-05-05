@@ -160,8 +160,36 @@ class ParliamentTVCapture:
                         # If we have an audio URL, download it
                         if audio_url:
                             # Use ffmpeg to download the audio
-                            cmd = ["ffmpeg", "-y", "-i", audio_url, "-c:a", "copy", audio_file_path]
-            
+                            cmd = ["ffmpeg", "-y"]
+                            
+                            # Check if we have a time marker in the metadata
+                            start_position = None
+                            if "time_marker" in db_capture.metadata:
+                                time_marker_seconds = db_capture.metadata.get("time_marker", {}).get("seconds", 0)
+                                if time_marker_seconds > 0:
+                                    # If we have a time marker, use it as the start position
+                                    start_position = time_marker_seconds
+                                    logger.info(f"Using time marker as start position for audio: {start_position} seconds")
+                            
+                            # Add input options
+                            if start_position:
+                                # Add seek option to start at the specified position
+                                cmd.extend(["-ss", str(start_position)])
+                            
+                            cmd.extend(["-i", audio_url])
+                            
+                            # Add codec options
+                            cmd.extend(["-c:a", "copy"])
+                            
+                            # Get duration from metadata if available
+                            if "duration" in db_capture.metadata:
+                                duration = db_capture.metadata.get("duration", 300)  # Default to 5 minutes
+                                cmd.extend(["-t", str(duration)])
+                                logger.info(f"Setting audio capture duration to {duration} seconds")
+                            
+                            # Add output file
+                            cmd.append(audio_file_path)
+                            
                             # Log the command
                             logger.info(f"Audio download command: {' '.join(cmd)}")
                             
@@ -414,8 +442,11 @@ class ParliamentTVCapture:
             # Add codec options
             cmd.extend(["-c", "copy"])
             
-            # Add duration limit (as a safety measure)
+            # Add duration limit
+            # For recorded streams with a time marker, this is the exact duration to capture
+            # For live streams, this acts as a safety limit
             cmd.extend(["-t", str(duration)])
+            logger.info(f"Setting capture duration to {duration} seconds")
             
             # Add output file
             cmd.append(output_file)
