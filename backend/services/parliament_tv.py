@@ -231,6 +231,24 @@ class ParliamentTVCapture:
                         # Update the capture with the file path and status
                         db_capture.file_path = output_file
                         db_capture.status = "completed"
+                        
+                        # Extract audio for this capture
+                        try:
+                            # Find the extract_audio_for_capture.py script
+                            script_path = os.path.join(self.scripts_dir, "extract_audio_for_capture.py")
+                            if os.path.exists(script_path):
+                                print(f"DEBUG - run_capture_process - Extracting audio for capture {db_capture.id}")
+                                # Run the script in a non-blocking way
+                                cmd = [sys.executable, script_path, str(db_capture.id)]
+                                subprocess.Popen(cmd)
+                                print(f"DEBUG - run_capture_process - Audio extraction started for capture {db_capture.id}")
+                                self.log_capture(db, db_capture.id, "info", "Audio extraction started")
+                            else:
+                                print(f"DEBUG - run_capture_process - Audio extraction script not found: {script_path}")
+                        except Exception as e:
+                            print(f"DEBUG - run_capture_process - Error extracting audio: {str(e)}")
+                            import traceback
+                            print(f"DEBUG - run_capture_process - Traceback: {traceback.format_exc()}")
                         db_capture.end_time = datetime.now()
                         
                         # Save the audio file path if available

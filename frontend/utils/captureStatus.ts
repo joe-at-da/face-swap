@@ -34,7 +34,7 @@ export const checkCaptureStatus = async (captureId: number): Promise<CombinedSta
     const videoResponse = await apiClient.get<CaptureStatusResponse>(`/parliament-tv/${captureId}/status`);
     
     // Check audio status
-    const audioResponse = await apiClient.get<AudioStatusResponse>(`/extract-audio/${captureId}/status`);
+    const audioResponse = await apiClient.get<AudioStatusResponse>(`/audio-extraction/${captureId}/status`);
     
     // Determine if video is ready
     const videoReady = videoResponse.data.success && 

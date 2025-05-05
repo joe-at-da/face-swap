@@ -12,7 +12,7 @@ interface ExtractAudioResponse {
  */
 export const extractAudioForCapture = async (captureId: number): Promise<boolean> => {
   try {
-    const response = await apiClient.post<ExtractAudioResponse>(`/extract-audio/${captureId}`);
+    const response = await apiClient.post<ExtractAudioResponse>(`/audio-extraction/${captureId}`);
     return response.data.success;
   } catch (error) {
     console.error('Error extracting audio:', error);
