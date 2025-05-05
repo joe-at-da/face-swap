@@ -136,8 +136,8 @@ class ParliamentTVCapture:
             if os.path.exists(output_file):
                 print(f"DEBUG - stop_capture - Output file exists: {output_file}")
                 
-                # Extract audio directly from the video file
-                print(f"DEBUG - stop_capture - Extracting audio from video file")
+                # Download the separate audio stream
+                print(f"DEBUG - stop_capture - Downloading separate audio stream")
                 
                 # Define paths
                 audio_extracts_dir = "/app/data/temp/audio_extracts"
@@ -150,44 +150,77 @@ class ParliamentTVCapture:
                 print(f"DEBUG - stop_capture - Audio file path: {audio_file_path}")
                 
                 try:
-                    # Extract audio using ffmpeg
-                    cmd = [
-                        "ffmpeg", "-y", "-i", output_file, "-vn", "-acodec", "libmp3lame", "-ab", "192k",
-                        "-ar", "44100", audio_file_path
-                    ]
-                    print(f"DEBUG - stop_capture - Running ffmpeg command: {' '.join(cmd)}")
-                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    # Get the original URL from the capture metadata
+                    original_url = None
+                    if hasattr(db_capture, 'metadata') and db_capture.metadata:
+                        if isinstance(db_capture.metadata, dict):
+                            original_url = db_capture.metadata.get('original_url')
+                            print(f"DEBUG - stop_capture - Found original URL in metadata: {original_url}")
                     
-                    if result.returncode == 0 and os.path.exists(audio_file_path):
-                        print(f"DEBUG - stop_capture - Successfully extracted audio to: {audio_file_path}")
-                        # Save the audio file path in the database
-                        if hasattr(db_capture, 'audio_file_path'):
-                            print(f"DEBUG - stop_capture - Saving audio_file_path to database: {audio_file_path}")
-                            db_capture.audio_file_path = audio_file_path
-                            
-                            # Initialize metadata if needed
-                            print(f"DEBUG - stop_capture - Current metadata: {db_capture.metadata}")
-                            db_capture.metadata = db_capture.metadata or {}
-                            
-                            if isinstance(db_capture.metadata, dict):
-                                db_capture.metadata['audio_file_path'] = audio_file_path
-                                print(f"DEBUG - stop_capture - Updated metadata: {db_capture.metadata}")
-                            else:
-                                print(f"WARNING - stop_capture - Metadata is not a dict: {type(db_capture.metadata)}")
-                                
-                            self.log_capture(db, db_capture.id, "info", f"Audio extracted from video: {audio_file_path}")
-                            print(f"DEBUG - stop_capture - Successfully saved audio_file_path to database")
-                            db.commit()
-                        else:
-                            print(f"WARNING - stop_capture - CaptureSession model does not have audio_file_path attribute")
+                    if not original_url and hasattr(db_capture, 'source_url'):
+                        original_url = db_capture.source_url
+                        print(f"DEBUG - stop_capture - Using source_url as original URL: {original_url}")
+                    
+                    if not original_url:
+                        print(f"WARNING - stop_capture - No original URL found in metadata or source_url")
+                        self.log_capture(db, db_capture.id, "warning", "No original URL found for audio download")
                     else:
-                        print(f"WARNING - stop_capture - Failed to extract audio from video: {result.stderr}")
-                        self.log_capture(db, db_capture.id, "warning", "Failed to extract audio from video")
+                        # Extract the stream URLs again to get the audio URL
+                        print(f"DEBUG - stop_capture - Extracting stream URLs from original URL: {original_url}")
+                        stream_info = self.extract_stream_url(original_url)
+                        
+                        if stream_info and isinstance(stream_info, dict):
+                            # Check if we have separate video and audio URLs
+                            direct_stream = stream_info.get('direct_stream', {})
+                            
+                            if isinstance(direct_stream, dict) and 'audio_url' in direct_stream:
+                                audio_url = direct_stream.get('audio_url')
+                                print(f"DEBUG - stop_capture - Found separate audio URL: {audio_url}")
+                                
+                                # Download the audio stream using ffmpeg
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", audio_url, "-c:a", "libmp3lame", "-ab", "192k",
+                                    "-ar", "44100", audio_file_path
+                                ]
+                                print(f"DEBUG - stop_capture - Running ffmpeg command to download audio: {' '.join(cmd)}")
+                                result = subprocess.run(cmd, capture_output=True, text=True)
+                                
+                                if result.returncode == 0 and os.path.exists(audio_file_path):
+                                    print(f"DEBUG - stop_capture - Successfully downloaded audio to: {audio_file_path}")
+                                    # Save the audio file path in the database
+                                    if hasattr(db_capture, 'audio_file_path'):
+                                        print(f"DEBUG - stop_capture - Saving audio_file_path to database: {audio_file_path}")
+                                        db_capture.audio_file_path = audio_file_path
+                                        
+                                        # Initialize metadata if needed
+                                        db_capture.metadata = db_capture.metadata or {}
+                                        
+                                        if isinstance(db_capture.metadata, dict):
+                                            db_capture.metadata['audio_file_path'] = audio_file_path
+                                            db_capture.metadata['audio_url'] = audio_url
+                                            print(f"DEBUG - stop_capture - Updated metadata: {db_capture.metadata}")
+                                        else:
+                                            print(f"WARNING - stop_capture - Metadata is not a dict: {type(db_capture.metadata)}")
+                                            
+                                        self.log_capture(db, db_capture.id, "info", f"Audio downloaded to: {audio_file_path}")
+                                        print(f"DEBUG - stop_capture - Successfully saved audio_file_path to database")
+                                        db.commit()
+                                    else:
+                                        print(f"WARNING - stop_capture - CaptureSession model does not have audio_file_path attribute")
+                                else:
+                                    print(f"WARNING - stop_capture - Failed to download audio: {result.stderr}")
+                                    self.log_capture(db, db_capture.id, "warning", "Failed to download audio stream")
+                            else:
+                                print(f"WARNING - stop_capture - No separate audio URL found in stream info")
+                                self.log_capture(db, db_capture.id, "warning", "No separate audio URL found in stream info")
+                        else:
+                            print(f"WARNING - stop_capture - Failed to extract stream URLs: {stream_info}")
+                            self.log_capture(db, db_capture.id, "warning", "Failed to extract stream URLs for audio")
                 except Exception as e:
-                    print(f"ERROR - stop_capture - Failed to extract audio from video: {str(e)}")
-                    self.log_capture(db, db_capture.id, "warning", f"Failed to extract audio: {str(e)}")
+                    print(f"ERROR - stop_capture - Failed to download audio: {str(e)}")
+                    self.log_capture(db, db_capture.id, "warning", f"Failed to download audio: {str(e)}")
                     
-                print(f"DEBUG - stop_capture - Audio extraction process completed")
+                print(f"DEBUG - stop_capture - Audio download process completed")
             else:
                 print(f"ERROR - stop_capture - Output file does not exist: {output_file}")
                 self.log_capture(db, capture_id, "error", f"Output file does not exist: {output_file}")
