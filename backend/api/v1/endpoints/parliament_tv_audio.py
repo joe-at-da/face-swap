@@ -99,21 +99,53 @@ async def extract_audio_for_capture(
                     'error': f'Error extracting stream URL: {str(e)}'
                 }
         
-        # Create the ffmpeg command to extract audio directly from the URL
-        cmd = [
-            "ffmpeg", "-y",
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            "-http_persistent", "1",
-            "-allowed_extensions", "ALL",
-            "-reconnect", "1",
-            "-reconnect_streamed", "1",
-            "-reconnect_delay_max", "5",
-            "-i", input_url,
-            "-vn",  # Disable video
-            "-c:a", "libmp3lame",
-            "-q:a", "2",  # Good quality
-            output_file
-        ]
+        # Properly escape the URL for shell usage
+        import urllib.parse
+        import shlex
+        
+        # URL encode the input URL to handle special characters
+        encoded_url = input_url
+        
+        # Create a temporary script to run ffmpeg with the URL
+        script_dir = '/app/data/temp'
+        os.makedirs(script_dir, exist_ok=True)
+        script_path = os.path.join(script_dir, f"extract_audio_{padded_capture_id}.sh")
+        
+        # Create the ffmpeg command as a shell script to avoid shell parsing issues
+        script_content = f"#!/bin/bash\n"
+        script_content += f"ffmpeg -y \
+"
+        script_content += f"  -protocol_whitelist file,http,https,tcp,tls,crypto \
+"
+        script_content += f"  -http_persistent 1 \
+"
+        script_content += f"  -allowed_extensions ALL \
+"
+        script_content += f"  -reconnect 1 \
+"
+        script_content += f"  -reconnect_streamed 1 \
+"
+        script_content += f"  -reconnect_delay_max 5 \
+"
+        script_content += f"  -i \"{encoded_url}\" \
+"
+        script_content += f"  -vn \
+"
+        script_content += f"  -c:a libmp3lame \
+"
+        script_content += f"  -q:a 2 \
+"
+        script_content += f"  \"{output_file}\"\n"
+        
+        # Write the script to a file
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        
+        # Make the script executable
+        os.chmod(script_path, 0o755)
+        
+        # Create the command to run the script
+        cmd = [script_path]
         
         # Log the command
         logger.info(f"Running ffmpeg command to extract audio directly from URL")
