@@ -453,10 +453,11 @@ class ParliamentTVCapture:
             # Create the output directory if it doesn't exist
             os.makedirs(str(self.temp_dir), exist_ok=True)
             
-            # Create the video file path - format: capture_XXXX.mp4
+            # Create the video file path
             padded_capture_id = str(capture_id).zfill(4)
-            output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
-            logger.info(f"Output file path: {output_file}")
+            output_filename = f"capture_{padded_capture_id}.mp4"
+            output_path = os.path.join(self.temp_dir, output_filename)
+            logger.info(f"Output file path: {output_path}")
             
             # Start the ffmpeg process to capture the video
             cmd = ["ffmpeg", "-y"]
@@ -497,6 +498,17 @@ class ParliamentTVCapture:
                 logger.error(error_msg)
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
+            
+            # Add network-related options to handle Parliament TV URLs
+            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            cmd.extend(["-http_persistent", "1"])
+            cmd.extend(["-allowed_extensions", "ALL"])
+            cmd.extend(["-reconnect", "1"])
+            cmd.extend(["-reconnect_streamed", "1"])
+            cmd.extend(["-reconnect_delay_max", "5"])
+            cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
+            # Add proxy settings to help with network access
+            cmd.extend(["-http_proxy", "http://host.docker.internal:3128"])
                 
             # Add input file
             cmd.extend(["-i", actual_video_url])
@@ -518,13 +530,13 @@ class ParliamentTVCapture:
             logger.info(f"Setting capture duration to {duration} seconds")
             
             # Add output file
-            cmd.append(output_file)
+            cmd.extend([str(output_path)])
             
             # Log the full command for debugging
             logger.info(f"Full ffmpeg command: {' '.join(cmd)}")
             
             # Create the output directory if it doesn't exist
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            os.makedirs(os.path.dirname(str(output_path)), exist_ok=True)
             
             # Start the ffmpeg process with better error handling
             try:
@@ -549,6 +561,33 @@ class ParliamentTVCapture:
                     universal_newlines=True
                 )
                 logger.info(f"Started ffmpeg process for capture {capture_id} with PID: {process.pid}")
+                
+                # Store the process in the active_captures dictionary
+                self.active_captures[capture_id] = {
+                    "process": process,
+                    "start_time": datetime.now(),
+                    "scheduled_end": scheduled_end,
+                    "output_file": str(output_path)
+                }
+                
+                # Update the database
+                db_capture.video_file = str(output_path)
+                db_capture.status = "active"
+                db_capture.start_time = datetime.now()
+                db_capture.end_time = None
+                db.commit()
+                
+                # Log the capture start
+                self.log_capture(db, capture_id, "info", f"Started capture for URL: {url}")
+                
+                return {
+                    "success": True,
+                    "message": f"Capture {capture_id} started successfully",
+                    "output_file": str(output_path),
+                    "video_url": video_url,
+                    "audio_url": audio_url
+                }
+            
             except subprocess.TimeoutExpired:
                 error_msg = "Timeout while testing stream URL"
                 logger.error(error_msg)
@@ -559,89 +598,6 @@ class ParliamentTVCapture:
                 logger.error(error_msg)
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
-            
-            # Store process information
-            self.active_captures[capture_id] = {
-                "process": process,
-                "start_time": datetime.now(),
-                "output_file": output_file,
-                "video_url": video_url,
-                "audio_url": audio_url,
-                "original_url": url
-            }
-            
-            # Update the database
-            db_capture.status = "active"
-            db_capture.file_path = output_file
-            db_capture.video_file = output_file
-            
-            # Always store a string in source_url, never a dict or object
-            # For Parliament TV URLs, this should be the URL with the time marker (e.g., https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30)
-            
-            # Convert any dict to a string representation of the original URL
-            if isinstance(url, dict):
-                # If we have the original URL in stream_info, use that
-                if stream_info and "original_url" in stream_info:
-                    db_capture.source_url = str(stream_info["original_url"])
-                # If we have an event_id, construct a URL
-                elif stream_info and "event_id" in stream_info:
-                    event_id = stream_info["event_id"]
-                    db_capture.source_url = f"https://parliamentlive.tv/event/index/{event_id}"
-                else:
-                    # Last resort fallback
-                    db_capture.source_url = "Parliament TV Stream"
-            else:
-                # If url is already a string, use it directly
-                db_capture.source_url = str(url)
-            
-            # Store the URLs and scheduling info in metadata
-            if not db_capture.metadata:
-                db_capture.metadata = {}
-            
-            if isinstance(db_capture.metadata, dict):
-                # Store all three URLs in metadata for reference
-                # Make sure we store strings for original_url, not dict objects
-                if isinstance(url, dict):
-                    if stream_info and "original_url" in stream_info:
-                        db_capture.metadata["original_url"] = str(stream_info["original_url"])
-                    elif stream_info and "event_id" in stream_info:
-                        event_id = stream_info["event_id"]
-                        db_capture.metadata["original_url"] = f"https://parliamentlive.tv/event/index/{event_id}"
-                    else:
-                        db_capture.metadata["original_url"] = "Parliament TV Stream"
-                else:
-                    db_capture.metadata["original_url"] = str(url)  # The URL entered by the user (with time marker if present)
-                
-                # Store video and audio URLs as strings
-                if isinstance(video_url, dict) and "video_url" in video_url:
-                    db_capture.metadata["video_url"] = str(video_url["video_url"])
-                else:
-                    db_capture.metadata["video_url"] = str(video_url)  # The direct video stream URL
-                
-                # Store audio URL if available
-                if isinstance(audio_url, dict) and "audio_url" in audio_url:
-                    db_capture.metadata["audio_url"] = str(audio_url["audio_url"])
-                elif audio_url:
-                    db_capture.metadata["audio_url"] = str(audio_url)  # The direct audio stream URL (if available)
-                
-                # Store scheduling information
-                if scheduled_start:
-                    db_capture.metadata["scheduled_start"] = scheduled_start
-                if scheduled_end:
-                    db_capture.metadata["scheduled_end"] = scheduled_end
-            
-            db.commit()
-            
-            # Log the capture start
-            self.log_capture(db, capture_id, "info", f"Started capture for URL: {url}")
-            
-            return {
-                "success": True,
-                "message": f"Capture {capture_id} started successfully",
-                "output_file": output_file,
-                "video_url": video_url,
-                "audio_url": audio_url
-            }
             
         except Exception as e:
             logger.error(f"Failed to start capture: {str(e)}")
@@ -820,14 +776,13 @@ class ParliamentTVCapture:
         video_file = db_capture.video_file
         source_url = db_capture.source_url
         
-        # Define the output file path
-        output_dir = os.path.join(settings.DATA_DIR, "audio")
+        # Define the output file path - use the audio_extracts_dir
+        output_dir = str(self.audio_extracts_dir)
         os.makedirs(output_dir, exist_ok=True)
         
-        # Generate a unique filename based on the capture ID and timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Format capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
-        output_file = os.path.join(output_dir, f"capture_{padded_capture_id}_{timestamp}.mp3")
+        output_file = os.path.join(output_dir, f"capture_{padded_capture_id}.mp3")
         
         # Start the ffmpeg process to extract the audio
         cmd = ["ffmpeg", "-y"]
@@ -867,6 +822,12 @@ class ParliamentTVCapture:
                     cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
                     cmd.extend(["-http_persistent", "1"])
                     cmd.extend(["-allowed_extensions", "ALL"])
+                    cmd.extend(["-reconnect", "1"])
+                    cmd.extend(["-reconnect_streamed", "1"])
+                    cmd.extend(["-reconnect_delay_max", "5"])
+                    cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
+                    # Add proxy settings to help with network access
+                    cmd.extend(["-http_proxy", "http://host.docker.internal:3128"])
                     cmd.extend(["-i", audio_url])
                 # Fall back to video URL if no audio URL
                 elif video_url:
@@ -874,6 +835,12 @@ class ParliamentTVCapture:
                     cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
                     cmd.extend(["-http_persistent", "1"])
                     cmd.extend(["-allowed_extensions", "ALL"])
+                    cmd.extend(["-reconnect", "1"])
+                    cmd.extend(["-reconnect_streamed", "1"])
+                    cmd.extend(["-reconnect_delay_max", "5"])
+                    cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
+                    # Add proxy settings to help with network access
+                    cmd.extend(["-http_proxy", "http://host.docker.internal:3128"])
                     cmd.extend(["-i", video_url])
                 else:
                     error_msg = f"No valid stream URL found in {stream_info}"
