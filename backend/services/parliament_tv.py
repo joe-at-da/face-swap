@@ -507,8 +507,6 @@ class ParliamentTVCapture:
             cmd.extend(["-reconnect_streamed", "1"])
             cmd.extend(["-reconnect_delay_max", "5"])
             cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-            # Add proxy settings to help with network access
-            cmd.extend(["-http_proxy", "http://host.docker.internal:3128"])
                 
             # Add input file
             cmd.extend(["-i", actual_video_url])
@@ -747,7 +745,7 @@ class ParliamentTVCapture:
                 try:
                     # Parse the JSON output
                     stream_info = json.loads(result.stdout)
-                    logger.info("Successfully extracted stream URL")
+                    logger.info(f"Successfully extracted stream URL: {stream_info}")
                     return stream_info
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON output: {str(e)}")
@@ -826,8 +824,6 @@ class ParliamentTVCapture:
                     cmd.extend(["-reconnect_streamed", "1"])
                     cmd.extend(["-reconnect_delay_max", "5"])
                     cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-                    # Add proxy settings to help with network access
-                    cmd.extend(["-http_proxy", "http://host.docker.internal:3128"])
                     cmd.extend(["-i", audio_url])
                 # Fall back to video URL if no audio URL
                 elif video_url:
@@ -839,8 +835,6 @@ class ParliamentTVCapture:
                     cmd.extend(["-reconnect_streamed", "1"])
                     cmd.extend(["-reconnect_delay_max", "5"])
                     cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-                    # Add proxy settings to help with network access
-                    cmd.extend(["-http_proxy", "http://host.docker.internal:3128"])
                     cmd.extend(["-i", video_url])
                 else:
                     error_msg = f"No valid stream URL found in {stream_info}"
