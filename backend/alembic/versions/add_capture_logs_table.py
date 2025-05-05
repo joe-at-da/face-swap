@@ -1,6 +1,6 @@
 """Add capture_logs table
 
-Revision ID: add_capture_logs
+Revision ID: add_capture_logs_table
 Revises: 
 Create Date: 2025-05-05 16:50:00.000000
 
@@ -11,7 +11,7 @@ from sqlalchemy.sql import func
 
 
 # revision identifiers, used by Alembic.
-revision = 'add_capture_logs'
+revision = 'add_capture_logs_table'
 down_revision = None
 branch_labels = None
 depends_on = None

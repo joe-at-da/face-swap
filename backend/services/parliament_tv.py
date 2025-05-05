@@ -485,13 +485,19 @@ class ParliamentTVCapture:
             
             # Make sure video_url is a string, not a dict
             actual_video_url = None
+            
+            # Handle the case where direct_stream is a dictionary with video_url
             if isinstance(video_url, dict):
                 if "video_url" in video_url:
                     actual_video_url = str(video_url["video_url"])
                     logger.info(f"Extracted video_url from dict: {actual_video_url}")
-            else:
-                actual_video_url = str(video_url)
+            # Handle the case where video_url is already a string
+            elif isinstance(video_url, str):
+                actual_video_url = video_url
                 logger.info(f"Using video_url directly: {actual_video_url}")
+            # Handle any other unexpected case
+            else:
+                logger.error(f"Unexpected video_url type: {type(video_url)}, value: {video_url}")
                 
             if not actual_video_url or not isinstance(actual_video_url, str):
                 error_msg = f"Invalid video URL: {video_url}"
