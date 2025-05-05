@@ -355,6 +355,139 @@ class ParliamentTVCapture:
             print(f"ERROR - test_stream_url - Traceback: {traceback.format_exc()}")
             return {"success": False, "error": f"Unexpected error: {str(e)}"}
     
+    def start_capture(self, url: str, capture_id: int, duration: int = 1800) -> Dict:
+        """Start capturing a Parliament TV stream."""
+        print(f"DEBUG - start_capture - Starting capture for URL: {url}, capture_id: {capture_id}")
+        
+        try:
+            # Get a database session
+            db = next(get_db())
+            
+            # Get the capture from the database
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not db_capture:
+                error_msg = f"Capture {capture_id} not found in database"
+                logger.error(error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Extract the stream URL
+            stream_info = self.extract_stream_url(url)
+            if "error" in stream_info:
+                error_msg = f"Failed to extract stream URL: {stream_info['error']}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Check if we have separate video and audio URLs
+            direct_stream = stream_info.get("direct_stream", {})
+            video_url = None
+            audio_url = None
+            
+            if isinstance(direct_stream, dict) and "video_url" in direct_stream:
+                video_url = direct_stream.get("video_url")
+                audio_url = direct_stream.get("audio_url")
+                print(f"DEBUG - start_capture - Found separate video URL: {video_url}")
+                print(f"DEBUG - start_capture - Found separate audio URL: {audio_url}")
+            else:
+                video_url = direct_stream if isinstance(direct_stream, str) else None
+                print(f"DEBUG - start_capture - Using single stream URL: {video_url}")
+            
+            if not video_url:
+                error_msg = "No valid video stream URL found"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Create the output directory if it doesn't exist
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            
+            # Create the video file path - format: capture_XXXX.mp4
+            padded_capture_id = str(capture_id).zfill(4)
+            output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
+            print(f"DEBUG - start_capture - Output file path: {output_file}")
+            
+            # Start the ffmpeg process to capture the video
+            cmd = [
+                "ffmpeg", "-y", "-i", video_url,
+                "-c", "copy", "-t", str(duration),
+                output_file
+            ]
+            print(f"DEBUG - start_capture - Running ffmpeg command: {' '.join(cmd)}")
+            
+            # Start the ffmpeg process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Store process information
+            self.active_captures[capture_id] = {
+                "process": process,
+                "start_time": datetime.now(),
+                "output_file": output_file,
+                "video_url": video_url,
+                "audio_url": audio_url,
+                "original_url": url
+            }
+            
+            # Update the database
+            db_capture.status = "active"
+            db_capture.file_path = output_file
+            db_capture.source_url = url
+            
+            # Store the URLs in metadata
+            if not db_capture.metadata:
+                db_capture.metadata = {}
+            
+            if isinstance(db_capture.metadata, dict):
+                db_capture.metadata["video_url"] = video_url
+                if audio_url:
+                    db_capture.metadata["audio_url"] = audio_url
+                db_capture.metadata["original_url"] = url
+            
+            db.commit()
+            
+            # Log the capture start
+            self.log_capture(db, capture_id, "info", f"Started capture for URL: {url}")
+            
+            return {
+                "success": True,
+                "message": f"Capture {capture_id} started successfully",
+                "output_file": output_file,
+                "video_url": video_url,
+                "audio_url": audio_url
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to start capture: {str(e)}")
+            return {"success": False, "error": f"Failed to start capture: {str(e)}"}
+    
+    def start_capture_async(self, url: str, capture_id: int, duration: int = 1800) -> bool:
+        """Start capturing a Parliament TV stream asynchronously."""
+        print(f"DEBUG - start_capture_async - Starting async capture for URL: {url}, capture_id: {capture_id}")
+        
+        try:
+            # Start the capture in a separate thread
+            thread = threading.Thread(
+                target=self.start_capture,
+                args=(url, capture_id, duration)
+            )
+            thread.daemon = True
+            thread.start()
+            
+            # Store the thread
+            if capture_id in self.active_captures:
+                self.active_captures[capture_id]["thread"] = thread
+            else:
+                self.active_captures[capture_id] = {"thread": thread}
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start async capture: {str(e)}")
+            return False
+    
     def extract_stream_url(self, url: str) -> Dict:
         """Extract the direct stream URL from a Parliament TV event URL."""
         try:
