@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Response, File, UploadFile, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -23,6 +24,7 @@ parliament_tv_service = ParliamentTVCapture()
 
 # Define the data directory where videos are stored
 DATA_DIR = os.environ.get('DATA_DIR', '/app/data/temp')
+AUDIO_EXTRACTS_DIR = os.path.join(DATA_DIR, 'audio_extracts')
 
 # Helper function to make objects JSON serializable
 def make_json_serializable(obj: Any) -> Any:
@@ -286,13 +288,38 @@ async def start_parliament_tv_capture(
             
             print(f"Starting capture with scheduled_start: {scheduled_start}, scheduled_end: {scheduled_end}")
             
-            parliament_tv_service.start_capture_async(
-                url=direct_stream,  # Use the validated direct_stream variable
-                capture_id=db_capture.id,  # Pass the capture ID for proper file naming
-                duration=capture_request.duration,
-                scheduled_start=scheduled_start,
-                scheduled_end=scheduled_end
-            )
+            # Check if direct_stream is a dictionary with video_url and audio_url
+            if isinstance(direct_stream, dict) and 'video_url' in direct_stream:
+                print(f"Starting capture with direct_stream: {direct_stream}")
+                # Store the original URL in metadata if not already there
+                if 'original_url' not in db_capture.metadata and capture_request.url:
+                    db_capture.metadata['original_url'] = capture_request.url
+                
+                # Update the metadata with the direct stream URLs
+                db_capture.metadata['video_url'] = direct_stream.get('video_url')
+                if 'audio_url' in direct_stream:
+                    db_capture.metadata['audio_url'] = direct_stream.get('audio_url')
+                
+                # Commit the metadata updates
+                db.commit()
+                
+                # Start the capture with the video URL
+                parliament_tv_service.start_capture_async(
+                    url=capture_request.url,  # Use the original URL, not the direct stream object
+                    capture_id=db_capture.id,  # Pass the capture ID for proper file naming
+                    duration=capture_request.duration,
+                    scheduled_start=scheduled_start,
+                    scheduled_end=scheduled_end
+                )
+            else:
+                # If direct_stream is a string or other format, use it directly
+                parliament_tv_service.start_capture_async(
+                    url=direct_stream,
+                    capture_id=db_capture.id,
+                    duration=capture_request.duration,
+                    scheduled_start=scheduled_start,
+                    scheduled_end=scheduled_end
+                )
             print(f"Capture process started successfully for ID: {db_capture.id}")
         except Exception as e:
             print(f"Error starting capture process: {str(e)}")

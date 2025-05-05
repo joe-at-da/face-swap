@@ -529,9 +529,24 @@ class ParliamentTVCapture:
             db_capture.status = "active"
             db_capture.file_path = output_file
             
-            # Always store the original URL in source_url
-            # For Parliament TV URLs, this is the URL with the time marker (e.g., https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30)
-            db_capture.source_url = url
+            # Always store a string in source_url, never a dict or object
+            # For Parliament TV URLs, this should be the URL with the time marker (e.g., https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30)
+            
+            # Convert any dict to a string representation of the original URL
+            if isinstance(url, dict):
+                # If we have the original URL in stream_info, use that
+                if stream_info and "original_url" in stream_info:
+                    db_capture.source_url = str(stream_info["original_url"])
+                # If we have an event_id, construct a URL
+                elif stream_info and "event_id" in stream_info:
+                    event_id = stream_info["event_id"]
+                    db_capture.source_url = f"https://parliamentlive.tv/event/index/{event_id}"
+                else:
+                    # Last resort fallback
+                    db_capture.source_url = "Parliament TV Stream"
+            else:
+                # If url is already a string, use it directly
+                db_capture.source_url = str(url)
             
             # Store the URLs and scheduling info in metadata
             if not db_capture.metadata:
@@ -539,7 +554,19 @@ class ParliamentTVCapture:
             
             if isinstance(db_capture.metadata, dict):
                 # Store all three URLs in metadata for reference
-                db_capture.metadata["original_url"] = url  # The URL entered by the user (with time marker if present)
+                # Make sure we store strings for original_url, not dict objects
+                if isinstance(url, dict):
+                    if stream_info and "original_url" in stream_info:
+                        db_capture.metadata["original_url"] = str(stream_info["original_url"])
+                    elif stream_info and "event_id" in stream_info:
+                        event_id = stream_info["event_id"]
+                        db_capture.metadata["original_url"] = f"https://parliamentlive.tv/event/index/{event_id}"
+                    else:
+                        db_capture.metadata["original_url"] = "Parliament TV Stream"
+                else:
+                    db_capture.metadata["original_url"] = str(url)  # The URL entered by the user (with time marker if present)
+                
+                # Store video and audio URLs
                 db_capture.metadata["video_url"] = video_url  # The direct video stream URL
                 if audio_url:
                     db_capture.metadata["audio_url"] = audio_url  # The direct audio stream URL (if available)
