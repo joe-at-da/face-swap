@@ -888,7 +888,8 @@ class ParliamentTVCapture:
             os.makedirs(os.path.dirname(audio_file), exist_ok=True)
             
             # Run the command
-            process = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Explicitly set shell=False to avoid shell parsing issues with URLs containing special characters
+            process = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=False)
             
             # Check if the command was successful
             if process.returncode == 0:

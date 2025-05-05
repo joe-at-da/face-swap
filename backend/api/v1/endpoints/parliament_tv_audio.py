@@ -99,64 +99,53 @@ async def extract_audio_for_capture(
                     'error': f'Error extracting stream URL: {str(e)}'
                 }
         
-        # Properly escape the URL for shell usage
-        import urllib.parse
-        import shlex
+        # Use ffmpeg directly with the HLS stream
+        # For HLS streams, we need to use ffmpeg with special options
+        logger.info(f"Processing HLS audio stream: {input_url}")
         
-        # URL encode the input URL to handle special characters
-        encoded_url = input_url
-        
-        # Create a temporary script to run ffmpeg with the URL
-        script_dir = '/app/data/temp'
-        os.makedirs(script_dir, exist_ok=True)
-        script_path = os.path.join(script_dir, f"extract_audio_{padded_capture_id}.sh")
-        
-        # Create the ffmpeg command as a shell script to avoid shell parsing issues
-        script_content = f"#!/bin/bash\n"
-        script_content += f"ffmpeg -y \
-"
-        script_content += f"  -protocol_whitelist file,http,https,tcp,tls,crypto \
-"
-        script_content += f"  -http_persistent 1 \
-"
-        script_content += f"  -allowed_extensions ALL \
-"
-        script_content += f"  -reconnect 1 \
-"
-        script_content += f"  -reconnect_streamed 1 \
-"
-        script_content += f"  -reconnect_delay_max 5 \
-"
-        script_content += f"  -i \"{encoded_url}\" \
-"
-        script_content += f"  -vn \
-"
-        script_content += f"  -c:a libmp3lame \
-"
-        script_content += f"  -q:a 2 \
-"
-        script_content += f"  \"{output_file}\"\n"
-        
-        # Write the script to a file
-        with open(script_path, 'w') as f:
-            f.write(script_content)
-        
-        # Make the script executable
-        os.chmod(script_path, 0o755)
-        
-        # Create the command to run the script
-        cmd = [script_path]
+        try:
+            # Define the temporary directory
+            temp_dir = '/app/data/temp'
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Create a command that properly handles HLS streams
+            cmd = [
+                "ffmpeg", "-y",
+                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+                "-http_persistent", "0",  # Disable persistent connections
+                "-allowed_extensions", "ALL",
+                "-i", input_url,
+                "-vn",  # No video
+                "-c:a", "libmp3lame",
+                "-q:a", "2",
+                output_file
+            ]
+            
+            logger.info(f"Using direct ffmpeg command for HLS stream to: {output_file}")
+            logger.info(f"Command: {' '.join(cmd)}")
+            
+            # We'll use a direct approach without shell=True to avoid shell parsing issues
+            
+            logger.info(f"Converting downloaded audio to MP3: {output_file}")
+        except Exception as e:
+            logger.error(f"Error downloading audio: {str(e)}")
+            return {
+                'success': False,
+                'error': f'Error downloading audio: {str(e)}'
+            }
         
         # Log the command
         logger.info(f"Running ffmpeg command to extract audio directly from URL")
         
         # Run the command
+        # Explicitly set shell=False to avoid shell parsing issues with URLs containing special characters
         process = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            check=False
+            check=False,
+            shell=False  # Explicitly set shell=False to avoid syntax errors with special characters
         )
         
         # Check if the command was successful
