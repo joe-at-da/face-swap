@@ -38,7 +38,7 @@ const Navbar: React.FC = () => {
               </Link>
             </div>
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link href="/parliament-tv/capture">
+              <Link href="/capture">
                 <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Parliament TV
                 </span>
@@ -182,7 +182,7 @@ const Navbar: React.FC = () => {
               </span>
             </Link>
             
-            <Link href="/parliament-tv/capture">
+            <Link href="/capture">
               <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
                 Parliament TV
               </span>

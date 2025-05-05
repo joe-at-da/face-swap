@@ -118,7 +118,7 @@ const ParliamentTVVideoList: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-900">Parliament TV Videos</h2>
-        <Link href="/parliament-tv/capture">
+        <Link href="/capture">
           <a className="btn-primary px-4 py-2 rounded-md">Capture New Video</a>
         </Link>
       </div>
@@ -127,7 +127,7 @@ const ParliamentTVVideoList: React.FC = () => {
         <div className="text-center py-8 bg-gray-50 rounded-lg">
           <p className="text-gray-500">No Parliament TV videos found.</p>
           <p className="mt-2">
-            <Link href="/parliament-tv/capture">
+            <Link href="/capture">
               <a className="text-indigo-600 hover:text-indigo-800">Capture a new video</a>
             </Link>
           </p>

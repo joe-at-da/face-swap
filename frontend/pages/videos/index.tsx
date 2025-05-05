@@ -287,7 +287,7 @@ const VideoGalleryPage: React.FC = () => {
                 {isDeleting ? 'Deleting...' : 'Delete All Videos'}
               </button>
             )}
-            <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+            <Link href="/capture" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
               New Capture
             </Link>
           </div>
@@ -296,7 +296,7 @@ const VideoGalleryPage: React.FC = () => {
         {videos.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-6 text-center">
             <p className="text-gray-500">No videos available.</p>
-            <Link href="/capture/new" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
+            <Link href="/capture" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
               Start a new capture
             </Link>
           </div>

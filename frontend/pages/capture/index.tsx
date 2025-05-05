@@ -5,6 +5,7 @@ import MainLayout from '../../components/layout/MainLayout';
 import { withAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
+import ParliamentTVCapture from '../../components/parliament-tv/ParliamentTVCapture';
 
 interface CaptureSession {
   id: number;
@@ -27,6 +28,7 @@ interface CaptureSession {
 
 const CaptureListPage: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>('');
+  const [showCaptureForm, setShowCaptureForm] = useState<boolean>(false);
   
   // Fetch capture sessions
   const { data: captureSessions, isLoading, isError, refetch } = useQuery({
@@ -127,12 +129,29 @@ const CaptureListPage: React.FC = () => {
       <div className="page-container">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Capture Sessions</h1>
-          <Link href="/capture/new">
-            <span className="btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block">
-              Start New Capture
-            </span>
-          </Link>
+          <button
+            onClick={() => setShowCaptureForm(!showCaptureForm)}
+            className="btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block"
+          >
+            {showCaptureForm ? 'Hide Capture Form' : 'Start New Capture'}
+          </button>
         </div>
+        
+        {/* Capture Form Section */}
+        {showCaptureForm && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-lg font-medium text-gray-800 mb-4">Start New Capture</h2>
+            <ParliamentTVCapture 
+              onSuccess={() => {
+                setShowCaptureForm(false);
+                refetch();
+              }}
+              onError={(error) => {
+                console.error('Capture error:', error);
+              }}
+            />
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
