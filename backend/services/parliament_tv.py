@@ -431,19 +431,20 @@ class ParliamentTVCapture:
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
             
-            # Check if we have separate video and audio URLs
-            direct_stream = stream_info.get("direct_stream", {})
-            video_url = None
-            audio_url = None
+            # Get video and audio URLs directly from the standardized format
+            video_url = stream_info.get("video_url")
+            audio_url = stream_info.get("audio_url")
             
-            if isinstance(direct_stream, dict) and "video_url" in direct_stream:
-                video_url = direct_stream.get("video_url")
-                audio_url = direct_stream.get("audio_url")
+            if video_url and audio_url:
                 logger.info(f"Found separate video and audio URLs for capture {capture_id}")
+                logger.info(f"Video URL: {video_url}")
+                logger.info(f"Audio URL: {audio_url}")
+            elif video_url:
+                logger.info(f"Using single video stream URL for capture {capture_id}")
+                logger.info(f"Video URL: {video_url}")
             else:
-                video_url = direct_stream if isinstance(direct_stream, str) else None
-                logger.info(f"Using single stream URL for capture {capture_id}")
-            
+                logger.error("No valid video URL found in stream info")
+                
             if not video_url:
                 error_msg = "No valid video stream URL found"
                 logger.error(error_msg)
@@ -483,27 +484,16 @@ class ParliamentTVCapture:
                 # For ffmpeg, it's more efficient to put -ss BEFORE -i for seeking
                 cmd.extend(["-ss", str(start_position)])
             
-            # Make sure video_url is a string, not a dict
-            actual_video_url = None
-            
-            # Handle the case where direct_stream is a dictionary with video_url
-            if isinstance(video_url, dict):
-                if "video_url" in video_url:
-                    actual_video_url = str(video_url["video_url"])
-                    logger.info(f"Extracted video_url from dict: {actual_video_url}")
-            # Handle the case where video_url is already a string
-            elif isinstance(video_url, str):
-                actual_video_url = video_url
-                logger.info(f"Using video_url directly: {actual_video_url}")
-            # Handle any other unexpected case
-            else:
-                logger.error(f"Unexpected video_url type: {type(video_url)}, value: {video_url}")
-                
-            if not actual_video_url or not isinstance(actual_video_url, str):
-                error_msg = f"Invalid video URL: {video_url}"
+            # Ensure video_url is a valid string
+            if not video_url or not isinstance(video_url, str):
+                error_msg = f"Invalid or missing video URL: {video_url}"
                 logger.error(error_msg)
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
+                
+            # Use the video_url directly - it's already been validated as a string
+            actual_video_url = video_url
+            logger.info(f"Using video URL: {actual_video_url}")
             
             # Add network-related options to handle Parliament TV URLs
             cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
@@ -588,7 +578,7 @@ class ParliamentTVCapture:
                     "success": True,
                     "message": f"Capture {capture_id} started successfully",
                     "output_file": str(output_path),
-                    "video_url": video_url,
+                    "video_url": actual_video_url,
                     "audio_url": audio_url
                 }
             
@@ -643,9 +633,12 @@ class ParliamentTVCapture:
                 
             # Check if the URL is already a dictionary with direct stream URLs
             if isinstance(url, dict) and "video_url" in url:
-                logger.info(f"Direct stream URL is not a string: {url}, type: {type(url)}")
+                logger.info(f"Direct stream URL is already a dictionary: {url}")
+                video_url = url.get("video_url")
+                audio_url = url.get("audio_url")
                 return {
-                    "direct_stream": url,
+                    "video_url": video_url,
+                    "audio_url": audio_url,
                     "event_id": "direct",
                     "time_marker": {"seconds": 0},
                     "original_url": url.get("original_url", "Direct Stream")
@@ -663,10 +656,8 @@ class ParliamentTVCapture:
                     # Try to derive the video URL from the audio URL
                     video_url = url.replace('audio', 'video')
                     return {
-                        "direct_stream": {
-                            "video_url": video_url,
-                            "audio_url": url
-                        },
+                        "video_url": video_url,
+                        "audio_url": url,
                         "event_id": "direct",
                         "time_marker": {"seconds": 0},
                         "original_url": url
@@ -683,17 +674,16 @@ class ParliamentTVCapture:
                     
                     if audio_url:
                         return {
-                            "direct_stream": {
-                                "video_url": url,
-                                "audio_url": audio_url
-                            },
+                            "video_url": url,
+                            "audio_url": audio_url,
                             "event_id": "direct",
                             "time_marker": {"seconds": 0},
                             "original_url": url
                         }
                     else:
                         return {
-                            "direct_stream": url,
+                            "video_url": url,
+                            "audio_url": None,
                             "event_id": "direct",
                             "time_marker": {"seconds": 0},
                             "original_url": url
@@ -752,7 +742,36 @@ class ParliamentTVCapture:
                     # Parse the JSON output
                     stream_info = json.loads(result.stdout)
                     logger.info(f"Successfully extracted stream URL: {stream_info}")
-                    return stream_info
+                    
+                    # Standardize the output format
+                    if "direct_stream" in stream_info:
+                        direct_stream = stream_info["direct_stream"]
+                        if isinstance(direct_stream, dict) and "video_url" in direct_stream:
+                            # Extract video_url and audio_url from nested dict
+                            video_url = direct_stream.get("video_url")
+                            audio_url = direct_stream.get("audio_url")
+                        else:
+                            # If direct_stream is a string, it's the video URL
+                            video_url = direct_stream
+                            audio_url = None
+                            
+                        # Create a standardized response
+                        return {
+                            "video_url": video_url,
+                            "audio_url": audio_url,
+                            "event_id": stream_info.get("event_id"),
+                            "time_marker": stream_info.get("time_marker"),
+                            "original_url": stream_info.get("original_url")
+                        }
+                    else:
+                        # If the structure is different, try to extract what we can
+                        return {
+                            "video_url": stream_info.get("video_url") or stream_info.get("url"),
+                            "audio_url": stream_info.get("audio_url"),
+                            "event_id": stream_info.get("event_id"),
+                            "time_marker": stream_info.get("time_marker"),
+                            "original_url": stream_info.get("original_url") or url
+                        }
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON output: {str(e)}")
                     return {"error": f"Failed to parse JSON output: {str(e)}"}
@@ -803,25 +822,18 @@ class ParliamentTVCapture:
                 # Extract the stream URL
                 stream_info = self.extract_stream_url(source_url)
                 
-                # Handle different stream_info structures
-                audio_url = None
-                video_url = None
+                # Get audio and video URLs directly from the standardized format
+                audio_url = stream_info.get("audio_url")
+                video_url = stream_info.get("video_url")
                 
-                # Check if stream_info contains direct_stream
-                if "direct_stream" in stream_info and isinstance(stream_info["direct_stream"], dict):
-                    direct_stream = stream_info["direct_stream"]
-                    if "audio_url" in direct_stream and direct_stream["audio_url"]:
-                        audio_url = direct_stream["audio_url"]
-                    if "video_url" in direct_stream and direct_stream["video_url"]:
-                        video_url = direct_stream["video_url"]
-                # Check for top-level audio/video URLs
-                elif "audio_url" in stream_info and stream_info["audio_url"]:
-                    audio_url = stream_info["audio_url"]
-                elif "video_url" in stream_info and stream_info["video_url"]:
-                    video_url = stream_info["video_url"]
-                
-                # Use audio URL if available
+                # Log what we found
                 if audio_url:
+                    logger.info(f"Found dedicated audio URL: {audio_url}")
+                if video_url:
+                    logger.info(f"Found video URL: {video_url}")
+                    
+                # Use audio URL if available
+                if audio_url and isinstance(audio_url, str):
                     logger.info(f"Using dedicated audio URL: {audio_url}")
                     cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
                     cmd.extend(["-http_persistent", "1"])
@@ -832,7 +844,7 @@ class ParliamentTVCapture:
                     cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
                     cmd.extend(["-i", audio_url])
                 # Fall back to video URL if no audio URL
-                elif video_url:
+                elif video_url and isinstance(video_url, str):
                     logger.info(f"Using video URL for audio extraction: {video_url}")
                     cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
                     cmd.extend(["-http_persistent", "1"])
