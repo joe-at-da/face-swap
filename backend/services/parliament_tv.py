@@ -31,13 +31,15 @@ class ParliamentTVCapture:
         self.temp_dir = Path("/app/data/temp")
         self.media_dir = Path("/app/data/media")
         self.scripts_dir = Path("/app/scripts")
+        self.audio_extracts_dir = Path("/app/data/temp/audio_extracts")
         
-        logger.info(f"Initialized with paths: temp={self.temp_dir}, media={self.media_dir}, scripts={self.scripts_dir}")
+        logger.info(f"Initialized with paths: temp={self.temp_dir}, media={self.media_dir}, scripts={self.scripts_dir}, audio={self.audio_extracts_dir}")
         
         # Create directories if they don't exist
         try:
             os.makedirs(str(self.temp_dir), exist_ok=True)
             os.makedirs(str(self.media_dir), exist_ok=True)
+            os.makedirs(str(self.audio_extracts_dir), exist_ok=True)
         except Exception as e:
             logger.error(f"Failed to create directories: {str(e)}")
         
@@ -125,13 +127,12 @@ class ParliamentTVCapture:
                 # Download the separate audio stream
                 logger.info(f"Downloading separate audio stream for capture {capture_id}")
                 
-                # Define paths
-                audio_extracts_dir = "/app/data/temp/audio_extracts"
-                os.makedirs(audio_extracts_dir, exist_ok=True)
+                # Use the audio_extracts_dir from the class initialization
+                os.makedirs(str(self.audio_extracts_dir), exist_ok=True)
                 
-                # Create the audio file path - format: capture_XXXX.audio.mp3
+                # Create the audio file path - format: capture_XXXX.mp3 to match video naming
                 padded_capture_id = str(capture_id).zfill(4)
-                audio_file_path = os.path.join(audio_extracts_dir, f"capture_{padded_capture_id}.audio.mp3")
+                audio_file_path = os.path.join(str(self.audio_extracts_dir), f"capture_{padded_capture_id}.mp3")
                 
                 try:
                     # Get all URLs from the capture metadata
@@ -176,6 +177,7 @@ class ParliamentTVCapture:
                         
                         # If we have an audio URL, download it
                         if audio_url:
+                            logger.info(f"Attempting to download audio from URL: {audio_url}")
                             # Use ffmpeg to download the audio
                             cmd = ["ffmpeg", "-y"]
                             
@@ -188,15 +190,17 @@ class ParliamentTVCapture:
                                     start_position = time_marker_seconds
                                     logger.info(f"Using time marker as start position for audio: {start_position} seconds")
                             
-                            # Add input options
+                            # Add input options - for ffmpeg, it's more efficient to put -ss BEFORE -i for seeking
                             if start_position:
                                 # Add seek option to start at the specified position
                                 cmd.extend(["-ss", str(start_position)])
                             
+                            # Add input file with appropriate options for better stream handling
                             cmd.extend(["-i", audio_url])
+                            cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
                             
-                            # Add codec options
-                            cmd.extend(["-c:a", "copy"])
+                            # Add codec options - use aac codec instead of copy for better compatibility
+                            cmd.extend(["-c:a", "aac", "-b:a", "128k"])
                             
                             # Get duration from metadata if available
                             if "duration" in db_capture.metadata:
@@ -207,11 +211,22 @@ class ParliamentTVCapture:
                             # Add output file
                             cmd.append(audio_file_path)
                             
-                            # Log the command
-                            logger.info(f"Audio download command: {' '.join(cmd)}")
-                            
+                            # Log the full command for debugging
+                            logger.info(f"Full audio download command: {' '.join(cmd)}")
+            
                             logger.info(f"Running ffmpeg to download audio: {audio_file_path}")
-                            result = subprocess.run(cmd, capture_output=True, text=True)
+                            try:
+                                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
+                
+                                # Log the output for debugging
+                                if result.stdout:
+                                    logger.info(f"ffmpeg stdout: {result.stdout[:500]}...")
+                                if result.stderr:
+                                    logger.info(f"ffmpeg stderr: {result.stderr[:500]}...")
+                            except subprocess.TimeoutExpired:
+                                logger.error("Audio download timed out after 5 minutes")
+                                self.log_capture(db, capture_id, "error", "Audio download timed out after 5 minutes")
+                                return {"success": False, "error": "Audio download timed out"}
                             
                             if result.returncode == 0:
                                 logger.info(f"Successfully downloaded audio to: {audio_file_path}")
@@ -446,19 +461,26 @@ class ParliamentTVCapture:
             
             # Check if we have a time marker in the scheduled start time
             start_position = None
-            if scheduled_start and "time_marker" in db_capture.metadata:
+            if "time_marker" in db_capture.metadata:
                 time_marker_seconds = db_capture.metadata.get("time_marker", {}).get("seconds", 0)
                 if time_marker_seconds > 0:
                     # If we have a time marker, use it as the start position
                     start_position = time_marker_seconds
                     logger.info(f"Using time marker as start position: {start_position} seconds")
+            elif scheduled_start:
+                logger.info(f"Using scheduled start time but no time marker found")
             
             # Add input options
             if start_position:
                 # Add seek option to start at the specified position
+                # For ffmpeg, it's more efficient to put -ss BEFORE -i for seeking
                 cmd.extend(["-ss", str(start_position)])
             
+            # Add input file with appropriate options
             cmd.extend(["-i", video_url])
+            
+            # Add additional options for better handling of streams
+            cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
             
             # Add codec options
             cmd.extend(["-c", "copy"])
@@ -475,13 +497,23 @@ class ParliamentTVCapture:
             logger.info(f"Running ffmpeg to capture video: {output_file}")
             logger.info(f"ffmpeg command: {' '.join(cmd)}")
             
-            # Start the ffmpeg process
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
+            # Log the full command for debugging
+            logger.info(f"Full ffmpeg command: {' '.join(cmd)}")
+            
+            # Start the ffmpeg process with better error handling
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True
+                )
+                logger.info(f"Started ffmpeg process for capture {capture_id} with PID: {process.pid}")
+            except Exception as e:
+                error_msg = f"Failed to start ffmpeg process: {str(e)}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
             
             # Store process information
             self.active_captures[capture_id] = {
@@ -564,15 +596,58 @@ class ParliamentTVCapture:
         try:
             logger.info(f"Extracting stream URL from: {url}")
             
+            # Validate URL
+            if not url or not isinstance(url, str):
+                logger.error(f"Invalid URL provided: {url}")
+                return {"error": f"Invalid URL provided: {url}"}
+                
             # Check if the URL is already a direct stream URL
-            if url and ('cdn.redbee.live' in url or '.m3u8' in url):
+            if 'cdn.redbee.live' in url or '.m3u8' in url:
                 logger.info("URL appears to be a direct stream URL already")
-                return {
-                    "direct_stream": url,
-                    "event_id": "direct",
-                    "time_marker": {"seconds": 0},
-                    "original_url": url
-                }
+                
+                # Determine if this is a video or audio URL
+                is_audio = 'audio' in url.lower() and not 'video' in url.lower()
+                
+                if is_audio:
+                    logger.info("URL appears to be an audio stream")
+                    # Try to derive the video URL from the audio URL
+                    video_url = url.replace('audio', 'video')
+                    return {
+                        "direct_stream": {
+                            "video_url": video_url,
+                            "audio_url": url
+                        },
+                        "event_id": "direct",
+                        "time_marker": {"seconds": 0},
+                        "original_url": url
+                    }
+                else:
+                    logger.info("URL appears to be a video stream")
+                    # Try to derive the audio URL from the video URL
+                    audio_url = None
+                    if 'video' in url.lower():
+                        audio_url = url.replace('video', 'audio')
+                        # Check if we need to add bitrate for audio
+                        if '_eng=' not in audio_url and '.m3u8' in audio_url:
+                            audio_url = audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                    
+                    if audio_url:
+                        return {
+                            "direct_stream": {
+                                "video_url": url,
+                                "audio_url": audio_url
+                            },
+                            "event_id": "direct",
+                            "time_marker": {"seconds": 0},
+                            "original_url": url
+                        }
+                    else:
+                        return {
+                            "direct_stream": url,
+                            "event_id": "direct",
+                            "time_marker": {"seconds": 0},
+                            "original_url": url
+                        }
             
             # Set script path
             script_path = "/app/scripts/extract-url.py"
