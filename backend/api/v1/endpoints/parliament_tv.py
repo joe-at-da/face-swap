@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Response, File, UploadFile, Request
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path
+from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional, Any
@@ -971,7 +971,7 @@ async def delete_parliament_tv_capture(
 
 @router.post("/audio-extraction/{capture_id}")
 async def extract_audio_from_capture(
-    capture_id: int = Path(..., description="ID of the capture to extract audio from"),
+    capture_id: int = FastAPIPath(..., description="ID of the capture to extract audio from"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):

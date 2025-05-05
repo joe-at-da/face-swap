@@ -844,19 +844,36 @@ class ParliamentTVCapture:
                 # Extract the stream URL
                 stream_info = self.extract_stream_url(source_url)
                 
-                # Check if we have an audio URL
-                if "audio_url" in stream_info and stream_info["audio_url"]:
+                # Handle different stream_info structures
+                audio_url = None
+                video_url = None
+                
+                # Check if stream_info contains direct_stream
+                if "direct_stream" in stream_info and isinstance(stream_info["direct_stream"], dict):
+                    direct_stream = stream_info["direct_stream"]
+                    if "audio_url" in direct_stream and direct_stream["audio_url"]:
+                        audio_url = direct_stream["audio_url"]
+                    if "video_url" in direct_stream and direct_stream["video_url"]:
+                        video_url = direct_stream["video_url"]
+                # Check for top-level audio/video URLs
+                elif "audio_url" in stream_info and stream_info["audio_url"]:
                     audio_url = stream_info["audio_url"]
+                elif "video_url" in stream_info and stream_info["video_url"]:
+                    video_url = stream_info["video_url"]
+                
+                # Use audio URL if available
+                if audio_url:
                     logger.info(f"Using dedicated audio URL: {audio_url}")
                     cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
                     cmd.extend(["-http_persistent", "1"])
+                    cmd.extend(["-allowed_extensions", "ALL"])
                     cmd.extend(["-i", audio_url])
-                elif "video_url" in stream_info and stream_info["video_url"]:
-                    # If no dedicated audio URL, use the video URL
-                    video_url = stream_info["video_url"]
+                # Fall back to video URL if no audio URL
+                elif video_url:
                     logger.info(f"Using video URL for audio extraction: {video_url}")
                     cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
                     cmd.extend(["-http_persistent", "1"])
+                    cmd.extend(["-allowed_extensions", "ALL"])
                     cmd.extend(["-i", video_url])
                 else:
                     error_msg = f"No valid stream URL found in {stream_info}"
