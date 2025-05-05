@@ -395,7 +395,20 @@ class ParliamentTVCapture:
             # Start the ffmpeg process to capture the video
             cmd = ["ffmpeg", "-y"]
             
+            # Check if we have a time marker in the scheduled start time
+            start_position = None
+            if scheduled_start and "time_marker" in db_capture.metadata:
+                time_marker_seconds = db_capture.metadata.get("time_marker", {}).get("seconds", 0)
+                if time_marker_seconds > 0:
+                    # If we have a time marker, use it as the start position
+                    start_position = time_marker_seconds
+                    logger.info(f"Using time marker as start position: {start_position} seconds")
+            
             # Add input options
+            if start_position:
+                # Add seek option to start at the specified position
+                cmd.extend(["-ss", str(start_position)])
+            
             cmd.extend(["-i", video_url])
             
             # Add codec options

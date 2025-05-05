@@ -357,8 +357,12 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         duration,
         enable_facial_recognition: enableFacialRecognition,
         scheduled_start: scheduledStart ? new Date(scheduledStart).toISOString() : null,
-        scheduled_end: scheduledEnd ? new Date(scheduledEnd).toISOString() : null
+        scheduled_end: scheduledEnd ? new Date(scheduledEnd).toISOString() : null,
+        // Pass the time marker to the backend
+        time_marker_seconds: timeMarker || 0
       };
+      
+      console.log(`Including time marker in capture request: ${timeMarker} seconds`);
       
       // Add the direct_stream data if available
       if (extractResponse.data?.direct_stream) {

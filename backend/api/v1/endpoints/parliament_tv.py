@@ -95,7 +95,11 @@ async def start_parliament_tv_capture(
         metadata={
             "parliament_tv_url": capture_request.url,
             "duration": capture_request.duration,
-            "enable_facial_recognition": capture_request.enable_facial_recognition
+            "enable_facial_recognition": capture_request.enable_facial_recognition,
+            # Store time marker information if available
+            "time_marker": {
+                "seconds": getattr(capture_request, 'time_marker_seconds', 0)
+            }
         }
     )
     

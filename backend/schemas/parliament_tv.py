@@ -12,6 +12,7 @@ class ParliamentTVCaptureRequest(BaseModel):
     enable_facial_recognition: Optional[bool] = Field(True, description="Enable facial recognition to stop when speaker is no longer present")
     scheduled_start: Optional[datetime] = Field(None, description="Optional scheduled start time")
     scheduled_end: Optional[datetime] = Field(None, description="Optional scheduled end time")
+    time_marker_seconds: Optional[int] = Field(0, description="Time marker in seconds from the Parliament TV URL")
 
 
 class ParliamentTVCaptureResponse(BaseModel):
