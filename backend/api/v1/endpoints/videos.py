@@ -882,50 +882,36 @@ async def extract_audio_from_url(
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     try:
-        # Extract the direct stream URL
+        # Extract the stream URLs
         stream_info = parliament_tv_capture.extract_stream_url(url)
         
-        if "error" in stream_info:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error extracting stream URL: {stream_info['error']}"
-            )
+        # Get ONLY the audio URL - NEVER use video URL
+        audio_url = None
+        if isinstance(stream_info, dict):
+            if 'audio_url' in stream_info:
+                audio_url = stream_info['audio_url']
+            elif 'direct_stream' in stream_info and isinstance(stream_info['direct_stream'], dict):
+                audio_url = stream_info['direct_stream'].get('audio_url')
         
-        direct_stream = stream_info.get("direct_stream")
-        if not direct_stream:
+        if not audio_url:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="No direct stream URL found"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No audio URL found in stream - cannot extract audio"
             )
-            
-        # Check if direct_stream is a dictionary with separate video and audio URLs
-        if isinstance(direct_stream, dict):
-            # Use the audio URL if available, otherwise use the video URL
-            direct_stream_url = direct_stream.get("audio_url", direct_stream.get("video_url"))
-            if not direct_stream_url:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="No audio or video URL found in stream info"
-                )
-        else:
-            # If direct_stream is a string, use it directly
-            direct_stream_url = direct_stream
         
         # Create a temporary file for the audio
         temp_dir = tempfile.gettempdir()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         temp_audio_file = os.path.join(temp_dir, f"parliament_audio_{timestamp}.mp3")
         
-        # Use ffmpeg to extract just the audio from the stream
+        # Download the audio directly - NO EXTRACTION FROM VIDEO
         cmd = [
             "ffmpeg", "-y",
-            "-i", direct_stream_url,
-            "-vn",  # No video
-            "-acodec", "libmp3lame",
-            "-ab", "128k",
-            "-ar", "44100",
-            "-f", "mp3",
-            "-t", "60",  # Extract 60 seconds of audio
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-i", audio_url,  # ONLY use audio URL
+            "-c:a", "libmp3lame",
+            "-q:a", "2",
+            "-t", "60",  # 60 seconds sample
             temp_audio_file
         ]
         
@@ -935,14 +921,7 @@ async def extract_audio_from_url(
         if process.returncode != 0:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error extracting audio: {process.stderr}"
-            )
-        
-        # Check if the audio file was created successfully
-        if not os.path.exists(temp_audio_file) or os.path.getsize(temp_audio_file) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to extract audio from the stream"
+                detail="Failed to download audio from audio URL"
             )
         
         # Stream the audio file
@@ -955,5 +934,5 @@ async def extract_audio_from_url(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error extracting audio: {str(e)}"
+            detail=f"Error processing audio: {str(e)}"
         )

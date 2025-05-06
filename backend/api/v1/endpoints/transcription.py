@@ -512,35 +512,59 @@ def process_parliament_transcription(
             if not has_audio:
                 print("No audio stream detected in the video file!")
                 
-                # Try to extract audio with ffmpeg to a temporary file
-                print("Attempting to extract audio or create silent audio track...")
-                temp_audio_file = f"{video_path}.audio_fixed.mp4"
+                # Check if this is a Parliament TV capture
+                is_parliament_tv = False
+                if transcription.capture_session_id:
+                    capture = db.query(models.CaptureSession).filter(
+                        models.CaptureSession.id == transcription.capture_session_id
+                    ).first()
+                    
+                    if capture and capture.metadata:
+                        try:
+                            if isinstance(capture.metadata, dict) and 'parliament_tv_url' in capture.metadata:
+                                is_parliament_tv = True
+                        except Exception as e:
+                            print(f"Error checking metadata: {str(e)}")
                 
-                # Create a video with silent audio if needed
-                silent_cmd = [
-                    "ffmpeg", "-i", video_path, "-f", "lavfi", 
-                    "-i", "anullsrc=r=44100:cl=stereo", "-c:v", "copy", 
-                    "-c:a", "aac", "-shortest", "-y", temp_audio_file
-                ]
-                
-                silent_result = subprocess.run(
-                    silent_cmd,
-                    capture_output=True,
-                    text=True
-                )
-                
-                if silent_result.returncode == 0 and os.path.exists(temp_audio_file):
-                    print(f"Created video with audio track: {temp_audio_file}")
-                    video_path = temp_audio_file
-                    has_audio = True
-                else:
-                    error_msg = "Failed to create audio track for the video. Transcription requires audio."
-                    print(error_msg)
-                    print(f"FFmpeg output: {silent_result.stderr}")
+                if is_parliament_tv:
+                    # For Parliament TV, audio should be handled separately
+                    print("This is a Parliament TV capture - audio should be extracted separately")
+                    print("Use the dedicated audio extraction endpoint instead")
+                    error_msg = "Parliament TV captures require separate audio extraction. Use the audio extraction endpoint."
                     transcription.status = "failed"
                     transcription.error_message = error_msg
                     db.commit()
                     return
+                else:
+                    # For non-Parliament TV videos, create a silent audio track
+                    print("Creating silent audio track for non-Parliament TV video...")
+                    temp_audio_file = f"{video_path}.audio_fixed.mp4"
+                    
+                    # Create a video with silent audio
+                    silent_cmd = [
+                        "ffmpeg", "-i", video_path, "-f", "lavfi", 
+                        "-i", "anullsrc=r=44100:cl=stereo", "-c:v", "copy", 
+                        "-c:a", "aac", "-shortest", "-y", temp_audio_file
+                    ]
+                    
+                    silent_result = subprocess.run(
+                        silent_cmd,
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    if silent_result.returncode == 0 and os.path.exists(temp_audio_file):
+                        print(f"Created video with silent audio track: {temp_audio_file}")
+                        video_path = temp_audio_file
+                        has_audio = True
+                    else:
+                        error_msg = "Failed to create audio track for the video. Transcription requires audio."
+                        print(error_msg)
+                        print(f"FFmpeg output: {silent_result.stderr}")
+                        transcription.status = "failed"
+                        transcription.error_message = error_msg
+                        db.commit()
+                        return
         except Exception as e:
             print(f"Error checking for audio stream: {str(e)}")
             # Continue anyway, as the transcription script might handle this
