@@ -880,5 +880,5 @@ def test_stream_url(url: str) -> Dict:
 
 
 def extract_audio(db: Session, capture_id: int) -> Dict:
-    """Extract audio from a video file or directly from the stream URL."""
+    """Extract audio from the dedicated audio stream URL. Never extracts from video files."""
     return parliament_tv_capture.extract_audio(db, capture_id)

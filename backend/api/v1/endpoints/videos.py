@@ -436,42 +436,37 @@ def stream_audio_from_video(filename: str, db: Session, debug: bool = False):
                         else:
                             print(f"WARNING - stream_audio_from_video - Audio file in database doesn't exist: {audio_path}")
             
-            # If we still don't have a valid audio path, create one in the temp directory
+            # If we still don't have a valid audio path, check if this is a Parliament TV capture
             if not audio_path or not os.path.exists(audio_path):
-                # Create a directory for audio extracts if it doesn't exist
-                audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
-                os.makedirs(audio_extracts_dir, exist_ok=True)
+                # Check if this is a Parliament TV capture by looking at metadata
+                is_parliament_tv = False
+                if capture_id:
+                    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+                    if capture and capture.metadata:
+                        try:
+                            if isinstance(capture.metadata, dict) and 'parliament_tv_url' in capture.metadata:
+                                is_parliament_tv = True
+                            elif hasattr(capture.metadata, 'parliament_tv_url'):
+                                is_parliament_tv = True
+                        except Exception as e:
+                            print(f"Error checking metadata: {str(e)}")
                 
-                # Define the audio path
-                audio_filename = f"{video_name_without_ext}.audio.mp3"
-                audio_path = os.path.join(audio_extracts_dir, audio_filename)
-                print(f"DEBUG - stream_audio_from_video - Will extract audio to: {audio_path}")
-                
-                # Extract audio from the video file using ffmpeg
-                # Adding more robust options to handle potentially corrupted MP4 files
-                cmd = [
-                    'ffmpeg',
-                    '-err_detect', 'ignore_err',  # Ignore errors in the input
-                    '-i', video_path,
-                    '-vn',  # No video
-                    '-acodec', 'libmp3lame',  # Use MP3 codec
-                    '-q:a', '2',  # Quality setting
-                    '-f', 'mp3',  # Explicitly specify MP3 format
-                    '-y',  # Overwrite if exists
-                    audio_path
-                ]
-                
-                # Run the command
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                print(f"DEBUG - stream_audio_from_video - ffmpeg extraction result code: {result.returncode}")
-                
-                # Check if the audio file was created
-                if not os.path.exists(audio_path):
-                    print(f"ERROR - stream_audio_from_video - Failed to create audio file: {audio_path}")
-                    print(f"ERROR - stream_audio_from_video - ffmpeg stderr: {result.stderr}")
+                if is_parliament_tv:
+                    # For Parliament TV, audio and video are separate streams
+                    # DO NOT extract audio from video files
+                    print("This is a Parliament TV capture - audio should be extracted from the dedicated audio URL")
+                    print("Use the audio extraction endpoint instead of trying to extract from video")
                     
-                    # Create a silent audio file as fallback
-                    print(f"DEBUG - stream_audio_from_video - Creating silent audio file as fallback")
+                    # Create a directory for audio extracts if it doesn't exist
+                    audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+                    os.makedirs(audio_extracts_dir, exist_ok=True)
+                    
+                    # Define the audio path for a silent audio file
+                    audio_filename = f"{video_name_without_ext}.audio.mp3"
+                    audio_path = os.path.join(audio_extracts_dir, audio_filename)
+                    
+                    # Create a silent audio file as placeholder
+                    print(f"Creating silent audio file as placeholder: {audio_path}")
                     silent_cmd = [
                         'ffmpeg',
                         '-f', 'lavfi',
@@ -486,15 +481,69 @@ def stream_audio_from_video(filename: str, db: Session, debug: bool = False):
                     silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
                     
                     if silent_result.returncode != 0 or not os.path.exists(audio_path):
-                        print(f"ERROR - stream_audio_from_video - Failed to create silent audio file: {silent_result.stderr}")
+                        print(f"ERROR - Failed to create silent audio file: {silent_result.stderr}")
                         raise HTTPException(
                             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail=f"Failed to extract audio from {filename}"
+                            detail=f"Failed to create audio placeholder. Use the audio extraction endpoint."
                         )
                     
-                    print(f"DEBUG - stream_audio_from_video - Created silent audio file: {audio_path}")
+                    print(f"Created silent audio file as placeholder: {audio_path}")
                 else:
-                    print(f"DEBUG - stream_audio_from_video - Successfully extracted audio to: {audio_path}")
+                    # For non-Parliament TV videos, we can extract audio from the video file
+                    # Create a directory for audio extracts if it doesn't exist
+                    audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+                    os.makedirs(audio_extracts_dir, exist_ok=True)
+                    
+                    # Define the audio path
+                    audio_filename = f"{video_name_without_ext}.audio.mp3"
+                    audio_path = os.path.join(audio_extracts_dir, audio_filename)
+                    print(f"Will extract audio to: {audio_path}")
+                    
+                    # Extract audio from the video file using ffmpeg (only for non-Parliament TV videos)
+                    cmd = [
+                        'ffmpeg',
+                        '-err_detect', 'ignore_err',
+                        '-i', video_path,
+                        '-vn',
+                        '-acodec', 'libmp3lame',
+                        '-q:a', '2',
+                        '-f', 'mp3',
+                        '-y',
+                        audio_path
+                    ]
+                    
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    print(f"ffmpeg extraction result code: {result.returncode}")
+                    
+                    if not os.path.exists(audio_path):
+                        print(f"Failed to create audio file: {audio_path}")
+                        print(f"ffmpeg stderr: {result.stderr}")
+                        
+                        # Create a silent audio file as fallback
+                        print(f"Creating silent audio file as fallback")
+                        silent_cmd = [
+                            'ffmpeg',
+                            '-f', 'lavfi',
+                            '-i', 'anullsrc=r=44100:cl=stereo',
+                            '-t', '10',
+                            '-acodec', 'libmp3lame',
+                            '-q:a', '2',
+                            '-y',
+                            audio_path
+                        ]
+                        
+                        silent_result = subprocess.run(silent_cmd, capture_output=True, text=True)
+                        
+                        if silent_result.returncode != 0 or not os.path.exists(audio_path):
+                            print(f"Failed to create silent audio file: {silent_result.stderr}")
+                            raise HTTPException(
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"Failed to extract audio from {filename}"
+                            )
+                        
+                        print(f"Created silent audio file as fallback: {audio_path}")
+                    else:
+                        print(f"Successfully extracted audio to: {audio_path}")
                 
                 # Update the capture session with the audio file path if we have a capture_id
                 if capture_id:
