@@ -210,8 +210,13 @@ class ParliamentTVCapture:
             logger.error(f"Error stopping capture: {str(e)}")
     
     def start_capture(self, url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> Dict:
-        """Start capturing a Parliament TV stream."""
-        logger.info(f"Starting capture for URL: {url}, capture_id: {capture_id}")
+        """
+        Start capturing a Parliament TV video stream.
+        
+        IMPORTANT: This method ONLY handles video capture. Audio is handled separately.
+        Parliament TV provides completely separate audio and video streams.
+        """
+        logger.info(f"Starting video capture for URL: {url}, capture_id: {capture_id}")
         logger.info(f"Scheduled start: {scheduled_start}, Scheduled end: {scheduled_end}")
         
         try:
@@ -239,10 +244,10 @@ class ParliamentTVCapture:
             
             logger.info(f"Stream info: {stream_info}")
             
-            # Verify we have a valid video URL
+            # Verify we have a valid video URL for video capture
             if not video_url:
-                # If we don't have a video URL but we have the original URL, try to use that
-                if "original_url" in stream_info and stream_info["original_url"]:
+                # If we don't have a video URL but we have the original URL, check if it's a video URL
+                if "original_url" in stream_info and stream_info["original_url"] and "video" in stream_info["original_url"].lower():
                     logger.warning(f"No video_url found in stream_info, using original URL")
                     video_url = stream_info["original_url"]
                 else:
@@ -251,28 +256,21 @@ class ParliamentTVCapture:
                     logger.error(error_msg)
                     self.log_capture(db, capture_id, "error", error_msg)
                     return {"success": False, "error": error_msg}
-            
+            # Log the URLs we found
             if video_url and audio_url:
                 logger.info(f"Found separate video and audio URLs for capture {capture_id}")
                 logger.info(f"Video URL: {video_url}")
                 logger.info(f"Audio URL: {audio_url}")
             elif video_url:
-                logger.info(f"Using single video stream URL for capture {capture_id}")
+                logger.info(f"Found only video URL for capture {capture_id}")
                 logger.info(f"Video URL: {video_url}")
-            else:
-                logger.error("No valid video URL found in stream info")
-                
-            if not video_url:
-                error_msg = "No valid video stream URL found"
-                logger.error(error_msg)
-                self.log_capture(db, capture_id, "error", error_msg)
-                return {"success": False, "error": error_msg}
+                logger.warning("No audio URL found - audio must be captured separately")
             
-            # Create the output directory if it doesn't exist and ensure it has proper permissions
+            # Create the output directory if it doesn't exist
             os.makedirs(str(self.temp_dir), exist_ok=True)
             
-            # Ensure the directory has proper permissions
             try:
+                # Ensure the directory has proper permissions
                 os.chmod(str(self.temp_dir), 0o777)  # rwx for all users
                 logger.info(f"Set permissions on directory: {self.temp_dir}")
             except Exception as e:
@@ -301,23 +299,32 @@ class ParliamentTVCapture:
                 if time_marker_seconds > 0:
                     start_position = time_marker_seconds
                     logger.info(f"Using time marker from stream_info: {start_position} seconds")
-                    
-                    # Update the metadata in the database
-                    if not db_capture.metadata:
-                        db_capture.metadata = {}
-                    db_capture.metadata["time_marker"] = {"seconds": time_marker_seconds}
-                    db_capture.metadata["video_url"] = video_url
-                    db_capture.metadata["audio_url"] = audio_url
-                    db.commit()
-                    logger.info(f"Updated metadata in database with time marker: {time_marker_seconds}")
-            # Fall back to metadata if not in stream_info
-            elif db_capture.metadata and "time_marker" in db_capture.metadata:
+            
+            # Always update the metadata with the URLs - this is critical for later audio extraction
+            if not db_capture.metadata:
+                db_capture.metadata = {}
+                
+            # Store video and audio URLs separately in metadata
+            db_capture.metadata["video_url"] = video_url
+            if audio_url:
+                db_capture.metadata["audio_url"] = audio_url
+                
+            # Store time marker if available
+            if "time_marker" in stream_info and stream_info["time_marker"]:
+                db_capture.metadata["time_marker"] = stream_info["time_marker"]
+                
+            # Commit the metadata changes
+            db.commit()
+            logger.info(f"Updated metadata in database with video_url and audio_url")
+            
+            # Check for time marker in metadata if not found in stream_info
+            if not start_position and db_capture.metadata and "time_marker" in db_capture.metadata:
                 time_marker_seconds = db_capture.metadata.get("time_marker", {}).get("seconds", 0)
                 if time_marker_seconds > 0:
                     # If we have a time marker, use it as the start position
                     start_position = time_marker_seconds
                     logger.info(f"Using time marker from metadata: {start_position} seconds")
-            elif scheduled_start:
+            elif not start_position and scheduled_start:
                 logger.info(f"Using scheduled start time but no time marker found")
         
             # Add seek option to start at the specified position

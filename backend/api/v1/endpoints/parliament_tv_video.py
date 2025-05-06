@@ -14,57 +14,59 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Constants
-AUDIO_DIR = FilePath("/app/data/temp/audio_extracts")
-AUDIO_QUALITY = "2"  # High quality (lower number = higher quality for MP3)
-AUDIO_FORMAT = "mp3"
+VIDEO_DIR = FilePath("/app/data/temp/video_downloads")
+VIDEO_FORMAT = "mp4"
+VIDEO_QUALITY = "medium"  # Options: low, medium, high
 
-class AudioExtractor:
+class VideoDownloader:
     """
-    Handles extraction of audio from Parliament TV streams.
+    Handles downloading of video from Parliament TV streams.
     Parliament TV provides separate audio and video streams.
-    This class ONLY handles audio streams - it never extracts audio from video.
+    This class ONLY handles video streams - it never deals with audio streams.
     """
     
     @staticmethod
-    def get_audio_url(capture: models.CaptureSession) -> Optional[str]:
-        """Get the audio URL from capture metadata."""
+    def get_video_url(capture: models.CaptureSession) -> Optional[str]:
+        """Get the video URL from capture metadata."""
         if not capture or not capture.metadata:
             return None
             
         metadata = capture.metadata
         
         # Check dict format
-        if isinstance(metadata, dict) and 'audio_url' in metadata:
-            return metadata['audio_url']
+        if isinstance(metadata, dict) and 'video_url' in metadata:
+            return metadata['video_url']
             
         # Check object format
-        if hasattr(metadata, 'audio_url'):
-            return metadata.audio_url
+        if hasattr(metadata, 'video_url'):
+            return metadata.video_url
             
         return None
     
     @staticmethod
     def get_output_path(capture_id: int) -> str:
-        """Generate the output file path for the audio file."""
-        return str(AUDIO_DIR / f"capture_{capture_id:04d}.audio.{AUDIO_FORMAT}")
+        """Generate the output file path for the video file."""
+        return str(VIDEO_DIR / f"capture_{capture_id:04d}.video.{VIDEO_FORMAT}")
     
     @staticmethod
-    def extract_audio(audio_url: str, output_path: str) -> Dict:
+    def download_video(video_url: str, output_path: str) -> Dict:
         """
-        Extract audio from the provided audio URL.
+        Download video from the provided video URL.
         Returns a dict with success status and error message if applicable.
         """
         try:
             # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            # Create ffmpeg command for audio extraction
+            # Create ffmpeg command for video download
             cmd = [
                 "ffmpeg", "-y",
                 "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-                "-i", audio_url,
-                "-c:a", "libmp3lame",
-                "-q:a", AUDIO_QUALITY,
+                "-i", video_url,
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "23",  # Quality setting (lower = better quality)
+                "-an",  # No audio - we handle audio separately
                 output_path
             ]
             
@@ -79,7 +81,7 @@ class AudioExtractor:
             
             # Check result
             if process.returncode != 0:
-                logger.error(f"Audio extraction failed: {process.stderr}")
+                logger.error(f"Video download failed: {process.stderr}")
                 return {
                     "success": False,
                     "error": f"ffmpeg error: {process.stderr.strip()}",
@@ -100,23 +102,23 @@ class AudioExtractor:
             }
             
         except Exception as e:
-            logger.exception(f"Error during audio extraction: {str(e)}")
+            logger.exception(f"Error during video download: {str(e)}")
             return {
                 "success": False,
                 "error": str(e)
             }
 
 @router.post('/{capture_id}', response_model=Dict)
-async def extract_audio_for_capture(
-    capture_id: int = Path(..., description='ID of the capture to extract audio from'),
+async def download_video_for_capture(
+    capture_id: int = Path(..., description='ID of the capture to download video for'),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ) -> Dict:
     '''
-    Extract audio from Parliament TV stream and save it as a separate file.
+    Download video from Parliament TV stream and save it as a file.
     
     Parliament TV provides completely separate audio and video streams.
-    This endpoint ONLY handles the audio stream - it never extracts audio from video.
+    This endpoint ONLY handles the video stream - it never deals with audio.
     
     Returns:
         Dict: Success status and output file path or error message
@@ -132,19 +134,19 @@ async def extract_audio_for_capture(
             detail=f'Capture {capture_id} not found'
         )
     
-    # Get the audio URL
-    audio_url = AudioExtractor.get_audio_url(capture)
-    if not audio_url:
+    # Get the video URL
+    video_url = VideoDownloader.get_video_url(capture)
+    if not video_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='No audio URL found in capture metadata'
+            detail='No video URL found in capture metadata'
         )
     
     # Generate output path
-    output_path = AudioExtractor.get_output_path(capture_id)
+    output_path = VideoDownloader.get_output_path(capture_id)
     
-    # Extract audio
-    result = AudioExtractor.extract_audio(audio_url, output_path)
+    # Download video
+    result = VideoDownloader.download_video(video_url, output_path)
     
     if not result["success"]:
         raise HTTPException(
@@ -152,28 +154,28 @@ async def extract_audio_for_capture(
             detail=result["error"]
         )
     
-    # Update database with audio file path
-    capture.audio_file_path = output_path
+    # Update database with video file path
+    capture.video_file_path = output_path
     db.commit()
     
     return {
         "success": True,
-        "message": "Audio extracted successfully",
+        "message": "Video downloaded successfully",
         "output_file": output_path,
         "capture_id": capture_id
     }
 
 @router.get('/{capture_id}/status', response_model=Dict)
-async def get_audio_extraction_status(
-    capture_id: int = Path(..., description='ID of the capture to check audio status for'),
+async def get_video_download_status(
+    capture_id: int = Path(..., description='ID of the capture to check video status for'),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ) -> Dict:
     '''
-    Check if audio has been extracted for a capture session.
+    Check if video has been downloaded for a capture session.
     
     Returns:
-        Dict: Status information about the audio extraction
+        Dict: Status information about the video download
     '''
     # Check permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
@@ -186,17 +188,17 @@ async def get_audio_extraction_status(
             detail=f'Capture {capture_id} not found'
         )
     
-    # Check if audio file exists
-    audio_path = capture.audio_file_path
-    audio_exists = audio_path and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0
+    # Check if video file exists
+    video_path = capture.video_file_path
+    video_exists = video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0
     
-    # Check if audio URL exists in metadata
-    audio_url = AudioExtractor.get_audio_url(capture)
+    # Check if video URL exists in metadata
+    video_url = VideoDownloader.get_video_url(capture)
     
     return {
         "capture_id": capture_id,
-        "audio_extracted": audio_exists,
-        "audio_file_path": audio_path if audio_exists else None,
-        "audio_url_available": audio_url is not None,
-        "can_extract": audio_url is not None and not audio_exists
+        "video_downloaded": video_exists,
+        "video_file_path": video_path if video_exists else None,
+        "video_url_available": video_url is not None,
+        "can_download": video_url is not None and not video_exists
     }

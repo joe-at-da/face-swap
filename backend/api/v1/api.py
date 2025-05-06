@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, parliament_tv_audio
+from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, parliament_tv_audio, parliament_tv_video
 
 api_router = APIRouter()
 
@@ -16,3 +16,4 @@ api_router.include_router(dashboard.router, prefix='/dashboard', tags=['dashboar
 api_router.include_router(admin.router, prefix='/admin', tags=['admin'])
 api_router.include_router(parliament_tv.router, prefix='/parliament-tv', tags=['parliament-tv'])
 api_router.include_router(parliament_tv_audio.router, prefix='/audio-extraction', tags=['audio-extraction'])
+api_router.include_router(parliament_tv_video.router, prefix='/video-download', tags=['video-download'])
