@@ -349,17 +349,17 @@ class ParliamentTVCapture:
             # Add input file for video
             cmd.extend(["-i", actual_video_url])
             
-            # For HLS streams, it's better to use a single input with both video and audio
-            # This avoids synchronization issues and HTTP 415 errors
-            logger.info(f"Using video URL for both video and audio: {actual_video_url}")
+            # For Parliament TV, audio and video are completely separate streams
+            # We only capture video here - audio is handled separately
+            logger.info(f"Using video URL for video capture only: {actual_video_url}")
             
             # Add options to handle HLS streams better
             cmd.extend(["-live_start_index", "0"])
             cmd.extend(["-avoid_negative_ts", "make_zero"])
             cmd.extend(["-correct_ts_overflow", "1"])
             
-            # Try to use the audio from the video stream if available
-            logger.info("Using audio from video stream if available")
+            # DO NOT try to use audio from video stream - audio is handled separately
+            logger.info("Parliament TV has separate audio and video streams - not using audio from video")
             
             # Add additional options for better handling of streams
             cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
@@ -562,46 +562,28 @@ class ParliamentTVCapture:
             if isinstance(url, str) and ('.m3u8' in url or 'cdn.redbee.live' in url):
                 logger.info("URL appears to be a direct stream URL already")
                 
-                # Determine if this is a video or audio URL
+                # Parliament TV has completely separate audio and video streams
+                # DO NOT try to derive one from the other
                 is_audio = 'audio' in url.lower() and not 'video' in url.lower()
                 
                 if is_audio:
-                    logger.info("URL appears to be an audio stream")
-                    # Try to derive the video URL from the audio URL
-                    video_url = url.replace('audio', 'video')
+                    logger.info("URL appears to be an audio stream - DO NOT derive video URL from it")
                     return {
-                        "video_url": video_url,
+                        "video_url": None,  # DO NOT derive video URL from audio URL
                         "audio_url": url,
                         "event_id": "direct",
                         "time_marker": {"seconds": 0},
                         "original_url": url
                     }
                 else:
-                    logger.info("URL appears to be a video stream")
-                    # Try to derive the audio URL from the video URL
-                    audio_url = None
-                    if 'video' in url.lower():
-                        audio_url = url.replace('video', 'audio')
-                        # Check if we need to add bitrate for audio
-                        if '_eng=' not in audio_url and '.m3u8' in audio_url:
-                            audio_url = audio_url.replace('.m3u8', '_eng=64000.m3u8')
-                    
-                    if audio_url:
-                        return {
-                            "video_url": url,
-                            "audio_url": audio_url,
-                            "event_id": "direct",
-                            "time_marker": {"seconds": 0},
-                            "original_url": url
-                        }
-                    else:
-                        return {
-                            "video_url": url,
-                            "audio_url": None,
-                            "event_id": "direct",
-                            "time_marker": {"seconds": 0},
-                            "original_url": url
-                        }
+                    logger.info("URL appears to be a video stream - DO NOT derive audio URL from it")
+                    return {
+                        "video_url": url,
+                        "audio_url": None,  # DO NOT derive audio URL from video URL
+                        "event_id": "direct",
+                        "time_marker": {"seconds": 0},
+                        "original_url": url
+                    }
             
             # Set script path
             script_path = "/app/scripts/extract-url.py"
