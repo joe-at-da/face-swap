@@ -86,13 +86,19 @@ async def extract_audio_for_capture(
         # 3. Stream URL from metadata
         
         input_url = None
+        is_audio_url = False
         
         # First, try to get the audio URL directly from metadata
         if metadata:
-            # Try to get audio_url from metadata
-            if hasattr(metadata, 'audio_url') and metadata.audio_url:
+            # Try to get audio_url from metadata - handle both dict and object formats
+            if isinstance(metadata, dict) and 'audio_url' in metadata:
+                input_url = metadata['audio_url']
+                is_audio_url = True
+                logger.info(f"Using audio URL directly from metadata (dict): {input_url}")
+            elif hasattr(metadata, 'audio_url') and metadata.audio_url:
                 input_url = metadata.audio_url
-                logger.info(f"Using audio URL directly from metadata: {input_url}")
+                is_audio_url = True
+                logger.info(f"Using audio URL directly from metadata (object): {input_url}")
         
         # If no audio URL in metadata, check if the video file exists
         if not input_url:
@@ -163,52 +169,56 @@ async def extract_audio_for_capture(
                 'error': 'No valid input URL found for audio extraction'
             }
         
-        # Create the ffmpeg command based on the input URL type
-        # For streaming URLs, we need additional parameters
-        is_streaming_url = input_url.startswith('http') and ('.m3u8' in input_url or '.ism' in input_url)
+        # For audio extraction, we'll use a direct approach with ffmpeg
+        # Create a script file to run ffmpeg with the correct parameters
+        script_file = f"/app/data/temp/extract_audio_{capture_id:04d}.sh"
         
-        # Base command with common parameters
-        cmd = [
-            "ffmpeg",
-            "-y",  # Overwrite output files without asking
-        ]
+        # Create the ffmpeg command for audio extraction
+        # We'll use a different approach based on whether we have an audio URL or video URL
+        if is_audio_url and 'audio_url' in str(input_url):
+            # Direct approach for audio URL
+            ffmpeg_cmd = f"""#!/bin/bash
+            ffmpeg -y -protocol_whitelist file,http,https,tcp,tls,crypto \
+            -i \"{input_url}\" \
+            -c:a libmp3lame -q:a 2 \
+            \"{output_file}\" > /app/data/temp/ffmpeg_log_{capture_id}.txt 2>&1
+            """
+            logger.info(f"Using direct audio URL extraction command")
+        else:
+            # Extract audio from video URL
+            ffmpeg_cmd = f"""#!/bin/bash
+            ffmpeg -y -protocol_whitelist file,http,https,tcp,tls,crypto \
+            -i \"{input_url}\" \
+            -vn -c:a libmp3lame -q:a 2 \
+            \"{output_file}\" > /app/data/temp/ffmpeg_log_{capture_id}.txt 2>&1
+            """
+            logger.info(f"Using video URL extraction command")
         
-        # Add streaming-specific parameters if needed
-        if is_streaming_url:
-            cmd.extend([
-                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-                "-http_persistent", "0",
-                "-allowed_extensions", "ALL",
-            ])
+        # Write the script file
+        with open(script_file, 'w') as f:
+            f.write(ffmpeg_cmd)
         
-        # Add input file and output parameters
-        cmd.extend([
-            "-i", str(input_url),  # Input file/URL
-            "-vn",  # No video
-            "-c:a", "libmp3lame",  # MP3 audio codec
-            "-q:a", "2",  # Audio quality
-            str(output_file)  # Output file
-        ])
+        # Make the script executable
+        os.chmod(script_file, 0o755)
         
-        # Log the command for debugging
-        logger.info(f"Running ffmpeg command: {' '.join([str(arg) for arg in cmd])}")
+        logger.info(f"Created audio extraction script: {script_file}")
         
+        # Execute the script
         try:
-            # Use subprocess.run with shell=False to avoid shell parsing issues
+            # Run the script directly
             process = subprocess.run(
-                cmd,
+                [script_file],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                check=False,
-                shell=False  # CRITICAL: Avoid shell parsing issues
+                check=False
             )
             
-            # Log the command output
-            logger.info(f"Command stdout: {process.stdout}")
-            logger.info(f"Command stderr: {process.stderr}")
+            # Log the output
+            logger.info(f"Script stdout: {process.stdout}")
+            logger.info(f"Script stderr: {process.stderr}")
             
-            # Check if the command was successful
+            # Check if the script was successful
             if process.returncode != 0:
                 error_message = process.stderr if process.stderr else "Unknown error"
                 logger.error(f"Audio extraction failed with return code {process.returncode}: {error_message}")
@@ -216,7 +226,7 @@ async def extract_audio_for_capture(
                     'success': False,
                     'error': f'Audio extraction failed: {error_message}'
                 }
-                
+            
             # Audio extraction completed successfully
             logger.info(f"Audio extraction completed successfully: {output_file}")
             
@@ -230,11 +240,13 @@ async def extract_audio_for_capture(
                 'output_file': output_file
             }
         except Exception as e:
-            logger.error(f"Error executing ffmpeg command: {str(e)}")
+            logger.error(f"Error executing audio extraction script: {str(e)}")
             return {
                 'success': False,
-                'error': f'Error executing ffmpeg command: {str(e)}'
+                'error': f'Error executing audio extraction script: {str(e)}'
             }
+        
+        # The audio extraction is now handled by the script execution above
     except Exception as e:
         logger.error(f'Error extracting audio: {str(e)}')
         return {
