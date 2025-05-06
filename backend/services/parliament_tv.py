@@ -177,13 +177,8 @@ class ParliamentTVCapture:
                 except Exception as e:
                     logger.error(f"Error verifying MP4 file: {str(e)}")
                     
-                # If we have a valid video stream but no audio, try to extract audio separately
-                if video_valid and not audio_valid:
-                    logger.info(f"Attempting to extract audio separately for {output_file}")
-                    try:
-                        self.extract_audio(db, capture_id)
-                    except Exception as e:
-                        logger.error(f"Failed to extract audio separately: {str(e)}")
+                # Parliament TV has separate audio and video streams - no need to extract audio from video
+                # Audio will be handled separately via the dedicated audio URL
 
             else:
                 logger.warning(f"MP4 file not found: {output_file}")
@@ -206,16 +201,9 @@ class ParliamentTVCapture:
             # Log the success
             self.log_capture(db, capture_id, "info", "Capture completed successfully")
             
-            # Now extract audio if needed
-            if output_file and os.path.exists(output_file):
-                try:
-                    audio_result = self.extract_audio(db, capture_id)
-                    if audio_result.get("success", False):
-                        logger.info(f"Successfully extracted audio: {audio_result.get('audio_file')}")
-                    else:
-                        logger.warning(f"Audio extraction failed: {audio_result.get('error')}")
-                except Exception as e:
-                    logger.error(f"Error during audio extraction: {str(e)}")
+            # Parliament TV has separate audio and video streams
+            # Audio extraction is handled separately via a dedicated endpoint
+            # Do NOT attempt to extract audio from video files
             
             return {"success": True, "file_path": db_capture.file_path}
         except Exception as e:
@@ -771,7 +759,7 @@ class ParliamentTVCapture:
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
-        """Extract audio from a capture session"""
+        """Extract audio from Parliament TV - AUDIO ONLY, NEVER FROM VIDEO"""
         logger.info(f"Extracting audio for capture {capture_id}")
         
         # Get the capture session from the database
@@ -780,18 +768,19 @@ class ParliamentTVCapture:
             logger.error(f"Capture session {capture_id} not found")
             return {"success": False, "error": f"Capture session {capture_id} not found"}
         
-        # Get the video file path and source URL from the database
-        video_file = db_capture.file_path
-        source_url = db_capture.source_url
-        
-        # Check if we have metadata with audio_url
+        # Check if we have metadata with audio_url - ONLY SOURCE OF AUDIO
         audio_url = None
         if db_capture.metadata and isinstance(db_capture.metadata, dict):
             audio_url = db_capture.metadata.get("audio_url")
+        elif db_capture.metadata and hasattr(db_capture.metadata, 'audio_url'):
+            audio_url = db_capture.metadata.audio_url
             
-        logger.info(f"Metadata audio URL: {audio_url}")
-        logger.info(f"Source URL: {source_url}")
-        logger.info(f"Video file: {video_file}")
+        logger.info(f"Audio URL: {audio_url}")
+        
+        # If no audio URL, we can't proceed - NEVER fall back to video
+        if not audio_url:
+            logger.error("No audio URL found in metadata - cannot extract audio")
+            return {"success": False, "error": "No audio URL found in metadata"}
         
         # Format the capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
@@ -801,130 +790,53 @@ class ParliamentTVCapture:
         os.makedirs(audio_dir, exist_ok=True)
         audio_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
         
-        # Create the ffmpeg command
-        cmd = ["ffmpeg", "-y"]
+        # Create the ffmpeg command - DIRECT FROM AUDIO URL ONLY
+        cmd = [
+            "ffmpeg", "-y",
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-i", audio_url,
+            "-c:a", "libmp3lame",
+            "-q:a", "2",
+            audio_file
+        ]
         
-        # First, check if we have a dedicated audio URL in metadata
-        if audio_url and isinstance(audio_url, str):
-            logger.info(f"Using dedicated audio URL from metadata: {audio_url}")
-            # Test if the audio URL is valid
-            audio_test = self.test_stream_url(audio_url)
-            if audio_test.get("success", False):
-                logger.info(f"Audio URL is valid, using it for audio extraction: {audio_url}")
-                cmd.extend(["-i", audio_url])
-            else:
-                logger.warning(f"Audio URL test failed: {audio_test.get('error', 'Unknown error')}")
-                # Fall back to extracting from source URL
-                if source_url:
-                    logger.info(f"Falling back to source URL: {source_url}")
-                    # Extract stream info to get fresh audio URL
-                    try:
-                        stream_info = self.extract_stream_url(source_url)
-                        fresh_audio_url = stream_info.get("audio_url")
-                        if fresh_audio_url and isinstance(fresh_audio_url, str):
-                            logger.info(f"Using fresh audio URL: {fresh_audio_url}")
-                            cmd.extend(["-i", fresh_audio_url])
-                        else:
-                            logger.warning(f"No valid audio URL found in stream info")
-                            # Fall back to video file if it exists
-                            if video_file and os.path.exists(video_file):
-                                logger.info(f"Falling back to video file: {video_file}")
-                                cmd.extend(["-i", video_file])
-                            else:
-                                logger.error("No valid audio source available")
-                                return {"success": False, "error": "No valid audio source available"}
-                    except Exception as e:
-                        logger.error(f"Failed to extract stream URL: {str(e)}")
-                        # Fall back to video file if it exists
-                        if video_file and os.path.exists(video_file):
-                            logger.info(f"Falling back to video file: {video_file}")
-                            cmd.extend(["-i", video_file])
-                        else:
-                            logger.error("No valid audio source available")
-                            return {"success": False, "error": "No valid audio source available"}
-                else:
-                    logger.error("No source URL available for audio extraction")
-                    return {"success": False, "error": "No source URL available for audio extraction"}
-        # If no audio URL in metadata, try to extract from source URL
-        elif source_url:
-            logger.info(f"No audio URL in metadata, extracting from source URL: {source_url}")
-            try:
-                stream_info = self.extract_stream_url(source_url)
-                fresh_audio_url = stream_info.get("audio_url")
-                if fresh_audio_url and isinstance(fresh_audio_url, str):
-                    logger.info(f"Using audio URL from stream info: {fresh_audio_url}")
-                    cmd.extend(["-i", fresh_audio_url])
-                else:
-                    logger.warning(f"No valid audio URL found in stream info")
-                    # Fall back to video file if it exists
-                    if video_file and os.path.exists(video_file):
-                        logger.info(f"Falling back to video file: {video_file}")
-                        cmd.extend(["-i", video_file])
-                    else:
-                        logger.error("No valid audio source available")
-                        return {"success": False, "error": "No valid audio source available"}
-            except Exception as e:
-                logger.error(f"Failed to extract stream URL: {str(e)}")
-                # Fall back to video file if it exists
-                if video_file and os.path.exists(video_file):
-                    logger.info(f"Falling back to video file: {video_file}")
-                    cmd.extend(["-i", video_file])
-                else:
-                    logger.error("No valid audio source available")
-                    return {"success": False, "error": "No valid audio source available"}
-        # If no source URL, try to use the video file
-        elif video_file and os.path.exists(video_file):
-            logger.info(f"No source URL, using video file: {video_file}")
-            cmd.extend(["-i", video_file])
-        else:
-            logger.error("No valid audio source available")
-            return {"success": False, "error": "No valid audio source available"}
-        # Add network-related options for streaming
-        cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
-        cmd.extend(["-http_persistent", "1"])
-        cmd.extend(["-allowed_extensions", "ALL"])
-        cmd.extend(["-reconnect", "1"])
-        cmd.extend(["-reconnect_streamed", "1"])
-        cmd.extend(["-reconnect_delay_max", "5"])
-        cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-        
-        # Add audio extraction options
-        cmd.extend(["-vn"])  # Disable video
-        cmd.extend(["-c:a", "libmp3lame", "-q:a", "2"])  # Use MP3 codec with good quality
-        cmd.append(audio_file)
-        
-        # Log the full command for debugging
-        logger.info(f"Full ffmpeg command for audio extraction: {' '.join(cmd)}")
+        logger.info(f"Running ffmpeg command with AUDIO URL ONLY: {' '.join(cmd)}")
         
         try:
-            # Create the output directory if it doesn't exist
-            os.makedirs(os.path.dirname(audio_file), exist_ok=True)
-            
-            # Run the command
-            # Explicitly set shell=False to avoid shell parsing issues with URLs containing special characters
-            process = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=False)
+            # Run the ffmpeg command
+            process = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
             
             # Check if the command was successful
-            if process.returncode == 0:
-                logger.info(f"Audio extraction successful. Output file: {audio_file}")
-                
-                # Update the database with the audio file path
-                db_capture.audio_file_path = audio_file
-                db.commit()
-                
-                return {"success": True, "audio_file": audio_file}
-            else:
-                error_msg = f"Audio extraction failed: {process.stderr}"
-                logger.error(error_msg)
-                return {"success": False, "error": error_msg}
+            if process.returncode != 0:
+                error_message = process.stderr if process.stderr else "Unknown error"
+                logger.error(f"Audio extraction failed: {error_message}")
+                return {"success": False, "error": f"Audio extraction failed: {error_message}"}
+            
+            # Audio extraction completed successfully
+            logger.info(f"Audio extraction successful. Output file: {audio_file}")
+            
+            # Update the database
+            db_capture.audio_file_path = audio_file
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": "Audio extraction completed successfully",
+                "audio_file": audio_file
+            }
         except subprocess.TimeoutExpired:
-            error_msg = f"Audio extraction timed out"
+            error_msg = "Audio extraction timed out"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
         except Exception as e:
-            error_msg = f"Error during audio extraction: {str(e)}"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg}
+            logger.error(f"Error executing audio extraction command: {str(e)}")
+            return {"success": False, "error": f"Error executing audio extraction command: {str(e)}"}
 
 
 # Initialize the Parliament TV capture service
