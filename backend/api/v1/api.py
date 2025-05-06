@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, parliament_tv_audio, parliament_tv_video
+from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, parliament_tv_audio, parliament_tv_video, videos_audio
 
 api_router = APIRouter()
 
@@ -7,6 +7,7 @@ api_router.include_router(auth.router, prefix='/auth', tags=['authentication'])
 api_router.include_router(video.router, prefix='/clips', tags=['clips'])
 api_router.include_router(capture.router, prefix='/capture', tags=['capture'])
 api_router.include_router(videos.router, prefix='/videos', tags=['videos'])
+api_router.include_router(videos_audio.router, prefix='/videos-audio', tags=['videos-audio'])
 api_router.include_router(speaker_identification.router, prefix='/speaker-identification', tags=['speaker-identification'])
 # Audio extraction is now handled directly in the parliament_tv service
 api_router.include_router(transcription.router, prefix='/transcription', tags=['transcriptions'])
