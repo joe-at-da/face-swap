@@ -26,14 +26,56 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       try {
         console.log('Starting recognition processing for capture ID:', captureId);
         
-        // Use the API client to make the request
-        const response = await api.post('/recognition/combined-recognition', {
-          video_id: captureId,
-          save_output: true
-        });
+        // Get the token from localStorage for debugging
+        const token = localStorage.getItem('token');
+        console.log('Auth token available:', !!token);
+        if (token) {
+          console.log('Token first 20 chars:', token.substring(0, 20));
+        }
         
-        console.log('Recognition processing response:', response);
-        return response;
+        // Log the API base URL
+        console.log('API base URL:', (api as any).getBaseUrl?.() || 'Not available');
+        
+        // Use the API client to make the request with the correct path
+        console.log('Making request to combined recognition endpoint');
+        console.log('Request payload:', { video_id: captureId, save_output: true });
+        
+        try {
+          // Make sure there's a slash between the base URL and the endpoint
+          const response = await api.post('/recognition/combined-recognition', {
+            video_id: captureId,
+            save_output: true
+          });
+          
+          console.log('Recognition processing response:', response);
+          return response;
+        } catch (error) {
+          console.error('Error details:', error);
+          // Try a direct fetch as a fallback
+          console.log('Trying direct fetch as fallback...');
+          const directResponse = await fetch('http://localhost:8000/api/v1/recognition/combined-recognition', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              video_id: captureId,
+              save_output: true
+            })
+          });
+          
+          console.log('Direct fetch status:', directResponse.status);
+          if (!directResponse.ok) {
+            const errorText = await directResponse.text();
+            console.error('Direct fetch error:', errorText);
+            throw new Error(`Direct fetch error: ${directResponse.status} - ${errorText}`);
+          }
+          
+          const data = await directResponse.json();
+          console.log('Direct fetch response:', data);
+          return data;
+        }
       } catch (error) {
         console.error('Error in recognition processing:', error);
         throw error;
