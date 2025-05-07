@@ -478,14 +478,12 @@ class ParliamentTVCapture:
             # Use MP4 format with faststart to ensure the moov atom is at the beginning
             cmd.extend(["-f", "mp4"])
             cmd.extend(["-movflags", "+faststart"])
-            cmd.append(output_file)
             
             # Store the output file path in the database
+            # Make sure we're using a consistent output path
+            output_file = str(output_path)  # Use the same output path throughout
             db_capture.file_path = output_file
             db.commit()
-            
-            # Avoid negative timestamps
-            cmd.extend(["-avoid_negative_ts", "make_zero"])
             
             # Add duration limit - place it BEFORE the output file but AFTER input options
             # For recorded streams with a time marker, this is the exact duration to capture
@@ -493,7 +491,13 @@ class ParliamentTVCapture:
             cmd.extend(["-t", str(duration)])
             logger.info(f"Setting capture duration to {duration} seconds")
             
-            # Add output file - this must be the last parameter
+            # Avoid negative timestamps
+            cmd.extend(["-avoid_negative_ts", "make_zero"])
+            
+            # Add output file - this must be the last parameter and should not be duplicated
+            # Remove any existing output file in the command to avoid duplication
+            if str(output_path) in cmd:
+                cmd.remove(str(output_path))
             cmd.append(str(output_path))
             
             # Log the full command for debugging
