@@ -1649,6 +1649,16 @@ class ParliamentTVCapture:
         if not duration_to_use and hasattr(db_capture, 'duration') and db_capture.duration:
             duration_to_use = db_capture.duration
             logger.info(f"Using duration from capture record: {duration_to_use} seconds")
+            
+        # CRITICAL: Ensure we have a duration - default to 30 seconds if none is specified
+        if not duration_to_use or duration_to_use <= 0:
+            duration_to_use = 30
+            logger.info(f"No valid duration found, using default: {duration_to_use} seconds")
+            
+        # CRITICAL: Ensure we have a valid time marker
+        if not start_position or start_position < 0:
+            logger.warning("No valid time marker found, starting from beginning of stream")
+            start_position = 0
         
         # Log the final time marker and duration values before building the command
         logger.info(f"FINAL TIME MARKER: {start_position if start_position is not None else 'None'}")
@@ -1686,15 +1696,17 @@ class ParliamentTVCapture:
             # Create a temporary file to store FFmpeg output
             temp_log_file = os.path.join(str(self.temp_dir), f"ffmpeg_log_{capture_id}.txt")
             with open(temp_log_file, 'w') as log_file:
-                # Run FFmpeg with output redirected to the log file
-                logger.info(f"Starting FFmpeg process with timeout of 120 seconds")
+                # Calculate an appropriate timeout based on the duration
+                # Use duration + 60 seconds as a buffer for processing overhead
+                timeout_seconds = (duration_to_use or 30) + 60
+                logger.info(f"Starting FFmpeg process with timeout of {timeout_seconds} seconds (based on duration {duration_to_use} seconds)")
                 try:
                     result = subprocess.run(
                         cmd, 
                         stdout=log_file, 
                         stderr=subprocess.STDOUT,
                         text=True, 
-                        timeout=120  # Reduced timeout from 300 to 120 seconds
+                        timeout=timeout_seconds
                     )
                     # Check immediately if the process failed
                     if result.returncode != 0:
