@@ -653,23 +653,32 @@ class ParliamentTVCapture:
                 logger.info("URL appears to be a direct stream URL already")
                 
                 # Parliament TV has completely separate audio and video streams
-                # DO NOT try to derive one from the other
                 is_audio = 'audio' in url.lower() and not 'video' in url.lower()
                 
                 if is_audio:
-                    logger.info("URL appears to be an audio stream - DO NOT derive video URL from it")
+                    logger.info("URL appears to be an audio stream")
                     return {
-                        "video_url": None,  # DO NOT derive video URL from audio URL
+                        "video_url": None,
                         "audio_url": url,
                         "event_id": "direct",
                         "time_marker": {"seconds": 0},
                         "original_url": url
                     }
                 else:
-                    logger.info("URL appears to be a video stream - DO NOT derive audio URL from it")
+                    logger.info("URL appears to be a video stream")
+                    # For Parliament TV, if we have a direct video URL, try to construct the audio URL
+                    # This is a common pattern in Parliament TV URLs
+                    audio_url = None
+                    if 'video=' in url and '.m3u8' in url:
+                        # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                        # Use regex to handle any video bitrate, not just 3000000
+                        import re
+                        audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', url)
+                        logger.info(f"Constructed audio URL: {audio_url}")
+                    
                     return {
                         "video_url": url,
-                        "audio_url": None,  # DO NOT derive audio URL from video URL
+                        "audio_url": audio_url,
                         "event_id": "direct",
                         "time_marker": {"seconds": 0},
                         "original_url": url
