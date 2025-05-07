@@ -301,20 +301,44 @@ class ParliamentTVCapture:
                     logger.info(f"Using time marker from stream_info: {start_position} seconds")
             
             # Always update the metadata with the URLs - this is critical for later audio extraction
-            if not db_capture.metadata:
+            # Convert metadata to dictionary if it's not already
+            if db_capture.metadata is None:
                 db_capture.metadata = {}
-                
+            elif not isinstance(db_capture.metadata, dict):
+                try:
+                    # Handle SQLAlchemy MetaData objects
+                    if hasattr(db_capture.metadata, '__dict__'):
+                        db_capture.metadata = db_capture.metadata.__dict__
+                    # Try to convert to dictionary if it's a JSON string or other format
+                    else:
+                        db_capture.metadata = dict(db_capture.metadata)
+                except Exception as e:
+                    logger.warning(f"Could not convert metadata to dictionary: {e}")
+                    # Create a fresh metadata dictionary
+                    db_capture.metadata = {}
+                    
+            # Create a new metadata dictionary to avoid modifying the original object
+            new_metadata = {}  # Start with empty dict to avoid reference issues
+            # Copy existing metadata if it's a dict
+            if isinstance(db_capture.metadata, dict):
+                for key, value in db_capture.metadata.items():
+                    new_metadata[key] = value
+            
             # Store video and audio URLs separately in metadata
-            db_capture.metadata["video_url"] = video_url
+            new_metadata["video_url"] = video_url
             if audio_url:
-                db_capture.metadata["audio_url"] = audio_url
+                new_metadata["audio_url"] = audio_url
                 
             # Store time marker if available
             if "time_marker" in stream_info and stream_info["time_marker"]:
-                db_capture.metadata["time_marker"] = stream_info["time_marker"]
+                new_metadata["time_marker"] = stream_info["time_marker"]
                 
-            # Commit the metadata changes
+            # Update the metadata with the new dictionary
+            db_capture.metadata = new_metadata
+            
+            # Commit the changes to ensure metadata is saved
             db.commit()
+            
             logger.info(f"Updated metadata in database with video_url and audio_url")
             
             # Check for time marker in metadata if not found in stream_info

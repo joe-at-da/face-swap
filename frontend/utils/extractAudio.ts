@@ -14,7 +14,7 @@ interface ExtractAudioResponse {
  */
 export const extractAudioForCapture = async (captureId: number): Promise<ExtractAudioResponse> => {
   try {
-    const response = await apiClient.post<ExtractAudioResponse>(`/audio-extraction/${captureId}`);
+    const response = await apiClient.post<ExtractAudioResponse>(`/parliament-tv/audio-extraction/${captureId}`);
     console.log('Audio extraction response:', response.data);
     return response.data;
   } catch (error: any) {

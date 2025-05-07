@@ -938,8 +938,141 @@ async def delete_parliament_tv_capture(
         "files_deleted": files_deleted
     }
 
-# Audio extraction is now handled by the dedicated parliament_tv_audio.py module
-# See /api/v1/audio-extraction/{capture_id} endpoint
+# Integrated audio extraction endpoint
+@router.post("/audio-extraction/{capture_id}", response_model=Dict)
+async def extract_audio_for_capture(
+    capture_id: int = FastAPIPath(..., description='ID of the capture to extract audio from'),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+) -> Dict:
+    '''
+    Extract audio from Parliament TV stream and save it as a separate file.
+    
+    Parliament TV provides completely separate audio and video streams.
+    This endpoint ONLY handles the audio stream - it never extracts audio from video.
+    
+    Returns:
+        Dict: Success status and output file path or error message
+    '''
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the capture
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Capture {capture_id} not found'
+        )
+    
+    # Get the audio URL from metadata
+    audio_url = None
+    if capture.metadata and isinstance(capture.metadata, dict) and 'audio_url' in capture.metadata:
+        audio_url = capture.metadata['audio_url']
+    
+    if not audio_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='No audio URL found in capture metadata'
+        )
+    
+    # Generate output path
+    os.makedirs(AUDIO_EXTRACTS_DIR, exist_ok=True)
+    output_path = os.path.join(AUDIO_EXTRACTS_DIR, f"capture_{capture_id:04d}.audio.mp3")
+    
+    # Extract audio using ffmpeg
+    try:
+        # Create ffmpeg command for audio extraction
+        cmd = [
+            "ffmpeg", "-y",
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-i", audio_url,
+            "-c:a", "libmp3lame",
+            "-q:a", "2",  # High quality (lower number = higher quality for MP3)
+            output_path
+        ]
+        
+        # Execute command
+        process = subprocess.run(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True,
+            check=False
+        )
+        
+        # Check result
+        if process.returncode != 0:
+            error_message = process.stderr if process.stderr else "Unknown error"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Audio extraction failed: {error_message}"
+            )
+            
+        # Verify file exists and has content
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Output file is empty or does not exist"
+            )
+        
+        # Update database with audio file path
+        capture.audio_file_path = output_path
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Audio extracted successfully",
+            "output_file": output_path,
+            "capture_id": capture_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error during audio extraction: {str(e)}"
+        )
+
+@router.get("/audio-extraction/{capture_id}/status", response_model=Dict)
+async def get_audio_extraction_status(
+    capture_id: int = FastAPIPath(..., description='ID of the capture to check audio status for'),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+) -> Dict:
+    '''
+    Check if audio has been extracted for a capture session.
+    
+    Returns:
+        Dict: Status information about the audio extraction
+    '''
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the capture
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Capture {capture_id} not found'
+        )
+    
+    # Check if audio file exists
+    audio_path = capture.audio_file_path
+    audio_exists = audio_path and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0
+    
+    # Check if audio URL exists in metadata
+    audio_url = None
+    if capture.metadata and isinstance(capture.metadata, dict) and 'audio_url' in capture.metadata:
+        audio_url = capture.metadata['audio_url']
+    
+    return {
+        "capture_id": capture_id,
+        "audio_extracted": audio_exists,
+        "audio_file_path": audio_path if audio_exists else None,
+        "audio_url_available": audio_url is not None,
+        "can_extract": audio_url is not None and not audio_exists
+    }
 
 
 @router.post("/cleanup")
