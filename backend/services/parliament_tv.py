@@ -572,64 +572,56 @@ class ParliamentTVCapture:
                 logger.error(error_msg)
                 self.log_capture(db, capture_id, "error", error_msg)
                 return {"success": False, "error": error_msg}
-                
+            
             # Use the video_url directly - it's already been validated as a string
             actual_video_url = video_url
             logger.info(f"Using video URL: {actual_video_url}")
             
-            # Add network-related options to handle Parliament TV URLs
+            # Completely rebuild the FFmpeg command with proper option order
+            # Start with the base command
+            cmd = ["ffmpeg", "-y"]
+            
+            # 1. Add all global options BEFORE any input
+            cmd.extend(["-max_muxing_queue_size", "9999"])
+            cmd.extend(["-vsync", "0"])
+            
+            # 2. Add network and protocol options BEFORE input
             cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
             cmd.extend(["-http_persistent", "1"])
             cmd.extend(["-allowed_extensions", "ALL"])
             cmd.extend(["-reconnect", "1"])
             cmd.extend(["-reconnect_streamed", "1"])
             cmd.extend(["-reconnect_delay_max", "5"])
-            cmd.extend(["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"])
-                
-            # Add input file for video
+            cmd.extend(["-hls_allow_cache", "1"])
+            cmd.extend(["-timeout", "5000000"])  # Add a longer timeout
+            
+            # 3. Add seek option if needed (must be before input for efficiency)
+            if start_position:
+                cmd.extend(["-ss", str(start_position)])
+                logger.info(f"Added seek option to ffmpeg command: -ss {start_position}")
+            
+            # 4. NOW add the input file
             cmd.extend(["-i", actual_video_url])
+            logger.info(f"Using video URL for capture: {actual_video_url}")
             
-            # For Parliament TV, audio and video are completely separate streams
-            # We only capture video here - audio is handled separately
-            logger.info(f"Using video URL for video capture only: {actual_video_url}")
-            
-            # Add options to handle HLS streams better
+            # 5. Add output options AFTER input
+            # HLS stream handling
             cmd.extend(["-live_start_index", "0"])
             cmd.extend(["-avoid_negative_ts", "make_zero"])
             cmd.extend(["-correct_ts_overflow", "1"])
-            cmd.extend(["-timeout", "5000000"])  # Add a longer timeout
             
-            # DO NOT try to use audio from video stream - audio is handled separately
+            # Video codec options
+            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
+            
+            # Disable audio (we'll handle audio separately)
+            cmd.extend(["-an"])
             logger.info("Parliament TV has separate audio and video streams - not using audio from video")
             
-            # Add additional options for better handling of streams
-            cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
-            
-            # Add HLS-specific options
-            cmd.extend(["-hls_allow_cache", "1"])
-            cmd.extend(["-http_persistent", "1"])
-            
-            # Use proper codec options to ensure we have a valid MP4 file
-            # Instead of just copying the video stream, use a specific codec to ensure compatibility
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
-            # Don't try to process audio in the video capture - we'll handle audio separately
-            cmd.extend(["-an"])
-            
-            # Use a direct approach to create an MP4 file with the moov atom at the beginning
+            # Define the output file path
             output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
             
-            # If we have a separate audio URL, add it as a second input
-            if audio_url and isinstance(audio_url, str):
-                logger.info(f"Adding separate audio input: {audio_url}")
-                cmd.extend(["-i", audio_url])
-                
-                # Map video from first input and audio from second input
-                cmd.extend(["-map", "0:v:0"])  # Map the first video stream from first input
-                cmd.extend(["-map", "1:a:0"])  # Map the first audio stream from second input
-            else:
-                # If no separate audio URL, just map the video stream
-                cmd.extend(["-map", "0:v:0"])  # Map the first video stream
-                # Don't map audio - we'll extract it separately later
+            # Map the video stream from the input
+            cmd.extend(["-map", "0:v:0"])  # Map the first video stream
             
             # Use MP4 format with faststart to ensure the moov atom is at the beginning
             cmd.extend(["-f", "mp4"])
@@ -705,14 +697,37 @@ class ParliamentTVCapture:
                     logger.warning(f"Could not remove existing output file: {e}")
             
                 # Start the process in the background with process group detached
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    preexec_fn=os.setpgrp,  # This detaches the process from the parent
-                    close_fds=True,         # Close file descriptors
-                    shell=False             # CRITICAL: Avoid shell parsing issues with URLs
-                )
+                try:
+                    logger.info(f"Starting FFmpeg process with command: {' '.join(cmd)}")
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        preexec_fn=os.setpgrp,  # This detaches the process from the parent
+                        close_fds=True,         # Close file descriptors
+                        shell=False             # CRITICAL: Avoid shell parsing issues with URLs
+                    )
+                    
+                    # Wait a short time to see if the process starts successfully
+                    time.sleep(2)
+                    
+                    # Check if the process is still running
+                    if process.poll() is not None:
+                        # Process has already terminated
+                        exit_code = process.poll()
+                        logger.error(f"FFmpeg process terminated immediately with exit code {exit_code}")
+                        # Read the log file to get error details
+                        log_file.flush()
+                        log_file.close()
+                        with open(log_file_path, 'r') as f:
+                            log_content = f.read()
+                        logger.error(f"FFmpeg error log: {log_content}")
+                        raise Exception(f"FFmpeg process failed to start with exit code {exit_code}")
+                    
+                    logger.info(f"FFmpeg process started successfully with PID {process.pid}")
+                except Exception as e:
+                    logger.error(f"Failed to start FFmpeg process: {str(e)}")
+                    raise
                 
                 logger.info(f"Started ffmpeg process for capture {capture_id} in the background")
                 
@@ -1235,25 +1250,41 @@ class ParliamentTVCapture:
         padded_capture_id = str(capture_id).zfill(4)
         logger.info(f"Using padded capture ID: {padded_capture_id}")
         
-        # Define the output audio file path
+        # Define the output audio file path and ensure directory exists with proper permissions
         audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
-        os.makedirs(audio_dir, exist_ok=True)
+        
+        # Ensure the audio directory exists with proper permissions
+        try:
+            # Create the directory if it doesn't exist
+            os.makedirs(audio_dir, exist_ok=True)
+            logger.info(f"Ensured audio directory exists: {audio_dir}")
+            
+            # Set permissions to ensure it's writable
+            try:
+                os.chmod(audio_dir, 0o777)  # rwx for all users
+                logger.info(f"Set permissions on audio directory: {audio_dir}")
+            except Exception as e:
+                logger.warning(f"Could not set permissions on audio directory: {e}")
+            
+            # Test if the directory is writable
+            test_file = os.path.join(audio_dir, ".test_write")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            logger.info(f"Verified audio directory is writable")
+        except Exception as e:
+            logger.error(f"Failed to create or access audio directory: {str(e)}")
+            # Try to create the directory with a different approach
+            try:
+                subprocess.run(["mkdir", "-p", audio_dir], check=True)
+                subprocess.run(["chmod", "777", audio_dir], check=True)
+                logger.info(f"Created audio directory using subprocess: {audio_dir}")
+            except Exception as e2:
+                logger.error(f"Failed to create audio directory using subprocess: {str(e2)}")
+        
+        # Define the audio file path
         audio_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
         logger.info(f"Audio output file will be: {audio_file}")
-        
-        # Check if the directory exists and is writable
-        if os.path.exists(audio_dir):
-            logger.info(f"Audio directory exists: {audio_dir}")
-            try:
-                test_file = os.path.join(audio_dir, ".test_write")
-                with open(test_file, 'w') as f:
-                    f.write("test")
-                os.remove(test_file)
-                logger.info(f"Audio directory is writable")
-            except Exception as e:
-                logger.warning(f"Audio directory may not be writable: {str(e)}")
-        else:
-            logger.warning(f"Audio directory does not exist: {audio_dir}")
         
         # Sanitize the audio URL - ensure it's properly formatted
         if audio_url and '%' in audio_url:
@@ -1302,13 +1333,20 @@ class ParliamentTVCapture:
             with open(temp_log_file, 'w') as log_file:
                 # Run FFmpeg with output redirected to the log file
                 logger.info(f"Starting FFmpeg process with timeout of 120 seconds")
-                result = subprocess.run(
-                    cmd, 
-                    stdout=log_file, 
-                    stderr=subprocess.STDOUT,
-                    text=True, 
-                    timeout=120  # Reduced timeout from 300 to 120 seconds
-                )
+                try:
+                    result = subprocess.run(
+                        cmd, 
+                        stdout=log_file, 
+                        stderr=subprocess.STDOUT,
+                        text=True, 
+                        timeout=120  # Reduced timeout from 300 to 120 seconds
+                    )
+                    # Check immediately if the process failed
+                    if result.returncode != 0:
+                        logger.error(f"FFmpeg process failed with return code: {result.returncode}")
+                except Exception as e:
+                    logger.error(f"Exception during FFmpeg execution: {str(e)}")
+                    raise
                 logger.info(f"FFmpeg process completed with return code: {result.returncode}")
             # Read the log file contents
             with open(temp_log_file, 'r') as log_file:
@@ -1342,9 +1380,37 @@ class ParliamentTVCapture:
                         validate_result = subprocess.run(validate_cmd, capture_output=True, text=True, timeout=30)
                         
                         if validate_result.returncode == 0:
-                            logger.info(f"Audio file validation successful: {validate_result.stdout}")
+                            # Parse the JSON output to get the duration
+                            import json
+                            try:
+                                probe_data = json.loads(validate_result.stdout)
+                                duration = float(probe_data.get('format', {}).get('duration', 0))
+                                logger.info(f"Audio file validation successful: Duration = {duration} seconds")
+                                
+                                # Check if the duration is too short (less than 1 second)
+                                if duration < 1.0:
+                                    logger.warning(f"Audio file duration is too short: {duration} seconds")
+                                    # Consider this a failed extraction
+                                    os.remove(audio_file)
+                                    logger.info(f"Removed invalid audio file with too short duration: {audio_file}")
+                                    error_result = {"success": False, "error": f"Audio file duration too short: {duration} seconds"}
+                                    if try_new_session and db is not None:
+                                        db.close()
+                                    return error_result
+                            except json.JSONDecodeError as je:
+                                logger.warning(f"Failed to parse ffprobe JSON output: {str(je)}")
+                            except Exception as ex:
+                                logger.warning(f"Error processing ffprobe output: {str(ex)}")
                         else:
                             logger.warning(f"Audio file validation warning: {validate_result.stderr}")
+                            # If validation fails, we should consider the file invalid
+                            if os.path.exists(audio_file):
+                                os.remove(audio_file)
+                                logger.info(f"Removed invalid audio file that failed validation: {audio_file}")
+                                error_result = {"success": False, "error": "Audio file failed validation"}
+                                if try_new_session and db is not None:
+                                    db.close()
+                                return error_result
                     except Exception as e:
                         logger.warning(f"Failed to validate audio file: {str(e)}")
                     

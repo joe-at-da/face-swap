@@ -1119,7 +1119,7 @@ async def extract_audio_for_capture(
         parliament_tv_service = ParliamentTVCapture()
         
         # Call our improved extract_audio method
-        print(f"Calling improved extract_audio method for capture {capture_id}")
+        logger.info(f"Calling improved extract_audio method for capture {capture_id}")
         result = parliament_tv_service.extract_audio(db, capture_id)
         
         if not result.get('success', False):
@@ -1129,7 +1129,7 @@ async def extract_audio_for_capture(
                 'capture_id': capture_id,
                 'source_url': capture.source_url
             }
-            print(f"Audio extraction failed: {error_detail}")
+            logger.error(f"Audio extraction failed: {error_detail}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_detail
@@ -1139,11 +1139,60 @@ async def extract_audio_for_capture(
         output_path = result.get('audio_file')
         
         # Verify file exists and has content
-        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        if not os.path.exists(output_path):
+            logger.error(f"Audio output file does not exist: {output_path}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Output file is empty or does not exist"
+                detail="Audio output file does not exist"
             )
+            
+        if os.path.getsize(output_path) == 0:
+            logger.error(f"Audio output file is empty: {output_path}")
+            # Try to remove the empty file
+            try:
+                os.remove(output_path)
+                logger.info(f"Removed empty audio file: {output_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove empty audio file: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Audio output file is empty"
+            )
+            
+        # Validate the audio file using ffprobe
+        try:
+            validate_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", output_path]
+            validate_result = subprocess.run(validate_cmd, capture_output=True, text=True, timeout=30)
+            
+            if validate_result.returncode != 0:
+                logger.error(f"Audio file validation failed: {validate_result.stderr}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Audio file validation failed"
+                )
+                
+            # Parse the JSON output to get the duration
+            import json
+            try:
+                probe_data = json.loads(validate_result.stdout)
+                duration = float(probe_data.get('format', {}).get('duration', 0))
+                logger.info(f"Audio file validation successful: Duration = {duration} seconds")
+                
+                # Check if the duration is too short (less than 1 second)
+                if duration < 1.0:
+                    logger.warning(f"Audio file duration is too short: {duration} seconds")
+                    # Remove the invalid file
+                    os.remove(output_path)
+                    logger.info(f"Removed invalid audio file with too short duration: {output_path}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Audio file duration too short: {duration} seconds"
+                    )
+            except json.JSONDecodeError as je:
+                logger.warning(f"Failed to parse ffprobe JSON output: {str(je)}")
+        except subprocess.SubprocessError as e:
+            logger.warning(f"Failed to validate audio file: {str(e)}")
+            # Continue anyway since we already checked file existence and size
         
         # The database should already be updated by the extract_audio method,
         # but let's make sure
