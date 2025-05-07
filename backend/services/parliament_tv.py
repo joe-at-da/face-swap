@@ -733,7 +733,6 @@ class ParliamentTVCapture:
                 
                 # Store the stream info in the metadata
                 try:
-                    import json
                     # Create a metadata dictionary with the stream info
                     metadata = {
                         "video_url": video_url,
@@ -741,8 +740,8 @@ class ParliamentTVCapture:
                         "time_marker": stream_info.get("time_marker"),
                         "original_url": stream_info.get("original_url")
                     }
-                    # Convert to JSON string and store in the database
-                    db_capture.metadata = metadata
+                    # Store in the database using the capture_metadata attribute
+                    db_capture.capture_metadata = metadata
                     logger.info(f"Stored metadata in database: {metadata}")
                 except Exception as e:
                     logger.error(f"Failed to store metadata in database: {str(e)}")
@@ -1087,16 +1086,35 @@ class ParliamentTVCapture:
                 # Extract metadata from the capture session
                 metadata = {}
                 
-                # First check if we have metadata in the capture object
-                if db_capture.metadata:
+                # First check if we have metadata in the capture object using the new attribute name
+                if hasattr(db_capture, 'capture_metadata') and db_capture.capture_metadata:
+                    logger.info(f"Found capture_metadata: {type(db_capture.capture_metadata)}")
+                    
+                    # If it's a dictionary, use it directly
+                    if isinstance(db_capture.capture_metadata, dict):
+                        metadata = db_capture.capture_metadata
+                        logger.info(f"Using capture_metadata dictionary with keys: {list(metadata.keys())}")
+                        return metadata
+            
+                # Fallback to the old metadata attribute for backward compatibility
+                if hasattr(db_capture, 'metadata') and db_capture.metadata:
                     logger.info(f"DB Capture metadata format: {type(db_capture.metadata)}")
-                    logger.debug(f"Raw metadata content: {db_capture.metadata}")
                     
                     # Handle different metadata formats
                     if isinstance(db_capture.metadata, dict):
                         # This is the preferred format - a dictionary with our metadata
                         metadata = db_capture.metadata
                         logger.info(f"Found metadata dictionary with keys: {list(metadata.keys())}")
+                        
+                        # Migrate to the new attribute
+                        try:
+                            db_capture.capture_metadata = metadata
+                            db_session.commit()
+                            logger.info(f"Migrated metadata to capture_metadata for capture {capture_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to migrate metadata: {str(e)}")
+                        
+                        return metadata
                         
                     # Check if it's an SQLAlchemy MetaData object (special case)
                     elif str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
@@ -1138,19 +1156,14 @@ class ParliamentTVCapture:
                                 # For non-standard URLs, we can't derive an audio URL
                                 logger.warning(f"Non-standard URL format: {video_url} - cannot derive audio URL")
                                 # We don't set an audio_url in this case
-                            
-                        # Update the database with the new metadata
+                        
+                        # Update the database with the new metadata using the capture_metadata attribute
                         try:
-                            # Use a direct SQL query to update the metadata JSON to ensure it's stored correctly
-                            from sqlalchemy import text
-                            import json
-                            metadata_json = json.dumps(metadata)
-                            stmt = text("UPDATE capture_sessions SET metadata = cast(:metadata_json AS jsonb) WHERE id = :id")
-                            db_session.execute(stmt, {"id": capture_id, "metadata_json": metadata_json})
+                            db_capture.capture_metadata = metadata
                             db_session.commit()
-                            logger.info(f"Updated metadata for capture {capture_id} to fix SQLAlchemy MetaData object")
+                            logger.info(f"Updated capture_metadata for capture {capture_id}")
                         except Exception as e:
-                            logger.error(f"Failed to update metadata: {str(e)}")
+                            logger.error(f"Failed to update capture_metadata: {str(e)}")
                             # Continue with the derived metadata anyway
                     # Handle string format (could be JSON string)
                     elif isinstance(db_capture.metadata, str):
@@ -1160,6 +1173,14 @@ class ParliamentTVCapture:
                             if isinstance(parsed_metadata, dict):
                                 metadata = parsed_metadata
                                 logger.info(f"Parsed metadata from JSON string with keys: {list(metadata.keys())}")
+                                
+                                # Migrate to the new attribute
+                                try:
+                                    db_capture.capture_metadata = metadata
+                                    db_session.commit()
+                                    logger.info(f"Migrated JSON string metadata to capture_metadata for capture {capture_id}")
+                                except Exception as e:
+                                    logger.error(f"Failed to migrate JSON string metadata: {str(e)}")
                         except Exception as e:
                             logger.error(f"Failed to parse metadata string: {str(e)}")
                             # Use the string as-is if it contains useful information

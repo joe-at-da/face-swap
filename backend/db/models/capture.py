@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, BigInteger, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, BigInteger, Text, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -24,6 +24,10 @@ class CaptureSession(Base):
     end_time = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Use capture_metadata as the attribute name to avoid conflict with SQLAlchemy's metadata
+    # This maps to the 'metadata' column in the database
+    capture_metadata = Column('metadata', JSON, nullable=True, default=dict)
     
     # Relationships
     user = relationship("User", back_populates="capture_sessions")
