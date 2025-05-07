@@ -38,7 +38,7 @@ const TranscriptionsPage: React.FC = () => {
   const { data: captures, isLoading: isLoadingCaptures } = useQuery({
     queryKey: ['parliament-tv-captures'],
     queryFn: async () => {
-      const response = await api.get('/parliament-tv/list');
+      const response = await api.get('/parliament-tv/all-captures');
       return response.captures || [];
     },
   });
@@ -47,7 +47,7 @@ const TranscriptionsPage: React.FC = () => {
   const { data: allTranscriptions, isLoading: isLoadingTranscriptions } = useQuery({
     queryKey: ['transcriptions'],
     queryFn: async () => {
-      const response = await api.get('/transcription/parliament-tv-list');
+      const response = await api.get('/transcription/parliament-tv-all');
       return response.transcriptions || [];
     },
   });

@@ -531,7 +531,7 @@ async def test_stream_url(
         "message": "Stream URL is valid" if is_valid else "Stream URL is invalid or cannot be played"
     }
 
-@router.get("/list", response_model=List[Dict])
+@router.get("/all-captures", response_model=List[Dict])
 async def get_parliament_tv_captures(
     status: Optional[str] = None,
     db: Session = Depends(get_db),

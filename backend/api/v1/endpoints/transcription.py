@@ -393,7 +393,7 @@ async def get_parliament_tv_transcriptions_by_capture(
     
     return make_json_serializable(results)
 
-@router.get("/parliament-tv-list", response_model=Dict)
+@router.get("/parliament-tv-all", response_model=Dict)
 async def get_all_parliament_tv_transcriptions(
     limit: int = Query(100, description="Maximum number of transcriptions to return"),
     offset: int = Query(0, description="Offset for pagination"),
