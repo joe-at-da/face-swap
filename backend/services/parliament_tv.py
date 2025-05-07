@@ -1269,27 +1269,39 @@ class ParliamentTVCapture:
         ffmpeg_executable = ["ffmpeg"]
         global_options = ["-y"]  # Overwrite output files without asking
         input_options = []
+        post_input_options = []
         
         # Add network and protocol options as input options
         input_options.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
         input_options.extend(["-http_persistent", "1"])
         input_options.extend(["-allowed_extensions", "ALL"])
         
-        # Add seek option if provided (must come before input for efficiency)
+        # Determine if this is an HLS stream (ends with .m3u8)
+        is_hls = input_url.lower().endswith('.m3u8')
+        logger.info(f"Stream type: {'HLS' if is_hls else 'Regular'} stream")
+        
+        # For HLS streams, we need to place the -ss AFTER the input for accurate seeking
+        # For regular files, placing -ss BEFORE the input is more efficient
         if start_position:
-            input_options.extend(["-ss", str(start_position)])
-            logger.info(f"Added seek option: -ss {start_position}")
+            if is_hls:
+                # For HLS streams, put -ss AFTER input
+                post_input_options.extend(["-ss", str(start_position)])
+                logger.info(f"Added post-input seek option for HLS stream: -ss {start_position}")
+            else:
+                # For regular files, put -ss BEFORE input
+                input_options.extend(["-ss", str(start_position)])
+                logger.info(f"Added pre-input seek option: -ss {start_position}")
         
         # The input URL
         input_url_option = ["-i", input_url]
         
-        # Combine all options in the correct order
-        cmd = ffmpeg_executable + global_options + input_options + input_url_option
-        
-        # Add duration limit if provided - place it AFTER input URL for better accuracy with seeking
+        # Add duration limit if provided - always place AFTER input URL and after seeking
         if duration:
-            cmd.extend(["-t", str(duration)])
+            post_input_options.extend(["-t", str(duration)])
             logger.info(f"Added duration limit: -t {duration}")
+        
+        # Combine all options in the correct order
+        cmd = ffmpeg_executable + global_options + input_options + input_url_option + post_input_options
         
         # Log the command being built
         logger.info(f"Built FFmpeg base command: {' '.join(cmd)}")
@@ -1434,10 +1446,20 @@ class ParliamentTVCapture:
                 
             # Test write access using subprocess (most reliable)
             test_file = os.path.join(absolute_audio_dir, ".test_write_abs")
-            subprocess.run(["touch", test_file], check=True)
-            if not os.path.exists(test_file):
-                raise Exception(f"Failed to create test file in {absolute_audio_dir}")
-            subprocess.run(["rm", test_file], check=True)
+            try:
+                # Try to create the test file
+                subprocess.run(["touch", test_file], check=True)
+                
+                # Verify it exists
+                if not os.path.exists(test_file):
+                    raise Exception(f"Failed to create test file in {absolute_audio_dir}")
+                    
+                # Only try to remove it if it exists
+                if os.path.exists(test_file):
+                    subprocess.run(["rm", test_file])
+            except Exception as e:
+                logger.warning(f"Test file operation failed: {str(e)}")
+                # Don't raise the exception, just log it and continue
             
             # Success - use this directory
             audio_dir = absolute_audio_dir
@@ -1457,9 +1479,14 @@ class ParliamentTVCapture:
                     
                 # Test write access
                 test_file = os.path.join(relative_audio_dir, ".test_write_rel")
-                with open(test_file, 'w') as f:
-                    f.write("test")
-                os.remove(test_file)
+                try:
+                    with open(test_file, 'w') as f:
+                        f.write("test")
+                    if os.path.exists(test_file):
+                        os.remove(test_file)
+                except Exception as e:
+                    logger.warning(f"Test file operation failed: {str(e)}")
+                    # Continue despite the error
                 
                 # Success - use this directory
                 audio_dir = relative_audio_dir
@@ -1479,8 +1506,13 @@ class ParliamentTVCapture:
                         
                     # Test write access using subprocess
                     test_file = os.path.join(relative_audio_dir, ".test_write_rel_sub")
-                    subprocess.run(["touch", test_file], check=True)
-                    subprocess.run(["rm", test_file], check=True)
+                    try:
+                        subprocess.run(["touch", test_file], check=True)
+                        if os.path.exists(test_file):
+                            subprocess.run(["rm", test_file])
+                    except Exception as e:
+                        logger.warning(f"Test file operation failed: {str(e)}")
+                        # Continue despite the error
                     
                     # Success - use this directory
                     audio_dir = relative_audio_dir
@@ -1497,9 +1529,14 @@ class ParliamentTVCapture:
                 
             # Test write permissions one more time
             test_file = os.path.join(audio_dir, ".final_test_write")
-            subprocess.run(["touch", test_file], check=True)
-            subprocess.run(["rm", test_file], check=True)
-            logger.info(f"FINAL VERIFICATION PASSED: Directory exists and is writable: {audio_dir}")
+            try:
+                subprocess.run(["touch", test_file], check=True)
+                if os.path.exists(test_file):
+                    subprocess.run(["rm", test_file])
+                logger.info(f"FINAL VERIFICATION PASSED: Directory exists and is writable: {audio_dir}")
+            except Exception as e:
+                logger.warning(f"Final verification test file operation failed: {str(e)}")
+                # Continue anyway since we've already tried multiple approaches
         except Exception as e:
             logger.error(f"FINAL VERIFICATION FAILED: Directory is not usable: {str(e)}")
             return {"success": False, "error": f"Audio directory verification failed: {str(e)}"}
@@ -1540,7 +1577,7 @@ class ParliamentTVCapture:
                     time_marker_seconds = metadata["time_marker"]["seconds"]
                     if time_marker_seconds > 0:
                         start_position = time_marker_seconds
-                        logger.info(f"Using time marker from metadata: {start_position} seconds")
+                        logger.info(f"Using time marker from metadata dictionary: {start_position} seconds")
                 elif isinstance(metadata["time_marker"], (int, float)):
                     # Handle direct seconds value
                     time_marker_seconds = metadata["time_marker"]
@@ -1551,6 +1588,46 @@ class ParliamentTVCapture:
                     logger.warning(f"Unknown time marker format: {metadata['time_marker']}")
             else:
                 logger.info("No time marker found in metadata")
+                
+            # Also check for time_marker_seconds directly in metadata (alternative format)
+            if start_position is None and "time_marker_seconds" in metadata:
+                time_marker_seconds = metadata["time_marker_seconds"]
+                if isinstance(time_marker_seconds, (int, float)) and time_marker_seconds > 0:
+                    start_position = time_marker_seconds
+                    logger.info(f"Using time_marker_seconds from metadata: {start_position} seconds")
+                    
+            # Check for original_url with time marker in query string format
+            if start_position is None and "original_url" in metadata:
+                original_url = metadata["original_url"]
+                if isinstance(original_url, str) and "?in=" in original_url:
+                    try:
+                        # Extract time marker from URL like https://parliamentlive.tv/event/index/abc?in=12:34:56
+                        time_part = original_url.split("?in=")[1].split("&")[0]
+                        # Parse time in format HH:MM:SS
+                        if ":" in time_part:
+                            time_parts = time_part.split(":")
+                            if len(time_parts) == 3:  # HH:MM:SS
+                                hours, minutes, seconds = map(int, time_parts)
+                                time_marker_seconds = hours * 3600 + minutes * 60 + seconds
+                            elif len(time_parts) == 2:  # MM:SS
+                                minutes, seconds = map(int, time_parts)
+                                time_marker_seconds = minutes * 60 + seconds
+                            
+                            if time_marker_seconds > 0:
+                                start_position = time_marker_seconds
+                                logger.info(f"Extracted time marker from URL: {start_position} seconds from {time_part}")
+                    except Exception as e:
+                        logger.warning(f"Failed to extract time marker from URL: {str(e)}")
+            
+            # Final check - look for event_time_position as used in some metadata formats
+            if start_position is None and "event_time_position" in metadata:
+                try:
+                    time_marker_seconds = int(metadata["event_time_position"])
+                    if time_marker_seconds > 0:
+                        start_position = time_marker_seconds
+                        logger.info(f"Using event_time_position from metadata: {start_position} seconds")
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid event_time_position in metadata: {metadata['event_time_position']}")
             
             # Check for duration
             if "duration" in metadata and metadata["duration"]:
@@ -1561,6 +1638,10 @@ class ParliamentTVCapture:
         if not duration_to_use and hasattr(db_capture, 'duration') and db_capture.duration:
             duration_to_use = db_capture.duration
             logger.info(f"Using duration from capture record: {duration_to_use} seconds")
+        
+        # Log the final time marker and duration values before building the command
+        logger.info(f"FINAL TIME MARKER: {start_position if start_position is not None else 'None'}")
+        logger.info(f"FINAL DURATION: {duration_to_use if duration_to_use is not None else 'None'}")
         
         # Use the build_ffmpeg_command helper function to create the command with proper ordering
         cmd = self.build_ffmpeg_command(
