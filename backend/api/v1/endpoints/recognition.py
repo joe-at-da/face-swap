@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 
-from backend.api.deps import get_db, get_current_active_user
+from backend.api.deps import get_db, get_current_user
 from backend.db import models
 from backend.schemas import recognition as schemas
 from backend.services.recognition import FacialRecognitionService, VoiceRecognitionService
@@ -29,7 +29,7 @@ voice_recognition_service = VoiceRecognitionService()
 async def process_facial_recognition(
     request: schemas.FacialRecognitionRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Process facial recognition for a video.
@@ -70,7 +70,7 @@ async def process_facial_recognition(
 async def process_speaker_identification(
     request: schemas.SpeakerIdentificationRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Process speaker identification for a video.
@@ -113,7 +113,7 @@ async def process_speaker_identification(
 async def process_transcription(
     request: schemas.TranscriptionRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Process transcription for an audio file.
@@ -162,7 +162,7 @@ async def process_transcription(
 async def process_voice_identification(
     request: schemas.VoiceIdentificationRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Process voice identification for an audio file.
@@ -203,7 +203,7 @@ async def process_voice_identification(
 async def process_combined_recognition(
     request: schemas.CombinedRecognitionRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Process combined facial and voice recognition for a video.
@@ -330,7 +330,7 @@ async def process_combined_recognition(
 @router.post("/update-mp-database", response_model=Dict)
 async def update_mp_database(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Update the MP database with the latest photos and face encodings.

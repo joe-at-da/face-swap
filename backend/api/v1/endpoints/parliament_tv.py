@@ -588,60 +588,101 @@ async def get_parliament_tv_captures(
     # Make the response JSON serializable
     return make_json_serializable(result)
 
-@router.get("/{capture_id}", response_model=Dict)
+@router.get("/captures/{capture_id}", response_model=Dict)
 async def get_parliament_tv_capture(
     capture_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
     """Get a specific Parliament TV capture session by ID."""
+    # Check permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
-    # Get the specified capture session
-    capture = db.query(models.CaptureSession).filter(
-        models.CaptureSession.id == capture_id
-    ).first()
-    
-    # Check if it's a Parliament TV capture
-    try:
-        if capture and (not capture.metadata or not isinstance(capture.metadata, dict) or 'parliament_tv_url' not in capture.metadata):
-            capture = None
-    except Exception as e:
-        print(f"Error checking metadata for capture {capture_id}: {str(e)}")
-        capture = None
+    # Get the capture session
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
     
     if not capture:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Parliament TV capture session with ID {capture_id} not found"
+            detail=f"Capture session with ID {capture_id} not found"
         )
     
-    # Format response
-    user = db.query(models.User).filter(models.User.id == capture.user_id).first()
-    metadata = capture.metadata or {}
+    # Check if video file exists
+    video_exists = False
+    if capture.video_path:
+        try:
+            video_exists = os.path.exists(capture.video_path) and os.path.getsize(capture.video_path) > 0
+        except Exception as e:
+            print(f"Error checking video file: {str(e)}")
     
+    # Check if audio file exists
+    audio_exists = False
+    if capture.audio_path:
+        try:
+            audio_exists = os.path.exists(capture.audio_path) and os.path.getsize(capture.audio_path) > 0
+        except Exception as e:
+            print(f"Error checking audio file: {str(e)}")
+    
+    # Get metadata
+    metadata = {}
+    if capture.metadata:
+        try:
+            if isinstance(capture.metadata, str):
+                metadata = json.loads(capture.metadata)
+            else:
+                metadata = capture.metadata
+        except Exception as e:
+            print(f"Error parsing metadata: {str(e)}")
+    
+    # Get transcription information
+    transcription = db.query(models.Transcription).filter(
+        models.Transcription.capture_session_id == capture_id,
+        models.Transcription.source == "parliament-tv"
+    ).first()
+    
+    # Check if facial recognition and speaker identification results exist
+    facial_recognition_exists = False
+    if hasattr(capture, 'facial_recognition_path') and capture.facial_recognition_path:
+        try:
+            facial_recognition_exists = os.path.exists(capture.facial_recognition_path) and os.path.getsize(capture.facial_recognition_path) > 0
+        except Exception as e:
+            print(f"Error checking facial recognition file: {str(e)}")
+    
+    speaker_identification_exists = False
+    speaker_identification_results = None
+    if hasattr(capture, 'speaker_identification_results') and capture.speaker_identification_results:
+        try:
+            speaker_identification_exists = os.path.exists(capture.speaker_identification_results) and os.path.getsize(capture.speaker_identification_results) > 0
+            if speaker_identification_exists:
+                with open(capture.speaker_identification_results, 'r') as f:
+                    speaker_identification_results = json.load(f)
+        except Exception as e:
+            print(f"Error checking speaker identification results: {str(e)}")
+    
+    # Make the response JSON serializable
     response = {
         "id": capture.id,
         "title": capture.title,
+        "description": capture.description,
         "status": capture.status,
-        "url": capture.source_url,
-        "duration": metadata.get("duration"),
-        "facial_recognition_enabled": metadata.get("enable_facial_recognition", False),
-        "start_time": capture.created_at,
-        "end_time": capture.end_time,
-        "file_path": capture.file_path,
-        "file_size": capture.file_size,
-        "created_by_id": user.id,
-        "created_by": {
-            "id": user.id,
-            "name": user.full_name,
-            "email": user.email
-        },
+        "source_url": capture.source_url,
+        "video_path": capture.video_path if video_exists else None,
+        "audio_path": capture.audio_path if audio_exists else None,
+        "video_exists": video_exists,
+        "audio_exists": audio_exists,
         "created_at": capture.created_at,
-        "updated_at": capture.updated_at
+        "updated_at": capture.updated_at,
+        "duration": metadata.get("duration"),
+        "metadata": metadata,
+        "has_transcription": transcription is not None,
+        "transcription_id": transcription.id if transcription else None,
+        "transcription_status": transcription.status if transcription else None,
+        "facial_recognition_path": capture.facial_recognition_path if facial_recognition_exists else None,
+        "has_facial_recognition": facial_recognition_exists,
+        "speaker_identification_results": speaker_identification_results,
+        "has_speaker_identification": speaker_identification_exists
     }
     
-    # Make the response JSON serializable
     return make_json_serializable(response)
 
 @router.post("/{capture_id}/stop", response_model=Dict)
