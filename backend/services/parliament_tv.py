@@ -623,6 +623,9 @@ class ParliamentTVCapture:
             cmd.extend(["-t", str(duration)])
             logger.info(f"Setting capture duration to {duration} seconds")
             
+            # Log the time marker and duration to make it clear what we're doing
+            logger.info(f"VIDEO CAPTURE: Using time marker {start_position if start_position is not None else 'None'} and duration {duration} seconds")
+            
             # This option is already added above, no need to duplicate it
             
             # Add output file - this must be the last parameter and should not be duplicated
@@ -1263,6 +1266,7 @@ class ParliamentTVCapture:
             List of command arguments for subprocess
         """
         logger.info(f"Building FFmpeg command for input URL: {input_url}")
+        logger.info(f"Parameters: start_position={start_position}, duration={duration}")
         
         # Create separate lists for different types of options
         # This ensures proper ordering when we combine them
@@ -1280,31 +1284,38 @@ class ParliamentTVCapture:
         is_hls = input_url.lower().endswith('.m3u8')
         logger.info(f"Stream type: {'HLS' if is_hls else 'Regular'} stream")
         
-        # For HLS streams, we need to place the -ss AFTER the input for accurate seeking
-        # For regular files, placing -ss BEFORE the input is more efficient
-        if start_position:
-            if is_hls:
-                # For HLS streams, put -ss AFTER input
-                post_input_options.extend(["-ss", str(start_position)])
-                logger.info(f"Added post-input seek option for HLS stream: -ss {start_position}")
-            else:
-                # For regular files, put -ss BEFORE input
+        # For HLS streams, we need to handle seeking differently
+        if is_hls and start_position:
+            # For HLS streams, we need to use the -ss option AFTER the input
+            # This is the most accurate way to seek in HLS streams
+            input_url_option = ["-i", input_url]
+            post_input_options.extend(["-ss", str(start_position)])
+            logger.info(f"HLS stream: Added -ss {start_position} AFTER input for accurate seeking")
+            
+            # Add duration AFTER the seek position
+            if duration:
+                post_input_options.extend(["-t", str(duration)])
+                logger.info(f"HLS stream: Added duration limit -t {duration} AFTER seek position")
+        else:
+            # For regular files or when no seeking is needed
+            if start_position:
+                # For regular files, put -ss BEFORE input for efficiency
                 input_options.extend(["-ss", str(start_position)])
-                logger.info(f"Added pre-input seek option: -ss {start_position}")
-        
-        # The input URL
-        input_url_option = ["-i", input_url]
-        
-        # Add duration limit if provided - always place AFTER input URL and after seeking
-        if duration:
-            post_input_options.extend(["-t", str(duration)])
-            logger.info(f"Added duration limit: -t {duration}")
+                logger.info(f"Regular stream: Added -ss {start_position} BEFORE input for efficiency")
+            
+            # Add the input URL
+            input_url_option = ["-i", input_url]
+            
+            # Add duration after input
+            if duration:
+                post_input_options.extend(["-t", str(duration)])
+                logger.info(f"Added duration limit -t {duration} after input")
         
         # Combine all options in the correct order
         cmd = ffmpeg_executable + global_options + input_options + input_url_option + post_input_options
         
-        # Log the command being built
-        logger.info(f"Built FFmpeg base command: {' '.join(cmd)}")
+        # Log the full command for debugging
+        logger.info(f"FINAL FFMPEG COMMAND: {' '.join(cmd)}")
         
         return cmd
         
