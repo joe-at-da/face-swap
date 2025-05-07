@@ -49,7 +49,16 @@ class ParliamentTVCapture:
         self.active_captures = {}
         
         # Start background task to check for completed captures
-        self._start_background_task()
+        try:
+            # Create and start a daemon thread that will run in the background
+            completion_thread = threading.Thread(
+                target=self._check_active_captures_periodically,
+                daemon=True  # This ensures the thread will exit when the main program exits
+            )
+            completion_thread.start()
+            logger.info("Started background task to check for completed captures")
+        except Exception as e:
+            logger.error(f"Failed to start background task: {str(e)}")
         
     def _start_background_task(self):
         """Start a background task to periodically check for captures that should be completed."""
@@ -69,6 +78,7 @@ class ParliamentTVCapture:
         check_interval = 10  # Check every 10 seconds
         
         while True:
+            db = None
             try:
                 # Get a database session
                 db = next(get_db())
@@ -88,6 +98,14 @@ class ParliamentTVCapture:
                 
             except Exception as e:
                 logger.error(f"Error in background capture check: {str(e)}")
+            finally:
+                # Always close the database session to release the connection back to the pool
+                if db is not None:
+                    try:
+                        db.close()
+                        logger.debug("Database session closed successfully in background task")
+                    except Exception as e:
+                        logger.error(f"Error closing database session: {str(e)}")
             
             # Sleep for the check interval
             time.sleep(check_interval)
@@ -104,8 +122,8 @@ class ParliamentTVCapture:
         now = datetime.now()
         if db_capture.scheduled_end and db_capture.scheduled_end.tzinfo:
             # If scheduled_end has timezone, make sure now has the same timezone
-            # Use datetime.timezone.utc instead of pytz
-            now = now.replace(tzinfo=datetime.timezone.utc) if not now.tzinfo else now
+            # Use timezone.utc (imported at the top) instead of pytz
+            now = now.replace(tzinfo=timezone.utc) if not now.tzinfo else now
         
         # Check if the capture has a scheduled end time and if it has passed
         if db_capture.scheduled_end and now >= db_capture.scheduled_end:
@@ -142,8 +160,8 @@ class ParliamentTVCapture:
                 
                 # Handle timezone awareness for comparison
                 if db_capture.start_time.tzinfo and not now.tzinfo:
-                    # Use datetime.timezone.utc instead of pytz
-                    now = now.replace(tzinfo=datetime.timezone.utc)
+                    # Use timezone.utc directly (already imported at the top)
+                    now = now.replace(tzinfo=timezone.utc)
                 
                 if now >= expected_end_time:
                     logger.info(f"Capture {db_capture.id} has reached its duration ({duration_seconds}s), marking as completed")
@@ -568,6 +586,7 @@ class ParliamentTVCapture:
             cmd.extend(["-live_start_index", "0"])
             cmd.extend(["-avoid_negative_ts", "make_zero"])
             cmd.extend(["-correct_ts_overflow", "1"])
+            cmd.extend(["-timeout", "5000000"])  # Add a longer timeout
             
             # DO NOT try to use audio from video stream - audio is handled separately
             logger.info("Parliament TV has separate audio and video streams - not using audio from video")
@@ -581,8 +600,9 @@ class ParliamentTVCapture:
             
             # Use proper codec options to ensure we have a valid MP4 file
             # Instead of just copying the video stream, use a specific codec to ensure compatibility
-            cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "22"])
-            cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
+            # Don't try to process audio in the video capture - we'll handle audio separately
+            cmd.extend(["-an"])
             
             # Use a direct approach to create an MP4 file with the moov atom at the beginning
             output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
@@ -966,12 +986,25 @@ class ParliamentTVCapture:
             return {"success": False, "error": error_msg}
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from Parliament TV - AUDIO ONLY, NEVER FROM VIDEO"""
-        logger.info(f"========== STARTING AUDIO EXTRACTION for capture {capture_id} ==========")
+        logger.info(f"========== STARTING AUDIO EXTRACTION for capture {capture_id} ===========")
+        
+        # Create a new database session for this extraction to avoid connection pool issues
+        try_new_session = False
+        if db is None:
+            try_new_session = True
+            try:
+                db = next(get_db())
+                logger.info(f"Created new database session for audio extraction of capture {capture_id}")
+            except Exception as e:
+                logger.error(f"Failed to create new database session: {str(e)}")
+                return {"success": False, "error": f"Database connection error: {str(e)}"}
         
         # Get the capture session from the database
         db_capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
         if not db_capture:
             logger.error(f"Capture session {capture_id} not found")
+            if try_new_session:
+                db.close()
             return {"success": False, "error": f"Capture session {capture_id} not found"}
         
         logger.info(f"Found capture session {capture_id} with status: {db_capture.status}")
@@ -1023,7 +1056,15 @@ class ParliamentTVCapture:
         # If no audio URL, we can't proceed - NEVER fall back to video
         if not audio_url:
             logger.error("No audio URL found in metadata - cannot extract audio")
-            return {"success": False, "error": "No audio URL found in metadata"}
+            error_result = {"success": False, "error": "No audio URL found in metadata"}
+            # Close the database connection if we created it
+            if try_new_session and db is not None:
+                try:
+                    db.close()
+                    logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error closing database session: {str(e)}")
+            return error_result
         
         # Format the capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
@@ -1093,27 +1134,67 @@ class ParliamentTVCapture:
                     except Exception as e:
                         logger.error(f"Failed to update database with audio file path: {str(e)}")
                     
-                    return {"success": True, "message": "Audio extraction completed successfully", "audio_file": audio_file}
+                    result = {"success": True, "message": "Audio extraction completed successfully", "audio_file": audio_file}
+                    # Close the database connection if we created it
+                    if try_new_session and db is not None:
+                        try:
+                            db.close()
+                            logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
+                        except Exception as e:
+                            logger.error(f"Error closing database session: {str(e)}")
+                    return result
                 else:
                     logger.error(f"Audio file was not created or is empty: {audio_file}")
                     # Check directory permissions
                     output_dir = os.path.dirname(audio_file)
                     if not os.access(output_dir, os.W_OK):
                         logger.error(f"No write permission to directory: {output_dir}")
-                    return {"success": False, "error": "Audio file was not created or is empty"}
+                    error_result = {"success": False, "error": "Audio file was not created or is empty"}
+                    # Close the database connection if we created it
+                    if try_new_session and db is not None:
+                        try:
+                            db.close()
+                            logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
+                        except Exception as e:
+                            logger.error(f"Error closing database session: {str(e)}")
+                    return error_result
             else:
                 logger.error(f"Audio extraction failed for capture {capture_id}: {result.stderr}")
-                return {"success": False, "error": "Audio extraction failed: " + result.stderr}
+                error_result = {"success": False, "error": "Audio extraction failed: " + result.stderr}
+                # Close the database connection if we created it
+                if try_new_session and db is not None:
+                    try:
+                        db.close()
+                        logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
+                    except Exception as e:
+                        logger.error(f"Error closing database session: {str(e)}")
+                return error_result
         except subprocess.TimeoutExpired:
             error_msg = f"Audio extraction timed out for capture {capture_id} after 300 seconds"
             logger.error(error_msg)
-            return {"success": False, "error": error_msg}
+            error_result = {"success": False, "error": error_msg}
+            # Close the database connection if we created it
+            if try_new_session and db is not None:
+                try:
+                    db.close()
+                    logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error closing database session: {str(e)}")
+            return error_result
         except Exception as e:
             error_msg = f"Error executing audio extraction command for capture {capture_id}: {str(e)}"
             logger.error(error_msg)
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return {"success": False, "error": error_msg}
+            error_result = {"success": False, "error": error_msg}
+            # Close the database connection if we created it
+            if try_new_session and db is not None:
+                try:
+                    db.close()
+                    logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error closing database session: {str(e)}")
+            return error_result
 
 
 # Initialize the Parliament TV capture service
