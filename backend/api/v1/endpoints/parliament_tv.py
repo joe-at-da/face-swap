@@ -383,10 +383,15 @@ async def start_parliament_tv_capture(
     return make_json_serializable(response)
 
 @router.get("/extract-url", response_model=Dict)
+@router.post("/extract-url", response_model=Dict)
 async def extract_parliament_tv_url(
-    url: str,
+    url: str = None,
+    url_data: Dict = Body(None),
     current_user: models.User = Depends(get_current_active_user)
 ):
+    # If the URL is provided in the body (POST request), use that
+    if url is None and url_data and "url" in url_data:
+        url = url_data["url"]
     """Extract the direct stream URL from a Parliament TV event page."""
     # Check if user has required permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
