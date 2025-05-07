@@ -1086,9 +1086,20 @@ class ParliamentTVCapture:
                 
                 # Extract metadata from the capture session
                 metadata = {}
+                
+                # First check if we have metadata in the capture object
                 if db_capture.metadata:
+                    logger.info(f"DB Capture metadata format: {type(db_capture.metadata)}")
+                    logger.debug(f"Raw metadata content: {db_capture.metadata}")
+                    
+                    # Handle different metadata formats
+                    if isinstance(db_capture.metadata, dict):
+                        # This is the preferred format - a dictionary with our metadata
+                        metadata = db_capture.metadata
+                        logger.info(f"Found metadata dictionary with keys: {list(metadata.keys())}")
+                        
                     # Check if it's an SQLAlchemy MetaData object (special case)
-                    if str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
+                    elif str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
                         logger.warning(f"Found SQLAlchemy MetaData object for capture {capture_id} - creating fresh metadata dictionary")
                         
                         # First check if we have a source_url in the capture object
@@ -1141,9 +1152,20 @@ class ParliamentTVCapture:
                         except Exception as e:
                             logger.error(f"Failed to update metadata: {str(e)}")
                             # Continue with the derived metadata anyway
-                    elif isinstance(db_capture.metadata, dict):
-                        metadata = db_capture.metadata
-                        logger.info(f"Found metadata dictionary with keys: {list(metadata.keys())}")
+                    # Handle string format (could be JSON string)
+                    elif isinstance(db_capture.metadata, str):
+                        try:
+                            import json
+                            parsed_metadata = json.loads(db_capture.metadata)
+                            if isinstance(parsed_metadata, dict):
+                                metadata = parsed_metadata
+                                logger.info(f"Parsed metadata from JSON string with keys: {list(metadata.keys())}")
+                        except Exception as e:
+                            logger.error(f"Failed to parse metadata string: {str(e)}")
+                            # Use the string as-is if it contains useful information
+                            if 'video_url' in db_capture.metadata or 'audio_url' in db_capture.metadata:
+                                logger.info(f"Using metadata string as-is: {db_capture.metadata}")
+                                metadata['raw_metadata'] = db_capture.metadata
                     elif hasattr(db_capture.metadata, '__dict__'):
                         # Handle object-like metadata
                         try:
