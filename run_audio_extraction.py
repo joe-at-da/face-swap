@@ -1,41 +1,57 @@
 #!/usr/bin/env python3
 """
 Run audio extraction for a specific capture ID.
-This script bypasses the syntax issues in parliament_tv.py and directly runs the extract_audio_for_capture.py script.
+This script directly uses the extract_audio function from the parliament_tv module.
 """
 
 import os
 import sys
-import subprocess
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('run-audio-extraction')
+
+# Add the current directory to the path so we can import from backend
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import the extract_audio function from the parliament_tv module
+from backend.services.parliament_tv import extract_audio
+from backend.db.session import get_db
 
 def run_audio_extraction(capture_id):
     """Run audio extraction for a specific capture ID."""
     print(f"Running audio extraction for capture ID: {capture_id}")
     
-    # Path to the extract_audio_for_capture.py script
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "extract_audio_for_capture.py")
-    
-    if not os.path.exists(script_path):
-        print(f"Error: Script not found at {script_path}")
-        return False
-    
-    # Run the script
-    cmd = [sys.executable, script_path, str(capture_id)]
-    print(f"Running command: {' '.join(cmd)}")
-    
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Get a database session
+        db = next(get_db())
         
-        if result.returncode == 0:
-            print(f"Audio extraction successful for capture ID: {capture_id}")
-            print(f"Output: {result.stdout}")
-            return True
-        else:
-            print(f"Audio extraction failed for capture ID: {capture_id}")
-            print(f"Error: {result.stderr}")
-            return False
+        try:
+            # Call the extract_audio function directly
+            logger.info(f"Calling extract_audio function for capture ID: {capture_id}")
+            result = extract_audio(db, capture_id)
+            
+            if result.get('success'):
+                print(f"Audio extraction successful for capture ID: {capture_id}")
+                print(f"Audio file: {result.get('audio_file')}")
+                print(f"File size: {result.get('file_size', 'unknown')} bytes")
+                return True
+            else:
+                print(f"Audio extraction failed for capture ID: {capture_id}")
+                print(f"Error: {result.get('error')}")
+                return False
+        finally:
+            # Always close the database session
+            db.close()
+            logger.info("Closed database session")
     except Exception as e:
         print(f"Error running audio extraction: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 if __name__ == "__main__":

@@ -1012,7 +1012,42 @@ class ParliamentTVCapture:
                 # Extract metadata from the capture session
                 metadata = {}
                 if db_capture.metadata:
-                    if isinstance(db_capture.metadata, dict):
+                    # Check if it's an SQLAlchemy MetaData object (special case)
+                    if str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
+                        logger.warning(f"Found SQLAlchemy MetaData object for capture {capture_id} - creating empty metadata")
+                        # We can't use this object directly, so we'll try to extract source_url from the capture
+                        if hasattr(db_capture, 'source_url') and db_capture.source_url:
+                            video_url = db_capture.source_url
+                            metadata['video_url'] = video_url
+                            logger.info(f"Added video_url from source_url: {video_url}")
+                            
+                            # Try to derive audio URL from video URL if possible
+                            if '.m3u8' in video_url:
+                                # Standard Parliament TV format
+                                potential_audio_url = video_url.replace('video', 'audio')
+                                if 'eng=' not in potential_audio_url:
+                                    potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                                metadata['audio_url'] = potential_audio_url
+                                logger.info(f"Derived audio_url from video_url: {potential_audio_url}")
+                            else:
+                                # For non-standard URLs, we can't derive an audio URL
+                                logger.warning(f"Non-standard URL format: {video_url} - cannot derive audio URL")
+                                # We don't set an audio_url in this case
+                        
+                        # Update the database with the new metadata
+                        try:
+                            # Use a direct SQL query to update the metadata JSON to ensure it's stored correctly
+                            from sqlalchemy import text
+                            import json
+                            metadata_json = json.dumps(metadata)
+                            stmt = text("UPDATE capture_sessions SET metadata = cast(:metadata_json AS jsonb) WHERE id = :id")
+                            db_session.execute(stmt, {"id": capture_id, "metadata_json": metadata_json})
+                            db_session.commit()
+                            logger.info(f"Updated metadata for capture {capture_id} to fix SQLAlchemy MetaData object")
+                        except Exception as e:
+                            logger.error(f"Failed to update metadata: {str(e)}")
+                            # Continue with the derived metadata anyway
+                    elif isinstance(db_capture.metadata, dict):
                         metadata = db_capture.metadata
                         logger.info(f"Found metadata dictionary with keys: {list(metadata.keys())}")
                     elif hasattr(db_capture.metadata, '__dict__'):
@@ -1040,6 +1075,26 @@ class ParliamentTVCapture:
                     }]
                     logger.info(f"Added audio_url to media list: {metadata['audio_url']}")
                 
+                # If we have source_url but no video_url or audio_url, try to derive them
+                if 'source_url' in metadata and not ('video_url' in metadata or 'audio_url' in metadata):
+                    source_url = metadata['source_url']
+                    if source_url and '.m3u8' in source_url:
+                        metadata['video_url'] = source_url
+                        logger.info(f"Added video_url from source_url: {source_url}")
+                        
+                        # Try to derive audio URL
+                        potential_audio_url = source_url.replace('video', 'audio')
+                        if 'eng=' not in potential_audio_url:
+                            potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                        metadata['audio_url'] = potential_audio_url
+                        logger.info(f"Derived audio_url from source_url: {potential_audio_url}")
+                        
+                        # Add to media list for compatibility
+                        metadata['media'] = [
+                            {'type': 'video', 'url': source_url},
+                            {'type': 'audio', 'url': potential_audio_url}
+                        ]
+            
                 return metadata
             finally:
                 db_session.close()
@@ -1078,30 +1133,52 @@ class ParliamentTVCapture:
         # Try to find audio URLs in the metadata
         audio_urls = []
         try:
+            # Get metadata using our improved method
             metadata = self.get_metadata(capture_id)
             logger.info(f"Retrieved metadata for capture {capture_id}")
             
-            if metadata and 'media' in metadata:
+            # Check for audio URLs in the 'media' list (preferred format)
+            if metadata and 'media' in metadata and isinstance(metadata['media'], list):
                 logger.info(f"Found {len(metadata['media'])} media items in metadata")
                 for media_item in metadata['media']:
-                    logger.info(f"Media item type: {media_item.get('type')}")
-                    if media_item.get('type') == 'audio':
-                        audio_urls.append(media_item.get('url'))
-                        logger.info(f"Found audio URL in metadata: {media_item.get('url')}")
-            else:
-                logger.warning(f"No 'media' key found in metadata or metadata is empty")
-                
-                # Check for direct audio_url in metadata
-                if db_capture.metadata and isinstance(db_capture.metadata, dict):
-                    audio_url = db_capture.metadata.get("audio_url")
+                    if isinstance(media_item, dict) and media_item.get('type') == 'audio' and media_item.get('url'):
+                        audio_url = media_item.get('url')
+                        audio_urls.append(audio_url)
+                        logger.info(f"Found audio URL in media list: {audio_url}")
+            
+            # Check for direct audio_url in metadata (alternative format)
+            if not audio_urls and metadata and 'audio_url' in metadata:
+                audio_url = metadata['audio_url']
+                if audio_url:
+                    audio_urls.append(audio_url)
+                    logger.info(f"Found direct audio_url in metadata: {audio_url}")
+            
+            # Check directly in db_capture.metadata as a fallback
+            if not audio_urls and db_capture.metadata:
+                # Check if it's a dictionary
+                if isinstance(db_capture.metadata, dict) and 'audio_url' in db_capture.metadata:
+                    audio_url = db_capture.metadata.get('audio_url')
                     if audio_url:
                         audio_urls.append(audio_url)
-                        logger.info(f"Found audio_url in metadata dictionary: {audio_url}")
-                elif db_capture.metadata and hasattr(db_capture.metadata, 'audio_url'):
+                        logger.info(f"Found audio_url in db_capture.metadata dictionary: {audio_url}")
+                # Check if it has an audio_url attribute
+                elif hasattr(db_capture.metadata, 'audio_url'):
                     audio_url = db_capture.metadata.audio_url
                     if audio_url:
                         audio_urls.append(audio_url)
-                        logger.info(f"Found audio_url as attribute: {audio_url}")
+                        logger.info(f"Found audio_url as attribute in db_capture.metadata: {audio_url}")
+            
+            # If we still don't have any audio URLs, try to derive one from video_url if present
+            if not audio_urls and metadata and 'video_url' in metadata:
+                video_url = metadata['video_url']
+                if video_url and '.m3u8' in video_url:
+                    # Try to derive audio URL by replacing 'video' with 'audio' in the URL
+                    potential_audio_url = video_url.replace('video', 'audio')
+                    # Add audio quality parameter if not present
+                    if 'eng=' not in potential_audio_url:
+                        potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                    audio_urls.append(potential_audio_url)
+                    logger.info(f"Derived potential audio URL from video URL: {potential_audio_url}")
             
             if not audio_urls:
                 logger.warning(f"No audio URLs found in metadata for capture {capture_id}")
@@ -1109,7 +1186,7 @@ class ParliamentTVCapture:
                 logger.info(f"Metadata structure: {str(metadata)[:1000]}..." if metadata and len(str(metadata)) > 1000 else f"Metadata structure: {metadata}")
                 logger.warning(f"DB Capture metadata format: {type(db_capture.metadata)}")
                 if db_capture.metadata:
-                    logger.warning(f"DB Capture metadata content: {str(db_capture.metadata)[:1000]}..." if len(str(db_capture.metadata)) > 1000 else db_capture.metadata)
+                    logger.warning(f"DB Capture metadata content: {str(db_capture.metadata)[:1000]}..." if len(str(db_capture.metadata)) > 1000 else str(db_capture.metadata))
         except Exception as e:
             logger.error(f"Error retrieving metadata for capture {capture_id}: {str(e)}")
             import traceback
@@ -1161,10 +1238,17 @@ class ParliamentTVCapture:
             "ffmpeg",
             "-y",  # Overwrite output files without asking
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-reconnect", "1",  # Enable reconnection
+            "-reconnect_streamed", "1",  # Enable reconnection for streamed content
+            "-reconnect_delay_max", "5",  # Maximum delay between reconnection attempts
             "-i", audio_url,  # Input audio URL
             "-c:a", "libmp3lame",  # Use MP3 codec
             "-q:a", "2",  # Quality setting for audio
             "-vn",  # No video
+            "-hide_banner",  # Hide banner information
+            "-stats",  # Show progress stats
+            "-write_xing", "0",  # Disable Xing headers
+            "-id3v2_version", "4",  # Set ID3v2 version
             audio_file  # Output file
         ]
         
@@ -1179,7 +1263,31 @@ class ParliamentTVCapture:
         try:
             # Run the command with a timeout
             logger.info(f"Running audio extraction command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            # Create a temporary file to store FFmpeg output
+            temp_log_file = os.path.join(str(self.temp_dir), f"ffmpeg_log_{capture_id}.txt")
+            with open(temp_log_file, 'w') as log_file:
+                # Run FFmpeg with output redirected to the log file
+                result = subprocess.run(
+                    cmd, 
+                    stdout=log_file, 
+                    stderr=subprocess.STDOUT,
+                    text=True, 
+                    timeout=300
+                )
+            
+            # Read the log file contents
+            with open(temp_log_file, 'r') as log_file:
+                ffmpeg_output = log_file.read()
+            
+            # Clean up the temporary log file
+            try:
+                os.remove(temp_log_file)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary log file: {str(e)}")
+            
+            # Set the result stdout and stderr for compatibility with existing code
+            result.stdout = ffmpeg_output
+            result.stderr = ""
             
             # Log command output regardless of success/failure for debugging
             logger.info(f"FFmpeg stdout: {result.stdout[:500]}..." if len(result.stdout) > 500 else f"FFmpeg stdout: {result.stdout}")
@@ -1190,17 +1298,33 @@ class ParliamentTVCapture:
                 logger.info(f"Audio extraction successful for capture {capture_id}")
                 # Verify the file was created
                 if os.path.exists(audio_file) and os.path.getsize(audio_file) > 0:
-                    logger.info(f"Audio file created successfully: {audio_file} (size: {os.path.getsize(audio_file)} bytes)")
+                    file_size = os.path.getsize(audio_file)
+                    logger.info(f"Audio file created successfully: {audio_file} (size: {file_size} bytes)")
+                    
+                    # Validate the audio file using ffprobe
+                    try:
+                        validate_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_file]
+                        validate_result = subprocess.run(validate_cmd, capture_output=True, text=True, timeout=30)
+                        
+                        if validate_result.returncode == 0:
+                            logger.info(f"Audio file validation successful: {validate_result.stdout}")
+                        else:
+                            logger.warning(f"Audio file validation warning: {validate_result.stderr}")
+                    except Exception as e:
+                        logger.warning(f"Failed to validate audio file: {str(e)}")
                     
                     # Update the database with the audio file path
                     try:
                         db_capture.audio_file_path = audio_file
+                        # Add file size if the column exists in the database model
+                        if hasattr(db_capture, 'audio_file_size'):
+                            db_capture.audio_file_size = file_size
                         db.commit()
                         logger.info(f"Updated database with audio file path for capture {capture_id}")
                     except Exception as e:
                         logger.error(f"Failed to update database with audio file path: {str(e)}")
                     
-                    result = {"success": True, "message": "Audio extraction completed successfully", "audio_file": audio_file}
+                    result = {"success": True, "message": "Audio extraction completed successfully", "audio_file": audio_file, "file_size": file_size}
                     # Close the database connection if we created it
                     if try_new_session and db is not None:
                         try:
