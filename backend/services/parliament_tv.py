@@ -788,6 +788,9 @@ class ParliamentTVCapture:
             logger.info(f"Extracting stream URL from: {url}")
             
             # Store the original URL to preserve it throughout the process
+            # Import urlparse and parse_qs within the method scope to ensure they're available
+            from urllib.parse import urlparse, parse_qs
+            
             original_url = url
             
             # Extract time marker from the original URL first
