@@ -1411,27 +1411,39 @@ class ParliamentTVCapture:
         try:
             # First check if the parent directory exists and is writable
             parent_dir = str(self.temp_dir)
+            logger.info(f"Checking parent directory: {parent_dir}")
+            
+            # Create parent directory if it doesn't exist
             if not os.path.exists(parent_dir):
                 logger.info(f"Creating parent directory: {parent_dir}")
-                os.makedirs(parent_dir, exist_ok=True)
+                try:
+                    os.makedirs(parent_dir, exist_ok=True)
+                except Exception as e:
+                    logger.error(f"Failed to create parent directory with os.makedirs: {str(e)}")
+                    # Fallback to subprocess
+                    subprocess.run(["mkdir", "-p", parent_dir], check=True)
+                
+                # Set permissions
                 try:
                     os.chmod(parent_dir, 0o777)  # rwx for all users
                 except Exception as e:
                     logger.warning(f"Could not set permissions on parent directory: {e}")
+                    subprocess.run(["chmod", "777", parent_dir], check=True)
             
-            # Now create the audio directory
+            # Now create the audio directory - use subprocess first for reliability
             logger.info(f"Creating audio directory: {audio_dir}")
-            os.makedirs(audio_dir, exist_ok=True)
-            logger.info(f"Ensured audio directory exists: {audio_dir}")
+            subprocess.run(["mkdir", "-p", audio_dir], check=True)
+            subprocess.run(["chmod", "777", audio_dir], check=True)
+            logger.info(f"Created audio directory using subprocess: {audio_dir}")
             
-            # Set permissions to ensure it's writable
-            try:
-                os.chmod(audio_dir, 0o777)  # rwx for all users
-                logger.info(f"Set permissions on audio directory: {audio_dir}")
-            except Exception as e:
-                logger.warning(f"Could not set permissions on audio directory: {e}")
+            # Verify the directory exists
+            if os.path.exists(audio_dir):
+                logger.info(f"Verified audio directory exists: {audio_dir}")
+            else:
+                logger.error(f"Audio directory does not exist after creation attempts: {audio_dir}")
+                raise Exception(f"Failed to create audio directory: {audio_dir}")
             
-            # Test if the directory is writable using a different approach
+            # Test if the directory is writable
             try:
                 test_file = os.path.join(audio_dir, ".test_write")
                 with open(test_file, 'w') as f:
@@ -1440,28 +1452,30 @@ class ParliamentTVCapture:
                 logger.info(f"Verified audio directory is writable")
             except Exception as write_error:
                 logger.warning(f"Could not write test file: {write_error}")
-                # Try to create the directory with subprocess as a fallback
-                subprocess.run(["mkdir", "-p", audio_dir], check=True)
-                subprocess.run(["chmod", "777", audio_dir], check=True)
-                logger.info(f"Created audio directory using subprocess: {audio_dir}")
+                # Try one more approach - create with full permissions
+                subprocess.run(["touch", os.path.join(audio_dir, ".test_write2")], check=True)
+                subprocess.run(["chmod", "666", os.path.join(audio_dir, ".test_write2")], check=True)
+                subprocess.run(["rm", os.path.join(audio_dir, ".test_write2")], check=True)
+                logger.info(f"Verified audio directory is writable using touch command")
         except Exception as e:
             logger.error(f"Failed to create or access audio directory: {str(e)}")
-            # Try to create the directory with a different approach as a last resort
+            # Last resort - try with absolute path
             try:
-                subprocess.run(["mkdir", "-p", audio_dir], check=True)
-                subprocess.run(["chmod", "777", audio_dir], check=True)
-                logger.info(f"Created audio directory using subprocess as last resort: {audio_dir}")
-            except Exception as e2:
-                logger.error(f"Failed to create audio directory using subprocess: {str(e2)}")
-                # Create a different directory as a fallback
-                try:
-                    audio_dir = "/tmp/audio_extracts"
-                    subprocess.run(["mkdir", "-p", audio_dir], check=True)
-                    subprocess.run(["chmod", "777", audio_dir], check=True)
-                    logger.info(f"Created fallback audio directory in /tmp: {audio_dir}")
-                except Exception as e3:
-                    logger.error(f"Failed to create fallback audio directory: {str(e3)}")
-                    return {"success": False, "error": "Could not create audio directory"}
+                absolute_audio_dir = "/app/data/temp/audio_extracts"
+                logger.info(f"Attempting to create directory with absolute path: {absolute_audio_dir}")
+                subprocess.run(["mkdir", "-p", absolute_audio_dir], check=True)
+                subprocess.run(["chmod", "777", absolute_audio_dir], check=True)
+                # Update the audio_dir to use the absolute path
+                audio_dir = absolute_audio_dir
+                logger.info(f"Created audio directory with absolute path: {audio_dir}")
+            except Exception as absolute_error:
+                logger.error(f"Failed to create audio directory with absolute path: {str(absolute_error)}")
+                return {"success": False, "error": "Could not create audio directory"}
+        
+        # Double check that the directory exists before proceeding
+        if not os.path.exists(audio_dir):
+            logger.error(f"Audio directory does not exist after all creation attempts: {audio_dir}")
+            return {"success": False, "error": "Failed to create audio directory"}
         
         # Define the audio file path
         audio_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
