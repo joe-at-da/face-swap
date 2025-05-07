@@ -1233,7 +1233,14 @@ async def get_capture_status(
     # Check permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
-    # Get the capture with minimal query (only select needed fields)
+    # Get the full capture object to check completion status
+    capture_full = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    
+    if capture_full and capture_full.status == "active":
+        # Check if the capture should be completed based on duration/scheduled end
+        parliament_tv_service.check_capture_completion(db, capture_full)
+    
+    # Get the capture with minimal query (only select needed fields) - refresh after potential status update
     capture = db.query(
         models.CaptureSession.id,
         models.CaptureSession.status,

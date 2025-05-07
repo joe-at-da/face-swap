@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import re
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
 
@@ -47,6 +47,131 @@ class ParliamentTVCapture:
         
         # Initialize active captures dictionary
         self.active_captures = {}
+        
+        # Start background task to check for completed captures
+        self._start_background_task()
+        
+    def _start_background_task(self):
+        """Start a background task to periodically check for captures that should be completed."""
+        try:
+            # Create and start a daemon thread that will run in the background
+            completion_thread = threading.Thread(
+                target=self._check_active_captures_periodically,
+                daemon=True  # This ensures the thread will exit when the main program exits
+            )
+            completion_thread.start()
+            logger.info("Started background task to check for completed captures")
+        except Exception as e:
+            logger.error(f"Failed to start background task: {str(e)}")
+    
+    def _check_active_captures_periodically(self):
+        """Periodically check for active captures that should be completed."""
+        check_interval = 10  # Check every 10 seconds
+        
+        while True:
+            try:
+                # Get a database session
+                db = next(get_db())
+                
+                # Query all active captures
+                active_captures = db.query(Capture).filter(Capture.status == "active").all()
+                
+                if active_captures:
+                    logger.info(f"Checking {len(active_captures)} active captures for completion")
+                    
+                    # Check each active capture
+                    for capture in active_captures:
+                        try:
+                            self.check_capture_completion(db, capture)
+                        except Exception as e:
+                            logger.error(f"Error checking capture {capture.id} for completion: {str(e)}")
+                
+            except Exception as e:
+                logger.error(f"Error in background capture check: {str(e)}")
+            
+            # Sleep for the check interval
+            time.sleep(check_interval)
+    
+    def check_capture_completion(self, db: Session, db_capture: Capture) -> None:
+        """Check if a capture has completed based on its duration and scheduled end time.
+        If completed, update its status and trigger audio extraction.
+        """
+        # Only check active captures
+        if db_capture.status != "active":
+            return
+            
+        # Get the current time with timezone awareness if needed
+        now = datetime.now()
+        if db_capture.scheduled_end and db_capture.scheduled_end.tzinfo:
+            # If scheduled_end has timezone, make sure now has the same timezone
+            # Use datetime.timezone.utc instead of pytz
+            now = now.replace(tzinfo=datetime.timezone.utc) if not now.tzinfo else now
+        
+        # Check if the capture has a scheduled end time and if it has passed
+        if db_capture.scheduled_end and now >= db_capture.scheduled_end:
+            logger.info(f"Capture {db_capture.id} has reached its scheduled end time, marking as completed")
+            db_capture.status = "completed"
+            db_capture.end_time = now
+            
+            # Log the file path for verification
+            if hasattr(db_capture, 'file_path') and db_capture.file_path:
+                logger.info(f"Capture {db_capture.id} video file path: {db_capture.file_path}")
+                if os.path.exists(db_capture.file_path):
+                    file_size = os.path.getsize(db_capture.file_path)
+                    logger.info(f"Video file exists with size: {file_size} bytes")
+                else:
+                    logger.warning(f"Video file does not exist at path: {db_capture.file_path}")
+            
+            db.commit()
+            
+            # Trigger audio extraction
+            logger.info(f"Automatically triggering audio extraction for completed capture {db_capture.id}")
+            try:
+                audio_result = self.extract_audio(db, db_capture.id)
+                logger.info(f"Audio extraction result: {audio_result}")
+            except Exception as e:
+                logger.error(f"Failed to extract audio for capture {db_capture.id}: {str(e)}")
+            return
+            
+        # Check if the capture has been running for its specified duration
+        if db_capture.start_time and hasattr(db_capture, 'duration') and db_capture.duration:
+            # Convert duration to integer if it's not already
+            try:
+                duration_seconds = int(db_capture.duration)
+                expected_end_time = db_capture.start_time + timedelta(seconds=duration_seconds)
+                
+                # Handle timezone awareness for comparison
+                if db_capture.start_time.tzinfo and not now.tzinfo:
+                    # Use datetime.timezone.utc instead of pytz
+                    now = now.replace(tzinfo=datetime.timezone.utc)
+                
+                if now >= expected_end_time:
+                    logger.info(f"Capture {db_capture.id} has reached its duration ({duration_seconds}s), marking as completed")
+                    db_capture.status = "completed"
+                    db_capture.end_time = now
+                    
+                    # Log the file path for verification
+                    if hasattr(db_capture, 'file_path') and db_capture.file_path:
+                        logger.info(f"Capture {db_capture.id} video file path: {db_capture.file_path}")
+                        if os.path.exists(db_capture.file_path):
+                            file_size = os.path.getsize(db_capture.file_path)
+                            logger.info(f"Video file exists with size: {file_size} bytes")
+                        else:
+                            logger.warning(f"Video file does not exist at path: {db_capture.file_path}")
+                    
+                    db.commit()
+                    
+                    # Trigger audio extraction
+                    logger.info(f"Automatically triggering audio extraction for completed capture {db_capture.id}")
+                    try:
+                        audio_result = self.extract_audio(db, db_capture.id)
+                        logger.info(f"Audio extraction result: {audio_result}")
+                    except Exception as e:
+                        logger.error(f"Failed to extract audio for capture {db_capture.id}: {str(e)}")
+                    return
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Could not convert duration to integer for capture {db_capture.id}: {str(e)}")
+                return
 
     def stop_capture(self, capture_id: int) -> Dict:
         """Stop a running capture and download the separate audio stream."""
@@ -841,7 +966,7 @@ class ParliamentTVCapture:
             return {"success": False, "error": error_msg}
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from Parliament TV - AUDIO ONLY, NEVER FROM VIDEO"""
-        logger.info(f"Extracting audio for capture {capture_id}")
+        logger.info(f"========== STARTING AUDIO EXTRACTION for capture {capture_id} ==========")
         
         # Get the capture session from the database
         db_capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
@@ -849,14 +974,51 @@ class ParliamentTVCapture:
             logger.error(f"Capture session {capture_id} not found")
             return {"success": False, "error": f"Capture session {capture_id} not found"}
         
-        # Check if we have metadata with audio_url - ONLY SOURCE OF AUDIO
-        audio_url = None
-        if db_capture.metadata and isinstance(db_capture.metadata, dict):
-            audio_url = db_capture.metadata.get("audio_url")
-        elif db_capture.metadata and hasattr(db_capture.metadata, 'audio_url'):
-            audio_url = db_capture.metadata.audio_url
+        logger.info(f"Found capture session {capture_id} with status: {db_capture.status}")
+        
+        # Try to find audio URLs in the metadata
+        audio_urls = []
+        try:
+            metadata = self.get_metadata(capture_id)
+            logger.info(f"Retrieved metadata for capture {capture_id}")
             
-        logger.info(f"Audio URL: {audio_url}")
+            if metadata and 'media' in metadata:
+                logger.info(f"Found {len(metadata['media'])} media items in metadata")
+                for media_item in metadata['media']:
+                    logger.info(f"Media item type: {media_item.get('type')}")
+                    if media_item.get('type') == 'audio':
+                        audio_urls.append(media_item.get('url'))
+                        logger.info(f"Found audio URL in metadata: {media_item.get('url')}")
+            else:
+                logger.warning(f"No 'media' key found in metadata or metadata is empty")
+                
+                # Check for direct audio_url in metadata
+                if db_capture.metadata and isinstance(db_capture.metadata, dict):
+                    audio_url = db_capture.metadata.get("audio_url")
+                    if audio_url:
+                        audio_urls.append(audio_url)
+                        logger.info(f"Found audio_url in metadata dictionary: {audio_url}")
+                elif db_capture.metadata and hasattr(db_capture.metadata, 'audio_url'):
+                    audio_url = db_capture.metadata.audio_url
+                    if audio_url:
+                        audio_urls.append(audio_url)
+                        logger.info(f"Found audio_url as attribute: {audio_url}")
+            
+            if not audio_urls:
+                logger.warning(f"No audio URLs found in metadata for capture {capture_id}")
+                # Log the structure of metadata for debugging
+                logger.info(f"Metadata structure: {str(metadata)[:1000]}..." if metadata and len(str(metadata)) > 1000 else f"Metadata structure: {metadata}")
+                logger.warning(f"DB Capture metadata format: {type(db_capture.metadata)}")
+                if db_capture.metadata:
+                    logger.warning(f"DB Capture metadata content: {str(db_capture.metadata)[:1000]}..." if len(str(db_capture.metadata)) > 1000 else db_capture.metadata)
+        except Exception as e:
+            logger.error(f"Error retrieving metadata for capture {capture_id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Select the first audio URL if available
+        audio_url = audio_urls[0] if audio_urls else None
+        logger.info(f"Selected audio URL for extraction: {audio_url}")
         
         # If no audio URL, we can't proceed - NEVER fall back to video
         if not audio_url:
@@ -865,59 +1027,93 @@ class ParliamentTVCapture:
         
         # Format the capture ID with leading zeros
         padded_capture_id = str(capture_id).zfill(4)
+        logger.info(f"Using padded capture ID: {padded_capture_id}")
         
         # Define the output audio file path
         audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
         os.makedirs(audio_dir, exist_ok=True)
         audio_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
+        logger.info(f"Audio output file will be: {audio_file}")
+        
+        # Check if the directory exists and is writable
+        if os.path.exists(audio_dir):
+            logger.info(f"Audio directory exists: {audio_dir}")
+            try:
+                test_file = os.path.join(audio_dir, ".test_write")
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                logger.info(f"Audio directory is writable")
+            except Exception as e:
+                logger.warning(f"Audio directory may not be writable: {str(e)}")
+        else:
+            logger.warning(f"Audio directory does not exist: {audio_dir}")
         
         # Create the ffmpeg command - DIRECT FROM AUDIO URL ONLY
         cmd = [
-            "ffmpeg", "-y",
+            "ffmpeg",
+            "-y",  # Overwrite output files without asking
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            "-i", audio_url,
-            "-c:a", "libmp3lame",
-            "-q:a", "2",
-            audio_file
+            "-i", audio_url,  # Input audio URL
+            "-c:a", "libmp3lame",  # Use MP3 codec
+            "-q:a", "2",  # Quality setting for audio
+            "-vn",  # No video
+            audio_file  # Output file
         ]
         
-        logger.info(f"Running ffmpeg command with AUDIO URL ONLY: {' '.join(cmd)}")
+        logger.info(f"FFmpeg command for audio extraction: {' '.join(cmd)}")
+        logger.info(f"Audio URL: {audio_url}")
+        logger.info(f"Output file: {audio_file}")
         
+        # Ensure the output directory exists
+        os.makedirs(os.path.dirname(audio_file), exist_ok=True)
+        
+        # Execute the command
         try:
-            # Run the ffmpeg command
-            process = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False
-            )
+            # Run the command with a timeout
+            logger.info(f"Running audio extraction command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
-            # Check if the command was successful
-            if process.returncode != 0:
-                error_message = process.stderr if process.stderr else "Unknown error"
-                logger.error(f"Audio extraction failed: {error_message}")
-                return {"success": False, "error": f"Audio extraction failed: {error_message}"}
+            # Log command output regardless of success/failure for debugging
+            logger.info(f"FFmpeg stdout: {result.stdout[:500]}..." if len(result.stdout) > 500 else f"FFmpeg stdout: {result.stdout}")
+            if result.stderr:
+                logger.warning(f"FFmpeg stderr: {result.stderr[:500]}..." if len(result.stderr) > 500 else f"FFmpeg stderr: {result.stderr}")
             
-            # Audio extraction completed successfully
-            logger.info(f"Audio extraction successful. Output file: {audio_file}")
-            
-            # Update the database
-            db_capture.audio_file_path = audio_file
-            db.commit()
-            
-            return {
-                "success": True,
-                "message": "Audio extraction completed successfully",
-                "audio_file": audio_file
-            }
+            if result.returncode == 0:
+                logger.info(f"Audio extraction successful for capture {capture_id}")
+                # Verify the file was created
+                if os.path.exists(audio_file) and os.path.getsize(audio_file) > 0:
+                    logger.info(f"Audio file created successfully: {audio_file} (size: {os.path.getsize(audio_file)} bytes)")
+                    
+                    # Update the database with the audio file path
+                    try:
+                        db_capture.audio_file_path = audio_file
+                        db.commit()
+                        logger.info(f"Updated database with audio file path for capture {capture_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to update database with audio file path: {str(e)}")
+                    
+                    return {"success": True, "message": "Audio extraction completed successfully", "audio_file": audio_file}
+                else:
+                    logger.error(f"Audio file was not created or is empty: {audio_file}")
+                    # Check directory permissions
+                    output_dir = os.path.dirname(audio_file)
+                    if not os.access(output_dir, os.W_OK):
+                        logger.error(f"No write permission to directory: {output_dir}")
+                    return {"success": False, "error": "Audio file was not created or is empty"}
+            else:
+                logger.error(f"Audio extraction failed for capture {capture_id}: {result.stderr}")
+                return {"success": False, "error": "Audio extraction failed: " + result.stderr}
         except subprocess.TimeoutExpired:
-            error_msg = "Audio extraction timed out"
+            error_msg = f"Audio extraction timed out for capture {capture_id} after 300 seconds"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
         except Exception as e:
-            logger.error(f"Error executing audio extraction command: {str(e)}")
-            return {"success": False, "error": f"Error executing audio extraction command: {str(e)}"}
+            error_msg = f"Error executing audio extraction command for capture {capture_id}: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {"success": False, "error": error_msg}
 
 
 # Initialize the Parliament TV capture service
