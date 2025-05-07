@@ -35,35 +35,43 @@ export const checkCaptureStatus = async (captureId: number): Promise<CombinedSta
       setTimeout(() => reject(new Error('Request timeout')), ms)
     );
 
+    // Define response types
+    type VideoResponseType = { data: CaptureStatusResponse };
+    type AudioResponseType = { data: AudioStatusResponse };
+
     // Make both API calls in parallel with timeouts
     const [videoResponse, audioResponse] = await Promise.all([
       Promise.race([
         apiClient.get<CaptureStatusResponse>(`/parliament-tv/${captureId}/status`),
         timeout(3000) // 3 second timeout
-      ]) as Promise<{ data: CaptureStatusResponse }>,
+      ]) as Promise<VideoResponseType>,
       Promise.race([
         apiClient.get<AudioStatusResponse>(`/parliament-tv/audio-extraction/${captureId}/status`),
         timeout(3000) // 3 second timeout
-      ]) as Promise<{ data: AudioStatusResponse }>
+      ]) as Promise<AudioResponseType>
     ]).catch(error => {
       console.error('Error fetching capture status:', error);
       throw error;
     });
     
+    // Explicitly type the responses
+    const videoData: CaptureStatusResponse = videoResponse.data;
+    const audioData: AudioStatusResponse = audioResponse.data;
+    
     // Determine if video is ready
-    const videoReady = videoResponse.data.success && 
-                       videoResponse.data.status === 'completed';
+    const videoReady = videoData.success && 
+                       videoData.status === 'completed';
     
     // Determine if audio is ready
-    const audioReady = audioResponse.data.success && 
-                       audioResponse.data.audio_exists;
+    const audioReady = audioData.success && 
+                       audioData.audio_exists;
     
     return {
       captureId,
       videoReady,
       audioReady,
-      status: videoResponse.data.status,
-      audioPath: audioResponse.data.audio_path || undefined,
+      status: videoData.status,
+      audioPath: audioData.audio_path || undefined,
       videoPath: undefined // Add this if you have a way to get the video path
     };
   } catch (error) {

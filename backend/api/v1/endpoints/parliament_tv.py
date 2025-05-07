@@ -702,7 +702,16 @@ async def stream_parliament_tv_video(
     print(f"Capture file path: {capture.file_path}")
     if hasattr(capture, 'metadata') and capture.metadata:
         try:
-            metadata_dict = dict(capture.metadata) if hasattr(capture.metadata, '__dict__') else capture.metadata
+            # Handle different types of metadata objects
+            if hasattr(capture.metadata, 'keys'):
+                # If it's a dict-like object
+                metadata_dict = {k: capture.metadata[k] for k in capture.metadata.keys()}
+            elif hasattr(capture.metadata, '__dict__'):
+                # If it's a custom object with __dict__
+                metadata_dict = capture.metadata.__dict__
+            else:
+                # Try direct conversion
+                metadata_dict = dict(capture.metadata)
             print(f"Capture metadata: {metadata_dict}")
         except Exception as e:
             print(f"Error serializing metadata: {str(e)}")
@@ -898,20 +907,20 @@ async def delete_parliament_tv_capture(
                 "stopped_by_name": current_user.full_name,
                 "stopped_at": datetime.now()
             }
-            
-            # Attempt to stop the actual capture process
-            try:
-                parliament_tv_service.stop_capture(capture_id)
-            except Exception as e:
-                # Log the error but don't fail the request
-                print(f"Error stopping capture process: {str(e)}")
         except Exception as e:
-            print(f"Error stopping active capture: {str(e)}")
-    
-    # Delete associated files
-    files_deleted = []
-    
-    # Try to delete the main video file
+            print(f"Error updating capture metadata: {str(e)}")
+    else:
+        # Update the capture session status
+        capture.status = "active"
+        capture.start_time = datetime.now()
+        
+        # Add metadata about who started the capture
+        capture.metadata = {
+            **(capture.metadata or {}),
+            "started_by": current_user.id,
+            "started_by_name": current_user.full_name,
+            "started_at": datetime.now()
+        }
     if capture.file_path and os.path.exists(capture.file_path):
         try:
             os.remove(capture.file_path)
@@ -1148,6 +1157,61 @@ async def extract_audio_for_capture(
             detail=f"Error during audio extraction: {str(e)}"
         )
 
+@router.get("/{capture_id}/status", response_model=Dict)
+async def get_capture_status(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+) -> Dict:
+    '''
+    Get the status of a Parliament TV capture session.
+    
+    Returns:
+        Dict: Status information about the capture
+    '''
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the capture with minimal query (only select needed fields)
+    capture = db.query(
+        models.CaptureSession.id,
+        models.CaptureSession.status,
+        models.CaptureSession.file_path,
+        models.CaptureSession.created_at,
+        models.CaptureSession.end_time
+    ).filter(models.CaptureSession.id == capture_id).first()
+    
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Capture {capture_id} not found'
+        )
+    
+    # Check if video file exists - use a non-blocking approach
+    video_exists = False
+    if capture.file_path:
+        try:
+            video_exists = os.path.exists(capture.file_path)
+        except Exception as e:
+            print(f"Error checking if video file exists: {str(e)}")
+    
+    # Calculate duration if possible
+    duration = None
+    if capture.end_time and capture.created_at:
+        try:
+            duration = (capture.end_time - capture.created_at).total_seconds()
+        except Exception as e:
+            print(f"Error calculating duration: {str(e)}")
+    
+    return {
+        "success": True,
+        "capture_id": capture_id,
+        "status": capture.status,
+        "video_exists": video_exists,
+        "duration": duration,
+        "completed": capture.status == "completed"
+    }
+
 @router.get("/audio-extraction/{capture_id}/status", response_model=Dict)
 async def get_audio_extraction_status(
     capture_id: int = FastAPIPath(..., description='ID of the capture to check audio status for'),
@@ -1163,29 +1227,44 @@ async def get_audio_extraction_status(
     # Check permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
-    # Get the capture
-    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    # Get the capture with minimal query (only select needed fields)
+    capture = db.query(
+        models.CaptureSession.id,
+        models.CaptureSession.audio_file_path,
+        models.CaptureSession.metadata
+    ).filter(models.CaptureSession.id == capture_id).first()
+    
     if not capture:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f'Capture {capture_id} not found'
         )
     
-    # Check if audio file exists
+    # Check if audio file exists - use a non-blocking approach
     audio_path = capture.audio_file_path
-    audio_exists = audio_path and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0
+    audio_exists = False
+    if audio_path:
+        try:
+            audio_exists = os.path.exists(audio_path) and os.path.getsize(audio_path) > 0
+        except Exception as e:
+            print(f"Error checking if audio file exists: {str(e)}")
     
-    # Check if audio URL exists in metadata
+    # Check if audio URL exists in metadata - use a non-blocking approach
     audio_url = None
-    if capture.metadata and isinstance(capture.metadata, dict) and 'audio_url' in capture.metadata:
-        audio_url = capture.metadata['audio_url']
+    try:
+        if capture.metadata and isinstance(capture.metadata, dict) and 'audio_url' in capture.metadata:
+            audio_url = capture.metadata['audio_url']
+    except Exception as e:
+        print(f"Error checking audio URL in metadata: {str(e)}")
     
     return {
+        "success": True,
         "capture_id": capture_id,
-        "audio_extracted": audio_exists,
-        "audio_file_path": audio_path if audio_exists else None,
+        "has_audio": audio_exists,
+        "audio_exists": audio_exists,
+        "audio_path": audio_path if audio_exists else None,
         "audio_url_available": audio_url is not None,
-        "can_extract": audio_url is not None and not audio_exists
+        "capture_status": "completed" if audio_exists else "processing"
     }
 
 

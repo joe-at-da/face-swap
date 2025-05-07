@@ -12,12 +12,13 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Keep track of all active capture processes
-active_processes = []
+# Keep track of active processes with their capture IDs
+active_processes = {}
+# Format: {capture_id: process_object}
 
 # Register a cleanup function to terminate all processes on exit
 def cleanup_processes():
-    for proc in active_processes:
+    for capture_id, proc in active_processes.items():
         if proc and proc.poll() is None:
             try:
                 proc.terminate()
@@ -53,78 +54,121 @@ class StreamCapture:
         
         self._current_process = None
         
-    def start_capture(self) -> str:
-        """Start capturing the stream. Returns the output filename."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = self.temp_dir / f"capture_{timestamp}.mp4"
+    def start_capture(self, output_file: str = None, duration: int = 300, capture_id: int = None):
+        """Start capturing the stream to a file."""
+        if output_file is None:
+            # If capture_id is provided, use it for the filename
+            if capture_id is not None:
+                # Format with leading zeros (e.g., 0001)
+                padded_id = str(capture_id).zfill(4)
+                output_file = self.temp_dir / f"capture_{padded_id}.mp4"
+            else:
+                # Generate a unique filename based on timestamp
+                timestamp = int(time.time())
+                output_file = self.temp_dir / f"capture_{timestamp}.mp4"
+        else:
+            # Ensure output_file is a Path object
+            output_file = Path(output_file)
         
-        # Add a timeout for the connection
-        connection_timeout = 30  # seconds
+        # Ensure the output directory exists
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Build the ffmpeg command
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", self.stream_url,
+            "-c", "copy",
+            "-t", str(duration),
+            str(output_file)
+        ]
+        
+        logger.info(f"Starting capture with command: {' '.join(cmd)}")
         
         try:
-            # Try to connect to the stream with a timeout
-            logger.info(f"Attempting to connect to stream: {self.stream_url}")
-            
-            # Use a more robust ffmpeg command with error handling
-            stream = ffmpeg.input(self.stream_url, timeout=connection_timeout)
-            stream = ffmpeg.output(
-                stream, 
-                str(output_file), 
-                acodec='copy', 
-                vcodec='copy',
-                f='mp4',  # Force mp4 format
-                # Add error handling flags
-                reconnect=1,
-                reconnect_at_eof=1,
-                reconnect_streamed=1,
-                reconnect_delay_max=5
+            # Start the process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
             
-            # Start the process
-            self._current_process = ffmpeg.run_async(stream)
+            # Store the current process
+            self._current_process = process
             
-            # Add to global list of active processes
-            active_processes.append(self._current_process)
+            # Store in active_processes with capture_id as key
+            if capture_id is not None:
+                active_processes[capture_id] = process
+                logger.info(f"Started capture process with PID {process.pid} for capture ID {capture_id}")
+            else:
+                # For backward compatibility
+                logger.warning(f"Started capture process with PID {process.pid} but no capture ID was provided")
             
-            logger.info(f"Successfully started capture to {output_file}")
             return str(output_file)
-            
-        except ffmpeg.Error as e:
-            error_message = e.stderr.decode() if e.stderr else str(e)
-            logger.error(f"Failed to start capture: {error_message}")
-            # Create a small log file to record the error
-            error_log_file = self.temp_dir / f"error_log_{timestamp}.txt"
-            with open(error_log_file, 'w') as f:
-                f.write(f"Error capturing from {self.stream_url}: {error_message}")
-            raise
         except Exception as e:
-            logger.error(f"Unexpected error starting capture: {str(e)}")
+            logger.error(f"Error starting capture: {str(e)}")
             raise
     
-    def stop_capture(self):
-        """Stop the current capture process."""
-        if self._current_process:
-            try:
-                # First try to terminate gracefully
-                if self._current_process.poll() is None:
-                    self._current_process.terminate()
+    def stop_capture(self, capture_id: int = None):
+        """Stop the capture process for the given capture_id or the current process."""
+        process_to_stop = None
+        
+        # If capture_id is provided, try to find the process in active_processes
+        if capture_id is not None and capture_id in active_processes:
+            process_to_stop = active_processes[capture_id]
+            logger.info(f"Found process for capture ID {capture_id}")
+        # Otherwise, use the current process of this instance
+        elif self._current_process:
+            process_to_stop = self._current_process
+            logger.info("Using current process of this instance")
+        else:
+            logger.warning(f"No process found for capture ID {capture_id}")
+            return
+        
+        try:
+            # First check if the process is still running
+            if process_to_stop.poll() is None:
+                logger.info(f"Process is still running, attempting to gracefully stop")
+                
+                # For ffmpeg, we need to send SIGINT (Ctrl+C) to allow it to finalize the MP4 file
+                # This is critical for MP4 files to ensure the moov atom is written
+                try:
+                    # Send SIGINT (equivalent to Ctrl+C) which allows ffmpeg to finalize the file
+                    os.kill(process_to_stop.pid, signal.SIGINT)
+                    logger.info(f"Sent SIGINT to process {process_to_stop.pid}")
+                    
+                    # Wait with a longer timeout to allow ffmpeg to finalize the file
+                    process_to_stop.wait(timeout=10)
+                    logger.info("Process terminated gracefully with proper file finalization")
+                except subprocess.TimeoutExpired:
+                    # If it doesn't terminate after SIGINT, try SIGTERM
+                    logger.warning("Process did not terminate with SIGINT, trying SIGTERM")
+                    process_to_stop.terminate()
+                    
                     try:
-                        # Wait with timeout to avoid hanging
-                        self._current_process.wait(timeout=5)
+                        # Wait with a short timeout
+                        process_to_stop.wait(timeout=3)
+                        logger.info("Process terminated with SIGTERM")
                     except subprocess.TimeoutExpired:
-                        # If it doesn't terminate in time, force kill
-                        self._current_process.kill()
-                        self._current_process.wait()
-                
-                # Remove from active processes list
-                if self._current_process in active_processes:
-                    active_processes.remove(self._current_process)
-                
-                logger.info("Stopped capture process")
-            except Exception as e:
-                logger.error(f"Error stopping capture process: {str(e)}")
-            finally:
+                        logger.error("Failed to kill process, it may be zombie")
+            else:
+                logger.info("Process was already terminated")
+            
+            # Remove from active processes dictionary
+            if capture_id is not None and capture_id in active_processes:
+                del active_processes[capture_id]
+                logger.info(f"Removed process for capture ID {capture_id} from active processes")
+            
+            # Also check if it's the current process of this instance
+            if process_to_stop == self._current_process:
                 self._current_process = None
+                logger.info("Cleared current process reference")
+            
+            logger.info("Stopped capture process successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error stopping capture process: {str(e)}")
+            return False
     
     def is_capturing(self) -> bool:
         """Check if currently capturing."""

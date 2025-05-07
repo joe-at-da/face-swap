@@ -18,6 +18,7 @@ interface ExtractUrlResponse {
   time_marker?: {
     seconds: number;
   };
+  seconds: number;
   original_url?: string;
   direct_stream?: string;
 }
@@ -45,6 +46,13 @@ interface ValidationResult {
   streamUrl?: string;
   timeMarker?: number;
   error?: string;
+}
+
+// Define a type for our stop capture result
+interface StopCaptureResult {
+  success: boolean;
+  message: string;
+  data?: any;
 }
 
 const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, onError }) => {
@@ -114,81 +122,54 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
           });
         }
       } catch (err) {
-        console.error('Error checking active captures:', err);
-        // Don't show error to user, just log it
+        console.error('Error checking for active captures:', err);
       }
     };
     
     checkActiveCaptures();
   }, [token]);
-
+  
   const validateUrl = async () => {
-    if (!url) return;
-
+    if (!url) {
+      setValidationResult({
+        success: false,
+        message: 'Please enter a Parliament TV URL'
+      });
+      return;
+    }
+    
     setIsValidating(true);
     setValidationResult(null);
     
-    // Validate that the URL is a Parliament TV URL
-    const validDomains = ["parliamentlive.tv", "parliament.tv"];
-    let isValidDomain = false;
-    
-    for (const domain of validDomains) {
-      if (url.includes(domain)) {
-        isValidDomain = true;
-        break;
-      }
-    }
-    
-    if (!isValidDomain) {
-      setValidationResult({
-        success: false,
-        message: 'Invalid URL. Please enter a valid Parliament TV URL.',
-        error: 'URL must be from parliamentlive.tv or parliament.tv'
-      });
-      setIsValidating(false);
-      return;
-    }
-
     try {
-      // First extract the stream URL - direct API call with detailed error logging
-      console.log(`Calling extract-url API with URL: ${url}`);
-      console.log(`Full API URL: ${API_BASE_URL}/parliament-tv/extract-url?url=${encodeURIComponent(url)}`);
-      console.log('Auth headers:', getAuthHeaders());
-      
-      const extractResponse = await axios.get<ExtractUrlResponse>(
-        `${API_BASE_URL}/parliament-tv/extract-url`, 
-        {
-          params: { url },
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
+      // First, extract the URL components
+      const extractResponse = await axios.post<ExtractUrlResponse>(
+        `${API_BASE_URL}/parliament-tv/extract-url`,
+        { url },
+        getAuthHeaders()
       );
       
-      console.log('Extract response status:', extractResponse.status);
-      console.log('Extract response data:', extractResponse.data);
-
-      if (extractResponse.data?.video_url) {
-      // Then test if the stream URL is valid
       console.log('Extract URL response:', extractResponse.data);
       
-      let videoUrl = extractResponse.data.video_url;
-      let audioUrl = extractResponse.data.audio_url || '';
-      let params = {};
+      const { video_url, time_marker } = extractResponse.data;
       
-      console.log(`Testing stream URL:\nVideo URL: ${videoUrl}\nAudio URL: ${audioUrl}`);
-      params = { video_url: videoUrl };
-      if (audioUrl) {
-        params = { ...params, audio_url: audioUrl };
-      }
-      
-      if (!videoUrl) {
+      if (!video_url) {
         setValidationResult({
           success: false,
-          message: 'Could not extract a valid stream URL from Parliament TV page.'
+          message: 'Could not extract video URL from the provided link'
         });
         return;
       }
+      
+      // If we have a time marker, update the state
+      if (time_marker && time_marker.seconds) {
+        setTimeMarker(time_marker.seconds);
+      }
+      
+      // Now test if the stream is valid
+      const params = {
+        url: video_url
+      };
       
       console.log('Sending test request with params:', params);
       
@@ -202,51 +183,48 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
         }
       );
       
-      console.log('Test response status:', testResponse.status);
-      console.log('Test response data:', testResponse.data);
-
-      // Get the time marker from the response
-      const extractedTimeMarker = extractResponse.data.time_marker?.seconds || 0;
-      setTimeMarker(extractedTimeMarker);
+      console.log('Test URL response:', testResponse.data);
       
-      // Calculate scheduled start and end times based on the time marker
-      const startDate = new Date();
-      if (extractedTimeMarker > 0) {
-        // If we have a time marker, set the start time to that point in the video
-        startDate.setSeconds(startDate.getSeconds() - extractedTimeMarker);
-      }
-      
-      // Calculate end time (10 minutes from now by default)
-      const endDate = new Date();
-      endDate.setMinutes(endDate.getMinutes() + 10);
-      
-      // Format dates for datetime-local input
-      const formatDateForInput = (date: Date) => {
-        return date.toISOString().slice(0, 16);
-      };
-      
-      setScheduledStart(formatDateForInput(startDate));
-      setScheduledEnd(formatDateForInput(endDate));
-      
-      setValidationResult({
-        success: testResponse.data?.is_valid,
-        message: testResponse.data?.is_valid 
-          ? `Stream URL is valid and ready for capture. Time marker: ${extractedTimeMarker} seconds` 
-          : 'Stream URL was extracted but could not be validated. Capture may still work.',
-        streamUrl: videoUrl,
-        timeMarker: extractedTimeMarker
-      });
+      if (testResponse.data.is_valid) {
+        // If valid, update the validation result
+        setValidationResult({
+          success: true,
+          message: 'URL is valid and ready for capture',
+          streamUrl: video_url,
+          timeMarker: time_marker?.seconds
+        });
+        
+        // If we don't have a title yet, try to generate one from the URL
+        if (!title) {
+          // Extract a title from the URL if possible
+          try {
+            const urlObj = new URL(url);
+            const eventId = urlObj.pathname.split('/').pop() || '';
+            if (eventId) {
+              setTitle(`Parliament TV Capture - ${eventId}`);
+            }
+          } catch (e) {
+            console.error('Error parsing URL for title:', e);
+          }
+        }
+        
+        // Set default scheduled start/end times if not already set
+        if (!scheduledStart) {
+          const now = new Date();
+          setScheduledStart(formatDateForInput(now));
+          
+          // Default end time is 30 minutes from now
+          const endTime = new Date(now.getTime() + 30 * 60 * 1000);
+          setScheduledEnd(formatDateForInput(endTime));
+        }
       } else {
         setValidationResult({
           success: false,
-          message: 'Could not extract stream URL from Parliament TV page. No video_url found in response.'
+          message: 'The provided URL does not point to a valid stream'
         });
       }
     } catch (error: any) {
       console.error('Error validating URL:', error);
-      console.error('Error response:', error.response);
-      console.error('Error request:', error.request);
-      console.error('Error config:', error.config);
       
       // Check for specific error messages
       const errorMessage = error.response?.data?.detail || error.message || 'Error validating URL';
@@ -266,28 +244,56 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       setIsValidating(false);
     }
   };
-
+  
+  // Format dates for datetime-local input
+  const formatDateForInput = (date: Date) => {
+    return date.toISOString().slice(0, 16);
+  };
+  
+  // Improved stopActiveCapture function with timeouts and better error handling
   const stopActiveCapture = async () => {
     if (!activeCapture) return;
     
     setIsStoppingCapture(true);
+    
+    // Create a timeout promise that will resolve after 10 seconds
+    const timeoutPromise = new Promise<StopCaptureResult>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          success: true,
+          message: 'Capture stop request sent. The process may still be stopping in the background.'
+        });
+      }, 10000); // 10 second timeout
+    });
+    
     try {
       const authHeaders = getAuthHeaders();
       const token = authHeaders.headers.Authorization.split(' ')[1];
       
-      // Use the correct endpoint for stopping captures
-      const response = await axios.post(
+      // Create the API request promise
+      const apiRequestPromise = axios.post(
         `${API_BASE_URL}/capture/${activeCapture.id}/stop`,
         {},
         {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`
-          }
+          },
+          timeout: 8000 // 8 second timeout for the axios request itself
         }
       );
       
-      console.log('Capture stopped successfully:', response.data);
+      // Race between the API request and the timeout
+      const result = await Promise.race([
+        apiRequestPromise.then(response => ({
+          success: true,
+          message: 'Capture stopped successfully!',
+          data: response.data
+        })),
+        timeoutPromise
+      ]);
+      
+      console.log('Stop capture result:', result);
       
       // Clear the error and active capture
       setError('');
@@ -297,10 +303,21 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       // Show success message
       setCaptureStatus({
         success: true,
-        message: 'Capture stopped successfully!',
-        data: response.data
+        message: result.message,
+        data: result.data || { id: activeCapture.id }
       });
       
+      // Continue the API request in the background if it was the timeout that resolved
+      if (result.message === 'Capture stop request sent. The process may still be stopping in the background.') {
+        toast.info('Stopping capture in the background. The UI will remain responsive.');
+        
+        // Let the API request continue in the background
+        apiRequestPromise.then(() => {
+          console.log('Background capture stop completed successfully');
+        }).catch(err => {
+          console.error('Background capture stop failed:', err);
+        });
+      }
     } catch (err: any) {
       console.error('Error stopping capture:', err);
       
@@ -309,6 +326,8 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       if (err.response) {
         console.error('Error response data:', err.response.data);
         errorMessage = err.response.data?.detail || errorMessage;
+      } else if (err.code === 'ECONNABORTED') {
+        errorMessage = 'Request timed out. The capture may still be stopping in the background.';
       }
       
       setError(errorMessage);
@@ -319,63 +338,42 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
   
   const startCapture = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!validationResult || !validationResult.success) {
+      setError('Please validate the URL before starting capture');
+      return;
+    }
+    
     setIsSubmitting(true);
     setError('');
-
+    
     try {
-      // First, extract the direct stream URL to get the latest format
-      const authHeaders = getAuthHeaders();
-      const authToken = authHeaders.headers.Authorization.split(' ')[1];
-      
-      // Extract the direct stream URL
-      const extractResponse = await axios.get<ExtractUrlResponse>(
-        `${API_BASE_URL}/parliament-tv/extract-url`, 
-        {
-          params: { url },
-          headers: {
-            Authorization: `Bearer ${authToken}`
-          }
-        }
-      );
-        
-      console.log('Extract response for capture:', extractResponse.data);
-      
-      // Prepare the capture request with the latest stream URL format
-      let captureData: any = {
-        url,
+      const payload = {
+        url: validationResult.streamUrl,
         title,
         description,
         duration,
         enable_facial_recognition: enableFacialRecognition,
         scheduled_start: scheduledStart ? new Date(scheduledStart).toISOString() : null,
         scheduled_end: scheduledEnd ? new Date(scheduledEnd).toISOString() : null,
-        // Pass the time marker to the backend
-        time_marker_seconds: timeMarker || 0
       };
       
-      console.log(`Including time marker in capture request: ${timeMarker} seconds`);
-      
-      // Add the direct_stream data if available
-      if (extractResponse.data?.direct_stream) {
-        captureData.direct_stream = extractResponse.data.direct_stream;
+      // If we have a time marker, add it to the payload
+      if (timeMarker !== null) {
+        payload['time_marker'] = timeMarker;
       }
       
-      console.log('Starting capture with data:', captureData);
-
+      console.log('Starting capture with payload:', payload);
+      
       const response = await axios.post(
-        `${API_BASE_URL}/parliament-tv`, 
-        captureData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          }
-        }
+        `${API_BASE_URL}/parliament-tv`,
+        payload,
+        getAuthHeaders()
       );
-
+      
       console.log('Capture started successfully:', response.data);
       
-      setIsSubmitting(false);
+      // Update state to show success
       setSuccess(true);
       
       // Reset form
@@ -388,316 +386,205 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       setScheduledEnd('');
       setTimeMarker(null);
       
-      // Extract audio for this capture and show status indicator
-      if (response.data && typeof response.data === 'object' && 'id' in response.data) {
-        const captureId = response.data.id as number;
-        console.log('Starting audio extraction for capture ID:', captureId);
-        
-        // Set the current capture ID and show the status indicator
-        setCurrentCaptureId(captureId);
+      // Show success message
+      setCaptureStatus({
+        success: true,
+        message: 'Capture started successfully!',
+        data: response.data
+      });
+      
+      // Store the capture ID for status checking
+      if (response.data && response.data.id) {
+        setCurrentCaptureId(response.data.id);
         setShowStatusIndicator(true);
-        
-        // Start audio extraction
-        extractAudioForCapture(captureId)
-          .then(result => {
-            console.log('Audio extraction result:', result);
-            if (result.success) {
-              console.log('Audio extraction successful, output file:', result.output_file);
-              toast.success('Audio extraction started successfully');
-            } else {
-              console.error('Audio extraction failed:', result.error || result.message);
-              toast.error(`Audio extraction failed: ${result.error || result.message}`);
-            }
-          })
-          .catch(err => {
-            console.error('Error initiating audio extraction:', err);
-            toast.error('Error initiating audio extraction');
-          });
       }
+      
+      // Redirect to the captures page after a short delay
+      setTimeout(() => {
+        router.push('/capture');
+      }, 3000);
       
       // Call onSuccess callback if provided
       if (onSuccess) {
         onSuccess(response.data);
       }
-      
-    } catch (err: any) {
-      console.error('Error starting capture:', err);
-      setIsSubmitting(false);
+    } catch (error: any) {
+      console.error('Error starting capture:', error);
       
       let errorMessage = 'Failed to start capture. Please try again.';
-      let errorDetails = '';
       
-      if (err.response) {
-        // The request was made and the server responded with a status code
-        // that falls out of the range of 2xx
-        console.error('Error response data:', err.response.data);
-        console.error('Error response status:', err.response.status);
-        console.error('Error response headers:', err.response.headers);
+      if (error.response && error.response.data) {
+        console.error('Error response data:', error.response.data);
         
-        // Handle specific error status codes
-        if (err.response.status === 409) {
-          console.log('Full conflict response:', JSON.stringify(err.response.data));
-          
-          // Try to extract the conflict data from different possible structures
-          let conflictData;
-          if (typeof err.response.data.detail === 'object') {
-            conflictData = err.response.data.detail;
-          } else if (typeof err.response.data === 'object') {
-            conflictData = err.response.data;
-          } else {
-            conflictData = {};
-          }
-          
-          console.log('Conflict data extracted:', JSON.stringify(conflictData));
-          
-          errorMessage = conflictData.message || 'A capture session is already in progress';
-          
-          // Check for capture ID in different possible locations
-          const captureId = conflictData.capture_id || conflictData.id;
-          const startedBy = conflictData.started_by || conflictData.user || 'another user';
-          const startedAt = conflictData.started_at || conflictData.created_at;
-          
-          if (captureId && startedAt) {
-            const startTime = new Date(startedAt).toLocaleString();
-            errorDetails = `Started by ${startedBy} at ${startTime}`;
-            
-            // Store active capture info for the stop button
-            setActiveCapture({
-              id: captureId,
-              started_by: startedBy,
-              started_at: startedAt
-            });
-            
-            // Automatically check for active captures to get more details
-            try {
-              axios.get<any[]>(
-                `${API_BASE_URL}/parliament-tv?status=active`,
-                {
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                  }
-                }
-              ).then(response => {
-                if (Array.isArray(response.data) && response.data.length > 0) {
-                  const activeCapture = response.data[0];
-                  const user = activeCapture.created_by;
-                  
-                  setActiveCapture({
-                    id: activeCapture.id,
-                    started_by: user.name,
-                    started_at: activeCapture.created_at
-                  });
-                }
-              }).catch(e => console.error('Failed to get active captures:', e));
-            } catch (e) {
-              console.error('Error in secondary active capture check:', e);
-            }
-          } else {
-            console.log('Missing required conflict data fields. Available fields:', Object.keys(conflictData).join(', '));
-          }
-        } else {
-          errorMessage = err.response.data?.detail?.message || err.response.data?.detail || errorMessage;
+        if (error.response.data.detail) {
+          errorMessage = typeof error.response.data.detail === 'string'
+            ? error.response.data.detail
+            : JSON.stringify(error.response.data.detail);
         }
-      } else if (err.request) {
-        // The request was made but no response was received
-        console.error('Error request:', err.request);
-        errorMessage = 'No response received from server. Please check your connection.';
-      } else {
-        // Something happened in setting up the request that triggered an Error
-        console.error('Error message:', err.message);
-        errorMessage = err.message || errorMessage;
       }
       
-      setError(errorMessage + (errorDetails ? `\n${errorDetails}` : ''));
+      setError(errorMessage);
       
       // Call onError callback if provided
       if (onError) {
-        onError(err);
+        onError(error);
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
-
+  
   // Handle when both video and audio are ready
   const handleCaptureComplete = (status: CombinedStatus) => {
-    console.log('Capture complete!', status);
-    // You could show a notification or redirect to the capture page
+    console.log('Capture complete:', status);
+    // Additional handling can be added here
   };
-
+  
   return (
-    <div className="bg-white shadow-md rounded-lg p-6 max-w-2xl mx-auto">
+    <div className="bg-white shadow overflow-hidden sm:rounded-lg p-6">
       <h2 className="text-2xl font-bold mb-6">Parliament TV Capture</h2>
       
-      {/* Show status indicator when a capture is in progress */}
       {showStatusIndicator && currentCaptureId && (
         <div className="mb-6">
           <CaptureStatusIndicator 
             captureId={currentCaptureId} 
-            onComplete={handleCaptureComplete} 
+            onComplete={handleCaptureComplete}
           />
-          <button
-            onClick={() => setShowStatusIndicator(false)}
-            className="mt-2 text-sm text-gray-500 hover:text-gray-700"
-          >
-            Hide Status
-          </button>
         </div>
       )}
       
-      <form onSubmit={startCapture} className="space-y-4">
+      <form onSubmit={startCapture} className="space-y-6">
         <div>
-          <label htmlFor="url" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="url" className="block text-sm font-medium text-gray-700">
             Parliament TV URL
           </label>
-          <div className="flex">
+          <div className="mt-1 flex rounded-md shadow-sm">
             <input
               type="text"
+              name="url"
               id="url"
+              className="flex-1 min-w-0 block w-full px-3 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              placeholder="https://parliamentlive.tv/event/index/..."
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://parliamentlive.tv/event/index/EVENT_ID?in=HH:MM:SS"
-              className="flex-grow shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
-              required
             />
             <button
               type="button"
               onClick={validateUrl}
               disabled={isValidating || !url}
-              className="ml-2 inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              className="ml-3 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              {isValidating ? 'Validating...' : 'Validate'}
+              {isValidating ? 'Validating...' : 'Validate URL'}
             </button>
           </div>
           
           {validationResult && (
             <div className={`mt-2 text-sm ${validationResult.success ? 'text-green-600' : 'text-red-600'}`}>
               {validationResult.message}
-              {validationResult.timeMarker && (
-                <p className="mt-1">Time marker detected: {validationResult.timeMarker} seconds</p>
-              )}
-              {validationResult.error && !validationResult.success && (
-                <div className="mt-2 p-2 bg-red-50 rounded text-xs">
-                  <p className="font-semibold">Technical details:</p>
-                  <p className="font-mono">{validationResult.error}</p>
-                </div>
-              )}
             </div>
           )}
+          
+          <p className="mt-2 text-xs text-gray-500">
+            Enter a URL from parliamentlive.tv, e.g. https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb
+          </p>
         </div>
         
         <div>
-          <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="title" className="block text-sm font-medium text-gray-700">
             Title
           </label>
-          <input
-            type="text"
-            id="title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Enter a title for this capture"
-            className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
-            required
-          />
+          <div className="mt-1">
+            <input
+              type="text"
+              name="title"
+              id="title"
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              placeholder="Capture Title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
         </div>
         
         <div>
-          <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
-            Description (Optional)
+          <label htmlFor="description" className="block text-sm font-medium text-gray-700">
+            Description
           </label>
-          <textarea
-            id="description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Enter a description"
-            rows={3}
-            className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
-          />
+          <div className="mt-1">
+            <textarea
+              name="description"
+              id="description"
+              rows={3}
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              placeholder="Capture Description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
         </div>
         
-        <div className="mb-4">
-          <label htmlFor="scheduledStart" className="block text-sm font-medium text-gray-700">Scheduled Start Time</label>
-          <input
-            type="datetime-local"
-            id="scheduledStart"
-            name="scheduledStart"
-            value={scheduledStart}
-            onChange={(e) => setScheduledStart(e.target.value)}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-          <p className="mt-1 text-sm text-gray-500">
-            {timeMarker && timeMarker > 0 ? 
-              `Automatically set to ${timeMarker} seconds into the stream based on the URL` : 
-              'Start time for the capture'}
-          </p>
-        </div>
-
-        <div className="mb-4">
-          <label htmlFor="scheduledEnd" className="block text-sm font-medium text-gray-700">Scheduled End Time</label>
-          <input
-            type="datetime-local"
-            id="scheduledEnd"
-            name="scheduledEnd"
-            value={scheduledEnd}
-            onChange={(e) => setScheduledEnd(e.target.value)}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-          <p className="mt-1 text-sm text-gray-500">End time for the capture (defaults to 10 minutes from now)</p>
-        </div>
-
-        <div className="mb-4">
-          <label htmlFor="duration" className="block text-sm font-medium text-gray-700">Capture Duration</label>
-          
-          <div className="mt-2 grid grid-cols-5 gap-2">
-            <button type="button" onClick={() => setDuration(60)} 
-              className={`px-2 py-1 text-sm rounded ${duration === 60 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
-              1 minute
-            </button>
-            <button type="button" onClick={() => setDuration(300)} 
-              className={`px-2 py-1 text-sm rounded ${duration === 300 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
-              5 minutes
-            </button>
-            <button type="button" onClick={() => setDuration(600)} 
-              className={`px-2 py-1 text-sm rounded ${duration === 600 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
-              10 minutes
-            </button>
-            <button type="button" onClick={() => setDuration(900)} 
-              className={`px-2 py-1 text-sm rounded ${duration === 900 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
-              15 minutes
-            </button>
-            <button type="button" onClick={() => setDuration(1800)} 
-              className={`px-2 py-1 text-sm rounded ${duration === 1800 ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>
-              30 minutes
-            </button>
-          </div>
-          
-          <div className="mt-3 flex items-center">
+        <div>
+          <label htmlFor="duration" className="block text-sm font-medium text-gray-700">
+            Duration (seconds)
+          </label>
+          <div className="mt-1">
             <input
               type="number"
-              id="duration"
               name="duration"
-              value={duration}
-              onChange={(e) => setDuration(parseInt(e.target.value) || 300)}
-              min="60"
+              id="duration"
+              min="10"
               max="3600"
-              className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              value={duration}
+              onChange={(e) => setDuration(parseInt(e.target.value))}
             />
-            <span className="ml-2 text-sm text-gray-500">seconds</span>
           </div>
-          
-          <p className="mt-1 text-sm text-gray-500">
-            For recorded streams, this is the exact duration that will be captured starting from the time marker.
+          <p className="mt-2 text-xs text-gray-500">
+            Maximum duration: 3600 seconds (1 hour)
           </p>
         </div>
         
-        <div className="flex items-start">
+        <div>
+          <label htmlFor="scheduledStart" className="block text-sm font-medium text-gray-700">
+            Scheduled Start (optional)
+          </label>
+          <div className="mt-1">
+            <input
+              type="datetime-local"
+              name="scheduledStart"
+              id="scheduledStart"
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              value={scheduledStart}
+              onChange={(e) => setScheduledStart(e.target.value)}
+            />
+          </div>
+        </div>
+        
+        <div>
+          <label htmlFor="scheduledEnd" className="block text-sm font-medium text-gray-700">
+            Scheduled End (optional)
+          </label>
+          <div className="mt-1">
+            <input
+              type="datetime-local"
+              name="scheduledEnd"
+              id="scheduledEnd"
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              value={scheduledEnd}
+              onChange={(e) => setScheduledEnd(e.target.value)}
+            />
+          </div>
+        </div>
+        
+        <div className="relative flex items-start">
           <div className="flex items-center h-5">
             <input
               id="enableFacialRecognition"
+              name="enableFacialRecognition"
               type="checkbox"
+              className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded"
               checked={enableFacialRecognition}
               onChange={(e) => setEnableFacialRecognition(e.target.checked)}
-              className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded"
             />
           </div>
           <div className="ml-3 text-sm">

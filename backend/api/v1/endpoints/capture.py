@@ -329,8 +329,12 @@ async def stop_capture(
     # Stop the actual video capture process directly
     try:
         stream_capture = StreamCapture()
-        stream_capture.stop_capture()
-        print(f"DEBUG - Stopped capture process directly")
+        # Pass the capture_id to the stop_capture method
+        success = stream_capture.stop_capture(capture_id=capture_id)
+        if success:
+            print(f"DEBUG - Successfully stopped capture process for ID {capture_id}")
+        else:
+            print(f"WARNING - No active process found for capture ID {capture_id}")
     except Exception as e:
         print(f"ERROR - Failed to stop capture: {str(e)}")
     
