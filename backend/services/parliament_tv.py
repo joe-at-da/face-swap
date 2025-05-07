@@ -1000,7 +1000,7 @@ class ParliamentTVCapture:
                 return {"success": False, "error": f"Database connection error: {str(e)}"}
         
         # Get the capture session from the database
-        db_capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+        db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
         if not db_capture:
             logger.error(f"Capture session {capture_id} not found")
             if try_new_session:
