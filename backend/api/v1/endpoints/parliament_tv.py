@@ -9,8 +9,12 @@ import json
 import os
 import glob
 import subprocess
+import logging
+import re
 from pathlib import Path
-from backend.core.logger import logger
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission, get_current_active_user
@@ -1147,10 +1151,26 @@ async def extract_audio_for_capture(
     # Extract audio using ffmpeg
     try:
         # Create ffmpeg command for audio extraction
+        # Extract time marker from URL if present
+        start_time = "00:00:00"
+        if "?in=" in audio_url:
+            # Extract time marker from URL (format: ?in=12:34:56)
+            time_marker_match = re.search(r'\?in=([0-9:]+)', audio_url)
+            if time_marker_match:
+                start_time = time_marker_match.group(1)
+                # Remove the time marker from the URL
+                audio_url = audio_url.split("?in=")[0]
+                print(f"Extracted start time: {start_time} from URL")
+        
+        # Set duration to 30 seconds
+        duration = 30
+        
         cmd = [
             "ffmpeg", "-y",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-ss", start_time,  # Start time
             "-i", audio_url,
+            "-t", str(duration),  # Duration in seconds
             "-c:a", "libmp3lame",
             "-q:a", "2",  # High quality (lower number = higher quality for MP3)
             output_path
