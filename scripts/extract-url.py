@@ -48,12 +48,16 @@ def extract_time_marker(url):
             parts = time_str.split(':')
             if len(parts) == 3:
                 hours, minutes, seconds = map(int, parts)
-                return hours * 3600 + minutes * 60 + seconds
+                seconds_value = hours * 3600 + minutes * 60 + seconds
+                logger.info(f"Extracted time marker: {time_str} = {seconds_value} seconds")
+                return seconds_value
             elif len(parts) == 2:
                 minutes, seconds = map(int, parts)
-                return minutes * 60 + seconds
-        except ValueError:
-            pass
+                seconds_value = minutes * 60 + seconds
+                logger.info(f"Extracted time marker: {time_str} = {seconds_value} seconds")
+                return seconds_value
+        except ValueError as e:
+            logger.error(f"Error parsing time marker '{time_str}': {str(e)}")
     
     return None
 
@@ -78,6 +82,16 @@ def extract_direct_stream_url(url):
     if not url or not isinstance(url, str):
         logger.error(f"Invalid URL provided: {url}")
         return None
+    
+    # Extract time marker first - we'll need to preserve this
+    original_time_marker = extract_time_marker(url)
+    if original_time_marker is not None:
+        logger.info(f"Found time marker in original URL: {original_time_marker} seconds")
+    else:
+        logger.info("No time marker found in original URL")
+        
+    # Store the original URL for reference
+    original_url = url
         
     # Strict validation for Parliament TV URLs
     valid_domains = ["parliamentlive.tv", "parliament.tv"]
@@ -393,6 +407,11 @@ def main():
     parser.add_argument('--output', '-o', help='Output file for the stream information')
     args = parser.parse_args()
     
+    # Extract the time marker from the original URL first
+    original_time_marker = extract_time_marker(args.url)
+    if original_time_marker is not None:
+        logger.info(f"Original URL time marker: {original_time_marker} seconds")
+    
     # Extract the direct stream URL
     direct_url = extract_direct_stream_url(args.url)
     
@@ -400,9 +419,17 @@ def main():
         logger.error("Failed to extract direct stream URL")
         return 1
     
-    # Extract the event ID and time marker
+    # Extract the event ID
     event_id = extract_event_id(args.url)
-    time_marker = extract_time_marker(args.url)
+    
+    # Use the time marker we extracted earlier
+    time_marker = original_time_marker
+    
+    # Log the time marker for debugging
+    if time_marker is not None:
+        logger.info(f"Time marker extracted from URL: {time_marker} seconds")
+    else:
+        logger.info("No time marker found in URL")
     
     # Create the result object
     # Check if direct_url is a dictionary with video_url and audio_url
@@ -440,42 +467,88 @@ def main():
                                     "video_url": direct_url,
                                     "audio_url": audio_url
                                 },
-                                "event_id": event_id
+                                "event_id": event_id,
+                                "original_url": args.url  # Include the original URL
                             }
+                            # Include the time marker if it exists
+                            if time_marker is not None:
+                                result["time_marker"] = {
+                                    "seconds": time_marker
+                                }
+                                logger.info(f"Included time marker in result: {time_marker} seconds")
                             logger.info(f"Returning separate video and audio URLs")
                         else:
                             logger.warning(f"Audio URL test failed, using single URL")
                             result = {
                                 "direct_stream": direct_url,
-                                "event_id": event_id
+                                "event_id": event_id,
+                                "original_url": args.url  # Include the original URL
                             }
+                            # Include the time marker if it exists
+                            if time_marker is not None:
+                                result["time_marker"] = {
+                                    "seconds": time_marker
+                                }
+                                logger.info(f"Included time marker in result: {time_marker} seconds")
                     except Exception as e:
                         logger.warning(f"Error testing audio URL: {str(e)}")
                         result = {
                             "direct_stream": direct_url,
-                            "event_id": event_id
+                            "event_id": event_id,
+                            "original_url": args.url
                         }
+                        # Include the time marker if it exists
+                        if time_marker is not None:
+                            result["time_marker"] = {
+                                "seconds": time_marker
+                            }
                 else:
                     result = {
                         "direct_stream": direct_url,
-                        "event_id": event_id
+                        "event_id": event_id,
+                        "original_url": args.url
                     }
+                    # Include the time marker if it exists
+                    if time_marker is not None:
+                        result["time_marker"] = {
+                            "seconds": time_marker
+                        }
             else:
                 result = {
                     "direct_stream": direct_url,
-                    "event_id": event_id
+                    "event_id": event_id,
+                    "original_url": args.url
                 }
+                # Include the time marker if it exists
+                if time_marker is not None:
+                    result["time_marker"] = {
+                        "seconds": time_marker
+                    }
         except Exception as e:
             logger.warning(f"Error extracting separate streams: {str(e)}")
             result = {
                 "direct_stream": direct_url,
-                "event_id": event_id
+                "event_id": event_id,
+                "original_url": args.url
             }
+            # Include the time marker if it exists
+            if time_marker is not None:
+                result["time_marker"] = {
+                    "seconds": time_marker
+                }
+                logger.info(f"Included time marker in result: {time_marker} seconds")
     
-    if time_marker:
+    # Always include the time marker in the result, even if it's null
+    if time_marker is not None:
         result["time_marker"] = {
             "seconds": time_marker
         }
+        logger.info(f"Added time marker to result: {time_marker} seconds")
+    else:
+        result["time_marker"] = {
+            "seconds": 0
+        }
+        logger.info("Added default time marker (0 seconds) to result")
     
     # Print the result
     print(json.dumps(result, indent=2))
