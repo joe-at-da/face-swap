@@ -44,6 +44,7 @@ interface ValidationResult {
   success: boolean;
   message: string;
   streamUrl?: string;
+  originalUrl?: string; // Add originalUrl to store the original Parliament TV URL
   timeMarker?: number;
   error?: string;
 }
@@ -191,6 +192,7 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
           success: true,
           message: 'URL is valid and ready for capture',
           streamUrl: video_url,
+          originalUrl: url, // Store the original URL with time marker
           timeMarker: time_marker?.seconds
         });
         
@@ -348,8 +350,9 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
     setError('');
     
     try {
-      const payload = {
-        url: validationResult.streamUrl,
+      // Use the original URL with time marker instead of the extracted direct stream URL
+      const payload: Record<string, any> = {
+        url: validationResult.originalUrl || validationResult.streamUrl, // Prefer original URL
         title,
         description,
         duration,
@@ -360,12 +363,19 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
       
       // If we have a time marker, add it to the payload
       if (timeMarker !== null) {
-        payload['time_marker'] = timeMarker;
+        payload.time_marker = timeMarker;
       }
       
       console.log('Starting capture with payload:', payload);
       
-      const response = await axios.post(
+      // Define the expected response type
+      interface CaptureResponse {
+        id: number;
+        status: string;
+        [key: string]: any; // Allow for other properties
+      }
+      
+      const response = await axios.post<CaptureResponse>(
         `${API_BASE_URL}/parliament-tv`,
         payload,
         getAuthHeaders()

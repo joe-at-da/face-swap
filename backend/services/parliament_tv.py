@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
-
+from urllib.parse import urlparse, parse_qs
 import requests
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -787,6 +787,31 @@ class ParliamentTVCapture:
         try:
             logger.info(f"Extracting stream URL from: {url}")
             
+            # Store the original URL to preserve it throughout the process
+            original_url = url
+            
+            # Extract time marker from the original URL first
+            time_marker = None
+            if original_url and isinstance(original_url, str) and "?in=" in original_url:
+                # Extract time marker
+                parsed_url = urlparse(original_url)
+                query_params = parse_qs(parsed_url.query)
+                if 'in' in query_params:
+                    time_str = query_params['in'][0]
+                    logger.info(f"Found time marker in original URL: {time_str}")
+                    try:
+                        parts = time_str.split(':')
+                        if len(parts) == 3:
+                            hours, minutes, seconds = map(int, parts)
+                            time_marker = hours * 3600 + minutes * 60 + seconds
+                            logger.info(f"Parsed time marker: {time_marker} seconds")
+                        elif len(parts) == 2:
+                            minutes, seconds = map(int, parts)
+                            time_marker = minutes * 60 + seconds
+                            logger.info(f"Parsed time marker: {time_marker} seconds")
+                    except ValueError:
+                        logger.error(f"Error parsing time marker: {time_str}")
+            
             # Validate URL
             if not url:
                 logger.error(f"Invalid URL provided: {url}")
@@ -801,8 +826,8 @@ class ParliamentTVCapture:
                     "video_url": video_url,
                     "audio_url": audio_url,
                     "event_id": "direct",
-                    "time_marker": {"seconds": 0},
-                    "original_url": url.get("original_url", "Direct Stream")
+                    "time_marker": {"seconds": time_marker if time_marker is not None else 0},
+                    "original_url": original_url
                 }
             
             # Check if the URL is already a direct stream URL
@@ -818,8 +843,8 @@ class ParliamentTVCapture:
                         "video_url": None,
                         "audio_url": url,
                         "event_id": "direct",
-                        "time_marker": {"seconds": 0},
-                        "original_url": url
+                        "time_marker": {"seconds": time_marker if time_marker is not None else 0},
+                        "original_url": original_url
                     }
                 else:
                     logger.info("URL appears to be a video stream")
@@ -837,8 +862,8 @@ class ParliamentTVCapture:
                         "video_url": url,
                         "audio_url": audio_url,
                         "event_id": "direct",
-                        "time_marker": {"seconds": 0},
-                        "original_url": url
+                        "time_marker": {"seconds": time_marker if time_marker is not None else 0},
+                        "original_url": original_url
                     }
             
             # Set script path
@@ -882,9 +907,9 @@ class ParliamentTVCapture:
                     logger.error("Could not find Python executable")
                     return {"error": "Could not find Python executable"}
             
-            # Build and run the command
-            cmd = [python_executable, script_path, url]
-            logger.info(f"Running extract-url command for: {url}")
+            # Build and run the command - use the original URL to preserve time marker
+            cmd = [python_executable, script_path, original_url]
+            logger.info(f"Running extract-url command for: {original_url}")
             
             result = subprocess.run(cmd, capture_output=True, text=True)
             
@@ -900,51 +925,71 @@ class ParliamentTVCapture:
                         logger.info(f"Converting old format with direct_stream to new format")
                         direct_stream = stream_info["direct_stream"]
                         if isinstance(direct_stream, dict) and "video_url" in direct_stream:
-                            # Extract video_url and audio_url from nested dict
-                            return {
-                                "video_url": direct_stream.get("video_url"),
-                                "audio_url": direct_stream.get("audio_url"),
-                                "event_id": stream_info.get("event_id"),
-                                "time_marker": stream_info.get("time_marker"),
-                                "original_url": stream_info.get("original_url")
-                            }
+                            video_url = direct_stream["video_url"]
+                            audio_url = direct_stream["audio_url"]
                         else:
-                            # If direct_stream is a string, it's the video URL
-                            return {
-                                "video_url": direct_stream if isinstance(direct_stream, str) else None,
-                                "audio_url": None,
-                                "event_id": stream_info.get("event_id"),
-                                "time_marker": stream_info.get("time_marker"),
-                                "original_url": stream_info.get("original_url")
-                            }
+                            video_url = direct_stream
+                            audio_url = None
+                            
+                            # Try to derive audio URL from video URL
+                            if isinstance(video_url, str) and 'video=' in video_url and '.m3u8' in video_url:
+                                # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                                import re
+                                audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                                logger.info(f"Derived audio URL from video URL: {audio_url}")
                     else:
-                        # Already in the new format or different structure
-                        # Make sure we properly handle the time_marker
-                        time_marker = stream_info.get("time_marker")
+                        # No direct_stream key, assume the URL is already the direct stream URL
+                        video_url = url
+                        audio_url = None
                         
-                        # Log the time marker for debugging
-                        if time_marker:
-                            logger.info(f"Found time marker in stream info: {time_marker}")
+                        # Try to derive audio URL from video URL
+                        if isinstance(video_url, str) and 'video=' in video_url and '.m3u8' in video_url:
+                            # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                            import re
+                            audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                            logger.info(f"Derived audio URL from video URL: {audio_url}")
+                    
+                    # Get event ID
+                    event_id = stream_info.get("event_id", "unknown")
+                    
+                    # Get time marker from script output if available
+                    script_time_marker = None
+                    if "time_marker" in stream_info:
+                        time_marker_data = stream_info["time_marker"]
+                        if isinstance(time_marker_data, dict) and "seconds" in time_marker_data:
+                            script_time_marker = time_marker_data["seconds"]
                         else:
-                            logger.warning("No time marker found in stream info")
-                        
-                        return {
-                            "video_url": stream_info.get("video_url") or stream_info.get("url"),
-                            "audio_url": stream_info.get("audio_url"),
-                            "event_id": stream_info.get("event_id"),
-                            "time_marker": time_marker,
-                            "original_url": stream_info.get("original_url") or url
-                        }
+                            script_time_marker = time_marker_data
+                    
+                    # Use the time marker we extracted directly if the script didn't find one
+                    final_time_marker = script_time_marker if script_time_marker is not None and script_time_marker > 0 else time_marker
+                    logger.info(f"Using time marker: {final_time_marker} seconds (script: {script_time_marker}, direct: {time_marker})")
+                    
+                    # Create the result
+                    result = {
+                        "video_url": video_url,
+                        "audio_url": audio_url,
+                        "event_id": event_id,
+                        "time_marker": {"seconds": final_time_marker if final_time_marker is not None else 0},
+                        "original_url": original_url
+                    }
+                    
+                    logger.info(f"Extracted stream URLs: video={video_url}, audio={audio_url}")
+                    return result
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON output: {str(e)}")
-                    return {"error": f"Failed to parse JSON output: {str(e)}"}
+                    logger.error(f"Error parsing JSON output: {e}")
+                    logger.error(f"Raw output: {result.stdout}")
+                    return {"error": f"Error parsing stream info: {e}"}
             else:
-                logger.error(f"Command failed with return code {result.returncode}: {result.stderr}")
-                return {"error": f"Command failed with return code {result.returncode}: {result.stderr}"}
-                
+                logger.error(f"Error extracting stream URL. Return code: {result.returncode}")
+                logger.error(f"STDOUT: {result.stdout}")
+                logger.error(f"STDERR: {result.stderr}")
+                return {"error": f"Error extracting stream URL: {result.stderr}"}
         except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            return {"error": f"Unexpected error: {str(e)}"}
+            logger.error(f"Error in extract_stream_url: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {"error": f"Error: {str(e)}"}
 
     def log_capture(self, db: Session, capture_id: int, level: str, message: str):
         """Log a message for a capture."""
@@ -1301,7 +1346,18 @@ class ParliamentTVCapture:
         
         # Ensure the audio directory exists with proper permissions
         try:
-            # Create the directory if it doesn't exist
+            # First check if the parent directory exists and is writable
+            parent_dir = str(self.temp_dir)
+            if not os.path.exists(parent_dir):
+                logger.info(f"Creating parent directory: {parent_dir}")
+                os.makedirs(parent_dir, exist_ok=True)
+                try:
+                    os.chmod(parent_dir, 0o777)  # rwx for all users
+                except Exception as e:
+                    logger.warning(f"Could not set permissions on parent directory: {e}")
+            
+            # Now create the audio directory
+            logger.info(f"Creating audio directory: {audio_dir}")
             os.makedirs(audio_dir, exist_ok=True)
             logger.info(f"Ensured audio directory exists: {audio_dir}")
             
@@ -1312,21 +1368,37 @@ class ParliamentTVCapture:
             except Exception as e:
                 logger.warning(f"Could not set permissions on audio directory: {e}")
             
-            # Test if the directory is writable
-            test_file = os.path.join(audio_dir, ".test_write")
-            with open(test_file, 'w') as f:
-                f.write("test")
-            os.remove(test_file)
-            logger.info(f"Verified audio directory is writable")
-        except Exception as e:
-            logger.error(f"Failed to create or access audio directory: {str(e)}")
-            # Try to create the directory with a different approach
+            # Test if the directory is writable using a different approach
             try:
+                test_file = os.path.join(audio_dir, ".test_write")
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                logger.info(f"Verified audio directory is writable")
+            except Exception as write_error:
+                logger.warning(f"Could not write test file: {write_error}")
+                # Try to create the directory with subprocess as a fallback
                 subprocess.run(["mkdir", "-p", audio_dir], check=True)
                 subprocess.run(["chmod", "777", audio_dir], check=True)
                 logger.info(f"Created audio directory using subprocess: {audio_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create or access audio directory: {str(e)}")
+            # Try to create the directory with a different approach as a last resort
+            try:
+                subprocess.run(["mkdir", "-p", audio_dir], check=True)
+                subprocess.run(["chmod", "777", audio_dir], check=True)
+                logger.info(f"Created audio directory using subprocess as last resort: {audio_dir}")
             except Exception as e2:
                 logger.error(f"Failed to create audio directory using subprocess: {str(e2)}")
+                # Create a different directory as a fallback
+                try:
+                    audio_dir = "/tmp/audio_extracts"
+                    subprocess.run(["mkdir", "-p", audio_dir], check=True)
+                    subprocess.run(["chmod", "777", audio_dir], check=True)
+                    logger.info(f"Created fallback audio directory in /tmp: {audio_dir}")
+                except Exception as e3:
+                    logger.error(f"Failed to create fallback audio directory: {str(e3)}")
+                    return {"success": False, "error": "Could not create audio directory"}
         
         # Define the audio file path
         audio_file = os.path.join(audio_dir, f"capture_{padded_capture_id}.audio.mp3")
