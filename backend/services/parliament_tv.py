@@ -1014,8 +1014,9 @@ class ParliamentTVCapture:
                 if db_capture.metadata:
                     # Check if it's an SQLAlchemy MetaData object (special case)
                     if str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
-                        logger.warning(f"Found SQLAlchemy MetaData object for capture {capture_id} - creating empty metadata")
-                        # We can't use this object directly, so we'll try to extract source_url from the capture
+                        logger.warning(f"Found SQLAlchemy MetaData object for capture {capture_id} - creating fresh metadata dictionary")
+                        
+                        # First check if we have a source_url in the capture object
                         if hasattr(db_capture, 'source_url') and db_capture.source_url:
                             video_url = db_capture.source_url
                             metadata['video_url'] = video_url
@@ -1023,17 +1024,35 @@ class ParliamentTVCapture:
                             
                             # Try to derive audio URL from video URL if possible
                             if '.m3u8' in video_url:
-                                # Standard Parliament TV format
-                                potential_audio_url = video_url.replace('video', 'audio')
-                                if 'eng=' not in potential_audio_url:
-                                    potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
-                                metadata['audio_url'] = potential_audio_url
-                                logger.info(f"Derived audio_url from video_url: {potential_audio_url}")
+                                # For video URLs with format *video=3000000.m3u8
+                                if 'video=' in video_url:
+                                    potential_audio_url = video_url.replace('video=', 'audio_eng=')
+                                    potential_audio_url = potential_audio_url.replace('3000000', '64000')
+                                    metadata['audio_url'] = potential_audio_url
+                                    logger.info(f"Derived audio_url from video_url (pattern 1): {potential_audio_url}")
+                                # Standard Parliament TV format with 'video' in path
+                                elif '/video' in video_url:
+                                    potential_audio_url = video_url.replace('/video', '/audio')
+                                    if 'eng=' not in potential_audio_url:
+                                        potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                                    metadata['audio_url'] = potential_audio_url
+                                    logger.info(f"Derived audio_url from video_url (pattern 2): {potential_audio_url}")
+                                # Try another common pattern
+                                else:
+                                    base_url = video_url.rsplit('.m3u8', 1)[0]
+                                    if '-video=' in base_url:
+                                        potential_audio_url = base_url.replace('-video=', '-audio_eng=')
+                                        potential_audio_url = potential_audio_url.replace('3000000', '64000') + '.m3u8'
+                                        metadata['audio_url'] = potential_audio_url
+                                        logger.info(f"Derived audio_url from video_url (pattern 3): {potential_audio_url}")
+                                    else:
+                                        # For non-standard URLs, we can't derive an audio URL
+                                        logger.warning(f"Non-standard URL format: {video_url} - cannot derive audio URL")
                             else:
                                 # For non-standard URLs, we can't derive an audio URL
                                 logger.warning(f"Non-standard URL format: {video_url} - cannot derive audio URL")
                                 # We don't set an audio_url in this case
-                        
+                            
                         # Update the database with the new metadata
                         try:
                             # Use a direct SQL query to update the metadata JSON to ensure it's stored correctly
@@ -1233,6 +1252,17 @@ class ParliamentTVCapture:
         else:
             logger.warning(f"Audio directory does not exist: {audio_dir}")
         
+        # Sanitize the audio URL - ensure it's properly formatted
+        if audio_url and '%' in audio_url:
+            try:
+                # Try to unquote the URL if it's URL-encoded
+                import urllib.parse
+                decoded_url = urllib.parse.unquote(audio_url)
+                logger.info(f"Decoded URL-encoded audio URL: {decoded_url}")
+                audio_url = decoded_url
+            except Exception as e:
+                logger.warning(f"Failed to decode URL-encoded audio URL: {str(e)}")
+        
         # Create the ffmpeg command - DIRECT FROM AUDIO URL ONLY
         cmd = [
             "ffmpeg",
@@ -1241,14 +1271,14 @@ class ParliamentTVCapture:
             "-reconnect", "1",  # Enable reconnection
             "-reconnect_streamed", "1",  # Enable reconnection for streamed content
             "-reconnect_delay_max", "5",  # Maximum delay between reconnection attempts
+            "-timeout", "30",  # Set connection timeout in seconds
+            "-rw_timeout", "30",  # Set read/write timeout in seconds
             "-i", audio_url,  # Input audio URL
             "-c:a", "libmp3lame",  # Use MP3 codec
             "-q:a", "2",  # Quality setting for audio
             "-vn",  # No video
             "-hide_banner",  # Hide banner information
             "-stats",  # Show progress stats
-            "-write_xing", "0",  # Disable Xing headers
-            "-id3v2_version", "4",  # Set ID3v2 version
             audio_file  # Output file
         ]
         
@@ -1261,20 +1291,22 @@ class ParliamentTVCapture:
         
         # Execute the command
         try:
-            # Run the command with a timeout
+            # Run the command with a shorter timeout
             logger.info(f"Running audio extraction command: {' '.join(cmd)}")
+            logger.info(f"Audio URL being used: {audio_url}")
             # Create a temporary file to store FFmpeg output
             temp_log_file = os.path.join(str(self.temp_dir), f"ffmpeg_log_{capture_id}.txt")
             with open(temp_log_file, 'w') as log_file:
                 # Run FFmpeg with output redirected to the log file
+                logger.info(f"Starting FFmpeg process with timeout of 120 seconds")
                 result = subprocess.run(
                     cmd, 
                     stdout=log_file, 
                     stderr=subprocess.STDOUT,
                     text=True, 
-                    timeout=300
+                    timeout=120  # Reduced timeout from 300 to 120 seconds
                 )
-            
+                logger.info(f"FFmpeg process completed with return code: {result.returncode}")
             # Read the log file contents
             with open(temp_log_file, 'r') as log_file:
                 ffmpeg_output = log_file.read()
@@ -1349,8 +1381,13 @@ class ParliamentTVCapture:
                             logger.error(f"Error closing database session: {str(e)}")
                     return error_result
             else:
-                logger.error(f"Audio extraction failed for capture {capture_id}: {result.stderr}")
-                error_result = {"success": False, "error": "Audio extraction failed: " + result.stderr}
+                error_msg = f"Audio extraction failed for capture {capture_id} with return code {result.returncode}"
+                logger.error(error_msg)
+                if result.stdout:
+                    logger.error(f"FFmpeg stdout: {result.stdout[:1000]}..." if len(result.stdout) > 1000 else f"FFmpeg stdout: {result.stdout}")
+                if result.stderr:
+                    logger.error(f"FFmpeg stderr: {result.stderr[:1000]}..." if len(result.stderr) > 1000 else f"FFmpeg stderr: {result.stderr}")
+                error_result = {"success": False, "error": error_msg}
                 # Close the database connection if we created it
                 if try_new_session and db is not None:
                     try:
