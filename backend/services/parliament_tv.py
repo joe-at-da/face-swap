@@ -1110,7 +1110,7 @@ class ParliamentTVCapture:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return {}
     
-    def build_ffmpeg_command(self, input_url: str, start_position=None) -> List[str]:
+    def build_ffmpeg_command(self, input_url: str, start_position=None, duration=None) -> List[str]:
         """
         Build an FFmpeg command with the correct order of options.
         
@@ -1125,6 +1125,7 @@ class ParliamentTVCapture:
         Args:
             input_url: The input URL for the video stream
             start_position: Optional start position in seconds for seeking
+            duration: Optional duration in seconds to limit the capture
             
         Returns:
             List of command arguments for subprocess
@@ -1152,6 +1153,11 @@ class ParliamentTVCapture:
         
         # Combine all options in the correct order
         cmd = ffmpeg_executable + global_options + input_options + input_url_option
+        
+        # Add duration limit if provided - place it AFTER input URL for better accuracy with seeking
+        if duration:
+            cmd.extend(["-t", str(duration)])
+            logger.info(f"Added duration limit: -t {duration}")
         
         # Log the command being built
         logger.info(f"Built FFmpeg base command: {' '.join(cmd)}")
@@ -1313,29 +1319,35 @@ class ParliamentTVCapture:
             except Exception as e:
                 logger.warning(f"Failed to decode URL-encoded audio URL: {str(e)}")
         
-        # Create a fresh FFmpeg command for audio extraction using a structured approach
-        # Create separate lists for different types of options
-        ffmpeg_executable = ["ffmpeg"]
-        global_options = ["-y"]  # Overwrite output files without asking
-        input_options = []
+        # Check if we have a time marker in the metadata
+        start_position = None
+        duration_to_use = None
         
-        # Add network and protocol options as input options
-        input_options.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
-        input_options.extend(["-http_persistent", "1"])
-        input_options.extend(["-allowed_extensions", "ALL"])
+        # First check if time_marker is in the metadata
+        if metadata and isinstance(metadata, dict):
+            # Check for time marker
+            if "time_marker" in metadata and metadata["time_marker"] and "seconds" in metadata["time_marker"]:
+                time_marker_seconds = metadata["time_marker"]["seconds"]
+                if time_marker_seconds > 0:
+                    start_position = time_marker_seconds
+                    logger.info(f"Using time marker from metadata: {start_position} seconds")
+            
+            # Check for duration
+            if "duration" in metadata and metadata["duration"]:
+                duration_to_use = metadata["duration"]
+                logger.info(f"Using duration from metadata: {duration_to_use} seconds")
         
-        # Add reconnection options (must come before input)
-        input_options.extend(["-reconnect", "1"])  # Enable reconnection
-        input_options.extend(["-reconnect_streamed", "1"])  # Enable reconnection for streamed content
-        input_options.extend(["-reconnect_delay_max", "5"])  # Maximum delay between reconnection attempts
-        input_options.extend(["-timeout", "30"])  # Set connection timeout in seconds
-        input_options.extend(["-rw_timeout", "30"])  # Set read/write timeout in seconds
+        # If no duration in metadata, check if we have a duration in the capture record
+        if not duration_to_use and hasattr(db_capture, 'duration') and db_capture.duration:
+            duration_to_use = db_capture.duration
+            logger.info(f"Using duration from capture record: {duration_to_use} seconds")
         
-        # The input URL
-        input_url_option = ["-i", audio_url]
-        
-        # Combine all options in the correct order
-        cmd = ffmpeg_executable + global_options + input_options + input_url_option
+        # Use the build_ffmpeg_command helper function to create the command with proper ordering
+        cmd = self.build_ffmpeg_command(
+            input_url=audio_url,
+            start_position=start_position,
+            duration=duration_to_use
+        )
         
         # Now add output options after the input URL
         cmd.extend([
