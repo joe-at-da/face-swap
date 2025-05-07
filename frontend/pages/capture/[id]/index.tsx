@@ -6,6 +6,7 @@ import MainLayout from '../../../components/layout/MainLayout';
 import { withAuth, UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
 import AudioPlayer from '../../../components/AudioPlayer';
+import RecognitionPanel from '../../../components/recognition/RecognitionPanel';
 
 interface CaptureSession {
   id: number;
@@ -299,6 +300,9 @@ const CaptureDetailPage = () => {
                   </div>
                 )}
               </div>
+              
+              {/* Recognition Panel */}
+              <RecognitionPanel captureId={capture.id} videoElement={videoElement} />
               
               {/* Debug Info */}
               <div className="mt-8">

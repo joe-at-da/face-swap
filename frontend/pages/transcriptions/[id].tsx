@@ -31,7 +31,7 @@ import { ChevronRightIcon, DownloadIcon, TimeIcon, ChevronDownIcon } from '@chak
 import Layout from '../../components/layout/Layout';
 import { withAuth } from '../../lib/auth';
 import api from '../../lib/api';
-import RecognitionResults from '../../components/recognition/RecognitionResults';
+import TranscriptionWithRecognition from '../../components/transcriptions/TranscriptionWithRecognition';
 
 interface TranscriptionDetailPageProps {
   transcriptionData: {

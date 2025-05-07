@@ -28,6 +28,24 @@ router = APIRouter()
 # Initialize the Parliament TV capture service
 parliament_tv_service = ParliamentTVCapture()
 
+@router.get("", response_model=Dict)
+async def get_parliament_tv(status: Optional[str] = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Get Parliament TV captures with optional status filtering.
+    
+    This endpoint redirects to the captures endpoint for backward compatibility.
+    """
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get captures from the captures endpoint
+    captures = await get_parliament_tv_captures(status=status, db=db, current_user=current_user)
+    
+    # Format as a dictionary for response
+    return {
+        "success": True,
+        "captures": captures
+    }
+
 # Define the data directory where videos are stored
 DATA_DIR = os.environ.get('DATA_DIR', '/app/data/temp')
 AUDIO_EXTRACTS_DIR = os.path.join(DATA_DIR, 'audio_extracts')
@@ -535,7 +553,7 @@ async def test_stream_url(
 async def get_parliament_tv_captures(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """Get all Parliament TV capture sessions with optional filtering by status."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
