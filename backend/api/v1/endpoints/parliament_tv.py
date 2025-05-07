@@ -967,13 +967,37 @@ async def extract_audio_for_capture(
     
     # Get the audio URL from metadata
     audio_url = None
-    if capture.metadata and isinstance(capture.metadata, dict) and 'audio_url' in capture.metadata:
-        audio_url = capture.metadata['audio_url']
+    metadata = capture.metadata
+    
+    # Handle different metadata formats
+    if metadata:
+        # Convert SQLAlchemy MetaData objects if needed
+        if hasattr(metadata, '__dict__'):
+            metadata = metadata.__dict__
+        # Try to convert to dictionary if it's not already
+        elif not isinstance(metadata, dict):
+            try:
+                metadata = dict(metadata)
+            except Exception as e:
+                print(f"Error converting metadata to dict: {e}")
+                metadata = {}
+        
+        # Now try to get the audio_url
+        if isinstance(metadata, dict):
+            audio_url = metadata.get('audio_url')
     
     if not audio_url:
+        # Provide detailed error information for debugging
+        error_detail = {
+            'message': 'No audio URL found in capture metadata',
+            'metadata_type': str(type(capture.metadata)),
+            'metadata_keys': str(metadata.keys()) if isinstance(metadata, dict) else 'N/A',
+            'capture_id': capture_id
+        }
+        print(f"Audio extraction failed: {error_detail}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='No audio URL found in capture metadata'
+            detail=error_detail
         )
     
     # Generate output path

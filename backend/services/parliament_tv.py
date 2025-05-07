@@ -328,6 +328,9 @@ class ParliamentTVCapture:
             new_metadata["video_url"] = video_url
             if audio_url:
                 new_metadata["audio_url"] = audio_url
+                logger.info(f"Saved audio URL in metadata: {audio_url}")
+            else:
+                logger.warning("No audio URL available to save in metadata")
                 
             # Store time marker if available
             if "time_marker" in stream_info and stream_info["time_marker"]:
@@ -339,8 +342,10 @@ class ParliamentTVCapture:
             # Commit the changes to ensure metadata is saved
             db.commit()
             
-            logger.info(f"Updated metadata in database with video_url and audio_url")
-            
+            # Double-check that the audio URL was saved correctly
+            if audio_url:
+                logger.info(f"Verifying audio URL in metadata: {db_capture.metadata.get('audio_url', 'NOT FOUND')}")
+                
             # Check for time marker in metadata if not found in stream_info
             if not start_position and db_capture.metadata and "time_marker" in db_capture.metadata:
                 time_marker_seconds = db_capture.metadata.get("time_marker", {}).get("seconds", 0)
