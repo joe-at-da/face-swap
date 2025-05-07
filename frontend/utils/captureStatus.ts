@@ -30,11 +30,25 @@ export interface CombinedStatus {
  */
 export const checkCaptureStatus = async (captureId: number): Promise<CombinedStatus> => {
   try {
-    // Check video status
-    const videoResponse = await apiClient.get<CaptureStatusResponse>(`/parliament-tv/${captureId}/status`);
-    
-    // Check audio status
-    const audioResponse = await apiClient.get<AudioStatusResponse>(`/parliament-tv/audio-extraction/${captureId}/status`);
+    // Create a timeout promise that will reject after 3 seconds
+    const timeout = (ms: number) => new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Request timeout')), ms)
+    );
+
+    // Make both API calls in parallel with timeouts
+    const [videoResponse, audioResponse] = await Promise.all([
+      Promise.race([
+        apiClient.get<CaptureStatusResponse>(`/parliament-tv/${captureId}/status`),
+        timeout(3000) // 3 second timeout
+      ]) as Promise<{ data: CaptureStatusResponse }>,
+      Promise.race([
+        apiClient.get<AudioStatusResponse>(`/parliament-tv/audio-extraction/${captureId}/status`),
+        timeout(3000) // 3 second timeout
+      ]) as Promise<{ data: AudioStatusResponse }>
+    ]).catch(error => {
+      console.error('Error fetching capture status:', error);
+      throw error;
+    });
     
     // Determine if video is ready
     const videoReady = videoResponse.data.success && 

@@ -746,11 +746,14 @@ async def stream_parliament_tv_video(
                 break
     
     # 3. Try to find by parliament_stream pattern with capture ID - ONLY use patterns with the capture ID
+    # Also look for zero-padded capture IDs (e.g., capture_0189.mp4)
+    padded_id = str(capture_id).zfill(4)  # Pad with zeros to 4 digits
     parliament_patterns = [
         # ONLY look for files with the exact capture ID
         f"parliament_stream_*_{capture_id}.mp4",
         f"parliament_capture_*_{capture_id}.mp4",
         f"capture_*_{capture_id}.mp4",
+        f"capture_{padded_id}.mp4",  # Add pattern for zero-padded ID
         f"*_{capture_id}.mp4"
         # NO FALLBACK to random videos
     ]
@@ -765,7 +768,7 @@ async def stream_parliament_tv_video(
                 video_file_paths.append(file_path)
                 print(f"Found video file with pattern {pattern}: {file_path}")
     
-    # 3. Try to find in other common directories - ONLY look for files with the capture ID
+    # 4. Try to find in other common directories - ONLY look for files with the capture ID
     other_dirs = [
         "/app/data/media",
         "/app/data/temp",
@@ -775,10 +778,12 @@ async def stream_parliament_tv_video(
     for directory in other_dirs:
         if directory != DATA_DIR and os.path.exists(directory):
             print(f"Searching in alternative directory: {directory}")
-            # ONLY search for files with the capture ID
-            pattern = f"*_{capture_id}.mp4"
-            full_pattern = os.path.join(directory, pattern)
-            matching_files = glob.glob(full_pattern)
+            # ONLY search for files with the capture ID (both regular and zero-padded)
+            patterns = [f"*_{capture_id}.mp4", f"capture_{padded_id}.mp4"]
+            matching_files = []
+            for pattern in patterns:
+                full_pattern = os.path.join(directory, pattern)
+                matching_files.extend(glob.glob(full_pattern))
             print(f"Found {len(matching_files)} files with pattern {pattern} in {directory}")
             for file_path in matching_files:
                 if file_path not in video_file_paths:

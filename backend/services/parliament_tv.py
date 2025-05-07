@@ -53,11 +53,6 @@ class ParliamentTVCapture:
         logger.info(f"Stopping capture {capture_id}")
         
         try:
-            # Check if the capture is active
-            if capture_id not in self.active_captures:
-                logger.error(f"Capture {capture_id} is not active")
-                return {"success": False, "error": f"Capture {capture_id} is not active"}
-            
             # Get a database session
             db = next(get_db())
             
@@ -70,17 +65,17 @@ class ParliamentTVCapture:
             # Find and terminate the ffmpeg process
             logger.info(f"Terminating capture process for {capture_id}")
             
-            # Get the thread from active_captures
-            capture_info = self.active_captures.get(capture_id, {})
+            # Format the capture ID with leading zeros (e.g., 0096)
+            padded_capture_id = str(capture_id).zfill(4)
             
             # Find and terminate any running ffmpeg processes for this capture
             try:
-                # Format the capture ID with leading zeros (e.g., 0096)
-                padded_capture_id = str(capture_id).zfill(4)
-                
                 # Use ps to find ffmpeg processes containing the capture ID
                 ps_cmd = ["ps", "-ef"]
-                ps_result = subprocess.run(ps_cmd, capture_output=True, text=True)
+                ps_result = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5)
+                
+                # Keep track of whether we found and killed any processes
+                processes_killed = False
                 
                 # Look for ffmpeg processes with this capture ID
                 for line in ps_result.stdout.splitlines():
@@ -93,22 +88,32 @@ class ParliamentTVCapture:
                                 logger.info(f"Terminating process with PID {pid}")
                                 # First try to terminate gracefully
                                 os.kill(pid, signal.SIGTERM)
-                                # Give it a moment to terminate
-                                time.sleep(1)
-                                # Check if it's still running
-                                try:
-                                    os.kill(pid, 0)  # This will raise OSError if process is gone
-                                    # If we get here, process is still running, force kill
-                                    logger.warning(f"Process {pid} did not terminate gracefully, forcing kill")
-                                    os.kill(pid, signal.SIGKILL)
-                                    time.sleep(0.5)  # Give it a moment to die
-                                except OSError:
-                                    # Process is already gone
-                                    pass
+                                processes_killed = True
                             except ValueError:
                                 logger.warning(f"Could not parse PID from: {parts[1]}")
+                            except ProcessLookupError:
+                                logger.warning(f"Process {pid} no longer exists")
                             except Exception as e:
                                 logger.error(f"Error killing process: {str(e)}")
+                
+                # If we killed any processes, give them a moment to terminate
+                if processes_killed:
+                    time.sleep(1)
+                    
+                    # Check if any processes are still running and force kill them
+                    ps_result = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5)
+                    for line in ps_result.stdout.splitlines():
+                        if f"capture_{padded_capture_id}" in line and "ffmpeg" in line:
+                            parts = line.split()
+                            if len(parts) > 1:
+                                try:
+                                    pid = int(parts[1])
+                                    logger.warning(f"Process {pid} did not terminate gracefully, forcing kill")
+                                    os.kill(pid, signal.SIGKILL)
+                                except Exception as e:
+                                    logger.error(f"Error force killing process: {str(e)}")
+            except subprocess.TimeoutExpired:
+                logger.error("Process search timed out")
             except Exception as proc_err:
                 logger.error(f"Error finding/killing ffmpeg processes: {str(proc_err)}")
             
@@ -205,7 +210,8 @@ class ParliamentTVCapture:
             # Audio extraction is handled separately via a dedicated endpoint
             # Do NOT attempt to extract audio from video files
             
-            return {"success": True, "file_path": db_capture.file_path}
+            logger.info(f"Capture {capture_id} stopped successfully")
+            return {"success": True, "file_path": db_capture.file_path if hasattr(db_capture, 'file_path') else None}
         except Exception as e:
             logger.error(f"Error stopping capture: {str(e)}")
     
