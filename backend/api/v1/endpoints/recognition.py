@@ -4,8 +4,10 @@ API endpoints for facial and voice recognition.
 
 import os
 import logging
+import json
 from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db, get_current_user
@@ -23,6 +25,11 @@ router = APIRouter()
 # Initialize services
 facial_recognition_service = FacialRecognitionService()
 voice_recognition_service = VoiceRecognitionService()
+
+@router.get("/test")
+async def test_recognition_endpoint():
+    """Test endpoint to check if the recognition router is working."""
+    return {"status": "success", "message": "Recognition API is working correctly"}
 
 
 @router.post("/facial-recognition", response_model=schemas.FacialRecognitionResponse)
@@ -120,16 +127,16 @@ async def process_transcription(
     """
     logger.info(f"Processing transcription for audio ID: {request.audio_id}")
     
-    # Get the capture session from the database
+    # Get the audio from the database
     capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == request.audio_id).first()
     
     if not capture:
-        raise HTTPException(status_code=404, detail=f"Capture with ID {request.audio_id} not found")
+        raise HTTPException(status_code=404, detail=f"Audio with ID {request.audio_id} not found")
     
     # Check if the audio file exists
     audio_path = capture.audio_path
     if not audio_path or not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail=f"Audio file not found for capture ID {request.audio_id}")
+        raise HTTPException(status_code=404, detail=f"Audio file not found for audio ID {request.audio_id}")
     
     # Process transcription
     output_file = None
@@ -139,21 +146,8 @@ async def process_transcription(
         output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
         output_file = os.path.join(output_dir, output_filename)
     
-    # Call the voice recognition service for transcription
+    # Call the voice recognition service
     result = voice_recognition_service.transcribe_audio(audio_path, output_file)
-    
-    # Update the database with the transcription results
-    if result["success"] and result.get("output_file"):
-        # Create a new transcription record
-        transcription = models.Transcription(
-            capture_session_id=capture.id,
-            transcription_path=result["output_file"],
-            status="completed",
-            source="parliament-tv"
-        )
-        db.add(transcription)
-        db.commit()
-        db.refresh(transcription)
     
     return result
 
@@ -169,16 +163,16 @@ async def process_voice_identification(
     """
     logger.info(f"Processing voice identification for audio ID: {request.audio_id}")
     
-    # Get the capture session from the database
+    # Get the audio from the database
     capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == request.audio_id).first()
     
     if not capture:
-        raise HTTPException(status_code=404, detail=f"Capture with ID {request.audio_id} not found")
+        raise HTTPException(status_code=404, detail=f"Audio with ID {request.audio_id} not found")
     
     # Check if the audio file exists
     audio_path = capture.audio_path
     if not audio_path or not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail=f"Audio file not found for capture ID {request.audio_id}")
+        raise HTTPException(status_code=404, detail=f"Audio file not found for audio ID {request.audio_id}")
     
     # Process voice identification
     output_file = None
@@ -188,7 +182,7 @@ async def process_voice_identification(
         output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_voice_identification.json"
         output_file = os.path.join(output_dir, output_filename)
     
-    # Call the voice recognition service for voice identification
+    # Call the voice recognition service
     result = voice_recognition_service.identify_speakers_in_audio(audio_path, output_file)
     
     # Update the database with the voice identification results
@@ -199,132 +193,158 @@ async def process_voice_identification(
     return result
 
 
-@router.post("/combined-recognition", response_model=schemas.CombinedRecognitionResponse)
+@router.post("/combined-recognition")
 async def process_combined_recognition(
-    request: schemas.CombinedRecognitionRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
     """
     Process combined facial and voice recognition for a video.
     """
-    logger.info(f"Processing combined recognition for video ID: {request.video_id}")
-    
-    # Get the video from the database
-    video = db.query(models.CaptureSession).filter(models.CaptureSession.id == request.video_id).first()
-    
-    if not video:
-        raise HTTPException(status_code=404, detail=f"Video with ID {request.video_id} not found")
-    
-    # Check if the video and audio files exist
-    video_path = video.video_path
-    audio_path = video.audio_path
-    
-    if not video_path or not os.path.exists(video_path):
-        raise HTTPException(status_code=404, detail=f"Video file not found for video ID {request.video_id}")
-    
-    if not audio_path or not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail=f"Audio file not found for video ID {request.video_id}")
-    
-    # Process speaker identification
-    speaker_output_file = None
-    if request.save_output:
-        # Create output file path
+    try:
+        # Parse the request body manually
+        body = await request.json()
+        video_id = body.get("video_id")
+        save_output = body.get("save_output", True)
+        
+        logger.info(f"Processing combined recognition for video ID: {video_id}")
+        
+        # Get the video from the database
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        
+        if not video:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "error": f"Video with ID {video_id} not found"}
+            )
+        
+        # Check if the video file exists
+        video_path = video.video_path
+        if not video_path or not os.path.exists(video_path):
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "error": f"Video file not found for video ID {video_id}"}
+            )
+        
+        # Get or create the audio path
+        audio_path = video.audio_path
+        if not audio_path or not os.path.exists(audio_path):
+            # If no audio path is set, use the video path for audio extraction
+            audio_path = video_path
+            logger.info(f"No audio path set, using video path: {video_path}")
+        
+        # Step 1: Process speaker identification
+        logger.info(f"Processing speaker identification for video: {video_path}")
+        
+        # Create output file paths
         output_dir = os.path.dirname(video_path)
         speaker_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_speaker_identification.mp4"
-        speaker_output_file = os.path.join(output_dir, speaker_output_filename)
-    
-    # Call the facial recognition service for speaker identification
-    speaker_result = facial_recognition_service.identify_speakers(video_path, speaker_output_file)
-    
-    if not speaker_result["success"]:
-        return {
-            "success": False,
-            "error": f"Speaker identification failed: {speaker_result.get('error', 'Unknown error')}",
-            "message": "Combined recognition failed at speaker identification step"
-        }
-    
-    # Process transcription
-    transcript_output_file = None
-    if request.save_output:
-        # Create output file path
-        output_dir = os.path.dirname(audio_path)
+        speaker_output_file = os.path.join(output_dir, speaker_output_filename) if save_output else None
+        
+        # Call the facial recognition service for speaker identification
+        speaker_result = facial_recognition_service.identify_speakers(video_path, speaker_output_file)
+        
+        if not speaker_result["success"]:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False, 
+                    "error": f"Speaker identification failed: {speaker_result.get('error', 'Unknown error')}",
+                    "message": "Combined recognition failed at speaker identification step"
+                }
+            )
+        
+        # Step 2: Process transcription
+        logger.info(f"Processing transcription for audio: {audio_path}")
+        
+        # Create output file path for transcription
         transcript_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
-        transcript_output_file = os.path.join(output_dir, transcript_output_filename)
-    
-    # Call the voice recognition service for transcription
-    transcript_result = voice_recognition_service.transcribe_audio(audio_path, transcript_output_file)
-    
-    if not transcript_result["success"]:
-        return {
-            "success": False,
-            "error": f"Transcription failed: {transcript_result.get('error', 'Unknown error')}",
-            "message": "Combined recognition failed at transcription step"
-        }
-    
-    # Combine the results
-    combined_output_file = None
-    if request.save_output:
-        # Create output file path
-        output_dir = os.path.dirname(video_path)
+        transcript_output_file = os.path.join(output_dir, transcript_output_filename) if save_output else None
+        
+        # Call the voice recognition service for transcription
+        transcript_result = voice_recognition_service.transcribe_audio(audio_path, transcript_output_file)
+        
+        if not transcript_result["success"]:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False, 
+                    "error": f"Transcription failed: {transcript_result.get('error', 'Unknown error')}",
+                    "message": "Combined recognition failed at transcription step"
+                }
+            )
+        
+        # Step 3: Combine the results
         combined_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_combined_recognition.json"
-        combined_output_file = os.path.join(output_dir, combined_output_filename)
-    
-    # Call the voice recognition service to combine the results
-    if speaker_result.get("results_file") and transcript_result.get("output_file"):
-        combined_result = voice_recognition_service.combine_transcription_with_speakers(
-            transcript_result["output_file"],
-            speaker_result["results_file"],
-            combined_output_file
-        )
-    else:
-        combined_result = {
-            "success": True,
-            "message": "Speaker identification and transcription completed, but could not combine results due to missing files",
-            "video_output_file": speaker_result.get("output_file"),
-            "transcript_file": transcript_result.get("output_file"),
-            "results_file": None,
-            "results": {
-                "speaker_identification": speaker_result.get("results", {}),
-                "transcription": transcript_result.get("transcript", "")
-            }
-        }
-    
-    # Update the database with the combined results
-    if speaker_result["success"] and speaker_result.get("output_file"):
-        video.speaker_identification_path = speaker_result["output_file"]
-        if speaker_result.get("results_file"):
-            video.speaker_identification_results = speaker_result["results_file"]
-    
-    if transcript_result["success"] and transcript_result.get("output_file"):
-        # Create a new transcription record
-        transcription = models.Transcription(
-            capture_session_id=video.id,
-            transcription_path=transcript_result["output_file"],
-            status="completed",
-            source="parliament-tv"
-        )
-        db.add(transcription)
-    
-    if combined_result["success"] and combined_result.get("output_file"):
-        video.combined_recognition_results = combined_result["output_file"]
-    
-    db.commit()
-    
-    # Return the combined result
-    return {
-        "success": combined_result["success"],
-        "message": combined_result.get("message"),
-        "error": combined_result.get("error"),
-        "video_output_file": speaker_result.get("output_file"),
-        "audio_output_file": None,  # We don't modify the audio file
-        "transcript_file": transcript_result.get("output_file"),
-        "results_file": combined_result.get("output_file"),
-        "results": make_json_serializable({
+        combined_output_file = os.path.join(output_dir, combined_output_filename) if save_output else None
+        
+        # Combine the speaker identification and transcription results
+        combined_results = {
             "speaker_identification": speaker_result.get("results", {}),
             "transcription": transcript_result.get("transcript", "")
-        })
-    }
+        }
+        
+        # Save the combined results if output file is specified
+        if combined_output_file:
+            try:
+                with open(combined_output_file, 'w') as f:
+                    json.dump(combined_results, f, indent=2)
+                logger.info(f"Combined results saved to: {combined_output_file}")
+            except Exception as e:
+                logger.error(f"Error saving combined results: {str(e)}")
+        
+        # Update the database with the results
+        if speaker_result["success"] and speaker_result.get("output_file"):
+            video.speaker_identification_path = speaker_result["output_file"]
+            if speaker_result.get("results"):
+                video.speaker_identification_results = json.dumps(speaker_result["results"])
+        
+        # Create a transcription record if it doesn't exist
+        if transcript_result["success"] and transcript_result.get("output_file"):
+            # Check if a transcription already exists for this capture
+            existing_transcription = db.query(models.ParliamentTranscription).filter(
+                models.ParliamentTranscription.capture_id == video_id,
+                models.ParliamentTranscription.language == "en"
+            ).first()
+            
+            if not existing_transcription:
+                # Create a new transcription record
+                transcription = models.ParliamentTranscription(
+                    capture_id=video_id,
+                    language="en",
+                    status="ready",
+                    output_file=transcript_result["output_file"],
+                    text=transcript_result.get("transcript", ""),
+                    created_by_id=current_user.id
+                )
+                db.add(transcription)
+            else:
+                # Update existing transcription
+                existing_transcription.status = "ready"
+                existing_transcription.output_file = transcript_result["output_file"]
+                existing_transcription.text = transcript_result.get("transcript", "")
+        
+        # Save the combined results path
+        if combined_output_file:
+            video.combined_recognition_results = combined_output_file
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Combined recognition processing completed successfully",
+            "video_output_file": speaker_result.get("output_file"),
+            "transcript_file": transcript_result.get("output_file"),
+            "results_file": combined_output_file,
+            "results": combined_results
+        }
+    except Exception as e:
+        logger.error(f"Error in combined recognition: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )
 
 
 @router.post("/update-mp-database", response_model=Dict)
