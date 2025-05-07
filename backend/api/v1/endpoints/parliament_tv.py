@@ -1000,8 +1000,12 @@ async def extract_audio_for_capture(
                     
                     # Save this back to the database for future use
                     try:
-                        stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{audio_url}', :audio_url::jsonb) WHERE id = :id")
-                        db.execute(stmt, {"id": capture_id, "audio_url": f'"{audio_url}"'})
+                        # Need to properly format the JSON string for PostgreSQL
+                        import json
+                        audio_url_json = json.dumps(audio_url)
+                        # Use string formatting for the path
+                        stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{""audio_url""}', cast(:audio_url_json AS jsonb)) WHERE id = :id")
+                        db.execute(stmt, {"id": capture_id, "audio_url_json": audio_url_json})
                         db.commit()
                         print(f"Updated audio_url in database for future use")
                     except Exception as e:

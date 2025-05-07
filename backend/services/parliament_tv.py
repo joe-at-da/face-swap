@@ -359,8 +359,12 @@ class ParliamentTVCapture:
                 if audio_url:
                     # Use a direct SQL query to update the metadata JSON
                     from sqlalchemy import text
-                    stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{audio_url}', :audio_url::jsonb) WHERE id = :id")
-                    db.execute(stmt, {"id": capture_id, "audio_url": f'"{audio_url}"'})
+                    # Need to properly format the JSON string for PostgreSQL
+                    import json
+                    audio_url_json = json.dumps(audio_url)
+                    # Use string formatting for the path
+                    stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{""audio_url""}', cast(:audio_url_json AS jsonb)) WHERE id = :id")
+                    db.execute(stmt, {"id": capture_id, "audio_url_json": audio_url_json})
                     logger.info(f"Updated audio_url directly in database using SQL for capture {capture_id}")
             except Exception as e:
                 logger.error(f"Error updating metadata: {e}")
@@ -371,8 +375,9 @@ class ParliamentTVCapture:
                     import json
                     metadata_json = json.dumps(new_metadata)
                     # Update the metadata directly in the database
-                    stmt = text("UPDATE capture_sessions SET metadata = :metadata::jsonb WHERE id = :id")
-                    db.execute(stmt, {"id": capture_id, "metadata": metadata_json})
+                    # For PostgreSQL, we need to cast the string to jsonb
+                    stmt = text("UPDATE capture_sessions SET metadata = cast(:metadata_json AS jsonb) WHERE id = :id")
+                    db.execute(stmt, {"id": capture_id, "metadata_json": metadata_json})
                     logger.info(f"Updated metadata directly in database using SQL for capture {capture_id}")
                 except Exception as e2:
                     logger.error(f"Failed to update metadata even with direct SQL: {e2}")
