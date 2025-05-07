@@ -1596,7 +1596,20 @@ class ParliamentTVCapture:
                         start_position = time_marker_seconds
                         logger.info(f"Using direct seconds time marker: {start_position} seconds")
                 else:
-                    logger.warning(f"Unknown time marker format: {metadata['time_marker']}")
+                    # Try to extract seconds if it's a string or other format
+                    try:
+                        logger.info(f"Attempting to extract seconds from non-standard time marker format: {metadata['time_marker']}")
+                        if hasattr(metadata["time_marker"], "get"):
+                            # Try to get seconds from a dict-like object
+                            seconds = metadata["time_marker"].get("seconds")
+                            if seconds and float(seconds) > 0:
+                                start_position = float(seconds)
+                                logger.info(f"Extracted seconds from dict-like object: {start_position}")
+                    except Exception as e:
+                        logger.warning(f"Failed to extract seconds from non-standard time marker: {str(e)}")
+                        
+                    if start_position is None:
+                        logger.warning(f"Unknown time marker format: {metadata['time_marker']}")
             else:
                 logger.info("No time marker found in metadata")
                 
@@ -1657,8 +1670,38 @@ class ParliamentTVCapture:
             
         # CRITICAL: Ensure we have a valid time marker
         if not start_position or start_position < 0:
-            logger.warning("No valid time marker found, starting from beginning of stream")
-            start_position = 0
+            # Check if we can extract it from the original URL in the metadata
+            if metadata and isinstance(metadata, dict) and "original_url" in metadata:
+                original_url = metadata["original_url"]
+                logger.info(f"Attempting to extract time marker from original URL: {original_url}")
+                if isinstance(original_url, str) and "?in=" in original_url:
+                    try:
+                        # Extract time marker from URL like https://parliamentlive.tv/event/index/abc?in=12:23:30
+                        time_part = original_url.split("?in=")[1].split("&")[0]
+                        logger.info(f"Extracted time part from URL: {time_part}")
+                        
+                        # Parse time in format HH:MM:SS
+                        if ":" in time_part:
+                            time_parts = time_part.split(":")
+                            if len(time_parts) == 3:  # HH:MM:SS
+                                hours, minutes, seconds = map(int, time_parts)
+                                time_marker_seconds = hours * 3600 + minutes * 60 + seconds
+                            elif len(time_parts) == 2:  # MM:SS
+                                minutes, seconds = map(int, time_parts)
+                                time_marker_seconds = minutes * 60 + seconds
+                            else:
+                                time_marker_seconds = int(time_parts[0])
+                                
+                            if time_marker_seconds > 0:
+                                start_position = time_marker_seconds
+                                logger.info(f"Successfully extracted time marker from URL: {start_position} seconds from {time_part}")
+                    except Exception as e:
+                        logger.warning(f"Failed to extract time marker from URL: {str(e)}")
+            
+            # If we still don't have a valid start position, default to 0
+            if not start_position or start_position < 0:
+                logger.warning("No valid time marker found after all attempts, starting from beginning of stream")
+                start_position = 0
         
         # Log the final time marker and duration values before building the command
         logger.info(f"FINAL TIME MARKER: {start_position if start_position is not None else 'None'}")
@@ -1693,8 +1736,12 @@ class ParliamentTVCapture:
             # Run the command with a shorter timeout
             logger.info(f"Running audio extraction command: {' '.join(cmd)}")
             logger.info(f"Audio URL being used: {audio_url}")
+            # Ensure the temp directory exists
+            os.makedirs(str(self.temp_dir), exist_ok=True)
+            
             # Create a temporary file to store FFmpeg output
             temp_log_file = os.path.join(str(self.temp_dir), f"ffmpeg_log_{capture_id}.txt")
+            logger.info(f"Creating temporary log file at: {temp_log_file}")
             with open(temp_log_file, 'w') as log_file:
                 # Calculate an appropriate timeout based on the duration
                 # Use duration + 60 seconds as a buffer for processing overhead
@@ -1715,13 +1762,23 @@ class ParliamentTVCapture:
                     logger.error(f"Exception during FFmpeg execution: {str(e)}")
                     raise
                 logger.info(f"FFmpeg process completed with return code: {result.returncode}")
-            # Read the log file contents
-            with open(temp_log_file, 'r') as log_file:
-                ffmpeg_output = log_file.read()
-            
-            # Clean up the temporary log file
+            # Read the log file contents if it exists
+            ffmpeg_output = ""
             try:
-                os.remove(temp_log_file)
+                if os.path.exists(temp_log_file):
+                    with open(temp_log_file, 'r') as log_file:
+                        ffmpeg_output = log_file.read()
+                    logger.info(f"Successfully read FFmpeg log file: {len(ffmpeg_output)} bytes")
+                else:
+                    logger.warning(f"FFmpeg log file does not exist: {temp_log_file}")
+            except Exception as e:
+                logger.warning(f"Failed to read FFmpeg log file: {str(e)}")
+            
+            # Clean up the temporary log file if it exists
+            try:
+                if os.path.exists(temp_log_file):
+                    os.remove(temp_log_file)
+                    logger.info(f"Removed temporary log file: {temp_log_file}")
             except Exception as e:
                 logger.warning(f"Failed to remove temporary log file: {str(e)}")
             
