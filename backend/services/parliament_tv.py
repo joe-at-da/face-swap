@@ -431,13 +431,8 @@ class ParliamentTVCapture:
             output_path = os.path.join(self.temp_dir, output_filename)
             logger.info(f"Output file path: {output_path}")
             
-            # Start the ffmpeg process to capture the video
-            cmd = ["ffmpeg", "-y"]
-            
-            # Add essential options for HLS streams
-            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
-            cmd.extend(["-http_persistent", "1"])
-            cmd.extend(["-allowed_extensions", "ALL"])
+            # We'll build the ffmpeg command using our helper function later
+            # This will ensure all global options come before any input URLs
             
             # Check if we have a time marker in the scheduled start time
             start_position = None
@@ -560,11 +555,8 @@ class ParliamentTVCapture:
             elif not start_position and scheduled_start:
                 logger.info(f"Using scheduled start time but no time marker found")
         
-            # Add seek option to start at the specified position
-            if start_position:
-                # For ffmpeg, it's more efficient to put -ss BEFORE -i for seeking
-                cmd.extend(["-ss", str(start_position)])
-                logger.info(f"Added seek option to ffmpeg command: -ss {start_position}")
+            # The seek option will be added by the build_ffmpeg_command helper function
+            # which ensures it's placed before the input URL for efficiency
                 
             # Ensure video_url is a valid string
             if not video_url or not isinstance(video_url, str):
@@ -577,34 +569,14 @@ class ParliamentTVCapture:
             actual_video_url = video_url
             logger.info(f"Using video URL: {actual_video_url}")
             
-            # Completely rebuild the FFmpeg command with proper option order
-            # Start with the base command
-            cmd = ["ffmpeg", "-y"]
-            
-            # 1. Add all global options BEFORE any input
-            cmd.extend(["-max_muxing_queue_size", "9999"])
-            cmd.extend(["-vsync", "0"])
-            
-            # 2. Add network and protocol options BEFORE input
-            cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
-            cmd.extend(["-http_persistent", "1"])
-            cmd.extend(["-allowed_extensions", "ALL"])
-            cmd.extend(["-reconnect", "1"])
-            cmd.extend(["-reconnect_streamed", "1"])
-            cmd.extend(["-reconnect_delay_max", "5"])
-            cmd.extend(["-hls_allow_cache", "1"])
-            cmd.extend(["-timeout", "5000000"])  # Add a longer timeout
-            
-            # 3. Add seek option if needed (must be before input for efficiency)
-            if start_position:
-                cmd.extend(["-ss", str(start_position)])
-                logger.info(f"Added seek option to ffmpeg command: -ss {start_position}")
-            
-            # 4. NOW add the input file
-            cmd.extend(["-i", actual_video_url])
+            # Build the FFmpeg command using our helper function to ensure proper option ordering
+            cmd = self.build_ffmpeg_command(
+                input_url=actual_video_url,
+                start_position=start_position
+            )
             logger.info(f"Using video URL for capture: {actual_video_url}")
             
-            # 5. Add output options AFTER input
+            # Now add output options AFTER input
             # HLS stream handling
             cmd.extend(["-live_start_index", "0"])
             cmd.extend(["-avoid_negative_ts", "make_zero"])
@@ -616,9 +588,6 @@ class ParliamentTVCapture:
             # Disable audio (we'll handle audio separately)
             cmd.extend(["-an"])
             logger.info("Parliament TV has separate audio and video streams - not using audio from video")
-            
-            # Define the output file path
-            output_file = os.path.join(str(self.temp_dir), f"capture_{padded_capture_id}.mp4")
             
             # Map the video stream from the input
             cmd.extend(["-map", "0:v:0"])  # Map the first video stream
@@ -639,8 +608,7 @@ class ParliamentTVCapture:
             cmd.extend(["-t", str(duration)])
             logger.info(f"Setting capture duration to {duration} seconds")
             
-            # Avoid negative timestamps
-            cmd.extend(["-avoid_negative_ts", "make_zero"])
+            # This option is already added above, no need to duplicate it
             
             # Add output file - this must be the last parameter and should not be duplicated
             # Remove any existing output file in the command to avoid duplication
@@ -1142,6 +1110,54 @@ class ParliamentTVCapture:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return {}
     
+    def build_ffmpeg_command(self, input_url: str, start_position=None) -> List[str]:
+        """
+        Build an FFmpeg command with the correct order of options.
+        
+        This helper function ensures all options are in the correct order:
+        1. FFmpeg executable
+        2. Global options
+        3. Input options
+        4. Input URL
+        5. Output options (to be added by the caller)
+        6. Output file (to be added by the caller)
+        
+        Args:
+            input_url: The input URL for the video stream
+            start_position: Optional start position in seconds for seeking
+            
+        Returns:
+            List of command arguments for subprocess
+        """
+        logger.info(f"Building FFmpeg command for input URL: {input_url}")
+        
+        # Create separate lists for different types of options
+        # This ensures proper ordering when we combine them
+        ffmpeg_executable = ["ffmpeg"]
+        global_options = ["-y"]  # Overwrite output files without asking
+        input_options = []
+        
+        # Add network and protocol options as input options
+        input_options.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        input_options.extend(["-http_persistent", "1"])
+        input_options.extend(["-allowed_extensions", "ALL"])
+        
+        # Add seek option if provided (must come before input for efficiency)
+        if start_position:
+            input_options.extend(["-ss", str(start_position)])
+            logger.info(f"Added seek option: -ss {start_position}")
+        
+        # The input URL
+        input_url_option = ["-i", input_url]
+        
+        # Combine all options in the correct order
+        cmd = ffmpeg_executable + global_options + input_options + input_url_option
+        
+        # Log the command being built
+        logger.info(f"Built FFmpeg base command: {' '.join(cmd)}")
+        
+        return cmd
+        
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from Parliament TV - AUDIO ONLY, NEVER FROM VIDEO"""
         logger.info(f"========== STARTING AUDIO EXTRACTION for capture {capture_id} ===========")
@@ -1297,24 +1313,39 @@ class ParliamentTVCapture:
             except Exception as e:
                 logger.warning(f"Failed to decode URL-encoded audio URL: {str(e)}")
         
-        # Create the ffmpeg command - DIRECT FROM AUDIO URL ONLY
-        cmd = [
-            "ffmpeg",
-            "-y",  # Overwrite output files without asking
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            "-reconnect", "1",  # Enable reconnection
-            "-reconnect_streamed", "1",  # Enable reconnection for streamed content
-            "-reconnect_delay_max", "5",  # Maximum delay between reconnection attempts
-            "-timeout", "30",  # Set connection timeout in seconds
-            "-rw_timeout", "30",  # Set read/write timeout in seconds
-            "-i", audio_url,  # Input audio URL
+        # Create a fresh FFmpeg command for audio extraction using a structured approach
+        # Create separate lists for different types of options
+        ffmpeg_executable = ["ffmpeg"]
+        global_options = ["-y"]  # Overwrite output files without asking
+        input_options = []
+        
+        # Add network and protocol options as input options
+        input_options.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        input_options.extend(["-http_persistent", "1"])
+        input_options.extend(["-allowed_extensions", "ALL"])
+        
+        # Add reconnection options (must come before input)
+        input_options.extend(["-reconnect", "1"])  # Enable reconnection
+        input_options.extend(["-reconnect_streamed", "1"])  # Enable reconnection for streamed content
+        input_options.extend(["-reconnect_delay_max", "5"])  # Maximum delay between reconnection attempts
+        input_options.extend(["-timeout", "30"])  # Set connection timeout in seconds
+        input_options.extend(["-rw_timeout", "30"])  # Set read/write timeout in seconds
+        
+        # The input URL
+        input_url_option = ["-i", audio_url]
+        
+        # Combine all options in the correct order
+        cmd = ffmpeg_executable + global_options + input_options + input_url_option
+        
+        # Now add output options after the input URL
+        cmd.extend([
             "-c:a", "libmp3lame",  # Use MP3 codec
             "-q:a", "2",  # Quality setting for audio
             "-vn",  # No video
             "-hide_banner",  # Hide banner information
             "-stats",  # Show progress stats
             audio_file  # Output file
-        ]
+        ])
         
         logger.info(f"FFmpeg command for audio extraction: {' '.join(cmd)}")
         logger.info(f"Audio URL: {audio_url}")
