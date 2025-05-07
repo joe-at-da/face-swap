@@ -76,9 +76,10 @@ class StreamCapture:
         # Build the ffmpeg command
         cmd = [
             "ffmpeg", "-y",
+            # Add duration limit BEFORE the input for accurate seeking
+            "-t", str(duration),
             "-i", self.stream_url,
             "-c", "copy",
-            "-t", str(duration),
             str(output_file)
         ]
         
@@ -122,8 +123,72 @@ class StreamCapture:
             process_to_stop = self._current_process
             logger.info("Using current process of this instance")
         else:
-            logger.warning(f"No process found for capture ID {capture_id}")
-            return
+            # If we can't find the process in our tracking, try to find it by looking for ffmpeg processes
+            # that match our capture ID pattern
+            logger.warning(f"No tracked process found for capture ID {capture_id}, searching for ffmpeg processes")
+            try:
+                # Format the capture ID with leading zeros (e.g., 0001)
+                if capture_id is not None:
+                    padded_id = str(capture_id).zfill(4)
+                    pattern = f"capture_{padded_id}"
+                    
+                    # Use ps to find ffmpeg processes containing the capture ID pattern
+                    import subprocess
+                    ps_cmd = ["ps", "-ef"]
+                    ps_result = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5)
+                    
+                    # Look for ffmpeg processes with this capture ID pattern
+                    for line in ps_result.stdout.splitlines():
+                        if pattern in line and "ffmpeg" in line:
+                            # Extract PID (second column in ps output)
+                            parts = line.split()
+                            if len(parts) > 1:
+                                try:
+                                    pid = int(parts[1])
+                                    logger.info(f"Found ffmpeg process with PID {pid} for capture ID {capture_id}")
+                                    # Send SIGINT directly to this process
+                                    os.kill(pid, signal.SIGINT)
+                                    logger.info(f"Sent SIGINT to process {pid}")
+                                    
+                                    # Wait a moment to allow the process to finalize
+                                    time.sleep(2)
+                                    
+                                    # Check if the process is still running
+                                    try:
+                                        os.kill(pid, 0)  # This will raise an exception if the process doesn't exist
+                                        # Process still exists, try SIGTERM
+                                        logger.warning(f"Process {pid} did not terminate with SIGINT, trying SIGTERM")
+                                        os.kill(pid, signal.SIGTERM)
+                                        time.sleep(1)
+                                        
+                                        # Check again
+                                        try:
+                                            os.kill(pid, 0)
+                                            # Still exists, try SIGKILL
+                                            logger.warning(f"Process {pid} did not terminate with SIGTERM, force killing")
+                                            os.kill(pid, signal.SIGKILL)
+                                        except OSError:
+                                            logger.info(f"Process {pid} terminated with SIGTERM")
+                                    except OSError:
+                                        logger.info(f"Process {pid} terminated with SIGINT")
+                                    
+                                    return True
+                                except ValueError:
+                                    logger.warning(f"Could not parse PID from: {parts[1]}")
+                                except ProcessLookupError:
+                                    logger.warning(f"Process {pid} no longer exists")
+                                except Exception as e:
+                                    logger.error(f"Error killing process: {str(e)}")
+                    
+                    logger.warning(f"No ffmpeg processes found for pattern: {pattern}")
+                    return False
+            except Exception as e:
+                logger.error(f"Error searching for ffmpeg processes: {str(e)}")
+                return False
+        
+        if not process_to_stop:
+            logger.warning(f"No process found to stop for capture ID {capture_id}")
+            return False
         
         try:
             # First check if the process is still running
@@ -150,7 +215,22 @@ class StreamCapture:
                         process_to_stop.wait(timeout=3)
                         logger.info("Process terminated with SIGTERM")
                     except subprocess.TimeoutExpired:
-                        logger.error("Failed to kill process, it may be zombie")
+                        # If it still doesn't terminate, force kill as last resort
+                        logger.warning("Process did not terminate with SIGTERM, force killing")
+                        process_to_stop.kill()
+                        
+                        try:
+                            # Wait again with a short timeout
+                            process_to_stop.wait(timeout=2)
+                            logger.info("Process killed successfully")
+                        except subprocess.TimeoutExpired:
+                            logger.error("Failed to kill process, it may be zombie")
+                            # As a last resort, try to kill the process group
+                            try:
+                                os.killpg(os.getpgid(process_to_stop.pid), signal.SIGKILL)
+                                logger.info(f"Killed process group for PID {process_to_stop.pid}")
+                            except Exception as e:
+                                logger.error(f"Failed to kill process group: {str(e)}")
             else:
                 logger.info("Process was already terminated")
             

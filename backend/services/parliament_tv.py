@@ -487,14 +487,14 @@ class ParliamentTVCapture:
             # Avoid negative timestamps
             cmd.extend(["-avoid_negative_ts", "make_zero"])
             
-            # Add duration limit
+            # Add duration limit - place it BEFORE the output file but AFTER input options
             # For recorded streams with a time marker, this is the exact duration to capture
             # For live streams, this acts as a safety limit
             cmd.extend(["-t", str(duration)])
             logger.info(f"Setting capture duration to {duration} seconds")
             
-            # Add output file
-            cmd.extend([str(output_path)])
+            # Add output file - this must be the last parameter
+            cmd.append(str(output_path))
             
             # Log the full command for debugging
             logger.info(f"Full ffmpeg command: {' '.join(cmd)}")
