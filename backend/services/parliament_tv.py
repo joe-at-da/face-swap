@@ -730,6 +730,23 @@ class ParliamentTVCapture:
                 db_capture.status = "active"
                 db_capture.start_time = datetime.now()
                 db_capture.end_time = None
+                
+                # Store the stream info in the metadata
+                try:
+                    import json
+                    # Create a metadata dictionary with the stream info
+                    metadata = {
+                        "video_url": video_url,
+                        "audio_url": audio_url,
+                        "time_marker": stream_info.get("time_marker"),
+                        "original_url": stream_info.get("original_url")
+                    }
+                    # Convert to JSON string and store in the database
+                    db_capture.metadata = metadata
+                    logger.info(f"Stored metadata in database: {metadata}")
+                except Exception as e:
+                    logger.error(f"Failed to store metadata in database: {str(e)}")
+                
                 db.commit()
                 
                 # Log the capture start
