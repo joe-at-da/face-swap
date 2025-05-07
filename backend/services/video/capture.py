@@ -3,6 +3,8 @@ import logging
 import signal
 import subprocess
 import atexit
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -76,9 +78,9 @@ class StreamCapture:
         # Build the ffmpeg command
         cmd = [
             "ffmpeg", "-y",
-            # Add duration limit BEFORE the input for accurate seeking
-            "-t", str(duration),
             "-i", self.stream_url,
+            # Add duration limit AFTER the input for limiting output duration
+            "-t", str(duration),
             "-c", "copy",
             str(output_file)
         ]
@@ -101,6 +103,21 @@ class StreamCapture:
             if capture_id is not None:
                 active_processes[capture_id] = process
                 logger.info(f"Started capture process with PID {process.pid} for capture ID {capture_id}")
+                
+                # Start a timer to automatically stop the capture after the specified duration
+                # Add a small buffer (5 seconds) to allow ffmpeg to finalize the file properly
+                def auto_stop_capture():
+                    logger.info(f"Auto-stop timer triggered for capture ID {capture_id} after {duration} seconds")
+                    time.sleep(duration + 5)  # Wait for the duration plus a small buffer
+                    if capture_id in active_processes and active_processes[capture_id].poll() is None:
+                        logger.info(f"Auto-stopping capture ID {capture_id} after duration {duration} seconds")
+                        self.stop_capture(capture_id)
+                
+                # Start the auto-stop timer in a separate thread
+                auto_stop_thread = threading.Thread(target=auto_stop_capture)
+                auto_stop_thread.daemon = True  # Thread will exit when main program exits
+                auto_stop_thread.start()
+                logger.info(f"Started auto-stop timer for capture ID {capture_id} with duration {duration} seconds")
             else:
                 # For backward compatibility
                 logger.warning(f"Started capture process with PID {process.pid} but no capture ID was provided")
