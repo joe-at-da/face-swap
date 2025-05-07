@@ -271,44 +271,25 @@ async def process_combined_recognition(
             
             if not speaker_result["success"]:
                 logger.error(f"Speaker identification failed: {speaker_result.get('error', 'Unknown error')}")
-                # For testing purposes, provide a mock successful response
-                if 'numpy' in str(speaker_result.get('error', '')).lower():
-                    logger.warning("NumPy/OpenCV dependency error detected. Using mock data for testing.")
-                    speaker_result = {
-                        "success": True,
-                        "results": {
-                            "speakers": [
-                                {"name": "John Smith", "confidence": 0.85, "start_time": 10.5, "end_time": 45.2},
-                                {"name": "Jane Doe", "confidence": 0.78, "start_time": 62.1, "end_time": 98.7}
-                            ],
-                            "total_speakers": 2
-                        },
-                        "output_file": speaker_output_file or "mock_output.mp4"
+                # Return error response since we should now have working NumPy/OpenCV
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "success": False, 
+                        "error": f"Speaker identification failed: {speaker_result.get('error', 'Unknown error')}",
+                        "message": "Combined recognition failed at speaker identification step"
                     }
-                else:
-                    return JSONResponse(
-                        status_code=500,
-                        content={
-                            "success": False, 
-                            "error": f"Speaker identification failed: {speaker_result.get('error', 'Unknown error')}",
-                            "message": "Combined recognition failed at speaker identification step"
-                        }
-                    )
+                )
         except Exception as e:
-            logger.exception("Exception in facial recognition service")
-            # For testing purposes, provide a mock successful response
-            logger.warning("Using mock data for testing due to exception.")
-            speaker_result = {
-                "success": True,
-                "results": {
-                    "speakers": [
-                        {"name": "John Smith", "confidence": 0.85, "start_time": 10.5, "end_time": 45.2},
-                        {"name": "Jane Doe", "confidence": 0.78, "start_time": 62.1, "end_time": 98.7}
-                    ],
-                    "total_speakers": 2
-                },
-                "output_file": speaker_output_file or "mock_output.mp4"
-            }
+            logger.exception(f"Exception in facial recognition service: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False, 
+                    "error": f"Exception in facial recognition service: {str(e)}",
+                    "message": "Combined recognition failed due to exception in speaker identification"
+                }
+            )
         
         # Step 2: Process transcription
         logger.info(f"Processing transcription for audio: {audio_path}")
@@ -317,40 +298,34 @@ async def process_combined_recognition(
         transcript_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
         transcript_output_file = os.path.join(output_dir, transcript_output_filename) if save_output else None
         
-        # Process transcription with error handling
+        # Process transcription with proper error handling
         logger.info("Starting transcription processing")
         try:
             # Call the voice recognition service for transcription
             transcript_result = voice_recognition_service.transcribe_audio(audio_path, transcript_output_file)
             
-            # Handle unsuccessful transcription by using mock data
+            # Return error if transcription fails
             if not transcript_result["success"]:
                 logger.error(f"Transcription failed: {transcript_result.get('error', 'Unknown error')}")
-                logger.warning("Transcription failed. Using mock data for testing.")
-                transcript_result = {
-                    "success": True,
-                    "transcript": "This is a mock transcript for testing purposes. The Parliament is now in session. The first speaker discusses the budget proposal for the upcoming fiscal year.",
-                    "segments": [
-                        {"start": 0.0, "end": 10.0, "text": "This is a mock transcript for testing purposes."},
-                        {"start": 10.5, "end": 20.0, "text": "The Parliament is now in session."},
-                        {"start": 20.5, "end": 35.0, "text": "The first speaker discusses the budget proposal for the upcoming fiscal year."}
-                    ],
-                    "output_file": transcript_output_file or "mock_transcript.txt"
-                }
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "success": False, 
+                        "error": f"Transcription failed: {transcript_result.get('error', 'Unknown error')}",
+                        "message": "Combined recognition failed at transcription step"
+                    }
+                )
         except Exception as e:
-            # Handle any exceptions by using mock data
+            # Handle any exceptions with proper error response
             logger.exception(f"Exception in voice recognition service: {str(e)}")
-            logger.warning("Using mock transcription data due to exception.")
-            transcript_result = {
-                "success": True,
-                "transcript": "This is a mock transcript for testing purposes. The Parliament is now in session. The first speaker discusses the budget proposal for the upcoming fiscal year.",
-                "segments": [
-                    {"start": 0.0, "end": 10.0, "text": "This is a mock transcript for testing purposes."},
-                    {"start": 10.5, "end": 20.0, "text": "The Parliament is now in session."},
-                    {"start": 20.5, "end": 35.0, "text": "The first speaker discusses the budget proposal for the upcoming fiscal year."}
-                ],
-                "output_file": transcript_output_file or "mock_transcript.txt"
-            }
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False, 
+                    "error": f"Exception in voice recognition service: {str(e)}",
+                    "message": "Combined recognition failed due to exception in transcription processing"
+                }
+            )
         
         # Step 3: Combine the results
         combined_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_combined_recognition.json"
