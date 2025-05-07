@@ -10,6 +10,7 @@ import os
 import glob
 import subprocess
 from pathlib import Path
+from backend.core.logger import logger
 
 from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission, get_current_active_user
@@ -389,15 +390,50 @@ async def extract_parliament_tv_url(
     url_data: Dict = Body(None),
     current_user: models.User = Depends(get_current_active_user)
 ):
+    """Extract the direct stream URL from a Parliament TV event page."""
     # If the URL is provided in the body (POST request), use that
     if url is None and url_data and "url" in url_data:
         url = url_data["url"]
-    """Extract the direct stream URL from a Parliament TV event page."""
+        
     # Check if user has required permissions
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
+    # Log the original URL for debugging
+    logger.info(f"Extracting stream URL from: {url}")
+    
+    # Extract time marker from the URL if it's a parliamentlive.tv URL with a time marker
+    original_time_marker = None
+    if url and "parliamentlive.tv" in url and "?in=" in url:
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed_url = urlparse(url)
+            query_params = parse_qs(parsed_url.query)
+            
+            if 'in' in query_params:
+                time_str = query_params['in'][0]
+                # Parse the time string (format: HH:MM:SS)
+                parts = time_str.split(':')
+                if len(parts) == 3:
+                    hours, minutes, seconds = map(int, parts)
+                    original_time_marker = hours * 3600 + minutes * 60 + seconds
+                    logger.info(f"Extracted time marker from URL: {time_str} ({original_time_marker} seconds)")
+                elif len(parts) == 2:
+                    minutes, seconds = map(int, parts)
+                    original_time_marker = minutes * 60 + seconds
+                    logger.info(f"Extracted time marker from URL: {time_str} ({original_time_marker} seconds)")
+        except Exception as e:
+            logger.warning(f"Error extracting time marker from URL: {str(e)}")
+    
     # Extract the stream URL
     stream_info = parliament_tv_service.extract_stream_url(url)
+    
+    # If we extracted a time marker from the URL and the stream_info doesn't have one,
+    # or has a zero time marker, add our extracted one
+    if original_time_marker and ("time_marker" not in stream_info or 
+                               not stream_info.get("time_marker") or 
+                               stream_info.get("time_marker", {}).get("seconds", 0) == 0):
+        stream_info["time_marker"] = {"seconds": original_time_marker}
+        logger.info(f"Added time marker to stream_info: {original_time_marker} seconds")
     
     if not stream_info:
         raise HTTPException(
