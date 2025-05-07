@@ -438,11 +438,26 @@ class ParliamentTVCapture:
             start_position = None
         
             # First check if time_marker is in the stream_info
-            if "time_marker" in stream_info and stream_info["time_marker"] and "seconds" in stream_info["time_marker"]:
-                time_marker_seconds = stream_info["time_marker"]["seconds"]
-                if time_marker_seconds > 0:
-                    start_position = time_marker_seconds
-                    logger.info(f"Using time marker from stream_info: {start_position} seconds")
+            if "time_marker" in stream_info and stream_info["time_marker"]:
+                # Log the raw time marker for debugging
+                logger.info(f"Raw time marker from stream_info: {stream_info['time_marker']}")
+                
+                # Handle different time marker formats
+                if isinstance(stream_info["time_marker"], dict) and "seconds" in stream_info["time_marker"]:
+                    time_marker_seconds = stream_info["time_marker"]["seconds"]
+                    if time_marker_seconds > 0:
+                        start_position = time_marker_seconds
+                        logger.info(f"Using time marker from stream_info: {start_position} seconds")
+                elif isinstance(stream_info["time_marker"], (int, float)):
+                    # Handle direct seconds value
+                    time_marker_seconds = stream_info["time_marker"]
+                    if time_marker_seconds > 0:
+                        start_position = time_marker_seconds
+                        logger.info(f"Using direct seconds time marker: {start_position} seconds")
+                else:
+                    logger.warning(f"Unknown time marker format: {stream_info['time_marker']}")
+            else:
+                logger.info("No time marker found in stream_info")
             
             # Always update the metadata with the URLs - this is critical for later audio extraction
             # Create a fresh metadata dictionary
@@ -904,11 +919,20 @@ class ParliamentTVCapture:
                             }
                     else:
                         # Already in the new format or different structure
+                        # Make sure we properly handle the time_marker
+                        time_marker = stream_info.get("time_marker")
+                        
+                        # Log the time marker for debugging
+                        if time_marker:
+                            logger.info(f"Found time marker in stream info: {time_marker}")
+                        else:
+                            logger.warning("No time marker found in stream info")
+                        
                         return {
                             "video_url": stream_info.get("video_url") or stream_info.get("url"),
                             "audio_url": stream_info.get("audio_url"),
                             "event_id": stream_info.get("event_id"),
-                            "time_marker": stream_info.get("time_marker"),
+                            "time_marker": time_marker,
                             "original_url": stream_info.get("original_url") or url
                         }
                 except json.JSONDecodeError as e:
@@ -1326,11 +1350,26 @@ class ParliamentTVCapture:
         # First check if time_marker is in the metadata
         if metadata and isinstance(metadata, dict):
             # Check for time marker
-            if "time_marker" in metadata and metadata["time_marker"] and "seconds" in metadata["time_marker"]:
-                time_marker_seconds = metadata["time_marker"]["seconds"]
-                if time_marker_seconds > 0:
-                    start_position = time_marker_seconds
-                    logger.info(f"Using time marker from metadata: {start_position} seconds")
+            if "time_marker" in metadata and metadata["time_marker"]:
+                # Log the raw time marker for debugging
+                logger.info(f"Raw time marker from metadata: {metadata['time_marker']}")
+                
+                # Handle different time marker formats
+                if isinstance(metadata["time_marker"], dict) and "seconds" in metadata["time_marker"]:
+                    time_marker_seconds = metadata["time_marker"]["seconds"]
+                    if time_marker_seconds > 0:
+                        start_position = time_marker_seconds
+                        logger.info(f"Using time marker from metadata: {start_position} seconds")
+                elif isinstance(metadata["time_marker"], (int, float)):
+                    # Handle direct seconds value
+                    time_marker_seconds = metadata["time_marker"]
+                    if time_marker_seconds > 0:
+                        start_position = time_marker_seconds
+                        logger.info(f"Using direct seconds time marker: {start_position} seconds")
+                else:
+                    logger.warning(f"Unknown time marker format: {metadata['time_marker']}")
+            else:
+                logger.info("No time marker found in metadata")
             
             # Check for duration
             if "duration" in metadata and metadata["duration"]:
