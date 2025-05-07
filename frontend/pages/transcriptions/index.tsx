@@ -47,7 +47,7 @@ const TranscriptionsPage: React.FC = () => {
   const { data: allTranscriptions, isLoading: isLoadingTranscriptions } = useQuery({
     queryKey: ['transcriptions'],
     queryFn: async () => {
-      const response = await api.get('/transcription/parliament-tv-all');
+      const response = await api.get('/transcription/list/parliament-tv');
       return response.transcriptions || [];
     },
   });
