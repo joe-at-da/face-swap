@@ -1284,20 +1284,24 @@ class ParliamentTVCapture:
         is_hls = input_url.lower().endswith('.m3u8')
         logger.info(f"Stream type: {'HLS' if is_hls else 'Regular'} stream")
         
-        # For HLS streams, we need to handle seeking differently
-        if is_hls and start_position:
-            # For HLS streams, we need to use the -ss option AFTER the input
-            # This is the most accurate way to seek in HLS streams
+        # CRITICAL: For HLS streams (which Parliament TV uses), we MUST place the -ss option AFTER the input
+        # and we MUST place the -t option AFTER the -ss option
+        # This is the only way to get accurate seeking and duration for HLS streams
+        if is_hls:
+            # Always put the input URL first for HLS streams
             input_url_option = ["-i", input_url]
-            post_input_options.extend(["-ss", str(start_position)])
-            logger.info(f"HLS stream: Added -ss {start_position} AFTER input for accurate seeking")
             
-            # Add duration AFTER the seek position
+            # Then add the seek position AFTER the input URL
+            if start_position:
+                post_input_options.extend(["-ss", str(start_position)])
+                logger.info(f"HLS stream: Added -ss {start_position} AFTER input for accurate seeking")
+            
+            # Then add duration AFTER the seek position
             if duration:
                 post_input_options.extend(["-t", str(duration)])
                 logger.info(f"HLS stream: Added duration limit -t {duration} AFTER seek position")
         else:
-            # For regular files or when no seeking is needed
+            # For regular files (non-HLS streams)
             if start_position:
                 # For regular files, put -ss BEFORE input for efficiency
                 input_options.extend(["-ss", str(start_position)])
@@ -1671,10 +1675,22 @@ class ParliamentTVCapture:
             duration_to_use = db_capture.duration
             logger.info(f"Using duration from capture record: {duration_to_use} seconds")
             
-        # CRITICAL: Ensure we have a duration - default to 30 seconds if none is specified
+        # CRITICAL: Ensure we have a duration - use the capture duration if available
         if not duration_to_use or duration_to_use <= 0:
-            duration_to_use = 30
-            logger.info(f"No valid duration found, using default: {duration_to_use} seconds")
+            if hasattr(db_capture, 'duration') and db_capture.duration and db_capture.duration > 0:
+                duration_to_use = db_capture.duration
+                logger.info(f"Using duration from db_capture object: {duration_to_use} seconds")
+            else:
+                duration_to_use = 300  # Default to 5 minutes if no duration specified
+                logger.info(f"No valid duration found, using default: {duration_to_use} seconds")
+        
+        # Make sure duration is an integer
+        try:
+            duration_to_use = int(duration_to_use)
+            logger.info(f"Converted duration to integer: {duration_to_use}")
+        except (ValueError, TypeError):
+            logger.warning(f"Could not convert duration {duration_to_use} to integer, using default")
+            duration_to_use = 300
             
         # CRITICAL: Ensure we have a valid time marker
         if not start_position or start_position < 0:
@@ -1737,11 +1753,23 @@ class ParliamentTVCapture:
         logger.info(f"FINAL DURATION: {duration_to_use if duration_to_use is not None else 'None'}")
         
         # Use the build_ffmpeg_command helper function to create the command with proper ordering
+        # CRITICAL: Ensure both start_position and duration are passed correctly
+        logger.info(f"Building FFmpeg command with start_position={start_position}, duration={duration_to_use}")
         cmd = self.build_ffmpeg_command(
             input_url=audio_url,
             start_position=start_position,
             duration=duration_to_use
         )
+        
+        # Verify the command has the correct parameters
+        cmd_str = ' '.join(cmd)
+        logger.info(f"Generated FFmpeg command: {cmd_str}")
+        
+        # Double-check that the time marker and duration are in the command
+        if start_position and str(start_position) not in cmd_str:
+            logger.error(f"ERROR: Time marker {start_position} not found in FFmpeg command!")
+        if duration_to_use and str(duration_to_use) not in cmd_str:
+            logger.error(f"ERROR: Duration {duration_to_use} not found in FFmpeg command!")
         
         # Now add output options after the input URL
         cmd.extend([
