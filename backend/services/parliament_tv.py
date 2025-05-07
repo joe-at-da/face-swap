@@ -688,14 +688,22 @@ class ParliamentTVCapture:
                 
                 # Use a different approach to run ffmpeg in the background without shell=True
                 # We'll use subprocess.Popen with preexec_fn to detach the process
-                
+            
                 # Open log file for the process
                 log_file = open(log_file_path, 'w')
                 
                 # Log what we're about to do
                 logger.info(f"Starting ffmpeg process with command: {' '.join(cmd)}")
                 logger.info(f"Redirecting output to: {log_file_path}")
-                
+            
+                # First, ensure the output file doesn't exist to avoid any issues
+                try:
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                        logger.info(f"Removed existing output file: {output_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove existing output file: {e}")
+            
                 # Start the process in the background with process group detached
                 process = subprocess.Popen(
                     cmd,
@@ -715,14 +723,9 @@ class ParliamentTVCapture:
                     "output_file": str(output_path)
                 }
                 
-                # Touch the output file to ensure it exists with proper permissions
-                try:
-                    with open(output_path, 'w') as f:
-                        pass
-                    os.chmod(output_path, 0o666)  # rw for all users
-                    logger.info(f"Created empty output file with proper permissions: {output_path}")
-                except Exception as e:
-                    logger.warning(f"Could not create empty output file: {e}")
+                # We no longer create an empty file - let FFmpeg create the file directly
+                # This avoids issues with empty files if FFmpeg fails to start properly
+                logger.info(f"FFmpeg will create the output file: {output_path}")
                 
                 # Update the database
                 db_capture.video_file = str(output_path)

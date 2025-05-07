@@ -1112,87 +1112,32 @@ async def extract_audio_for_capture(
             except Exception as e:
                 print(f"Error converting to dict: {e}")
     
-    # APPROACH 4: If we still don't have an audio URL, look for it in the source_url
-    if not audio_url and capture.source_url:
-        if 'audio' in capture.source_url.lower():
-            audio_url = capture.source_url
-            print(f"SUCCESS: Using source_url as audio_url: {audio_url}")
-        else:
-            # Try to extract the audio URL from the source URL
-            try:
-                from backend.services.parliament_tv import ParliamentTVCapture
-                parliament_tv_service = ParliamentTVCapture()
-                stream_info = parliament_tv_service.extract_stream_url(capture.source_url)
-                if stream_info and "audio_url" in stream_info:
-                    audio_url = stream_info["audio_url"]
-                    print(f"SUCCESS: Extracted audio_url from source_url: {audio_url}")
-            except Exception as e:
-                print(f"Error extracting audio_url from source_url: {e}")
-    
-    if not audio_url:
-        # Provide detailed error information for debugging
-        error_detail = {
-            'message': 'No audio URL found in capture metadata',
-            'metadata_type': metadata_type,
-            'metadata_keys': str(working_metadata.keys()) if working_metadata else 'N/A',
-            'capture_id': capture_id,
-            'source_url': capture.source_url
-        }
-        print(f"Audio extraction failed: {error_detail}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_detail
-        )
-    
-    # Generate output path
-    os.makedirs(AUDIO_EXTRACTS_DIR, exist_ok=True)
-    output_path = os.path.join(AUDIO_EXTRACTS_DIR, f"capture_{capture_id:04d}.audio.mp3")
-    
-    # Extract audio using ffmpeg
+    # Instead of duplicating the audio extraction logic, use our improved implementation
+    # from the ParliamentTVCapture class
     try:
-        # Create ffmpeg command for audio extraction
-        # Extract time marker from URL if present
-        start_time = "00:00:00"
-        if "?in=" in audio_url:
-            # Extract time marker from URL (format: ?in=12:34:56)
-            time_marker_match = re.search(r'\?in=([0-9:]+)', audio_url)
-            if time_marker_match:
-                start_time = time_marker_match.group(1)
-                # Remove the time marker from the URL
-                audio_url = audio_url.split("?in=")[0]
-                print(f"Extracted start time: {start_time} from URL")
+        from backend.services.parliament_tv import ParliamentTVCapture
+        parliament_tv_service = ParliamentTVCapture()
         
-        # Set duration to 30 seconds
-        duration = 30
+        # Call our improved extract_audio method
+        print(f"Calling improved extract_audio method for capture {capture_id}")
+        result = parliament_tv_service.extract_audio(db, capture_id)
         
-        cmd = [
-            "ffmpeg", "-y",
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            "-ss", start_time,  # Start time
-            "-i", audio_url,
-            "-t", str(duration),  # Duration in seconds
-            "-c:a", "libmp3lame",
-            "-q:a", "2",  # High quality (lower number = higher quality for MP3)
-            output_path
-        ]
-        
-        # Execute command
-        process = subprocess.run(
-            cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            text=True,
-            check=False
-        )
-        
-        # Check result
-        if process.returncode != 0:
-            error_message = process.stderr if process.stderr else "Unknown error"
+        if not result.get('success', False):
+            error_detail = {
+                'message': result.get('error', 'Audio extraction failed'),
+                'metadata_type': metadata_type,
+                'capture_id': capture_id,
+                'source_url': capture.source_url
+            }
+            print(f"Audio extraction failed: {error_detail}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Audio extraction failed: {error_message}"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_detail
             )
-            
+        
+        # Get the output path from the result
+        output_path = result.get('audio_file')
+        
         # Verify file exists and has content
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise HTTPException(
@@ -1200,9 +1145,11 @@ async def extract_audio_for_capture(
                 detail="Output file is empty or does not exist"
             )
         
-        # Update database with audio file path
-        capture.audio_file_path = output_path
-        db.commit()
+        # The database should already be updated by the extract_audio method,
+        # but let's make sure
+        if not capture.audio_file_path:
+            capture.audio_file_path = output_path
+            db.commit()
         
         return {
             "success": True,
