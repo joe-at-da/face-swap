@@ -23,10 +23,47 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   const processMutation = useMutation({
     mutationFn: async () => {
       setIsProcessing(true);
-      return await api.post('/recognition/combined-recognition', {
-        video_id: captureId,
-        save_output: true
-      });
+      try {
+        console.log('Starting recognition processing for capture ID:', captureId);
+        
+        // Get the token from localStorage
+        const token = localStorage.getItem('token');
+        if (!token) {
+          throw new Error('No authentication token found');
+        }
+        
+        // Make direct fetch request to API
+        const API_BASE_URL = 'http://localhost:8000/api/v1';
+        const url = `${API_BASE_URL}/recognition/combined-recognition`;
+        console.log('Making request to:', url);
+        
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            video_id: captureId,
+            save_output: true
+          })
+        });
+        
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('API error:', response.status, errorText);
+          throw new Error(`API error: ${response.status} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        console.log('Recognition processing response:', data);
+        return data;
+      } catch (error) {
+        console.error('Error in recognition processing:', error);
+        throw error;
+      }
     },
     onSuccess: () => {
       setTimeout(() => {
