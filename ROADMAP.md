@@ -243,7 +243,12 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Enhanced transcription features:
      - Automatic speaker diarization
      - Transcription editing interface
-     - Transcription export to additional formats
+     - Transcription export to additional formats (SRT, TXT, DOCX)
+     - Real-time transcription updates during streaming
+     - Advanced search within transcriptions
+     - Custom parliamentary vocabulary for improved accuracy
+     - Multi-language support with automatic language detection
+     - Transcript comparison and version history
 
 #### 5. Documentation & Training
    - ✅ Comprehensive README with troubleshooting guide

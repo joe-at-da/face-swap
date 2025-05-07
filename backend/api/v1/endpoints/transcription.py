@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body, Query
 from sqlalchemy.orm import Session
 import os
 import subprocess
@@ -349,7 +349,7 @@ async def get_parliament_tv_transcription(
     
     return make_json_serializable(response)
 
-@router.get("/parliament-tv/capture/{capture_id}", response_model=List[Dict])
+@router.get("/parliament-tv/capture/{capture_id}", response_model=Dict)
 async def get_parliament_tv_transcriptions_by_capture(
     capture_id: int,
     db: Session = Depends(get_db),
@@ -392,6 +392,51 @@ async def get_parliament_tv_transcriptions_by_capture(
         })
     
     return make_json_serializable(results)
+
+@router.get("/parliament-tv-list", response_model=Dict)
+async def get_all_parliament_tv_transcriptions(
+    limit: int = Query(100, description="Maximum number of transcriptions to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Get all Parliament TV transcriptions with pagination.
+    """
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get total count
+    total_count = db.query(ParliamentTranscription).count()
+    
+    # Get transcriptions with pagination
+    transcriptions = db.query(ParliamentTranscription).order_by(
+        ParliamentTranscription.created_at.desc()
+    ).offset(offset).limit(limit).all()
+    
+    # Convert to dictionary format
+    results = []
+    for t in transcriptions:
+        result = {
+            "id": t.id,
+            "capture_id": t.capture_id,
+            "language": t.language,
+            "status": t.status,
+            "text": t.text[:200] if t.text else None,  # Include a preview of the text
+            "segments": t.segments[:3] if t.segments else None,  # Include first few segments
+            "error_message": t.error_message,
+            "output_file": t.output_file,
+            "created_at": t.created_at,
+            "updated_at": t.updated_at
+        }
+        results.append(result)
+    
+    return {
+        "success": True,
+        "transcriptions": results,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset
+    }
 
 @router.delete("/parliament-tv/{transcription_id}", response_model=Dict)
 async def delete_parliament_tv_transcription(

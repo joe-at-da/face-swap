@@ -9,15 +9,19 @@ from backend.db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 @shared_task
-def transcribe_video_clip(clip_id: int, language: str = "en"):
+def transcribe_video_clip(clip_id: int, language: str = "en", model_size: str = "base"):
     """
     Celery task to transcribe a video clip.
     
     Args:
         clip_id: ID of the video clip to transcribe
         language: Language code for transcription
+        model_size: Size of the Whisper model to use ('tiny', 'base', 'small', 'medium', 'large')
     """
     db = SessionLocal()
+    start_time = time.time()
+    logger.info(f"Starting transcription task for clip {clip_id} with language {language} and model {model_size}")
+    
     try:
         # Get the video clip
         clip = db.query(models.VideoClip).filter(models.VideoClip.id == clip_id).first()
@@ -56,9 +60,24 @@ def transcribe_video_clip(clip_id: int, language: str = "en"):
             transcription.error_message = None
             db.commit()
         
+        # Check for speaker identification data
+        speaker_data = None
+        speaker_id = db.query(models.SpeakerIdentification).filter(
+            models.SpeakerIdentification.video_clip_id == clip_id,
+            models.SpeakerIdentification.status == "completed"
+        ).first()
+        
+        if speaker_id and speaker_id.results:
+            logger.info(f"Found speaker identification data for clip {clip_id}")
+            speaker_data = speaker_id.results
+        
         # Perform transcription
-        service = TranscriptionService()
-        result = service.transcribe_video(str(video_path), language)
+        service = TranscriptionService(model_size=model_size)
+        result = service.transcribe_video(
+            str(video_path), 
+            language=language,
+            speaker_data=speaker_data
+        )
         
         # Update transcription record
         transcription.text = result["text"]
@@ -66,11 +85,22 @@ def transcribe_video_clip(clip_id: int, language: str = "en"):
         transcription.status = "ready"
         db.commit()
         
-        logger.info(f"Successfully transcribed video clip {clip_id}")
-        return {"status": "success", "transcription_id": transcription.id}
+        # Calculate duration
+        elapsed_time = time.time() - start_time
+        logger.info(f"Successfully transcribed video clip {clip_id} in {elapsed_time:.2f} seconds")
+        
+        return {
+            "status": "success", 
+            "transcription_id": transcription.id,
+            "duration": elapsed_time,
+            "segments_count": len(result["segments"]),
+            "has_speaker_data": speaker_data is not None
+        }
         
     except Exception as e:
         logger.error(f"Failed to transcribe video clip {clip_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Update transcription record with error
         if 'transcription' in locals() and transcription:

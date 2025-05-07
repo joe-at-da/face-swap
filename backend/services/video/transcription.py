@@ -1,6 +1,7 @@
 import os
-import logging
 import json
+import logging
+from datetime import datetime
 from pathlib import Path
 import subprocess
 from typing import Dict, List, Optional, Tuple
@@ -22,14 +23,31 @@ class TranscriptionService:
         self.model_size = model_size
         self.output_dir = Path(settings.MEDIA_STORAGE_PATH) / "transcriptions"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = Path(settings.TEMP_STORAGE_PATH) / "transcriptions"
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
         
-    def transcribe_video(self, video_path: str, language: str = "en") -> Dict:
+        # Check if whisper is installed
+        self._check_whisper()
+    
+    def _check_whisper(self) -> bool:
+        """Check if whisper is installed and available."""
+        try:
+            import whisper
+            logger.info(f"Whisper is available: {whisper.__version__ if hasattr(whisper, '__version__') else 'unknown version'}")
+            return True
+        except ImportError:
+            logger.error("Whisper is not installed. Transcription will not work.")
+            logger.error("Install with: pip install openai-whisper")
+            return False
+        
+    def transcribe_video(self, video_path: str, language: str = "en", speaker_data: Optional[Dict] = None) -> Dict:
         """
         Transcribe a video file using Whisper speech recognition.
         
         Args:
             video_path: Path to the video file
             language: Language code (default: 'en' for English)
+            speaker_data: Optional speaker identification data for diarization
             
         Returns:
             Dictionary containing transcription data with timestamps
@@ -39,28 +57,45 @@ class TranscriptionService:
             raise FileNotFoundError(f"Video file not found: {video_path}")
             
         # Create output filename based on input video
-        output_file = self.output_dir / f"{video_path.stem}_transcription.json"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = self.output_dir / f"{video_path.stem}_transcription_{timestamp}.json"
         
         try:
-            # Use whisper CLI for transcription
-            # This is a placeholder - in production, you'd use the whisper API directly
+            # Run Whisper for transcription
+            logger.info(f"Starting transcription for {video_path} with language {language}")
             result = self._run_whisper(str(video_path), language)
+            
+            # Process segments and add speaker information if available
+            processed_segments = self._process_segments(result["segments"], speaker_data)
+            
+            # Create final result
+            final_result = {
+                "text": result["text"],
+                "segments": processed_segments,
+                "language": language,
+                "duration": processed_segments[-1]["end"] if processed_segments else 0,
+                "model": self.model_size,
+                "source_file": str(video_path),
+                "timestamp": timestamp,
+                "has_speaker_data": speaker_data is not None
+            }
             
             # Save transcription to file
             with open(output_file, 'w') as f:
-                json.dump(result, f, indent=2)
+                json.dump(final_result, f, indent=2)
                 
             logger.info(f"Transcription saved to {output_file}")
-            return result
+            return final_result
             
         except Exception as e:
             logger.error(f"Transcription failed: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
     
     def _run_whisper(self, video_path: str, language: str) -> Dict:
         """
         Run Whisper speech recognition on a video file.
-        This is a mock implementation for development.
         
         Args:
             video_path: Path to the video file
@@ -69,35 +104,92 @@ class TranscriptionService:
         Returns:
             Dictionary with transcription data
         """
-        # In a real implementation, you would call the Whisper API here
-        # For now, we'll return a mock result
-        logger.info(f"Mock transcribing {video_path} with language {language}")
+        try:
+            # Import whisper here to avoid import errors if not installed
+            import whisper
+            
+            # Load the model
+            logger.info(f"Loading Whisper model: {self.model_size}")
+            model = whisper.load_model(self.model_size)
+            
+            # Transcribe the video
+            logger.info(f"Transcribing video: {video_path}")
+            result = model.transcribe(
+                video_path,
+                language=language,
+                verbose=True
+            )
+            
+            return result
+            
+        except ImportError:
+            logger.error("Whisper is not installed. Cannot transcribe video.")
+            raise
+        except Exception as e:
+            logger.error(f"Error during Whisper transcription: {str(e)}")
+            raise
+    
+    def _process_segments(self, segments: List[Dict], speaker_data: Optional[Dict] = None) -> List[Dict]:
+        """
+        Process transcription segments and add speaker information if available.
         
-        # Mock transcription result
-        return {
-            "text": "This is a mock transcription of the parliamentary debate.",
-            "segments": [
-                {
-                    "id": 0,
-                    "start": 0.0,
-                    "end": 5.0,
-                    "text": "Welcome to today's parliamentary session."
-                },
-                {
-                    "id": 1,
-                    "start": 5.0,
-                    "end": 10.0,
-                    "text": "We will be discussing the new climate bill."
-                },
-                {
-                    "id": 2,
-                    "start": 10.0,
-                    "end": 15.0,
-                    "text": "The opposition has raised several concerns."
+        Args:
+            segments: List of transcription segments from Whisper
+            speaker_data: Optional speaker identification data
+            
+        Returns:
+            Processed segments with additional information
+        """
+        processed_segments = []
+        
+        for i, segment in enumerate(segments):
+            # Extract basic segment data
+            start = segment["start"]
+            end = segment["end"]
+            text = segment["text"].strip()
+            
+            # Find speaker if speaker data is available
+            speaker = None
+            confidence = 1.0
+            if speaker_data and "timeline" in speaker_data:
+                speaker_info = self._find_speaker_at_time(speaker_data["timeline"], start)
+                if speaker_info:
+                    speaker = speaker_info.get("name")
+                    confidence = speaker_info.get("confidence", 1.0)
+            
+            # Create processed segment
+            processed_segment = {
+                "id": i,
+                "start": start,
+                "end": end,
+                "text": text,
+                "duration": end - start,
+                "speaker": speaker,
+                "confidence": confidence
+            }
+            
+            processed_segments.append(processed_segment)
+        
+        return processed_segments
+    
+    def _find_speaker_at_time(self, timeline: List[Dict], timestamp: float) -> Optional[Dict]:
+        """
+        Find the speaker at a specific timestamp in the timeline.
+        
+        Args:
+            timeline: List of speaker appearances with timestamps
+            timestamp: Time to find speaker for
+            
+        Returns:
+            Speaker information or None if not found
+        """
+        for entry in timeline:
+            if entry.get("start_time") <= timestamp <= entry.get("end_time"):
+                return {
+                    "name": entry.get("speaker_name"),
+                    "confidence": entry.get("confidence", 1.0)
                 }
-            ],
-            "language": language
-        }
+        return None
     
     def search_transcription(self, transcription: Dict, query: str) -> List[Dict]:
         """

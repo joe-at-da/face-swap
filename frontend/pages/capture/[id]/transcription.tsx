@@ -159,15 +159,14 @@ const TranscriptionPage: React.FC = () => {
     return (
       <MainLayout>
         <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <p className="text-sm text-red-700">Capture not found or you don't have permission to view it.</p>
-            </div>
+          <Link href={`/capture/${id}`} className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700">
+            <svg className="mr-1 h-5 w-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+              <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd"></path>
+            </svg>
+            Back to Capture
+          </Link>
+          <div className="ml-3">
+            <p className="text-sm text-red-700">Capture not found or you don't have permission to view it.</p>
           </div>
         </div>
       </MainLayout>
@@ -418,9 +417,143 @@ const TranscriptionPage: React.FC = () => {
               <div>
                 <h2 className="text-lg font-medium text-gray-800 mb-4">Transcription Content</h2>
                 {transcriptionContent ? (
-                  <pre className="bg-gray-50 p-4 rounded-md overflow-auto max-h-[600px] text-sm font-mono whitespace-pre-wrap">
-                    {transcriptionContent}
-                  </pre>
+                  <div className="space-y-4">
+                    {/* Transcription controls */}
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      <button 
+                        className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-md text-sm font-medium"
+                        onClick={() => {
+                          try {
+                            // Try to parse the content as JSON
+                            const jsonContent = JSON.parse(transcriptionContent);
+                            // Format it for better readability
+                            setTranscriptionContent(JSON.stringify(jsonContent, null, 2));
+                          } catch (e) {
+                            // If it's not valid JSON, do nothing
+                            console.error('Not valid JSON or already formatted');
+                          }
+                        }}
+                      >
+                        Format JSON
+                      </button>
+                      <button 
+                        className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-md text-sm font-medium"
+                        onClick={() => {
+                          try {
+                            // Try to copy to clipboard
+                            navigator.clipboard.writeText(transcriptionContent);
+                            alert('Copied to clipboard!');
+                          } catch (e) {
+                            console.error('Failed to copy', e);
+                          }
+                        }}
+                      >
+                        Copy to Clipboard
+                      </button>
+                    </div>
+                    
+                    {/* Try to parse and display as segments if it's JSON */}
+                    {(() => {
+                      try {
+                        const jsonContent = JSON.parse(transcriptionContent);
+                        if (jsonContent.segments && Array.isArray(jsonContent.segments)) {
+                          return (
+                            <div>
+                              {/* Full text preview */}
+                              <div className="mb-6">
+                                <h3 className="text-md font-medium mb-2">Full Transcript</h3>
+                                <div className="bg-white border border-gray-200 rounded-md p-4 max-h-[200px] overflow-y-auto">
+                                  <p className="text-gray-700">{jsonContent.text}</p>
+                                </div>
+                              </div>
+                              
+                              {/* Segments with timestamps */}
+                              <h3 className="text-md font-medium mb-2">Segments ({jsonContent.segments.length})</h3>
+                              <div className="bg-white border border-gray-200 rounded-md overflow-hidden">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                  <thead className="bg-gray-50">
+                                    <tr>
+                                      <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                                      {jsonContent.segments.some((s: any) => s.speaker) && (
+                                        <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Speaker</th>
+                                      )}
+                                      <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Text</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="bg-white divide-y divide-gray-200">
+                                    {jsonContent.segments.map((segment: any, index: number) => {
+                                      // Format time
+                                      const formatTime = (seconds: number) => {
+                                        const mins = Math.floor(seconds / 60);
+                                        const secs = Math.floor(seconds % 60);
+                                        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                                      };
+                                      
+                                      return (
+                                        <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                          <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">
+                                            {formatTime(segment.start)} - {formatTime(segment.end)}
+                                          </td>
+                                          {jsonContent.segments.some((s: any) => s.speaker) && (
+                                            <td className="px-3 py-2 whitespace-nowrap">
+                                              {segment.speaker ? (
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                                  {segment.speaker}
+                                                </span>
+                                              ) : (
+                                                <span className="text-gray-400 text-xs">Unknown</span>
+                                              )}
+                                            </td>
+                                          )}
+                                          <td className="px-3 py-2 text-sm text-gray-900">{segment.text}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                              
+                              {/* Metadata */}
+                              <div className="mt-6">
+                                <h3 className="text-md font-medium mb-2">Metadata</h3>
+                                <div className="bg-gray-50 rounded-md p-4 text-sm">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="font-medium">Language:</span> {jsonContent.language || 'Unknown'}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Duration:</span> {(() => {
+                                        const duration = jsonContent.duration || 0;
+                                        const mins = Math.floor(duration / 60);
+                                        const secs = Math.floor(duration % 60);
+                                        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                                      })()}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Model:</span> {jsonContent.model || 'Unknown'}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Speaker Detection:</span> {jsonContent.has_speaker_data ? 'Yes' : 'No'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                      } catch (e) {
+                        // Not valid JSON or doesn't have segments array
+                        console.log('Not a valid transcription JSON');
+                      }
+                      
+                      // Fallback to displaying as raw text
+                      return (
+                        <pre className="bg-gray-50 p-4 rounded-md overflow-auto max-h-[600px] text-sm font-mono whitespace-pre-wrap">
+                          {transcriptionContent}
+                        </pre>
+                      );
+                    })()}
+                  </div>
                 ) : (
                   <div className="bg-blue-50 border-l-4 border-blue-500 p-4">
                     <div className="flex">

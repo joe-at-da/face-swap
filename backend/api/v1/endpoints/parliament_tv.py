@@ -531,7 +531,7 @@ async def test_stream_url(
         "message": "Stream URL is valid" if is_valid else "Stream URL is invalid or cannot be played"
     }
 
-@router.get("", response_model=List[Dict])
+@router.get("/list", response_model=List[Dict])
 async def get_parliament_tv_captures(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -1361,3 +1361,195 @@ async def cleanup_temporary_files(
         "files_deleted": files_deleted,
         "count": len(files_deleted)
     }
+
+
+@router.post("/{capture_id}/transcribe", response_model=Dict)
+async def transcribe_parliament_tv_capture(
+    capture_id: int,
+    language: str = Query("en", description="Language code for transcription"),
+    model_size: str = Query("base", description="Whisper model size (tiny, base, small, medium, large)"),
+    force: bool = Query(False, description="Force re-transcription even if one already exists"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+) -> Dict:
+    """
+    Transcribe audio from a Parliament TV capture session.
+    
+    This endpoint will:
+    1. Check if audio has been extracted, and extract it if not
+    2. Create a ParliamentTranscription record
+    3. Start the transcription process as a background task
+    
+    Returns:
+        Dict: Information about the transcription process
+    """
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the capture
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture {capture_id} not found"
+        )
+    
+    # Check if audio has been extracted
+    audio_path = capture.audio_file_path
+    if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+        # Extract audio if not already done
+        try:
+            audio_result = parliament_tv_service.extract_audio(db, capture_id)
+            audio_path = audio_result.get("output_file")
+            if not audio_path or not os.path.exists(audio_path):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to extract audio for transcription"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error extracting audio: {str(e)}"
+            )
+    
+    # Check if transcription already exists
+    existing_transcription = db.query(models.ParliamentTranscription).filter(
+        models.ParliamentTranscription.capture_id == capture_id,
+        models.ParliamentTranscription.language == language
+    ).first()
+    
+    if existing_transcription and not force:
+        if existing_transcription.status == "ready":
+            return {
+                "success": True,
+                "message": "Transcription already exists",
+                "transcription_id": existing_transcription.id,
+                "status": existing_transcription.status,
+                "capture_id": capture_id
+            }
+        elif existing_transcription.status == "processing":
+            return {
+                "success": True,
+                "message": "Transcription is already in progress",
+                "transcription_id": existing_transcription.id,
+                "status": existing_transcription.status,
+                "capture_id": capture_id
+            }
+    
+    # Create or update transcription record
+    if existing_transcription and force:
+        # Update existing record
+        existing_transcription.status = "processing"
+        existing_transcription.error_message = None
+        existing_transcription.text = None
+        existing_transcription.segments = None
+        db.commit()
+        transcription = existing_transcription
+    else:
+        # Create new transcription record
+        transcription = models.ParliamentTranscription(
+            capture_id=capture_id,
+            language=language,
+            status="processing",
+            created_by_id=current_user.id
+        )
+        db.add(transcription)
+        db.commit()
+        db.refresh(transcription)
+    
+    # Start transcription task in background
+    try:
+        # Use Celery to run the task asynchronously
+        from backend.services.tasks.parliament_tv_tasks import transcribe_parliament_capture
+        transcribe_parliament_capture.delay(
+            capture_id=capture_id,
+            transcription_id=transcription.id,
+            language=language,
+            model_size=model_size
+        )
+        
+        return {
+            "success": True,
+            "message": "Transcription started",
+            "transcription_id": transcription.id,
+            "status": "processing",
+            "capture_id": capture_id
+        }
+    except Exception as e:
+        # Update transcription record with error
+        transcription.status = "failed"
+        transcription.error_message = str(e)
+        db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting transcription task: {str(e)}"
+        )
+
+
+@router.get("/{capture_id}/transcription", response_model=Dict)
+async def get_parliament_tv_transcription(
+    capture_id: int,
+    language: str = Query("en", description="Language code for transcription"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+) -> Dict:
+    """
+    Get transcription for a Parliament TV capture session.
+    
+    Returns:
+        Dict: Transcription data or status information
+    """
+    # Check permissions
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the transcription
+    transcription = db.query(models.ParliamentTranscription).filter(
+        models.ParliamentTranscription.capture_id == capture_id,
+        models.ParliamentTranscription.language == language
+    ).first()
+    
+    if not transcription:
+        return {
+            "success": False,
+            "message": "No transcription found for this capture",
+            "capture_id": capture_id,
+            "exists": False
+        }
+    
+    # Check if transcription file exists
+    file_exists = False
+    if transcription.output_file_path:
+        try:
+            file_exists = os.path.exists(transcription.output_file_path) and os.path.getsize(transcription.output_file_path) > 0
+        except Exception as e:
+            print(f"Error checking transcription file: {str(e)}")
+    
+    # Return transcription data or status
+    if transcription.status == "ready" and transcription.segments:
+        return {
+            "success": True,
+            "message": "Transcription available",
+            "transcription_id": transcription.id,
+            "status": transcription.status,
+            "capture_id": capture_id,
+            "language": transcription.language,
+            "text": transcription.text,
+            "segments": transcription.segments,
+            "file_exists": file_exists,
+            "file_path": transcription.output_file_path if file_exists else None,
+            "created_at": transcription.created_at,
+            "updated_at": transcription.updated_at
+        }
+    else:
+        return {
+            "success": True,
+            "message": f"Transcription status: {transcription.status}",
+            "transcription_id": transcription.id,
+            "status": transcription.status,
+            "capture_id": capture_id,
+            "language": transcription.language,
+            "error": transcription.error_message,
+            "created_at": transcription.created_at,
+            "updated_at": transcription.updated_at
+        }
