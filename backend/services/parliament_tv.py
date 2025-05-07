@@ -1407,70 +1407,102 @@ class ParliamentTVCapture:
         # Define the output audio file path and ensure directory exists with proper permissions
         audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
         
-        # Ensure the audio directory exists with proper permissions
+        # Ensure the audio directory exists with proper permissions - use a more robust approach
+        # Define both relative and absolute paths
+        relative_audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
+        absolute_audio_dir = "/app/data/temp/audio_extracts"
+        
+        # Try multiple approaches to ensure directory exists and is writable
+        logger.info(f"Starting robust directory creation process for audio extraction")
+        
+        # First try: Use the absolute path directly (most reliable in Docker)
         try:
-            # First check if the parent directory exists and is writable
-            parent_dir = str(self.temp_dir)
-            logger.info(f"Checking parent directory: {parent_dir}")
-            
-            # Create parent directory if it doesn't exist
-            if not os.path.exists(parent_dir):
-                logger.info(f"Creating parent directory: {parent_dir}")
-                try:
-                    os.makedirs(parent_dir, exist_ok=True)
-                except Exception as e:
-                    logger.error(f"Failed to create parent directory with os.makedirs: {str(e)}")
-                    # Fallback to subprocess
-                    subprocess.run(["mkdir", "-p", parent_dir], check=True)
-                
-                # Set permissions
-                try:
-                    os.chmod(parent_dir, 0o777)  # rwx for all users
-                except Exception as e:
-                    logger.warning(f"Could not set permissions on parent directory: {e}")
-                    subprocess.run(["chmod", "777", parent_dir], check=True)
-            
-            # Now create the audio directory - use subprocess first for reliability
-            logger.info(f"Creating audio directory: {audio_dir}")
-            subprocess.run(["mkdir", "-p", audio_dir], check=True)
-            subprocess.run(["chmod", "777", audio_dir], check=True)
-            logger.info(f"Created audio directory using subprocess: {audio_dir}")
-            
-            # Verify the directory exists
-            if os.path.exists(audio_dir):
-                logger.info(f"Verified audio directory exists: {audio_dir}")
+            logger.info(f"APPROACH 1: Using absolute path: {absolute_audio_dir}")
+            # Force remove and recreate the directory to ensure clean state
+            if os.path.exists(absolute_audio_dir):
+                logger.info(f"Directory already exists, ensuring proper permissions")
             else:
-                logger.error(f"Audio directory does not exist after creation attempts: {audio_dir}")
-                raise Exception(f"Failed to create audio directory: {audio_dir}")
+                logger.info(f"Directory doesn't exist, creating it")
+                
+            # Use subprocess for most reliable directory creation
+            subprocess.run(["mkdir", "-p", absolute_audio_dir], check=True)
+            subprocess.run(["chmod", "777", absolute_audio_dir], check=True)
             
-            # Test if the directory is writable
+            # Verify directory exists and is writable
+            if not os.path.exists(absolute_audio_dir):
+                raise Exception(f"Directory still doesn't exist after creation: {absolute_audio_dir}")
+                
+            # Test write access using subprocess (most reliable)
+            test_file = os.path.join(absolute_audio_dir, ".test_write_abs")
+            subprocess.run(["touch", test_file], check=True)
+            if not os.path.exists(test_file):
+                raise Exception(f"Failed to create test file in {absolute_audio_dir}")
+            subprocess.run(["rm", test_file], check=True)
+            
+            # Success - use this directory
+            audio_dir = absolute_audio_dir
+            logger.info(f"Successfully created and verified absolute audio directory: {audio_dir}")
+        except Exception as e:
+            logger.warning(f"APPROACH 1 FAILED: Could not use absolute path: {str(e)}")
+            
+            # Second try: Use relative path with os.makedirs
             try:
-                test_file = os.path.join(audio_dir, ".test_write")
+                logger.info(f"APPROACH 2: Using relative path with os.makedirs: {relative_audio_dir}")
+                os.makedirs(relative_audio_dir, exist_ok=True)
+                os.chmod(relative_audio_dir, 0o777)  # rwx for all users
+                
+                # Verify directory exists
+                if not os.path.exists(relative_audio_dir):
+                    raise Exception(f"Directory doesn't exist after os.makedirs: {relative_audio_dir}")
+                    
+                # Test write access
+                test_file = os.path.join(relative_audio_dir, ".test_write_rel")
                 with open(test_file, 'w') as f:
                     f.write("test")
                 os.remove(test_file)
-                logger.info(f"Verified audio directory is writable")
-            except Exception as write_error:
-                logger.warning(f"Could not write test file: {write_error}")
-                # Try one more approach - create with full permissions
-                subprocess.run(["touch", os.path.join(audio_dir, ".test_write2")], check=True)
-                subprocess.run(["chmod", "666", os.path.join(audio_dir, ".test_write2")], check=True)
-                subprocess.run(["rm", os.path.join(audio_dir, ".test_write2")], check=True)
-                logger.info(f"Verified audio directory is writable using touch command")
+                
+                # Success - use this directory
+                audio_dir = relative_audio_dir
+                logger.info(f"Successfully created and verified relative audio directory: {audio_dir}")
+            except Exception as e:
+                logger.warning(f"APPROACH 2 FAILED: Could not use relative path with os.makedirs: {str(e)}")
+                
+                # Third try: Use subprocess with relative path
+                try:
+                    logger.info(f"APPROACH 3: Using relative path with subprocess: {relative_audio_dir}")
+                    subprocess.run(["mkdir", "-p", relative_audio_dir], check=True)
+                    subprocess.run(["chmod", "777", relative_audio_dir], check=True)
+                    
+                    # Verify directory exists
+                    if not os.path.exists(relative_audio_dir):
+                        raise Exception(f"Directory doesn't exist after subprocess mkdir: {relative_audio_dir}")
+                        
+                    # Test write access using subprocess
+                    test_file = os.path.join(relative_audio_dir, ".test_write_rel_sub")
+                    subprocess.run(["touch", test_file], check=True)
+                    subprocess.run(["rm", test_file], check=True)
+                    
+                    # Success - use this directory
+                    audio_dir = relative_audio_dir
+                    logger.info(f"Successfully created and verified relative audio directory using subprocess: {audio_dir}")
+                except Exception as e:
+                    logger.error(f"APPROACH 3 FAILED: All directory creation approaches failed: {str(e)}")
+                    return {"success": False, "error": "Could not create audio directory after multiple attempts"}
+        
+        # Final verification - double check that the directory exists and is writable
+        try:
+            logger.info(f"FINAL VERIFICATION: Checking that directory exists and is writable: {audio_dir}")
+            if not os.path.exists(audio_dir):
+                raise Exception(f"Directory doesn't exist in final verification: {audio_dir}")
+                
+            # Test write permissions one more time
+            test_file = os.path.join(audio_dir, ".final_test_write")
+            subprocess.run(["touch", test_file], check=True)
+            subprocess.run(["rm", test_file], check=True)
+            logger.info(f"FINAL VERIFICATION PASSED: Directory exists and is writable: {audio_dir}")
         except Exception as e:
-            logger.error(f"Failed to create or access audio directory: {str(e)}")
-            # Last resort - try with absolute path
-            try:
-                absolute_audio_dir = "/app/data/temp/audio_extracts"
-                logger.info(f"Attempting to create directory with absolute path: {absolute_audio_dir}")
-                subprocess.run(["mkdir", "-p", absolute_audio_dir], check=True)
-                subprocess.run(["chmod", "777", absolute_audio_dir], check=True)
-                # Update the audio_dir to use the absolute path
-                audio_dir = absolute_audio_dir
-                logger.info(f"Created audio directory with absolute path: {audio_dir}")
-            except Exception as absolute_error:
-                logger.error(f"Failed to create audio directory with absolute path: {str(absolute_error)}")
-                return {"success": False, "error": "Could not create audio directory"}
+            logger.error(f"FINAL VERIFICATION FAILED: Directory is not usable: {str(e)}")
+            return {"success": False, "error": f"Audio directory verification failed: {str(e)}"}
         
         # Double check that the directory exists before proceeding
         if not os.path.exists(audio_dir):
