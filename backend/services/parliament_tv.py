@@ -301,29 +301,43 @@ class ParliamentTVCapture:
                     logger.info(f"Using time marker from stream_info: {start_position} seconds")
             
             # Always update the metadata with the URLs - this is critical for later audio extraction
-            # Convert metadata to dictionary if it's not already
-            if db_capture.metadata is None:
-                db_capture.metadata = {}
-            elif not isinstance(db_capture.metadata, dict):
-                try:
-                    # Handle SQLAlchemy MetaData objects
-                    if hasattr(db_capture.metadata, '__dict__'):
-                        db_capture.metadata = db_capture.metadata.__dict__
-                    # Try to convert to dictionary if it's a JSON string or other format
-                    else:
-                        db_capture.metadata = dict(db_capture.metadata)
-                except Exception as e:
-                    logger.warning(f"Could not convert metadata to dictionary: {e}")
-                    # Create a fresh metadata dictionary
-                    db_capture.metadata = {}
-                    
-            # Create a new metadata dictionary to avoid modifying the original object
-            new_metadata = {}  # Start with empty dict to avoid reference issues
-            # Copy existing metadata if it's a dict
-            if isinstance(db_capture.metadata, dict):
-                for key, value in db_capture.metadata.items():
-                    new_metadata[key] = value
-            
+            # Create a fresh metadata dictionary
+            new_metadata = {}
+
+            # If we have existing metadata, try to copy it
+            if db_capture.metadata is not None:
+                # Check if it's an SQLAlchemy MetaData object (special case)
+                if str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
+                    logger.warning("Found SQLAlchemy MetaData object - creating fresh metadata dictionary")
+                    # We can't use this object, so we'll create a fresh dictionary
+                # Handle regular objects with __dict__
+                elif hasattr(db_capture.metadata, '__dict__'):
+                    try:
+                        for key, value in db_capture.metadata.__dict__.items():
+                            # Skip internal attributes
+                            if not key.startswith('_'):
+                                new_metadata[key] = value
+                        logger.info(f"Copied metadata from object.__dict__: {list(new_metadata.keys())}")
+                    except Exception as e:
+                        logger.warning(f"Could not copy from __dict__: {e}")
+                # Handle dictionary-like objects
+                elif hasattr(db_capture.metadata, 'items'):
+                    try:
+                        for key, value in db_capture.metadata.items():
+                            new_metadata[key] = value
+                        logger.info(f"Copied metadata from dict-like object: {list(new_metadata.keys())}")
+                    except Exception as e:
+                        logger.warning(f"Could not copy from dict-like object: {e}")
+                # Try direct conversion as last resort
+                else:
+                    try:
+                        temp_dict = dict(db_capture.metadata)
+                        for key, value in temp_dict.items():
+                            new_metadata[key] = value
+                        logger.info(f"Converted metadata to dictionary: {list(new_metadata.keys())}")
+                    except Exception as e:
+                        logger.warning(f"Could not convert metadata to dictionary: {e}")
+        
             # Store video and audio URLs separately in metadata
             new_metadata["video_url"] = video_url
             if audio_url:
@@ -337,7 +351,32 @@ class ParliamentTVCapture:
                 new_metadata["time_marker"] = stream_info["time_marker"]
                 
             # Update the metadata with the new dictionary
-            db_capture.metadata = new_metadata
+            try:
+                # First try the normal way
+                db_capture.metadata = new_metadata
+                
+                # If we have an audio URL, also update it directly in the database as a fallback
+                if audio_url:
+                    # Use a direct SQL query to update the metadata JSON
+                    from sqlalchemy import text
+                    stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{audio_url}', :audio_url::jsonb) WHERE id = :id")
+                    db.execute(stmt, {"id": capture_id, "audio_url": f'"{audio_url}"'})
+                    logger.info(f"Updated audio_url directly in database using SQL for capture {capture_id}")
+            except Exception as e:
+                logger.error(f"Error updating metadata: {e}")
+                # If the normal way fails, try a direct SQL update as a last resort
+                try:
+                    from sqlalchemy import text
+                    # Convert the metadata to a JSON string
+                    import json
+                    metadata_json = json.dumps(new_metadata)
+                    # Update the metadata directly in the database
+                    stmt = text("UPDATE capture_sessions SET metadata = :metadata::jsonb WHERE id = :id")
+                    db.execute(stmt, {"id": capture_id, "metadata": metadata_json})
+                    logger.info(f"Updated metadata directly in database using SQL for capture {capture_id}")
+                except Exception as e2:
+                    logger.error(f"Failed to update metadata even with direct SQL: {e2}")
+                    # Continue anyway, we'll try to handle this in the audio extraction endpoint
             
             # Commit the changes to ensure metadata is saved
             db.commit()

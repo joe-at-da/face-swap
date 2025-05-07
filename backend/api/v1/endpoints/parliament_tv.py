@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Resp
 from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
@@ -965,34 +966,114 @@ async def extract_audio_for_capture(
             detail=f'Capture {capture_id} not found'
         )
     
-    # Get the audio URL from metadata
+    # Try multiple approaches to get the audio URL
     audio_url = None
-    metadata = capture.metadata
+    metadata_type = str(type(capture.metadata))
     
-    # Handle different metadata formats
-    if metadata:
-        # Convert SQLAlchemy MetaData objects if needed
-        if hasattr(metadata, '__dict__'):
-            metadata = metadata.__dict__
-        # Try to convert to dictionary if it's not already
-        elif not isinstance(metadata, dict):
-            try:
-                metadata = dict(metadata)
-            except Exception as e:
-                print(f"Error converting metadata to dict: {e}")
-                metadata = {}
+    # APPROACH 1: Direct SQL query to get the audio URL from the database
+    try:
+        print(f"Attempting to get audio_url directly from database for capture {capture_id}")
+        # Use a direct SQL query to get the audio URL from the metadata JSON
+        stmt = text("SELECT metadata->>'audio_url' FROM capture_sessions WHERE id = :id")
+        result = db.execute(stmt, {"id": capture_id}).scalar()
+        if result:
+            audio_url = result
+            print(f"SUCCESS: Retrieved audio_url directly from database: {audio_url}")
+    except Exception as e:
+        print(f"Error retrieving audio_url from database: {e}")
+    
+    # APPROACH 2: Try to get the audio URL from the stream_info in the database
+    if not audio_url:
+        try:
+            print(f"Attempting to get audio_url from stream_info in database for capture {capture_id}")
+            # Use a direct SQL query to get the stream_info from the metadata JSON
+            stmt = text("SELECT source_url FROM capture_sessions WHERE id = :id")
+            source_url = db.execute(stmt, {"id": capture_id}).scalar()
+            if source_url:
+                # Extract the stream URL from the source URL
+                from backend.services.parliament_tv import ParliamentTVCapture
+                parliament_tv_service = ParliamentTVCapture()
+                stream_info = parliament_tv_service.extract_stream_url(source_url)
+                if stream_info and "audio_url" in stream_info:
+                    audio_url = stream_info["audio_url"]
+                    print(f"SUCCESS: Retrieved audio_url from stream_info: {audio_url}")
+                    
+                    # Save this back to the database for future use
+                    try:
+                        stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{audio_url}', :audio_url::jsonb) WHERE id = :id")
+                        db.execute(stmt, {"id": capture_id, "audio_url": f'"{audio_url}"'})
+                        db.commit()
+                        print(f"Updated audio_url in database for future use")
+                    except Exception as e:
+                        print(f"Error updating audio_url in database: {e}")
+        except Exception as e:
+            print(f"Error extracting audio_url from source_url: {e}")
+    
+    # APPROACH 3: Try to get the audio URL from the metadata object
+    if not audio_url and capture.metadata is not None:
+        # Create a working metadata dictionary
+        working_metadata = {}
         
-        # Now try to get the audio_url
-        if isinstance(metadata, dict):
-            audio_url = metadata.get('audio_url')
+        # Handle different metadata formats
+        if metadata_type == "<class 'sqlalchemy.sql.schema.MetaData'>":
+            print(f"Found SQLAlchemy MetaData object but couldn't get audio_url from database")
+        # Handle regular objects with __dict__
+        elif hasattr(capture.metadata, '__dict__'):
+            try:
+                for key, value in capture.metadata.__dict__.items():
+                    # Skip internal attributes
+                    if not key.startswith('_'):
+                        working_metadata[key] = value
+                audio_url = working_metadata.get('audio_url')
+                if audio_url:
+                    print(f"SUCCESS: Retrieved audio_url from object.__dict__: {audio_url}")
+            except Exception as e:
+                print(f"Error accessing __dict__: {e}")
+        # Handle dictionary-like objects
+        elif hasattr(capture.metadata, 'items'):
+            try:
+                for key, value in capture.metadata.items():
+                    working_metadata[key] = value
+                audio_url = working_metadata.get('audio_url')
+                if audio_url:
+                    print(f"SUCCESS: Retrieved audio_url from dict-like object: {audio_url}")
+            except Exception as e:
+                print(f"Error accessing items(): {e}")
+        # Try direct conversion as last resort
+        else:
+            try:
+                working_metadata = dict(capture.metadata)
+                audio_url = working_metadata.get('audio_url')
+                if audio_url:
+                    print(f"SUCCESS: Converted metadata to dictionary and found audio_url: {audio_url}")
+            except Exception as e:
+                print(f"Error converting to dict: {e}")
+    
+    # APPROACH 4: If we still don't have an audio URL, look for it in the source_url
+    if not audio_url and capture.source_url:
+        if 'audio' in capture.source_url.lower():
+            audio_url = capture.source_url
+            print(f"SUCCESS: Using source_url as audio_url: {audio_url}")
+        else:
+            # Try to extract the audio URL from the source URL
+            try:
+                from backend.services.parliament_tv import ParliamentTVCapture
+                parliament_tv_service = ParliamentTVCapture()
+                stream_info = parliament_tv_service.extract_stream_url(capture.source_url)
+                if stream_info and "audio_url" in stream_info:
+                    audio_url = stream_info["audio_url"]
+                    print(f"SUCCESS: Extracted audio_url from source_url: {audio_url}")
+            except Exception as e:
+                print(f"Error extracting audio_url from source_url: {e}")
     
     if not audio_url:
         # Provide detailed error information for debugging
         error_detail = {
             'message': 'No audio URL found in capture metadata',
-            'metadata_type': str(type(capture.metadata)),
-            'metadata_keys': str(metadata.keys()) if isinstance(metadata, dict) else 'N/A',
-            'capture_id': capture_id
+            'metadata_type': metadata_type,
+            'metadata_keys': str(working_metadata.keys()) if working_metadata else 'N/A',
+            'capture_id': capture_id,
+            'source_url': capture.source_url
         }
         print(f"Audio extraction failed: {error_detail}")
         raise HTTPException(
