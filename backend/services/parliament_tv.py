@@ -1752,26 +1752,41 @@ class ParliamentTVCapture:
         logger.info(f"FINAL TIME MARKER: {start_position if start_position is not None else 'None'}")
         logger.info(f"FINAL DURATION: {duration_to_use if duration_to_use is not None else 'None'}")
         
-        # Use the build_ffmpeg_command helper function to create the command with proper ordering
-        # CRITICAL: Ensure both start_position and duration are passed correctly
-        logger.info(f"Building FFmpeg command with start_position={start_position}, duration={duration_to_use}")
-        cmd = self.build_ffmpeg_command(
-            input_url=audio_url,
-            start_position=start_position,
-            duration=duration_to_use
-        )
+        # CRITICAL: Build the FFmpeg command directly for audio extraction to ensure proper ordering
+        # For HLS streams, the correct order is:
+        # 1. ffmpeg executable and global options
+        # 2. Input options (except -ss)
+        # 3. Input URL
+        # 4. -ss option (for seeking)
+        # 5. -t option (for duration)
+        # 6. Output options
         
-        # Verify the command has the correct parameters
+        # Start with the FFmpeg executable
+        cmd = ["ffmpeg", "-y"]  # -y to overwrite output files without asking
+        
+        # Add network and protocol options
+        cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+        cmd.extend(["-http_persistent", "1"])
+        cmd.extend(["-allowed_extensions", "ALL"])
+        
+        # Add the input URL
+        cmd.extend(["-i", audio_url])
+        
+        # CRITICAL: For HLS streams, add -ss AFTER the input URL
+        if start_position and start_position > 0:
+            cmd.extend(["-ss", str(start_position)])
+            logger.info(f"Added -ss {start_position} AFTER input for accurate seeking")
+        
+        # Add duration AFTER the seek position
+        if duration_to_use and duration_to_use > 0:
+            cmd.extend(["-t", str(duration_to_use)])
+            logger.info(f"Added duration limit -t {duration_to_use} AFTER seek position")
+        
+        # Log the full command for debugging
         cmd_str = ' '.join(cmd)
-        logger.info(f"Generated FFmpeg command: {cmd_str}")
+        logger.info(f"DIRECT FFMPEG COMMAND: {cmd_str}")
         
-        # Double-check that the time marker and duration are in the command
-        if start_position and str(start_position) not in cmd_str:
-            logger.error(f"ERROR: Time marker {start_position} not found in FFmpeg command!")
-        if duration_to_use and str(duration_to_use) not in cmd_str:
-            logger.error(f"ERROR: Duration {duration_to_use} not found in FFmpeg command!")
-        
-        # Now add output options after the input URL
+        # Now add output options
         cmd.extend([
             "-c:a", "libmp3lame",  # Use MP3 codec
             "-q:a", "2",  # Quality setting for audio
