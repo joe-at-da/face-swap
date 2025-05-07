@@ -459,6 +459,10 @@ class ParliamentTVCapture:
                 if str(type(db_capture.metadata)) == "<class 'sqlalchemy.sql.schema.MetaData'>":
                     logger.warning("Found SQLAlchemy MetaData object - creating fresh metadata dictionary")
                     # We can't use this object, so we'll create a fresh dictionary
+                    # Force reset the metadata to an empty dict to avoid SQLAlchemy MetaData object issues
+                    db_capture.metadata = {}
+                    db.commit()
+                    logger.info("Reset metadata to empty dictionary to avoid SQLAlchemy MetaData object issues")
                 # Handle regular objects with __dict__
                 elif hasattr(db_capture.metadata, '__dict__'):
                     try:
@@ -501,15 +505,22 @@ class ParliamentTVCapture:
                 
             # Update the metadata with the new dictionary
             try:
-                # First try the normal way
-                db_capture.metadata = new_metadata
+                # First try the normal way - force it to be a proper JSON dictionary
+                import json
+                metadata_json_str = json.dumps(new_metadata)
+                metadata_dict = json.loads(metadata_json_str)
+                db_capture.metadata = metadata_dict
+                
+                # Log the metadata to verify it's correctly formatted
+                logger.info(f"Updated metadata for capture {capture_id} with keys: {list(metadata_dict.keys())}")
+                if 'audio_url' in metadata_dict:
+                    logger.info(f"Verified audio_url in metadata: {metadata_dict['audio_url']}")
                 
                 # If we have an audio URL, also update it directly in the database as a fallback
                 if audio_url:
                     # Use a direct SQL query to update the metadata JSON
                     from sqlalchemy import text
                     # Need to properly format the JSON string for PostgreSQL
-                    import json
                     audio_url_json = json.dumps(audio_url)
                     # Use string formatting for the path
                     stmt = text("UPDATE capture_sessions SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{""audio_url""}', cast(:audio_url_json AS jsonb)) WHERE id = :id")
@@ -984,6 +995,61 @@ class ParliamentTVCapture:
             error_msg = f"Error testing stream URL: {url}. Error: {str(e)}"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
+    def get_metadata(self, capture_id: int) -> Dict:
+        """Get metadata for a capture session"""
+        logger.info(f"Getting metadata for capture {capture_id}")
+        
+        # Create a new session for this query
+        try:
+            db_session = next(get_db())
+            try:
+                # Get the capture session from the database
+                db_capture = db_session.query(Capture).filter(Capture.id == capture_id).first()
+                if not db_capture:
+                    logger.error(f"Capture session {capture_id} not found when getting metadata")
+                    return {}
+                
+                # Extract metadata from the capture session
+                metadata = {}
+                if db_capture.metadata:
+                    if isinstance(db_capture.metadata, dict):
+                        metadata = db_capture.metadata
+                        logger.info(f"Found metadata dictionary with keys: {list(metadata.keys())}")
+                    elif hasattr(db_capture.metadata, '__dict__'):
+                        # Handle object-like metadata
+                        try:
+                            for key, value in db_capture.metadata.__dict__.items():
+                                if not key.startswith('_'):
+                                    metadata[key] = value
+                            logger.info(f"Extracted metadata from object.__dict__: {list(metadata.keys())}")
+                        except Exception as e:
+                            logger.error(f"Error extracting from metadata.__dict__: {str(e)}")
+                    else:
+                        # Try to convert to dict
+                        try:
+                            metadata = dict(db_capture.metadata)
+                            logger.info(f"Converted metadata to dictionary: {list(metadata.keys())}")
+                        except Exception as e:
+                            logger.error(f"Could not convert metadata to dictionary: {str(e)}")
+                
+                # If we have audio_url in metadata, add it to a 'media' list for compatibility
+                if 'audio_url' in metadata and 'media' not in metadata:
+                    metadata['media'] = [{
+                        'type': 'audio',
+                        'url': metadata['audio_url']
+                    }]
+                    logger.info(f"Added audio_url to media list: {metadata['audio_url']}")
+                
+                return metadata
+            finally:
+                db_session.close()
+                logger.debug(f"Closed database session after getting metadata for capture {capture_id}")
+        except Exception as e:
+            logger.error(f"Error getting metadata for capture {capture_id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {}
+    
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from Parliament TV - AUDIO ONLY, NEVER FROM VIDEO"""
         logger.info(f"========== STARTING AUDIO EXTRACTION for capture {capture_id} ===========")
