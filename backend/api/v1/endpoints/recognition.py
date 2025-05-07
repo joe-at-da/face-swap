@@ -195,7 +195,8 @@ async def process_voice_identification(
 
 @router.post("/combined-recognition")
 async def process_combined_recognition(
-    request: Request,
+    video_id: int = Body(..., description="ID of the video to process"),
+    save_output: bool = Body(True, description="Whether to save output files"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -203,12 +204,8 @@ async def process_combined_recognition(
     Process combined facial and voice recognition for a video.
     """
     try:
-        # Parse the request body manually
-        body = await request.json()
-        video_id = body.get("video_id")
-        save_output = body.get("save_output", True)
-        
         logger.info(f"Processing combined recognition for video ID: {video_id}")
+        logger.info(f"Current user: {current_user.email if current_user else 'None'}")
         
         # Get the video from the database
         video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()

@@ -492,7 +492,12 @@ def install_dependencies():
 
 def main():
     """Main entry point for the script."""
-    parser = argparse.ArgumentParser(description='Speaker Identification for Parliament TV Videos')
+    import argparse
+    
+    # Declare the global variable before using it
+    global RECOGNITION_THRESHOLD
+    
+    parser = argparse.ArgumentParser(description='Speaker identification for Parliament TV videos')
     parser.add_argument('video_file', help='Path to the video file to process')
     parser.add_argument('--output', '-o', help='Path to save the output video')
     parser.add_argument('--update-db', action='store_true', help='Update the MP database before processing')
@@ -515,7 +520,6 @@ def main():
                 logger.warning("Failed to update MP database. Continuing with existing database.")
         
         # Set the recognition threshold
-        global RECOGNITION_THRESHOLD
         RECOGNITION_THRESHOLD = args.threshold
         
         # Process the video
