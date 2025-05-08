@@ -17,7 +17,7 @@ from backend.db.models.user import UserRole
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.get("/list/{source_type}", response_model=List[Dict])
+@router.get("/list/{source_type}", response_model=Dict)
 async def list_recognition_results(
     source_type: str,
     db: Session = Depends(get_db),
