@@ -50,6 +50,42 @@ def check_whisper_installed():
             logger.error(f"Failed to install OpenAI Whisper: {e}")
             return False
 
+def validate_audio_file(file_path):
+    """Validate that the audio file exists and contains valid audio data."""
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        return False, f"Audio file not found: {file_path}"
+    
+    # Check if the file has content
+    if os.path.getsize(file_path) == 0:
+        return False, f"Audio file is empty: {file_path}"
+    
+    # Try to get audio file info using ffprobe
+    try:
+        cmd = [
+            "ffprobe", 
+            "-v", "error",
+            "-show_entries", "stream=codec_type",
+            "-of", "json",
+            file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            return False, f"Failed to probe audio file: {result.stderr}"
+        
+        data = json.loads(result.stdout)
+        streams = data.get('streams', [])
+        
+        # Check if there are any audio streams
+        audio_streams = [s for s in streams if s.get('codec_type') == 'audio']
+        if not audio_streams:
+            return False, f"No audio streams found in file: {file_path}"
+        
+        return True, "Audio file is valid"
+    except Exception as e:
+        return False, f"Error validating audio file: {str(e)}"
+
 def transcribe_audio(audio_file, output_file=None, model_size="medium"):
     """
     Transcribe an audio file using Whisper model.
@@ -160,9 +196,10 @@ def main():
     
     args = parser.parse_args()
     
-    # Check if the audio file exists
-    if not os.path.exists(args.audio_file):
-        logger.error(f"Audio file not found: {args.audio_file}")
+    # Validate the audio file
+    is_valid, message = validate_audio_file(args.audio_file)
+    if not is_valid:
+        logger.error(message)
         return 1
     
     try:

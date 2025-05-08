@@ -81,7 +81,40 @@ async def transcribe_audio(
                     break
         
         if not audio_path:
-            raise HTTPException(status_code=404, detail=f"Audio file not found for capture ID {capture_id}")
+            # Update the capture record with an error
+            capture.transcription_status = "error"
+            capture.transcription_error = f"No audio file found for capture ID {capture_id}. The video may not contain an audio track."
+            db.commit()
+            
+            return {
+                "success": False,
+                "error": "No audio file found",
+                "message": "The video file doesn't contain an audio track that can be transcribed."
+            }
+        
+        # Check if the audio file exists and has content
+        try:
+            if os.path.getsize(audio_path) == 0:
+                capture.transcription_status = "error"
+                capture.transcription_error = f"Audio file exists but is empty: {audio_path}"
+                db.commit()
+                
+                return {
+                    "success": False,
+                    "error": "Empty audio file",
+                    "message": "The audio file exists but contains no data."
+                }
+        except Exception as e:
+            logger.error(f"Error checking audio file: {str(e)}")
+            capture.transcription_status = "error"
+            capture.transcription_error = f"Error checking audio file: {str(e)}"
+            db.commit()
+            
+            return {
+                "success": False,
+                "error": "Error checking audio file",
+                "message": f"Error checking audio file: {str(e)}"
+            }
         
         # Update the capture record
         capture.transcription_status = "processing"

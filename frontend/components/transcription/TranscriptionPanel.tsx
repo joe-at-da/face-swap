@@ -32,6 +32,9 @@ interface CaptureData {
   transcription_path?: string;
   transcription_results?: string;
   transcription_completed_at?: string;
+  transcription_error?: string;
+  audio_path?: string | null;
+  audio_file_path?: string | null;
 }
 
 const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audioElement }) => {
@@ -172,6 +175,14 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         }
       }
       
+      // Check for transcription error
+      if (capture.transcription_error) {
+        console.log('Transcription error found:', capture.transcription_error);
+        setIsProcessing(false);
+        setTranscriptionStatus('error');
+        setShowTranscription(true);
+      }
+      
       // Force update UI based on transcription_completed_at
       if (capture.transcription_completed_at) {
         console.log('Transcription has a completed timestamp:', capture.transcription_completed_at);
@@ -183,6 +194,14 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         if (!transcriptionResults) {
           fetchTranscriptionResults();
         }
+      }
+      
+      // Check if audio path exists
+      if (capture.audio_path === null && capture.audio_file_path === null) {
+        console.log('No audio path found in capture data');
+        setIsProcessing(false);
+        setTranscriptionStatus('error');
+        setShowTranscription(true);
       }
     }
   }, [capture, isProcessing, transcriptionStatus, transcriptionResults, fetchTranscriptionResults]);
@@ -512,18 +531,37 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
             </div>
             <div>
               <h4 className="font-medium text-red-800 mb-1">Transcription Error</h4>
-              <p className="text-red-700">
-                An error occurred during the transcription process. This might be due to issues with the audio file or the transcription service.
-              </p>
-              <button
-                onClick={handleStartTranscription}
-                className="mt-3 px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-800 rounded inline-flex items-center"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Try Again
-              </button>
+              {capture?.transcription_error?.includes('No audio') || 
+               capture?.transcription_error?.includes('does not have audio') ? (
+                <div>
+                  <p className="text-red-700">
+                    <strong>No audio found in this capture.</strong> This video file doesn't contain an audio track that can be transcribed.
+                  </p>
+                  <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded text-sm text-gray-700">
+                    <p className="mb-2">Possible solutions:</p>
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>Verify that the original source has audio</li>
+                      <li>Try re-capturing the session with audio enabled</li>
+                      <li>Upload a separate audio file for this capture</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-red-700">
+                    An error occurred during the transcription process. This might be due to issues with the audio file or the transcription service.
+                  </p>
+                  <button
+                    onClick={handleStartTranscription}
+                    className="mt-3 px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-800 rounded inline-flex items-center"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Try Again
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
