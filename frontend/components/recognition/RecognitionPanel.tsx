@@ -29,6 +29,14 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       console.log('Recognition is already in progress, updating state');
       setIsProcessing(true);
       setShowProgress(true);
+    } else if (capture?.recognition_status === 'completed') {
+      console.log('Recognition is completed');
+      setIsProcessing(false);
+      setShowProgress(true); // Still show progress to display completion
+    } else if (capture?.recognition_status === 'error') {
+      console.log('Recognition has error');
+      setIsProcessing(false);
+      setShowProgress(true); // Still show progress to display error
     } else if (capture?.recognition_status) {
       console.log('Recognition status:', capture.recognition_status);
     }
@@ -113,15 +121,15 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   };
   
   const handleProgressComplete = () => {
-    // Called when the progress component detects completion
-    console.log('Progress complete callback called');
+    console.log('Progress component signaled completion');
     setIsProcessing(false);
-    refetch();
-    // Keep showing progress for a moment so user can see completion
-    setTimeout(() => {
-      console.log('Hiding progress component after timeout');
-      setShowProgress(false);
-    }, 3000);
+    
+    // Refetch capture data to get updated recognition results
+    refetch().then(() => {
+      console.log('Refetched capture data after completion');
+      // Keep showing the progress component so users can see the final status
+      // Don't hide it automatically
+    });
   };
   
   const jumpToTimestamp = (seconds: number) => {
@@ -235,28 +243,42 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
             
             {/* Always show progress information during processing */}
             <div className="mb-4">
-              <div className="text-sm text-gray-500 mb-2">
+              <div className="text-sm font-medium mb-2">
                 {isProcessing ? (
                   <div className="flex items-center">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                    <span>Recognition in progress...</span>
+                    <span className="text-blue-600">Recognition in progress...</span>
                   </div>
                 ) : capture?.recognition_status === 'completed' ? (
                   <div className="text-green-600">Recognition completed successfully</div>
                 ) : capture?.recognition_status === 'error' ? (
                   <div className="text-red-600">Recognition failed</div>
                 ) : (
-                  <div>No recognition data available</div>
+                  <div className="text-gray-600">No recognition data available</div>
                 )}
               </div>
               
               {/* Show detailed progress component */}
               {(isProcessing || showProgress) && (
-                <RecognitionProgress 
-                  captureId={captureId} 
-                  isProcessing={isProcessing} 
-                  onComplete={handleProgressComplete} 
-                />
+                <div className="mt-4">
+                  <RecognitionProgress 
+                    captureId={captureId} 
+                    isProcessing={isProcessing} 
+                    onComplete={handleProgressComplete} 
+                  />
+                </div>
+              )}
+              
+              {/* Add a button to hide/show progress details when completed */}
+              {!isProcessing && showProgress && (capture?.recognition_status === 'completed' || capture?.recognition_status === 'error') && (
+                <div className="mt-2">
+                  <button 
+                    onClick={() => setShowProgress(!showProgress)}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    {showProgress ? "Hide details" : "Show details"}
+                  </button>
+                </div>
               )}
             </div>
           </div>

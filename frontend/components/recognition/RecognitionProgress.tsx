@@ -62,9 +62,24 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   // Update progress state when data changes
   useEffect(() => {
     console.log('Recognition progress data changed:', data);
-    if (data?.success && data?.status?.progress) {
-      console.log('Setting progress data:', data.status.progress);
-      setProgress(data.status.progress);
+    if (data?.success && data?.status) {
+      // Check if we have progress data
+      if (data.status.progress) {
+        console.log('Setting progress data:', data.status.progress);
+        setProgress(data.status.progress);
+      } else {
+        // If no progress data yet, initialize with basic structure based on status
+        console.log('No progress data yet, using status:', data.status);
+        const initialProgress = {
+          status: data.status.status || 'processing',
+          steps: [{
+            name: 'initialization',
+            status: data.status.status === 'processing' ? 'started' : data.status.status,
+            timestamp: new Date().toISOString()
+          }]
+        };
+        setProgress(initialProgress);
+      }
       
       // Check if processing is complete or has error
       if (data.status.status === 'completed' || data.status.status === 'error') {
@@ -72,14 +87,6 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
         setPollingEnabled(false);
         onComplete();
       }
-    } else if (data?.success && data?.status) {
-      // If no progress data yet, initialize with basic structure
-      console.log('No progress data yet, using status:', data.status);
-      const initialProgress = {
-        status: data.status.status || 'processing',
-        steps: []
-      };
-      setProgress(initialProgress);
     }
   }, [data, onComplete]);
 
@@ -118,11 +125,20 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
     return Math.floor((completedSteps / totalSteps) * 100);
   };
 
-  // If not processing and no progress data, don't render anything
+  // Always render if isProcessing is true, even without progress data
+  // Only hide if not processing and no progress data
   if (!isProcessing && !progress) {
     console.log('Not processing and no progress data, not rendering');
     return null;
   }
+  
+  // Force polling to start if we're processing but don't have data yet
+  useEffect(() => {
+    if (isProcessing && !progress) {
+      console.log('Processing but no progress data, forcing poll');
+      setPollingEnabled(true);
+    }
+  }, [isProcessing, progress]);
   
   // Log current state for debugging
   console.log('Current progress state:', { isProcessing, progress, isLoading, isError, error });
