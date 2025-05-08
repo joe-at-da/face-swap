@@ -8,13 +8,103 @@ interface RecognitionPanelProps {
   videoElement: HTMLVideoElement | null;
 }
 
+interface SpeakerResult {
+  name: string;
+  confidence: number;
+  start_time: number;
+  end_time: number;
+  duration: number;
+}
+
+interface CaptureData {
+  id: number;
+  recognition_status: string;
+  facial_recognition_path: string | null;
+  speaker_identification_path: string | null;
+  speaker_identification_results: string | null;
+  recognition_completed_at: string | null;
+}
+
 const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoElement }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
+
   console.log('RecognitionPanel render state:', { isProcessing, showProgress });
   
+  // Process recognition mutation
+  const processMutation = useMutation({
+    mutationFn: async () => {
+      try {
+        console.log('Starting recognition processing for capture ID:', captureId);
+        
+        // Set processing state
+        setIsProcessing(true);
+        setShowProgress(true);
+        
+        // Determine API URL based on environment
+        const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        console.log('Using API URL for recognition:', apiBaseUrl);
+        
+        // Get auth token
+        const token = localStorage.getItem('token');
+        console.log('Auth token available:', !!token);
+        
+        // First try using the API client
+        try {
+          console.log('Making request to combined recognition endpoint');
+          const response = await api.post('/recognition/combined-recognition', {
+            video_id: captureId
+          });
+          
+          console.log('Recognition processing response:', response);
+          return response;
+        } catch (apiError) {
+          console.error('API client error, trying direct fetch:', apiError);
+          
+          // Fallback to direct fetch if API client fails
+          const directUrl = `${apiBaseUrl}/api/v1/recognition/combined-recognition`;
+          console.log('Trying direct fetch to:', directUrl);
+          
+          const authToken = localStorage.getItem('token') || sessionStorage.getItem('token');
+          const directResponse = await fetch(directUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': authToken ? `Bearer ${authToken}` : ''
+            },
+            body: JSON.stringify({
+              video_id: captureId
+            })
+          });
+          
+          if (!directResponse.ok) {
+            const errorText = await directResponse.text();
+            console.error(`HTTP error! status: ${directResponse.status}, body: ${errorText}`);
+            throw new Error(`HTTP error! status: ${directResponse.status}`);
+          }
+          
+          const data = await directResponse.json();
+          console.log('Direct fetch response:', data);
+          return data;
+        }
+      } catch (error) {
+        console.error('Error in recognition processing:', error);
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      console.log('Recognition processing started successfully');
+      // We'll keep the processing state true until the progress component signals completion
+    },
+    onError: (error: any) => {
+      console.error('Error processing recognition:', error);
+      setIsProcessing(false);
+      // Show error message
+    }
+  });
+
   // Fetch capture data to get recognition status
-  const { data: capture, isLoading, isError, refetch } = useQuery({
+  const { data: capture, isLoading, isError, error, refetch } = useQuery<CaptureData>({
     queryKey: ['captureRecognition', captureId],
     queryFn: async () => {
       return await api.get(`/capture/${captureId}`);
@@ -40,81 +130,19 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
     } else if (capture?.recognition_status) {
       console.log('Recognition status:', capture.recognition_status);
     }
-  }, [capture]);
+    
+    // Log additional debug info
+    console.log('RecognitionPanel component state:', {
+      captureId,
+      recognitionStatus: capture?.recognition_status,
+      isProcessing,
+      showProgress,
+      isMutationLoading: processMutation.isPending,
+      hasRecognitionResults: !!(capture?.facial_recognition_path || capture?.speaker_identification_path)
+    });
+  }, [capture, captureId, isProcessing, showProgress, processMutation.isPending]);
 
-  // Process recognition mutation
-  const processMutation = useMutation({
-    mutationFn: async () => {
-      setIsProcessing(true);
-      setShowProgress(true);
-      try {
-        console.log('Starting recognition processing for capture ID:', captureId);
-        
-        // Get the token from localStorage for debugging
-        const token = localStorage.getItem('token');
-        console.log('Auth token available:', !!token);
-        if (token) {
-          console.log('Token first 20 chars:', token.substring(0, 20));
-        }
-        
-        // Log the API base URL
-        console.log('API base URL:', (api as any).getBaseUrl?.() || 'Not available');
-        
-        // Use the API client to make the request with the correct path
-        console.log('Making request to combined recognition endpoint');
-        console.log('Request payload:', { video_id: captureId, save_output: true });
-        
-        try {
-          // Make sure there's a slash between the base URL and the endpoint
-          const response = await api.post('/recognition/combined-recognition', {
-            video_id: captureId,
-            save_output: true
-          });
-          
-          console.log('Recognition processing response:', response);
-          return response;
-        } catch (error) {
-          console.error('Error details:', error);
-          // Try a direct fetch as a fallback
-          console.log('Trying direct fetch as fallback...');
-          const directResponse = await fetch('http://localhost:8000/api/v1/recognition/combined-recognition', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              video_id: captureId,
-              save_output: true
-            })
-          });
-          
-          console.log('Direct fetch status:', directResponse.status);
-          if (!directResponse.ok) {
-            const errorText = await directResponse.text();
-            console.error('Direct fetch error:', errorText);
-            throw new Error(`Direct fetch error: ${directResponse.status} - ${errorText}`);
-          }
-          
-          const data = await directResponse.json();
-          console.log('Direct fetch response:', data);
-          return data;
-        }
-      } catch (error) {
-        console.error('Error in recognition processing:', error);
-        throw error;
-      }
-    },
-    onSuccess: () => {
-      // We'll keep isProcessing true until the progress component tells us it's done
-      refetch();
-    },
-    onError: (error) => {
-      console.error('Error processing recognition:', error);
-      // Keep showing progress to display the error
-    }
-  });
-  
+  // Handle button click to process recognition
   const handleProcessRecognition = () => {
     console.log('Starting recognition process');
     processMutation.mutate();
@@ -129,6 +157,9 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       console.log('Refetched capture data after completion');
       // Keep showing the progress component so users can see the final status
       // Don't hide it automatically
+    }).catch((error: any) => {
+      console.error('Error refetching capture data:', error);
+      // Still keep progress visible even if refetch fails
     });
   };
   

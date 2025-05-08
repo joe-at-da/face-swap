@@ -3,11 +3,17 @@
  */
 
 // Determine the correct API URL based on environment
-let API_BASE_URL = 'http://localhost:8000/api/v1';
+let API_BASE_URL = '';
 
-// Always use localhost when running in browser
+// Use environment variable if available, otherwise fallback to localhost
 if (typeof window !== 'undefined') {
-  API_BASE_URL = 'http://localhost:8000/api/v1';
+  // In browser context
+  const envApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  API_BASE_URL = `${envApiUrl}/api/v1`;
+  console.log('Using API URL from environment:', API_BASE_URL);
+} else {
+  // In server context
+  API_BASE_URL = 'http://app:8000/api/v1'; // Use Docker service name in server context
 }
 
 console.log('API Base URL:', API_BASE_URL);

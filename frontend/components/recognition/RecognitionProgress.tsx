@@ -2,6 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../utils/api';
 
+// Define API response types for TypeScript
+interface ApiResponse {
+  success: boolean;
+  status: {
+    status: string;
+    progress?: ProgressData;
+    video_id: number;
+    started_at?: string;
+    completed_at?: string;
+    has_results?: boolean;
+  };
+  error?: string;
+}
+
 interface RecognitionProgressProps {
   captureId: number;
   isProcessing: boolean;
@@ -38,39 +52,40 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   }, [isProcessing]);
 
   // Fetch recognition status
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['recognitionStatus', captureId],
-    queryFn: async () => {
-      try {
-        const response = await api.get(`/recognition/recognition-status/${captureId}`);
-        return response;
-      } catch (error) {
-        console.error('Error fetching recognition status:', error);
-        throw error;
-      }
-    },
-    enabled: pollingEnabled && !!captureId,
-    refetchInterval: pollingEnabled ? 3000 : false, // Poll every 3 seconds when enabled
-    onSuccess: (data) => {
-      console.log('Recognition status data:', data);
-    },
-    onError: (err) => {
-      console.error('Error fetching recognition status:', err);
+  const { data, isLoading, isError, error } = useQuery<ApiResponse>(
+    {
+      queryKey: ['recognitionStatus', captureId],
+      queryFn: async () => {
+        try {
+          console.log(`Fetching recognition status for capture ID: ${captureId}`);
+          const response = await api.get(`/recognition/recognition-status/${captureId}`);
+          console.log('Recognition status raw response:', response);
+          return response as ApiResponse;
+        } catch (error) {
+          console.error(`Error fetching recognition status for capture ID ${captureId}:`, error);
+          throw error;
+        }
+      },
+      enabled: pollingEnabled && !!captureId,
+      refetchInterval: pollingEnabled ? 3000 : false, // Poll every 3 seconds when enabled
+      retry: 3, // Retry failed requests up to 3 times
+      retryDelay: 1000, // Wait 1 second between retries
+      staleTime: 0, // Consider data always stale to ensure fresh data
     }
-  });
+  );
 
   // Update progress state when data changes
   useEffect(() => {
     console.log('Recognition progress data changed:', data);
-    if (data?.success && data?.status) {
+    if (data && 'success' in data && data.success && 'status' in data && data.status) {
       // Check if we have progress data
-      if (data.status.progress) {
+      if ('progress' in data.status && data.status.progress) {
         console.log('Setting progress data:', data.status.progress);
         setProgress(data.status.progress);
       } else {
         // If no progress data yet, initialize with basic structure based on status
         console.log('No progress data yet, using status:', data.status);
-        const initialProgress = {
+        const initialProgress: ProgressData = {
           status: data.status.status || 'processing',
           steps: [{
             name: 'initialization',
@@ -139,6 +154,24 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       setPollingEnabled(true);
     }
   }, [isProcessing, progress]);
+  
+  // Add additional debugging for Docker environment
+  useEffect(() => {
+    console.log('RecognitionProgress component state:', {
+      captureId,
+      isProcessing,
+      pollingEnabled,
+      hasData: !!data,
+      hasProgress: !!progress,
+      isLoading,
+      isError
+    });
+    
+    // Log data structure if available
+    if (data) {
+      console.log('Current data structure:', JSON.stringify(data, null, 2));
+    }
+  }, [captureId, isProcessing, pollingEnabled, data, progress, isLoading, isError]);
   
   // Log current state for debugging
   console.log('Current progress state:', { isProcessing, progress, isLoading, isError, error });
