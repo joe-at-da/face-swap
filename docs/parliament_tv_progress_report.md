@@ -204,7 +204,7 @@ capture_bp = Blueprint('capture', __name__)
 def capture_parliament():
     data = request.json
     url = data.get('url')
-    duration = data.get('duration', 300)  # Default to 5 minutes
+    duration = data.get('duration', 90)  # Default to 90 seconds
     enable_facial_recognition = data.get('enable_facial_recognition', True)
     
     if not url:
