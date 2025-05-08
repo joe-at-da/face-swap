@@ -547,7 +547,7 @@ async def update_mp_database(
 async def get_recognition_status(
     video_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Get the status of a recognition process for a specific video.
