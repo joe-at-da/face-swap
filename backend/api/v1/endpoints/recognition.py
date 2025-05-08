@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from datetime import datetime
+import sqlalchemy as sa
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
@@ -274,19 +276,42 @@ async def process_combined_recognition(
         
         # Update the video record to indicate processing has started
         try:
+            # Check if recognition_progress column exists
+            if not hasattr(video, 'recognition_progress'):
+                # Add the column if it doesn't exist
+                try:
+                    engine = db.get_bind()
+                    if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
+                        logger.warning(f"recognition_progress column doesn't exist, adding it")
+                        sa.Table(video.__table__.name, sa.MetaData(),
+                            sa.Column('recognition_progress', sa.Text),
+                            extend_existing=True)
+                        engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
+                    # Set default value
+                    video.recognition_progress = json.dumps({"steps": []})
+                except Exception as schema_error:
+                    logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
+                    # Continue with in-memory progress tracking
+                    video.recognition_progress = json.dumps({"steps": []})
+            
+            # Update video record with processing status
             video.recognition_status = "processing"
             video.recognition_started_at = datetime.now()
-            video.recognition_progress = json.dumps({
-                "status": "started",
-                "video_available": can_do_facial_recognition,
-                "audio_available": can_do_transcription,
-                "timestamp": datetime.now().isoformat(),
-                "steps": [
-                    {"name": "initialization", "status": "completed", "timestamp": datetime.now().isoformat()}
-                ]
-            })
+            
+            # Initialize progress tracking
+            progress = {
+                "status": "processing",
+                "started_at": datetime.now().isoformat(),
+                "steps": [{
+                    "name": "initialization",
+                    "status": "completed",
+                    "timestamp": datetime.now().isoformat()
+                }]
+            }
+            video.recognition_progress = json.dumps(progress)
+            
             db.commit()
-            logger.info(f"Updated database with processing status for video ID: {video_id}")
+            logger.info(f"Database updated with processing status for video ID: {video_id}")
         except Exception as e:
             logger.error(f"Failed to update database with processing status: {str(e)}")
         
@@ -301,9 +326,28 @@ async def process_combined_recognition(
         # Step 1: Process speaker identification (only if video is available)
         speaker_result = None
         if can_do_facial_recognition:
-            # Update progress
+            # Update progress with speaker identification started status
             try:
+                # Check if recognition_progress column exists
+                if not hasattr(video, 'recognition_progress'):
+                    # Add the column if it doesn't exist
+                    try:
+                        engine = db.get_bind()
+                        if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
+                            logger.warning(f"recognition_progress column doesn't exist, adding it")
+                            sa.Table(video.__table__.name, sa.MetaData(),
+                                sa.Column('recognition_progress', sa.Text),
+                                extend_existing=True)
+                            engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
+                        # Set default value
+                        video.recognition_progress = json.dumps({"steps": []})
+                    except Exception as schema_error:
+                        logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
+                        # Continue with in-memory progress tracking
+                        video.recognition_progress = json.dumps({"steps": []})
+                
                 progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
+                progress["status"] = "processing"
                 progress["steps"].append({
                     "name": "speaker_identification",
                     "status": "started",
@@ -311,8 +355,10 @@ async def process_combined_recognition(
                 })
                 video.recognition_progress = json.dumps(progress)
                 db.commit()
+                logger.info(f"Updated progress for speaker identification start: {video_id}")
             except Exception as e:
                 logger.error(f"Failed to update progress for speaker identification: {str(e)}")
+            
             logger.info(f"Processing speaker identification for video: {video_path}")
             
             # Define output file paths
@@ -359,9 +405,28 @@ async def process_combined_recognition(
         # Step 2: Process transcription (only if audio is available)
         transcript_result = None
         if can_do_transcription:
-            # Update progress
+            # Update progress with transcription started status
             try:
+                # Check if recognition_progress column exists
+                if not hasattr(video, 'recognition_progress'):
+                    # Add the column if it doesn't exist
+                    try:
+                        engine = db.get_bind()
+                        if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
+                            logger.warning(f"recognition_progress column doesn't exist, adding it")
+                            sa.Table(video.__table__.name, sa.MetaData(),
+                                sa.Column('recognition_progress', sa.Text),
+                                extend_existing=True)
+                            engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
+                        # Set default value
+                        video.recognition_progress = json.dumps({"steps": []})
+                    except Exception as schema_error:
+                        logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
+                        # Continue with in-memory progress tracking
+                        video.recognition_progress = json.dumps({"steps": []})
+                
                 progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
+                progress["status"] = "processing"
                 progress["steps"].append({
                     "name": "transcription",
                     "status": "started",
@@ -369,8 +434,10 @@ async def process_combined_recognition(
                 })
                 video.recognition_progress = json.dumps(progress)
                 db.commit()
+                logger.info(f"Updated progress for transcription start: {video_id}")
             except Exception as e:
                 logger.error(f"Failed to update progress for transcription: {str(e)}")
+            
             logger.info(f"Processing transcription for audio: {audio_path}")
             
             # Create output file path for transcription
@@ -486,7 +553,24 @@ async def process_combined_recognition(
         
         # Update the database with the results and final progress
         try:
-            # Update progress with completion status
+            # Check if recognition_progress column exists
+            if not hasattr(video, 'recognition_progress'):
+                # Add the column if it doesn't exist
+                try:
+                    engine = db.get_bind()
+                    if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
+                        logger.warning(f"recognition_progress column doesn't exist, adding it")
+                        sa.Table(video.__table__.name, sa.MetaData(),
+                            sa.Column('recognition_progress', sa.Text),
+                            extend_existing=True)
+                        engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
+                    # Set default value
+                    video.recognition_progress = json.dumps({"steps": []})
+                except Exception as schema_error:
+                    logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
+                    # Continue with in-memory progress tracking
+                    video.recognition_progress = json.dumps({"steps": []})
+            
             progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
             progress["status"] = "completed"
             progress["completed_at"] = datetime.now().isoformat()
@@ -511,6 +595,21 @@ async def process_combined_recognition(
         logger.error(f"Error in combined recognition: {str(e)}")
         # Update progress with error status
         try:
+            # Check if recognition_progress column exists
+            if not hasattr(video, 'recognition_progress'):
+                # Add the column if it doesn't exist
+                try:
+                    engine = db.get_bind()
+                    if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
+                        logger.warning(f"recognition_progress column doesn't exist, adding it")
+                        sa.Table(video.__table__.name, sa.MetaData(),
+                            sa.Column('recognition_progress', sa.Text),
+                            extend_existing=True)
+                        engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
+                except Exception as schema_error:
+                    logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
+                    # Continue with in-memory progress tracking
+            
             progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
             progress["status"] = "error"
             progress["error"] = str(e)
@@ -568,7 +667,7 @@ async def get_recognition_status(
         "status": video.recognition_status or "not_started",
         "started_at": video.recognition_started_at.isoformat() if video.recognition_started_at else None,
         "completed_at": video.recognition_completed_at.isoformat() if video.recognition_completed_at else None,
-        "progress": json.loads(video.recognition_progress) if video.recognition_progress else None,
+        "progress": json.loads(video.recognition_progress) if hasattr(video, 'recognition_progress') and video.recognition_progress else None,
         "has_results": bool(video.recognition_results)
     }
     
