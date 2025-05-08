@@ -83,6 +83,7 @@ const RecognitionPage: React.FC = () => {
 
   // Process recognition results when they're available
   useEffect(() => {
+    // First check if we have results in the capture object
     if (capture && capture.recognition_results) {
       try {
         const results = typeof capture.recognition_results === 'string' 
@@ -103,8 +104,35 @@ const RecognitionPage: React.FC = () => {
       } catch (error) {
         console.error('Error parsing recognition results:', error);
       }
+    } 
+    // If recognition status indicates there are results but we don't have them in the capture object,
+    // we need to fetch them directly
+    else if (recognitionStatus?.status?.has_results && recognitionStatus?.status?.status === 'completed') {
+      // Fetch recognition results directly
+      const fetchRecognitionResults = async () => {
+        try {
+          const response = await api.get(`/recognition/results/${id}`);
+          if (response && response.results) {
+            setRecognitionResults(response.results);
+            
+            // Extract facial recognition results
+            if (response.results.facial_recognition && Array.isArray(response.results.facial_recognition.faces)) {
+              setFacialResults(response.results.facial_recognition.faces);
+            }
+            
+            // Extract speaker recognition results
+            if (response.results.speaker_identification && Array.isArray(response.results.speaker_identification.segments)) {
+              setSpeakerResults(response.results.speaker_identification.segments);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching recognition results:', error);
+        }
+      };
+      
+      fetchRecognitionResults();
     }
-  }, [capture]);
+  }, [capture, recognitionStatus, id]);
 
   // Format time (convert seconds to MM:SS format)
   const formatTime = (seconds: number): string => {
@@ -322,21 +350,26 @@ const RecognitionPage: React.FC = () => {
                   )}
 
                   {/* No Results Message */}
-                  {!recognitionResults && recognitionStatus?.status?.status !== 'processing' && capture?.recognition_status !== 'processing' && (
-                    <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                  {!recognitionResults && (
+                    <div className={`border-l-4 p-4 ${recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ? 'bg-red-50 border-red-400' : recognitionStatus?.status?.status === 'completed' ? 'bg-blue-50 border-blue-400' : 'bg-yellow-50 border-yellow-400'}`}>
                       <div className="flex">
                         <div className="ml-3">
-                          <p className="text-sm text-yellow-700">
-                            No recognition results available. {recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ? 'An error occurred during processing.' : 'Try starting the recognition process.'}
+                          <p className={`text-sm ${recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ? 'text-red-700' : recognitionStatus?.status?.status === 'completed' ? 'text-blue-700' : 'text-yellow-700'}`}>
+                            {recognitionStatus?.status?.status === 'completed' || capture?.recognition_status === 'completed' ?
+                              'Recognition completed successfully, but no faces or speakers were detected in the media.' :
+                              recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ?
+                                'An error occurred during the recognition process.' :
+                                'No recognition results available. Try starting the recognition process.'}
                           </p>
                           {(recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error') && (recognitionStatus?.status?.progress || capture?.recognition_progress) && (
                             <p className="text-sm text-red-600 mt-2">
                               {(() => {
                                 try {
-                                  const progress = JSON.parse(capture.recognition_progress);
-                                  return progress.error || 'Unknown error';
+                                  const progress = recognitionStatus?.status?.progress || 
+                                    (capture?.recognition_progress ? JSON.parse(capture.recognition_progress) : {});
+                                  return progress.error || 'Unknown error occurred during recognition';
                                 } catch (e) {
-                                  return 'Error details not available';
+                                  return 'Error parsing recognition progress';
                                 }
                               })()}
                             </p>
