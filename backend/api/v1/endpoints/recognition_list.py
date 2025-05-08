@@ -59,12 +59,17 @@ async def list_recognition_results(
         # Create a result object
         result = {
             "id": video.id,
+            "capture_id": video.id,  # Frontend expects capture_id
             "title": getattr(video, 'title', f"Capture {video.id}"),
             "status": recognition_status or "not_started",
+            "type": "combined",  # Frontend expects a type field
             "created_at": video.created_at.isoformat() if hasattr(video, 'created_at') and video.created_at else None,
+            "updated_at": video.updated_at.isoformat() if hasattr(video, 'updated_at') and video.updated_at else None,
             "started_at": video.recognition_started_at.isoformat() if hasattr(video, 'recognition_started_at') and video.recognition_started_at else None,
             "completed_at": video.recognition_completed_at.isoformat() if hasattr(video, 'recognition_completed_at') and video.recognition_completed_at else None,
             "has_results": recognition_results is not None and recognition_results != '',
+            "results": parsed_results,  # Include the parsed results
+            "error_message": None,  # Frontend expects this field
             "source_type": source_type,
             "thumbnail_url": getattr(video, 'thumbnail_url', None),
             "video_path": getattr(video, 'video_path', None),
@@ -73,4 +78,9 @@ async def list_recognition_results(
         
         results.append(result)
     
-    return results
+    # Return in the format expected by the frontend
+    return {
+        "success": True,
+        "recognitions": results,
+        "total": len(results)
+    }
