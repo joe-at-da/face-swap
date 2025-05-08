@@ -164,15 +164,19 @@ const RecognitionPage: React.FC = () => {
                 <div className="flex items-center">
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mr-2">Status:</span>
                   <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
-                    ${capture?.recognition_status === 'completed' ? 'bg-green-100 text-green-800' : 
-                      capture?.recognition_status === 'processing' ? 'bg-blue-100 text-blue-800' : 
-                      capture?.recognition_status === 'error' ? 'bg-red-100 text-red-800' : 
+                    ${recognitionStatus?.status?.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                      recognitionStatus?.status?.status === 'processing' ? 'bg-blue-100 text-blue-800' : 
+                      recognitionStatus?.status?.status === 'error' ? 'bg-red-100 text-red-800' : 
                       'bg-gray-100 text-gray-800'}`}>
-                    {capture?.recognition_status || 'Not Started'}
+                    {recognitionStatus?.status?.status || capture?.recognition_status || 'Not Started'}
                   </span>
                 </div>
                 <div className="text-sm text-gray-600 dark:text-gray-400">
-                  {capture?.recognition_completed_at ? (
+                  {recognitionStatus?.status?.completed_at ? (
+                    <span>Completed: {formatDate(recognitionStatus.status.completed_at)}</span>
+                  ) : recognitionStatus?.status?.started_at ? (
+                    <span>Started: {formatDate(recognitionStatus.status.started_at)}</span>
+                  ) : capture?.recognition_completed_at ? (
                     <span>Completed: {formatDate(capture.recognition_completed_at)}</span>
                   ) : capture?.recognition_started_at ? (
                     <span>Started: {formatDate(capture.recognition_started_at)}</span>
@@ -318,14 +322,14 @@ const RecognitionPage: React.FC = () => {
                   )}
 
                   {/* No Results Message */}
-                  {!recognitionResults && capture?.recognition_status !== 'processing' && (
+                  {!recognitionResults && recognitionStatus?.status?.status !== 'processing' && capture?.recognition_status !== 'processing' && (
                     <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
                       <div className="flex">
                         <div className="ml-3">
                           <p className="text-sm text-yellow-700">
-                            No recognition results available. {capture?.recognition_status === 'error' ? 'An error occurred during processing.' : 'Try starting the recognition process.'}
+                            No recognition results available. {recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ? 'An error occurred during processing.' : 'Try starting the recognition process.'}
                           </p>
-                          {capture?.recognition_status === 'error' && capture.recognition_progress && (
+                          {(recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error') && (recognitionStatus?.status?.progress || capture?.recognition_progress) && (
                             <p className="text-sm text-red-600 mt-2">
                               {(() => {
                                 try {

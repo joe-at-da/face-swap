@@ -701,9 +701,15 @@ async def get_recognition_status(
     
     # Get the recognition status
     try:
+        # Check if we have recognition results even if status is not set
+        if video.recognition_results and not video.recognition_status:
+            actual_status = "completed"  # If we have results but no status, mark as completed
+        else:
+            actual_status = video.recognition_status or "not_started"
+            
         status = {
             "video_id": video_id,
-            "status": video.recognition_status or "not_started",
+            "status": actual_status,
             "started_at": video.recognition_started_at.isoformat() if video.recognition_started_at else None,
             "completed_at": video.recognition_completed_at.isoformat() if video.recognition_completed_at else None,
             "progress": json.loads(video.recognition_progress) if hasattr(video, 'recognition_progress') and video.recognition_progress else None,
