@@ -7,6 +7,7 @@ import { withAuth, UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
 import AudioPlayer from '../../../components/AudioPlayer';
 import RecognitionPanel from '../../../components/recognition/RecognitionPanel';
+import TranscriptionPanel from '../../../components/transcription/TranscriptionPanel';
 
 interface CaptureSession {
   id: number;
@@ -303,6 +304,9 @@ const CaptureDetailPage = () => {
               
               {/* Recognition Panel */}
               <RecognitionPanel captureId={capture.id} videoElement={videoElement} />
+              
+              {/* Transcription Panel */}
+              <TranscriptionPanel captureId={capture.id} audioElement={audioElement} />
               
               {/* Debug Info */}
               <div className="mt-8">
