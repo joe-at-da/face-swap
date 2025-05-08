@@ -84,7 +84,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
     
     try {
       const response = await api.post('/recognition/combined-recognition', {
-        capture_id: captureId,
+        video_id: captureId,
       });
       
       console.log('Recognition process started:', response);
@@ -179,12 +179,13 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         console.log('No recognition_status in capture data');
       }
       
-      // Force update UI based on capture status regardless of other conditions
-      if (capture.status === 'completed' || capture.recognition_completed_at) {
-        console.log('Capture is completed (via status or recognition_completed_at), ensuring UI reflects this');
+      // Only set recognition status to completed if we have explicit recognition completion indicators
+      if (capture.recognition_completed_at) {
+        console.log('Recognition has a completed timestamp, ensuring UI reflects this');
         setIsProcessing(false);
         setRecognitionStatus('completed');
       }
+      // Don't automatically set recognition status to completed just because capture is completed
       
       // Handle speaker identification results separately as a fallback
       if (capture.speaker_identification_results && !speakerResults) {
