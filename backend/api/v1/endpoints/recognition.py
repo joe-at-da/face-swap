@@ -621,6 +621,65 @@ async def update_mp_database(
     return result
 
 
+@router.get("/list/parliament-tv", response_model=Dict)
+async def get_all_parliament_tv_recognitions(
+    limit: int = Query(100, description="Maximum number of recognition results to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Get all Parliament TV recognition results with pagination.
+    """
+    logger.info(f"Getting all Parliament TV recognition results with limit={limit}, offset={offset}")
+    
+    # Get all captures with recognition results
+    query = db.query(models.CaptureSession).filter(
+        models.CaptureSession.recognition_status.in_(["completed", "processing", "error"])
+    ).order_by(models.CaptureSession.id.desc())
+    
+    # Apply pagination
+    total_count = query.count()
+    captures = query.offset(offset).limit(limit).all()
+    
+    # Format the results
+    recognitions = []
+    for capture in captures:
+        # Skip if no recognition data
+        if not capture.recognition_status:
+            continue
+            
+        # Create a base recognition object
+        recognition = {
+            "id": len(recognitions) + 1,  # Generate a unique ID
+            "capture_id": capture.id,
+            "status": capture.recognition_status,
+            "type": "combined",  # Default to combined
+            "results": capture.recognition_results if hasattr(capture, 'recognition_results') and capture.recognition_results else None,
+            "error_message": None,
+            "created_at": capture.recognition_started_at.isoformat() if capture.recognition_started_at else capture.created_at.isoformat(),
+            "updated_at": capture.recognition_completed_at.isoformat() if capture.recognition_completed_at else capture.updated_at.isoformat(),
+        }
+        
+        # Add error message if status is error
+        if capture.recognition_status == "error" and hasattr(capture, 'recognition_progress') and capture.recognition_progress:
+            try:
+                progress = json.loads(capture.recognition_progress)
+                if "error" in progress:
+                    recognition["error_message"] = progress["error"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        recognitions.append(recognition)
+    
+    return {
+        "success": True,
+        "recognitions": recognitions,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset
+    }
+
 @router.get("/recognition-status/{video_id}", response_model=Dict)
 async def get_recognition_status(
     video_id: int,

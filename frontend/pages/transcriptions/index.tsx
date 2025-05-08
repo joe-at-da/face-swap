@@ -19,6 +19,35 @@ interface Transcription {
   updated_at: string;
 }
 
+interface Recognition {
+  id: number;
+  capture_id: number;
+  status: string;
+  type: 'facial' | 'voice' | 'combined';
+  results: any;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  confidence?: number;
+}
+
+interface CombinedResult {
+  id: number;
+  capture_id: number;
+  status: string;
+  type: 'transcription' | 'recognition';
+  subtype?: 'facial' | 'voice' | 'combined';
+  language?: string;
+  text?: string;
+  segments?: any[];
+  results?: any;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  confidence?: number;
+  originalId: number; // Original ID from the source object
+}
+
 interface CaptureSession {
   id: number;
   title: string;
@@ -52,37 +81,96 @@ const TranscriptionsPage: React.FC = () => {
     },
   });
   
-  // Filter transcriptions based on search term and status
-  const filteredTranscriptions = React.useMemo(() => {
-    if (!allTranscriptions) return [];
+  // Fetch all recognition results
+  const { data: allRecognitions, isLoading: isLoadingRecognitions } = useQuery({
+    queryKey: ['recognitions'],
+    queryFn: async () => {
+      const response = await api.get('/recognition/list/parliament-tv');
+      return response.recognitions || [];
+    },
+  });
+  
+  // Combine transcriptions and recognitions into a single list
+  const combinedResults = React.useMemo(() => {
+    const combined: CombinedResult[] = [];
     
-    return allTranscriptions.filter((transcription: Transcription) => {
+    // Add transcriptions
+    if (allTranscriptions) {
+      allTranscriptions.forEach((transcription: Transcription) => {
+        combined.push({
+          id: combined.length + 1, // Generate a unique ID for the combined list
+          originalId: transcription.id,
+          capture_id: transcription.capture_id,
+          status: transcription.status,
+          type: 'transcription',
+          language: transcription.language,
+          text: transcription.text,
+          segments: transcription.segments,
+          error_message: transcription.error_message,
+          created_at: transcription.created_at,
+          updated_at: transcription.updated_at
+        });
+      });
+    }
+    
+    // Add recognitions
+    if (allRecognitions) {
+      allRecognitions.forEach((recognition: Recognition) => {
+        combined.push({
+          id: combined.length + 1, // Generate a unique ID for the combined list
+          originalId: recognition.id,
+          capture_id: recognition.capture_id,
+          status: recognition.status,
+          type: 'recognition',
+          subtype: recognition.type,
+          results: recognition.results,
+          error_message: recognition.error_message,
+          created_at: recognition.created_at,
+          updated_at: recognition.updated_at,
+          confidence: recognition.confidence
+        });
+      });
+    }
+    
+    return combined;
+  }, [allTranscriptions, allRecognitions]);
+  
+  // Filter combined results based on search term and status
+  const filteredResults = React.useMemo(() => {
+    if (!combinedResults.length) return [];
+    
+    return combinedResults.filter((result: CombinedResult) => {
       // Find the associated capture
-      const capture = captures?.find((c: CaptureSession) => c.id === transcription.capture_id);
-      const captureTitle = capture?.title || `Capture ${transcription.capture_id}`;
+      const capture = captures?.find((c: CaptureSession) => c.id === result.capture_id);
+      const captureTitle = capture?.title || `Capture ${result.capture_id}`;
       
       // Filter by search term
       const matchesSearch = searchTerm === '' || 
         captureTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        transcription.language.toLowerCase().includes(searchTerm.toLowerCase());
+        (result.language && result.language.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (result.type && result.type.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (result.subtype && result.subtype.toLowerCase().includes(searchTerm.toLowerCase()));
       
       // Filter by status
-      const matchesStatus = selectedStatus === 'all' || transcription.status === selectedStatus;
+      const matchesStatus = selectedStatus === 'all' || result.status === selectedStatus;
       
       return matchesSearch && matchesStatus;
     });
-  }, [allTranscriptions, captures, searchTerm, selectedStatus]);
+  }, [combinedResults, captures, searchTerm, selectedStatus]);
   
   // Get status counts for filtering
   const statusCounts = React.useMemo(() => {
-    if (!allTranscriptions) return { all: 0, ready: 0, processing: 0, failed: 0 };
+    if (!combinedResults.length) return { all: 0, completed: 0, processing: 0, error: 0, failed: 0 };
     
-    return allTranscriptions.reduce((counts: any, transcription: Transcription) => {
+    return combinedResults.reduce((counts: any, result: CombinedResult) => {
       counts.all += 1;
-      counts[transcription.status] = (counts[transcription.status] || 0) + 1;
+      // Normalize status names for consistency
+      const normalizedStatus = result.status === 'ready' || result.status === 'completed' ? 'completed' : 
+                              result.status === 'error' ? 'failed' : result.status;
+      counts[normalizedStatus] = (counts[normalizedStatus] || 0) + 1;
       return counts;
-    }, { all: 0, ready: 0, processing: 0, failed: 0 });
-  }, [allTranscriptions]);
+    }, { all: 0, completed: 0, processing: 0, error: 0, failed: 0 });
+  }, [combinedResults]);
   
   // Format date for display
   const formatDate = (dateString: string) => {
@@ -94,14 +182,35 @@ const TranscriptionsPage: React.FC = () => {
   const getStatusBadgeColor = (status: string) => {
     switch (status) {
       case 'ready':
+      case 'completed':
         return 'bg-green-100 text-green-800';
       case 'processing':
         return 'bg-blue-100 text-blue-800';
       case 'failed':
+      case 'error':
         return 'bg-red-100 text-red-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
+  };
+  
+  // Get type badge color
+  const getTypeBadgeColor = (type: string, subtype?: string) => {
+    if (type === 'transcription') {
+      return 'bg-purple-100 text-purple-800';
+    } else if (type === 'recognition') {
+      switch (subtype) {
+        case 'facial':
+          return 'bg-indigo-100 text-indigo-800';
+        case 'voice':
+          return 'bg-pink-100 text-pink-800';
+        case 'combined':
+          return 'bg-teal-100 text-teal-800';
+        default:
+          return 'bg-gray-100 text-gray-800';
+      }
+    }
+    return 'bg-gray-100 text-gray-800';
   };
 
   return (
@@ -126,7 +235,7 @@ const TranscriptionsPage: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : allTranscriptions && allTranscriptions.length > 0 ? (
+        ) : !isLoadingTranscriptions && !isLoadingRecognitions && combinedResults.length > 0 ? (
           <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
             {/* Filters */}
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
@@ -172,13 +281,16 @@ const TranscriptionsPage: React.FC = () => {
             {/* Transcription List */}
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-900">
+                <thead className="bg-gray-50 dark:bg-gray-800">
                   <tr>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Capture
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Language
+                      Type
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      Details
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Status
@@ -191,43 +303,75 @@ const TranscriptionsPage: React.FC = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                  {filteredTranscriptions.map((transcription: Transcription) => {
-                    const capture = captures?.find((c: CaptureSession) => c.id === transcription.capture_id);
-                    const captureTitle = capture?.title || `Capture ${transcription.capture_id}`;
+                <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+                  {filteredResults.map((result: CombinedResult) => {
+                    // Find the associated capture
+                    const capture = captures?.find((c: CaptureSession) => c.id === result.capture_id);
+                    const captureTitle = capture?.title || `Capture ${result.capture_id}`;
                     
                     return (
-                      <tr key={transcription.id}>
+                      <tr key={result.id}>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
                             {captureTitle}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">
-                            ID: {transcription.capture_id}
+                            ID: {result.capture_id}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900 dark:text-white">
-                            {transcription.language.toUpperCase()}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeColor(transcription.status)}`}>
-                            {transcription.status}
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getTypeBadgeColor(result.type, result.subtype)}`}>
+                            {result.type.charAt(0).toUpperCase() + result.type.slice(1)}
+                            {result.subtype && ` (${result.subtype})`}
                           </span>
-                          {transcription.error_message && (
-                            <div className="text-xs text-red-600 mt-1 truncate max-w-xs" title={transcription.error_message}>
-                              {transcription.error_message}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {result.type === 'transcription' && (
+                            <div className="text-sm text-gray-900 dark:text-white">
+                              {result.language?.toUpperCase()}
+                              {result.segments && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {result.segments.length} segments
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {result.type === 'recognition' && (
+                            <div className="text-sm text-gray-900 dark:text-white">
+                              {result.subtype === 'facial' ? 'Face Recognition' : 
+                               result.subtype === 'voice' ? 'Voice Recognition' : 
+                               'Combined Recognition'}
+                              {result.confidence !== undefined && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {Math.round(result.confidence * 100)}% confidence
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeColor(result.status)}`}>
+                            {result.status}
+                          </span>
+                          {result.error_message && (
+                            <div className="text-xs text-red-600 mt-1 truncate max-w-xs" title={result.error_message}>
+                              {result.error_message}
                             </div>
                           )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                          {formatDate(transcription.created_at)}
+                          {formatDate(result.created_at)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <Link href={`/capture/${transcription.capture_id}/transcription?id=${transcription.id}`} className="text-primary hover:text-primary-dark mr-3">
-                            View
-                          </Link>
+                          {result.type === 'transcription' ? (
+                            <Link href={`/capture/${result.capture_id}/transcription?id=${result.originalId}`} className="text-primary hover:text-primary-dark mr-3">
+                              View
+                            </Link>
+                          ) : (
+                            <Link href={`/capture/${result.capture_id}/recognition?id=${result.originalId}`} className="text-primary hover:text-primary-dark mr-3">
+                              View
+                            </Link>
+                          )}
                         </td>
                       </tr>
                     );
@@ -236,7 +380,7 @@ const TranscriptionsPage: React.FC = () => {
               </table>
             </div>
             
-            {filteredTranscriptions.length === 0 && (
+            {filteredResults.length === 0 && (
               <div className="p-6 text-center">
                 <p className="text-gray-500 dark:text-gray-400">
                   No transcriptions match your filters. Try adjusting your search criteria.
