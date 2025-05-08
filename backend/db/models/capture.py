@@ -33,6 +33,11 @@ class CaptureSession(Base):
     speaker_identification_results = Column(String(255), nullable=True)  # Path to speaker identification results file
     voice_identification_results = Column(String(255), nullable=True)  # Path to voice identification results file
     combined_recognition_results = Column(String(255), nullable=True)  # Path to combined recognition results file
+    recognition_progress = Column(Text, nullable=True)  # JSON string with recognition progress information
+    recognition_status = Column(String(50), nullable=True)  # Status of recognition process: not_started, processing, completed, error
+    recognition_started_at = Column(DateTime(timezone=True), nullable=True)  # When recognition process started
+    recognition_completed_at = Column(DateTime(timezone=True), nullable=True)  # When recognition process completed
+    recognition_results = Column(Text, nullable=True)  # JSON string with recognition results
     
     # Use capture_metadata as the attribute name to avoid conflict with SQLAlchemy's metadata
     # This maps to the 'metadata' column in the database
