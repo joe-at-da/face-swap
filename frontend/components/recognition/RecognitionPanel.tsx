@@ -289,9 +289,17 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
                 )}
               </div>
               
+              {/* Debug information */}
+              <div className="text-xs text-gray-500 mb-2">
+                Status: <span className="font-mono">{capture?.recognition_status || 'unknown'}</span> | 
+                Processing: <span className="font-mono">{isProcessing ? 'true' : 'false'}</span> | 
+                Show Progress: <span className="font-mono">{showProgress ? 'true' : 'false'}</span>
+              </div>
+              
               {/* Show detailed progress component */}
               {(isProcessing || showProgress) && (
-                <div className="mt-4">
+                <div className="mt-4 border border-gray-200 rounded p-3 bg-gray-50">
+                  <div className="text-sm font-medium mb-2">Recognition Progress Details:</div>
                   <RecognitionProgress 
                     captureId={captureId} 
                     isProcessing={isProcessing} 
@@ -308,6 +316,18 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
                     className="text-sm text-blue-600 hover:text-blue-800 underline"
                   >
                     {showProgress ? "Hide details" : "Show details"}
+                  </button>
+                </div>
+              )}
+              
+              {/* Force show progress button if it's processing but progress isn't visible */}
+              {isProcessing && !showProgress && (
+                <div className="mt-2">
+                  <button 
+                    onClick={() => setShowProgress(true)}
+                    className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                  >
+                    Show Progress Details
                   </button>
                 </div>
               )}

@@ -209,6 +209,14 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
     <div className="bg-white p-4 rounded border border-gray-200 mb-4">
       <h4 className="font-medium mb-3">Recognition Progress</h4>
       
+      {/* Connection status indicator */}
+      <div className="mb-3 flex items-center">
+        <div className={`w-3 h-3 rounded-full mr-2 ${isLoading ? 'bg-yellow-400' : isError ? 'bg-red-500' : pollingEnabled ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+        <span className="text-xs text-gray-600">
+          {isError ? 'Connection error' : isLoading ? 'Updating...' : pollingEnabled ? 'Connected' : 'Idle'}
+        </span>
+      </div>
+      
       {/* Overall progress status */}
       <div className="mb-4">
         <div className="flex justify-between items-center mb-1">
@@ -217,7 +225,7 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2.5">
           <div 
-            className="bg-blue-600 h-2.5 rounded-full" 
+            className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
             style={{ width: `${calculateProgress()}%` }}
           ></div>
         </div>
@@ -275,6 +283,23 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
           <span className="ml-2 text-sm text-gray-600">Initializing recognition process...</span>
         </div>
       )}
+      
+      {/* Debug information */}
+      <div className="mt-4 pt-3 border-t border-gray-200">
+        <details className="text-xs text-gray-500">
+          <summary className="cursor-pointer hover:text-gray-700">Debug Information</summary>
+          <div className="mt-2 p-2 bg-gray-50 rounded font-mono whitespace-pre-wrap">
+            <div>Capture ID: {captureId}</div>
+            <div>Is Processing: {isProcessing ? 'true' : 'false'}</div>
+            <div>Polling Enabled: {pollingEnabled ? 'true' : 'false'}</div>
+            <div>Is Loading: {isLoading ? 'true' : 'false'}</div>
+            <div>Is Error: {isError ? 'true' : 'false'}</div>
+            <div>Has Progress Data: {progress ? 'true' : 'false'}</div>
+            <div>Progress Status: {progress?.status || 'N/A'}</div>
+            <div>Steps Count: {progress?.steps?.length || 0}</div>
+          </div>
+        </details>
+      </div>
     </div>
   );
 };
