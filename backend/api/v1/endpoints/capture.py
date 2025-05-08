@@ -222,8 +222,14 @@ async def start_capture(
             # Store the output file path in the database
             if hasattr(capture_session, 'file_path'):
                 capture_session.file_path = output_file
-                db.commit()
                 print(f"DEBUG - Updated file_path in database: {output_file}")
+            
+            # Also set video_path to ensure recognition works properly
+            if hasattr(capture_session, 'video_path'):
+                capture_session.video_path = output_file
+                print(f"DEBUG - Updated video_path in database: {output_file}")
+                
+            db.commit()
         except Exception as e:
             print(f"ERROR - Failed to start capture: {str(e)}")
             import traceback
