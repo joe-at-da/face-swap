@@ -48,8 +48,13 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   useEffect(() => {
     if (isProcessing) {
       setPollingEnabled(true);
+      console.log('Recognition progress polling enabled');
+    } else if (pollingEnabled) {
+      // If we were polling and processing stopped, check one more time
+      console.log('Processing stopped, checking final status');
+      // We don't disable polling here to allow one more status check
     }
-  }, [isProcessing]);
+  }, [isProcessing, pollingEnabled]);
 
   // Fetch recognition status
   const { data, isLoading, isError, error } = useQuery<ApiResponse>(
@@ -100,6 +105,7 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       if (data.status.status === 'completed' || data.status.status === 'error') {
         console.log('Recognition process completed or has error:', data.status.status);
         setPollingEnabled(false);
+        // Call onComplete to notify parent component
         onComplete();
       }
     }
@@ -140,22 +146,13 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
     return Math.floor((completedSteps / totalSteps) * 100);
   };
 
-  // Always render if isProcessing is true, even without progress data
-  // Only hide if not processing and no progress data
-  if (!isProcessing && !progress) {
-    console.log('Not processing and no progress data, not rendering');
-    return null;
-  }
-  
-  // Force polling to start if we're processing but don't have data yet
   useEffect(() => {
     if (isProcessing && !progress) {
       console.log('Processing but no progress data, forcing poll');
       setPollingEnabled(true);
     }
   }, [isProcessing, progress]);
-  
-  // Add additional debugging for Docker environment
+
   useEffect(() => {
     console.log('RecognitionProgress component state:', {
       captureId,
@@ -172,9 +169,16 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       console.log('Current data structure:', JSON.stringify(data, null, 2));
     }
   }, [captureId, isProcessing, pollingEnabled, data, progress, isLoading, isError]);
-  
+
   // Log current state for debugging
   console.log('Current progress state:', { isProcessing, progress, isLoading, isError, error });
+
+  // Always render if isProcessing is true, even without progress data
+  // Only hide if not processing and no progress data
+  if (!isProcessing && !progress) {
+    console.log('Not processing and no progress data, not rendering');
+    return null;
+  }
 
   // Show loading state
   if (isLoading && !progress) {
@@ -231,16 +235,16 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
         </div>
       </div>
       
-      {/* Status message */}
+      {/* Overall status message */}
       {progress && (
         <div className={`mb-4 p-2 rounded text-sm ${
           progress.status === 'completed' ? 'bg-green-50 text-green-700' :
           progress.status === 'error' ? 'bg-red-50 text-red-700' :
           'bg-blue-50 text-blue-700'
         }`}>
-          {progress.status === 'completed' && 'Recognition completed successfully'}
-          {progress.status === 'error' && `Error: ${progress.error || 'An unknown error occurred'}`}
-          {progress.status !== 'completed' && progress.status !== 'error' && 'Recognition in progress...'}
+          {progress.status === 'completed' ? 'Recognition completed successfully' : 
+           progress.status === 'error' ? `Error: ${progress.error || 'An unknown error occurred'}` : 
+           'Recognition in progress...'}
         </div>
       )}
       

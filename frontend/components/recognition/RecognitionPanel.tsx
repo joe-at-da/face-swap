@@ -28,8 +28,10 @@ interface CaptureData {
 const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoElement }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
+  const [recognitionStatus, setRecognitionStatus] = useState<string | undefined>(undefined);
+  const [recognitionResults, setRecognitionResults] = useState<any | null>(null);
 
-  console.log('RecognitionPanel render state:', { isProcessing, showProgress });
+  console.log('RecognitionPanel render state:', { isProcessing, showProgress, recognitionStatus });
   
   // Process recognition mutation
   const processMutation = useMutation({
@@ -109,73 +111,77 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
     queryFn: async () => {
       return await api.get(`/capture/${captureId}`);
     },
-    enabled: !!captureId
+    enabled: !!captureId,
+    refetchInterval: isProcessing ? 5000 : false, // Poll every 5 seconds when processing
   });
   
-  // Check if recognition is already in progress when component mounts
+  // Check if recognition is already in progress or completed when component mounts or data changes
   useEffect(() => {
-    console.log('Capture data changed:', capture);
-    if (capture?.recognition_status === 'processing') {
-      console.log('Recognition is already in progress, updating state');
-      setIsProcessing(true);
-      setShowProgress(true);
-    } else if (capture?.recognition_status === 'completed') {
-      console.log('Recognition is completed');
-      setIsProcessing(false);
-      setShowProgress(true); // Still show progress to display completion
-    } else if (capture?.recognition_status === 'error') {
-      console.log('Recognition has error');
-      setIsProcessing(false);
-      setShowProgress(true); // Still show progress to display error
-    } else if (capture?.recognition_status) {
-      console.log('Recognition status:', capture.recognition_status);
+    if (capture) {
+      console.log('Capture data changed:', capture);
+      
+      // Update recognition status from capture data
+      if (capture.recognition_status) {
+        setRecognitionStatus(capture.recognition_status);
+        
+        // If status is completed or error, update the processing state
+        if (capture.recognition_status === 'completed' || capture.recognition_status === 'error') {
+          setIsProcessing(false);
+          
+          // Try to parse and set the recognition results if available
+          if (capture.speaker_identification_results) {
+            try {
+              const results = typeof capture.speaker_identification_results === 'string' 
+                ? JSON.parse(capture.speaker_identification_results)
+                : capture.speaker_identification_results;
+              setRecognitionResults(results);
+            } catch (e) {
+              console.error('Error parsing recognition results:', e);
+            }
+          }
+        } else if (capture.recognition_status === 'processing') {
+          // If status is processing, update the processing state
+          setIsProcessing(true);
+          setShowProgress(true);
+        }
+      }
     }
-    
-    // Log additional debug info
-    console.log('RecognitionPanel component state:', {
-      captureId,
-      recognitionStatus: capture?.recognition_status,
-      isProcessing,
-      showProgress,
-      isMutationLoading: processMutation.isPending,
-      hasRecognitionResults: !!(capture?.facial_recognition_path || capture?.speaker_identification_path)
-    });
-  }, [capture, captureId, isProcessing, showProgress, processMutation.isPending]);
+  }, [capture]);
 
   // Handle button click to process recognition
   const handleProcessRecognition = () => {
     console.log('Starting recognition process');
+    setIsProcessing(true);
+    setShowProgress(true);
+    setRecognitionStatus('processing');
     processMutation.mutate();
   };
-  
+
+  // Handle progress completion
   const handleProgressComplete = () => {
-    console.log('Progress component signaled completion');
+    console.log('Recognition progress complete');
     setIsProcessing(false);
-    
-    // Refetch capture data to get updated recognition results
+    // Refetch the capture data to get updated recognition results
     refetch().then(() => {
       console.log('Refetched capture data after completion');
-      // Keep showing the progress component so users can see the final status
-      // Don't hide it automatically
-    }).catch((error: any) => {
-      console.error('Error refetching capture data:', error);
-      // Still keep progress visible even if refetch fails
+    }).catch(err => {
+      console.error('Error refetching capture data:', err);
     });
   };
-  
+
   const jumpToTimestamp = (seconds: number) => {
     if (videoElement) {
       videoElement.currentTime = seconds;
       videoElement.play().catch(err => console.error('Error playing video:', err));
     }
   };
-  
+
   const formatTime = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.floor(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
-  
+
   if (isLoading) {
     return (
       <div className="mt-6">
@@ -186,7 +192,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       </div>
     );
   }
-  
+
   if (isError) {
     return (
       <div className="mt-6">
@@ -197,18 +203,29 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       </div>
     );
   }
+
+  // Initialize all state hooks at the top level (not conditionally)
+  const [speakerResults, setSpeakerResults] = useState<any | null>(null);
   
-  const hasFacialRecognition = capture?.facial_recognition_path;
+  const hasFacialRecognition = !!capture?.facial_recognition_path;
   const hasSpeakerIdentification = capture?.speaker_identification_results;
   const hasRecognitionResults = hasFacialRecognition || hasSpeakerIdentification;
-  
-  // Parse speaker identification results if available
-  const speakerResults = hasSpeakerIdentification 
-    ? (typeof capture.speaker_identification_results === 'string' 
-      ? JSON.parse(capture.speaker_identification_results) 
-      : capture.speaker_identification_results)
-    : null;
-  
+
+  // Check if we have speaker identification results
+  useEffect(() => {
+    if (capture?.speaker_identification_results) {
+      try {
+        const results = typeof capture.speaker_identification_results === 'string' 
+          ? JSON.parse(capture.speaker_identification_results)
+          : capture.speaker_identification_results;
+        setSpeakerResults(results);
+        setRecognitionResults(results);
+      } catch (e) {
+        console.error('Error parsing speaker results:', e);
+      }
+    }
+  }, [capture?.speaker_identification_results]);
+
   return (
     <div className="mt-6">
       <h3 className="text-lg font-medium mb-2">Recognition</h3>
@@ -220,86 +237,72 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
           </p>
           <button
             onClick={handleProcessRecognition}
-            disabled={isProcessing}
-            className={`px-3 py-1.5 rounded text-white ${
-              isProcessing ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-            }`}
+            disabled={isProcessing || processMutation.isPending}
+            className={`px-4 py-2 rounded text-white ${isProcessing || processMutation.isPending ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
           >
-            {isProcessing ? 'Processing...' : 'Process Recognition'}
+            {isProcessing || processMutation.isPending ? (
+              <span className="flex items-center">
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Processing...
+              </span>
+            ) : 'Process Recognition'}
           </button>
         </div>
       ) : (
         <div>
           {/* Recognition Status */}
           <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-medium">Recognition Status</h4>
-              <button
-                onClick={handleProcessRecognition}
-                disabled={isProcessing}
-                className={`px-2 py-1 text-sm rounded text-white ${
-                  isProcessing ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-              >
-                {isProcessing ? 'Processing...' : capture?.recognition_status === 'completed' ? 'Reprocess' : 'Process Recognition'}
-              </button>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <p className="text-sm text-gray-500">Facial Recognition:</p>
-                <p className={`text-sm ${hasFacialRecognition ? 'text-green-600' : 'text-yellow-600'}`}>
-                  {hasFacialRecognition ? 'Available' : 'Not Available'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Speaker Identification:</p>
-                <p className={`text-sm ${hasSpeakerIdentification ? 'text-green-600' : 'text-yellow-600'}`}>
-                  {hasSpeakerIdentification ? 'Available' : 'Not Available'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Status:</p>
-                <p className={`text-sm ${capture?.recognition_status === 'completed' ? 'text-green-600' : capture?.recognition_status === 'error' ? 'text-red-600' : 'text-blue-600'}`}>
-                  {capture?.recognition_status ? capture.recognition_status.charAt(0).toUpperCase() + capture.recognition_status.slice(1) : 'Not Started'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Last Updated:</p>
-                <p className="text-sm text-gray-600">
-                  {capture?.recognition_completed_at ? new Date(capture.recognition_completed_at).toLocaleString() : 'N/A'}
-                </p>
-              </div>
-            </div>
-            
-            {/* Always show progress information during processing */}
-            <div className="mb-4">
-              <div className="text-sm font-medium mb-2">
-                {isProcessing ? (
-                  <div className="flex items-center">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                    <span className="text-blue-600">Recognition in progress...</span>
+            <h4 className="font-medium mb-3">Recognition Status</h4>
+            <div className="space-y-2">
+              {isLoading ? (
+                <div className="text-sm text-gray-500">Loading recognition status...</div>
+              ) : isError ? (
+                <div className="text-sm text-red-500">Error loading recognition status</div>
+              ) : (
+                <div>
+                  <div className="text-sm mb-2">
+                    {!recognitionStatus || recognitionStatus === 'not_started' ? (
+                      <span className="text-gray-500">No recognition data available for this capture.</span>
+                    ) : recognitionStatus === 'processing' ? (
+                      <span className="text-blue-500">Recognition is currently processing...</span>
+                    ) : recognitionStatus === 'completed' ? (
+                      <span className="text-green-500">Recognition completed successfully.</span>
+                    ) : recognitionStatus === 'error' ? (
+                      <span className="text-red-500">Recognition failed with an error.</span>
+                    ) : (
+                      <span className="text-gray-500">Unknown recognition status: {recognitionStatus}</span>
+                    )}
                   </div>
-                ) : capture?.recognition_status === 'completed' ? (
-                  <div className="text-green-600">Recognition completed successfully</div>
-                ) : capture?.recognition_status === 'error' ? (
-                  <div className="text-red-600">Recognition failed</div>
-                ) : (
-                  <div className="text-gray-600">No recognition data available</div>
-                )}
-              </div>
+                  
+                  {/* Process Button */}
+                  {(!recognitionStatus || 
+                    recognitionStatus === 'not_started' || 
+                    recognitionStatus === 'error') && (
+                    <button
+                      onClick={handleProcessRecognition}
+                      disabled={isProcessing || processMutation.isPending}
+                      className={`px-4 py-2 rounded text-white ${isProcessing || processMutation.isPending ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+                    >
+                      {isProcessing || processMutation.isPending ? (
+                        <span className="flex items-center">
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Processing...
+                        </span>
+                      ) : 'Process Recognition'}
+                    </button>
+                  )}
+                </div>
+              )}
               
-              {/* Debug information */}
-              <div className="text-xs text-gray-500 mb-2">
-                Status: <span className="font-mono">{capture?.recognition_status || 'unknown'}</span> | 
-                Processing: <span className="font-mono">{isProcessing ? 'true' : 'false'}</span> | 
-                Show Progress: <span className="font-mono">{showProgress ? 'true' : 'false'}</span>
-              </div>
-              
-              {/* Show detailed progress component */}
+              {/* Progress Component */}
               {(isProcessing || showProgress) && (
-                <div className="mt-4 border border-gray-200 rounded p-3 bg-gray-50">
-                  <div className="text-sm font-medium mb-2">Recognition Progress Details:</div>
+                <div className="mt-4 border-t pt-4 border-gray-200">
                   <RecognitionProgress 
                     captureId={captureId} 
                     isProcessing={isProcessing} 
@@ -309,7 +312,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
               )}
               
               {/* Add a button to hide/show progress details when completed */}
-              {!isProcessing && showProgress && (capture?.recognition_status === 'completed' || capture?.recognition_status === 'error') && (
+              {!isProcessing && (recognitionStatus === 'completed' || recognitionStatus === 'error') && (
                 <div className="mt-2">
                   <button 
                     onClick={() => setShowProgress(!showProgress)}
