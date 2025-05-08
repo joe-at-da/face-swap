@@ -50,7 +50,8 @@ class VoiceRecognitionService:
         cmd = [
             "python",
             str(script_path),
-            audio_path
+            audio_path,
+            "--input-type", "audio"
         ]
         
         if output_file:

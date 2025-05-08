@@ -154,16 +154,16 @@ class ParliamentTranscriber:
     
     def transcribe(
         self,
-        video_path: Path,
+        input_path: Path,
         output_path: Optional[Path] = None,
         output_format: str = "txt",
         speaker_id_path: Optional[Path] = None
     ) -> Dict[str, Any]:
         """
-        Transcribe a video file.
+        Transcribe an audio or video file.
         
         Args:
-            video_path: Path to the video file
+            input_path: Path to the audio or video file
             output_path: Path to save the transcription (optional)
             output_format: Output format (txt, srt, json, docx)
             speaker_id_path: Path to speaker identification JSON file (optional)
@@ -171,8 +171,8 @@ class ParliamentTranscriber:
         Returns:
             Dict with transcription results
         """
-        if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input file not found: {input_path}")
         
         # Import whisper here to avoid import error if not installed
         import whisper
@@ -180,7 +180,7 @@ class ParliamentTranscriber:
         # Create output path if not provided
         if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = self.output_dir / f"transcript_{video_path.stem}_{timestamp}.{output_format}"
+            output_path = self.output_dir / f"transcript_{input_path.stem}_{timestamp}.{output_format}"
         
         # Load speaker identification data if provided
         speaker_data = None
@@ -196,10 +196,10 @@ class ParliamentTranscriber:
         logger.info(f"Loading Whisper model: {self.model_size}")
         model = whisper.load_model(self.model_size)
         
-        # Transcribe the video
-        logger.info(f"Transcribing video: {video_path}")
+        # Transcribe the audio/video
+        logger.info(f"Transcribing file: {input_path}")
         result = model.transcribe(
-            str(video_path),
+            str(input_path),
             language=self.language,
             verbose=True
         )
@@ -229,7 +229,7 @@ class ParliamentTranscriber:
         
         # Prepare results
         results = {
-            "input_file": str(video_path),
+            "input_file": str(input_path),
             "output_file": str(output_path),
             "model": self.model_size,
             "language": self.language,
@@ -374,12 +374,13 @@ def install_dependencies() -> bool:
 def main() -> int:
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(description='Automatic Transcription for Parliament TV Videos')
-    parser.add_argument('video_file', help='Path to the video file to transcribe')
+    parser.add_argument('video_file', help='Path to the audio or video file to transcribe')
     parser.add_argument('--output', '-o', help='Path to save the transcription')
     parser.add_argument('--format', '-f', choices=OUTPUT_FORMATS, default='txt', help='Output format')
     parser.add_argument('--speaker-id', '-s', help='Path to speaker identification JSON file')
     parser.add_argument('--model', '-m', default=WHISPER_MODEL_SIZE, help='Whisper model size')
     parser.add_argument('--language', '-l', default=LANGUAGE, help='Language code')
+    parser.add_argument('--input-type', choices=['audio', 'video'], default='video', help='Type of input file')
     args = parser.parse_args()
     
     try:
@@ -400,9 +401,9 @@ def main() -> int:
             language=args.language
         )
         
-        # Transcribe the video
+        # Transcribe the audio/video
         results = transcriber.transcribe(
-            video_path=video_path,
+            input_path=video_path,
             output_path=output_path,
             output_format=args.format,
             speaker_id_path=speaker_id_path
