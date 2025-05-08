@@ -11,6 +11,7 @@ interface RecognitionPanelProps {
 const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoElement }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
+  console.log('RecognitionPanel render state:', { isProcessing, showProgress });
   
   // Fetch capture data to get recognition status
   const { data: capture, isLoading, isError, refetch } = useQuery({
@@ -23,9 +24,13 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   
   // Check if recognition is already in progress when component mounts
   useEffect(() => {
+    console.log('Capture data changed:', capture);
     if (capture?.recognition_status === 'processing') {
+      console.log('Recognition is already in progress, updating state');
       setIsProcessing(true);
       setShowProgress(true);
+    } else if (capture?.recognition_status) {
+      console.log('Recognition status:', capture.recognition_status);
     }
   }, [capture]);
 
@@ -103,15 +108,18 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   });
   
   const handleProcessRecognition = () => {
+    console.log('Starting recognition process');
     processMutation.mutate();
   };
   
   const handleProgressComplete = () => {
     // Called when the progress component detects completion
+    console.log('Progress complete callback called');
     setIsProcessing(false);
     refetch();
     // Keep showing progress for a moment so user can see completion
     setTimeout(() => {
+      console.log('Hiding progress component after timeout');
       setShowProgress(false);
     }, 3000);
   };
@@ -225,14 +233,32 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
               </div>
             </div>
             
-            {/* Show progress information if processing or if showProgress is true */}
-            {(isProcessing || showProgress) && (
-              <RecognitionProgress 
-                captureId={captureId} 
-                isProcessing={isProcessing} 
-                onComplete={handleProgressComplete} 
-              />
-            )}
+            {/* Always show progress information during processing */}
+            <div className="mb-4">
+              <div className="text-sm text-gray-500 mb-2">
+                {isProcessing ? (
+                  <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                    <span>Recognition in progress...</span>
+                  </div>
+                ) : capture?.recognition_status === 'completed' ? (
+                  <div className="text-green-600">Recognition completed successfully</div>
+                ) : capture?.recognition_status === 'error' ? (
+                  <div className="text-red-600">Recognition failed</div>
+                ) : (
+                  <div>No recognition data available</div>
+                )}
+              </div>
+              
+              {/* Show detailed progress component */}
+              {(isProcessing || showProgress) && (
+                <RecognitionProgress 
+                  captureId={captureId} 
+                  isProcessing={isProcessing} 
+                  onComplete={handleProgressComplete} 
+                />
+              )}
+            </div>
           </div>
           
           {/* Speaker Results */}

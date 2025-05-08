@@ -38,7 +38,7 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   }, [isProcessing]);
 
   // Fetch recognition status
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['recognitionStatus', captureId],
     queryFn: async () => {
       try {
@@ -51,18 +51,35 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
     },
     enabled: pollingEnabled && !!captureId,
     refetchInterval: pollingEnabled ? 3000 : false, // Poll every 3 seconds when enabled
+    onSuccess: (data) => {
+      console.log('Recognition status data:', data);
+    },
+    onError: (err) => {
+      console.error('Error fetching recognition status:', err);
+    }
   });
 
   // Update progress state when data changes
   useEffect(() => {
+    console.log('Recognition progress data changed:', data);
     if (data?.success && data?.status?.progress) {
+      console.log('Setting progress data:', data.status.progress);
       setProgress(data.status.progress);
       
       // Check if processing is complete or has error
       if (data.status.status === 'completed' || data.status.status === 'error') {
+        console.log('Recognition process completed or has error:', data.status.status);
         setPollingEnabled(false);
         onComplete();
       }
+    } else if (data?.success && data?.status) {
+      // If no progress data yet, initialize with basic structure
+      console.log('No progress data yet, using status:', data.status);
+      const initialProgress = {
+        status: data.status.status || 'processing',
+        steps: []
+      };
+      setProgress(initialProgress);
     }
   }, [data, onComplete]);
 
@@ -103,11 +120,16 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
 
   // If not processing and no progress data, don't render anything
   if (!isProcessing && !progress) {
+    console.log('Not processing and no progress data, not rendering');
     return null;
   }
+  
+  // Log current state for debugging
+  console.log('Current progress state:', { isProcessing, progress, isLoading, isError, error });
 
   // Show loading state
   if (isLoading && !progress) {
+    console.log('Showing loading state');
     return (
       <div className="bg-white p-4 rounded border border-gray-200 mb-4">
         <h4 className="font-medium mb-3">Recognition Progress</h4>
@@ -121,6 +143,7 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
 
   // Show error state
   if (isError) {
+    console.log('Showing error state:', error);
     return (
       <div className="bg-white p-4 rounded border border-gray-200 mb-4">
         <h4 className="font-medium mb-3">Recognition Progress</h4>
@@ -132,6 +155,7 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   }
 
   // If we have progress data or we're processing, show the progress UI
+  console.log('Rendering progress UI with data:', progress);
   return (
     <div className="bg-white p-4 rounded border border-gray-200 mb-4">
       <h4 className="font-medium mb-3">Recognition Progress</h4>
