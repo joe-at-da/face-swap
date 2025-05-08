@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../utils/api';
+import RecognitionProgress from './RecognitionProgress';
 
 interface RecognitionPanelProps {
   captureId: number;
@@ -9,6 +10,7 @@ interface RecognitionPanelProps {
 
 const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoElement }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
   
   // Fetch capture data to get recognition status
   const { data: capture, isLoading, isError, refetch } = useQuery({
@@ -19,10 +21,19 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
     enabled: !!captureId
   });
   
+  // Check if recognition is already in progress when component mounts
+  useEffect(() => {
+    if (capture?.recognition_status === 'processing') {
+      setIsProcessing(true);
+      setShowProgress(true);
+    }
+  }, [capture]);
+
   // Process recognition mutation
   const processMutation = useMutation({
     mutationFn: async () => {
       setIsProcessing(true);
+      setShowProgress(true);
       try {
         console.log('Starting recognition processing for capture ID:', captureId);
         
@@ -82,19 +93,27 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       }
     },
     onSuccess: () => {
-      setTimeout(() => {
-        refetch();
-        setIsProcessing(false);
-      }, 1000);
+      // We'll keep isProcessing true until the progress component tells us it's done
+      refetch();
     },
     onError: (error) => {
       console.error('Error processing recognition:', error);
-      setIsProcessing(false);
+      // Keep showing progress to display the error
     }
   });
   
   const handleProcessRecognition = () => {
     processMutation.mutate();
+  };
+  
+  const handleProgressComplete = () => {
+    // Called when the progress component detects completion
+    setIsProcessing(false);
+    refetch();
+    // Keep showing progress for a moment so user can see completion
+    setTimeout(() => {
+      setShowProgress(false);
+    }, 3000);
   };
   
   const jumpToTimestamp = (seconds: number) => {
@@ -175,11 +194,11 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
                   isProcessing ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
                 }`}
               >
-                {isProcessing ? 'Processing...' : 'Reprocess'}
+                {isProcessing ? 'Processing...' : capture?.recognition_status === 'completed' ? 'Reprocess' : 'Process Recognition'}
               </button>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <p className="text-sm text-gray-500">Facial Recognition:</p>
                 <p className={`text-sm ${hasFacialRecognition ? 'text-green-600' : 'text-yellow-600'}`}>
@@ -192,7 +211,28 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
                   {hasSpeakerIdentification ? 'Available' : 'Not Available'}
                 </p>
               </div>
+              <div>
+                <p className="text-sm text-gray-500">Status:</p>
+                <p className={`text-sm ${capture?.recognition_status === 'completed' ? 'text-green-600' : capture?.recognition_status === 'error' ? 'text-red-600' : 'text-blue-600'}`}>
+                  {capture?.recognition_status ? capture.recognition_status.charAt(0).toUpperCase() + capture.recognition_status.slice(1) : 'Not Started'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Last Updated:</p>
+                <p className="text-sm text-gray-600">
+                  {capture?.recognition_completed_at ? new Date(capture.recognition_completed_at).toLocaleString() : 'N/A'}
+                </p>
+              </div>
             </div>
+            
+            {/* Show progress information if processing or if showProgress is true */}
+            {(isProcessing || showProgress) && (
+              <RecognitionProgress 
+                captureId={captureId} 
+                isProcessing={isProcessing} 
+                onComplete={handleProgressComplete} 
+              />
+            )}
           </div>
           
           {/* Speaker Results */}
