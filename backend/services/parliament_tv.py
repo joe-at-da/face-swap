@@ -331,13 +331,14 @@ class ParliamentTVCapture:
             else:
                 logger.warning(f"MP4 file not found: {output_file}")
                 
-            # Update the file path in the database if it's not already set
-            if not db_capture.file_path:
-                db_capture.file_path = output_file
-                db.commit()
-                logger.info(f"Updated database with file path: {output_file}")
+            # Update the file paths in the database
+            db_capture.file_path = output_file
+            # IMPORTANT: Also set the video_path field which is used by the recognition process
+            db_capture.video_path = output_file
+            db.commit()
+            logger.info(f"Updated database with video file path: {output_file}")
                 
-            # Update the capture in the database
+            # Update the capture status in the database
             db_capture.status = "completed"
             db_capture.end_time = datetime.now()
             db.commit()
@@ -1906,9 +1907,14 @@ class ParliamentTVCapture:
                     logger.info(f"Audio file created successfully: {audio_file} (size: {file_size} bytes)")
                     
                     # Validate the audio file using ffprobe
+                    validate_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_file]
                     try:
-                        validate_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_file]
                         validate_result = subprocess.run(validate_cmd, capture_output=True, text=True, timeout=30)
+                    except Exception as e:
+                        logger.error(f"Error running ffprobe: {str(e)}")
+                        validate_result = None
+                        
+                    if validate_result is not None:
                         
                         if validate_result.returncode == 0:
                             # Parse the JSON output to get the duration
@@ -1917,6 +1923,20 @@ class ParliamentTVCapture:
                                 probe_data = json.loads(validate_result.stdout)
                                 duration = float(probe_data.get('format', {}).get('duration', 0))
                                 logger.info(f"Audio file validation successful: Duration = {duration} seconds")
+                                
+                                # Update the database with the audio file path
+                                try:
+                                    # Get the capture record
+                                    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+                                    if capture:
+                                        # Update the audio_path field which is used by the recognition process
+                                        capture.audio_path = audio_file
+                                        db.commit()
+                                        logger.info(f"Updated database with audio file path: {audio_file}")
+                                    else:
+                                        logger.warning(f"Could not find capture {capture_id} to update audio path")
+                                except Exception as e:
+                                    logger.error(f"Error updating audio path in database: {str(e)}")
                                 
                                 # Check if the duration is too short (less than 1 second)
                                 if duration < 1.0:
@@ -1942,28 +1962,7 @@ class ParliamentTVCapture:
                                 if try_new_session and db is not None:
                                     db.close()
                                 return error_result
-                    except Exception as e:
-                        logger.warning(f"Failed to validate audio file: {str(e)}")
-                    
-                    # Update the database with the audio file path
-                    try:
-                        db_capture.audio_file_path = audio_file
-                        # Add file size if the column exists in the database model
-                        if hasattr(db_capture, 'audio_file_size'):
-                            db_capture.audio_file_size = file_size
-                        db.commit()
-                        logger.info(f"Updated database with audio file path for capture {capture_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to update database with audio file path: {str(e)}")
-                    
-                    result = {"success": True, "message": "Audio extraction completed successfully", "audio_file": audio_file, "file_size": file_size}
-                    # Close the database connection if we created it
-                    if try_new_session and db is not None:
-                        try:
-                            db.close()
-                            logger.debug(f"Closed database session for audio extraction of capture {capture_id}")
-                        except Exception as e:
-                            logger.error(f"Error closing database session: {str(e)}")
+                    # Return the result if validation was successful
                     return result
                 else:
                     logger.error(f"Audio file was not created or is empty: {audio_file}")
