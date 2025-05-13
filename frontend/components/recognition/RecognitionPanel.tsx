@@ -48,7 +48,27 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       console.log('Capture API response:', response);
       return response as CaptureData;
     },
-    refetchInterval: 3000, // Poll every 3 seconds regardless of processing state
+    refetchInterval: 2000, // Poll every 2 seconds regardless of processing state
+    staleTime: 0, // Consider data always stale to ensure fresh data
+    refetchOnWindowFocus: true, // Refetch when window regains focus
+  });
+  
+  // Also fetch recognition status directly to ensure we have the most up-to-date information
+  const { data: recognitionStatusData } = useQuery({
+    queryKey: ['recognitionStatusDirect', captureId],
+    queryFn: async () => {
+      console.log(`Fetching direct recognition status for ID: ${captureId}`);
+      try {
+        const response = await api.get(`/recognition/recognition-status/${captureId}`);
+        console.log('Direct recognition status response:', response);
+        return response;
+      } catch (error) {
+        console.warn(`Error fetching direct status, will rely on capture data: ${error}`);
+        return null;
+      }
+    },
+    enabled: !!captureId && (isProcessing || recognitionStatus === 'processing'),
+    refetchInterval: isProcessing ? 2000 : false, // Poll every 2 seconds when processing
     staleTime: 0, // Consider data always stale to ensure fresh data
   });
 
@@ -122,11 +142,20 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   };
 
   // Handle when the progress component signals completion
-  const handleProgressComplete = useCallback(() => {
-    console.log('Progress component signaled completion');
+  const handleProgressComplete = useCallback((status?: string) => {
+    console.log(`Progress component signaled completion with status: ${status || 'completed'}`);
     setIsProcessing(false);
-    // We'll let the useEffect that watches capture handle the state updates
-  }, []);
+    
+    // Update recognition status if provided
+    if (status) {
+      setRecognitionStatus(status);
+    } else {
+      setRecognitionStatus('completed');
+    }
+    
+    // Trigger a refetch to get the latest data
+    refetch();
+  }, [refetch]);
 
   // Effect to update state based on capture data changes
   useEffect(() => {
@@ -149,29 +178,9 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         
         // If status is completed or error, update the processing state
         if (capture.recognition_status === 'completed' || capture.recognition_status === 'error') {
-          console.log(`Recognition process is ${capture.recognition_status}, updating UI state`);
           setIsProcessing(false);
-          setShowProgress(true); // Keep showing progress to see the completed status
-          
-          // Try to parse and set the recognition results if available
-          if (capture.speaker_identification_results) {
-            console.log('Speaker identification results found, parsing...');
-            try {
-              const results = typeof capture.speaker_identification_results === 'string' 
-                ? JSON.parse(capture.speaker_identification_results)
-                : capture.speaker_identification_results;
-              console.log('Parsed speaker results:', results);
-              setRecognitionResults(results);
-              setSpeakerResults(results);
-            } catch (e) {
-              console.error('Error parsing recognition results:', e);
-            }
-          } else {
-            console.log('No speaker identification results available');
-          }
-        } else if (capture.recognition_status === 'processing') {
-          // If status is processing, update the processing state
-          console.log('Recognition is still processing');
+        } else if (capture.recognition_status === 'processing' && !isProcessing) {
+          // If status is processing but our state doesn't reflect that, update it
           setIsProcessing(true);
           setShowProgress(true);
         }
@@ -203,6 +212,47 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
       }
     }
   }, [capture, isProcessing, recognitionStatus, speakerResults]);
+  
+  // Effect to process direct recognition status updates
+  useEffect(() => {
+    if (recognitionStatusData && 'success' in recognitionStatusData && recognitionStatusData.success) {
+      console.log('Direct recognition status data:', recognitionStatusData);
+      
+      // Extract status information
+      let statusInfo: any = null;
+      
+      // Format 1: status is in recognitionStatusData.status
+      if ('status' in recognitionStatusData && recognitionStatusData.status) {
+        statusInfo = recognitionStatusData.status;
+      }
+      // Format 2: status is directly in recognitionStatusData
+      else if ('recognition_status' in recognitionStatusData) {
+        statusInfo = recognitionStatusData;
+      }
+      
+      if (statusInfo) {
+        // Update recognition status if available
+        if ('status' in statusInfo && typeof statusInfo.status === 'string') {
+          console.log(`Setting recognition status from direct data: ${statusInfo.status}`);
+          setRecognitionStatus(statusInfo.status);
+          
+          // Update processing state based on status
+          if (statusInfo.status === 'completed' || statusInfo.status === 'failed') {
+            setIsProcessing(false);
+          } else if (statusInfo.status === 'processing' && !isProcessing) {
+            setIsProcessing(true);
+            setShowProgress(true);
+          }
+        }
+        // Also check for completion_percentage - if 100%, consider it complete
+        else if ('completion_percentage' in statusInfo && statusInfo.completion_percentage >= 100) {
+          console.log('Recognition completed based on 100% completion');
+          setRecognitionStatus('completed');
+          setIsProcessing(false);
+        }
+      }
+    }
+  }, [recognitionStatusData, isProcessing]);
 
   return (
     <div className="mt-6">

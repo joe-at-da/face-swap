@@ -19,7 +19,7 @@ interface ApiResponse {
 interface RecognitionProgressProps {
   captureId: number;
   isProcessing: boolean;
-  onComplete: () => void;
+  onComplete: (status?: string) => void;
 }
 
 interface ProgressStep {
@@ -69,71 +69,97 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       queryFn: async () => {
         try {
           console.log(`Fetching detailed recognition status for capture ID: ${captureId}`);
-          const response = await api.get(`/recognition/detailed-status/${captureId}`);
-          console.log('Recognition status raw response:', response);
-          return response as ApiResponse;
+          // First try the detailed status endpoint
+          try {
+            const detailedResponse = await api.get(`/recognition/detailed-status/${captureId}`);
+            console.log('Detailed recognition status response:', detailedResponse);
+            return detailedResponse as ApiResponse;
+          } catch (detailedError) {
+            console.warn(`Error fetching detailed status, falling back to basic status: ${detailedError}`);
+            // Fall back to the basic status endpoint if detailed fails
+            const basicResponse = await api.get(`/recognition/recognition-status/${captureId}`);
+            console.log('Basic recognition status response:', basicResponse);
+            return basicResponse as ApiResponse;
+          }
         } catch (error) {
           console.error(`Error fetching recognition status for capture ID ${captureId}:`, error);
           throw error;
         }
       },
       enabled: pollingEnabled && !!captureId,
-      refetchInterval: pollingEnabled ? 3000 : false, // Poll every 3 seconds when enabled
+      refetchInterval: pollingEnabled ? 2000 : false, // Poll every 2 seconds when enabled (more frequent)
       retry: 3, // Retry failed requests up to 3 times
       retryDelay: 1000, // Wait 1 second between retries
       staleTime: 0, // Consider data always stale to ensure fresh data
+      refetchOnWindowFocus: true, // Refetch when window regains focus
     }
   );
 
   // Update progress state when data changes
   useEffect(() => {
     console.log('Recognition progress data changed:', data);
-    if (data && 'success' in data && data.success && 'status' in data && data.status) {
-      // Make sure data.status is an object and not a string
-      if (typeof data.status === 'object' && data.status !== null) {
-        // Check if we have progress data
-        if ('progress' in data.status && data.status.progress) {
-          console.log('Setting progress data:', data.status.progress);
-          setProgress(data.status.progress);
-        } else {
-          // If no progress data yet, initialize with basic structure based on status
-          console.log('No progress data yet, using status:', data.status);
-          const statusString = typeof data.status.status === 'string' ? data.status.status : 'processing';
-          const initialProgress: ProgressData = {
-            status: statusString,
-            steps: [{
-              name: 'initialization',
-              status: statusString === 'processing' ? 'started' : statusString,
-              timestamp: new Date().toISOString()
-            }]
-          };
-          setProgress(initialProgress);
+    if (data && 'success' in data && data.success) {
+      // Handle different response formats
+      let statusData: any = null;
+      let progressData: any = null;
+      
+      // Format 1: data.status contains progress
+      if ('status' in data && data.status && typeof data.status === 'object') {
+        statusData = data.status;
+        if ('progress' in statusData && statusData.progress) {
+          progressData = statusData.progress;
         }
-      } else {
-        // Handle case where data.status is not an object
-        console.log('Status is not an object:', data.status);
-        const statusString = typeof data.status === 'string' ? data.status : 'processing';
-        const initialProgress: ProgressData = {
+      }
+      // Format 2: data contains progress directly
+      else if ('progress' in data && data.progress) {
+        progressData = data.progress;
+        statusData = data;
+      }
+      // Format 3: data contains status directly as string
+      else if ('status' in data && typeof data.status === 'string') {
+        statusData = { status: data.status };
+      }
+      
+      // If we have progress data, use it
+      if (progressData) {
+        console.log('Setting progress data:', progressData);
+        setProgress(progressData);
+      }
+      // Otherwise, create a basic progress structure
+      else if (statusData) {
+        console.log('Creating basic progress from status:', statusData);
+        const statusString = typeof statusData.status === 'string' ? statusData.status : 'processing';
+        const completionPercentage = statusData.completion_percentage || 0;
+        
+        setProgress({
           status: statusString,
+          completion_percentage: completionPercentage,
           steps: [{
             name: 'initialization',
-            status: statusString === 'processing' ? 'started' : statusString,
-            timestamp: new Date().toISOString()
+            status: 'started',
+            timestamp: new Date().toISOString(),
+            completion_percentage: completionPercentage
           }]
-        };
-        setProgress(initialProgress);
+        });
       }
       
       // Check if processing is complete or has error
-      const statusValue = typeof data.status === 'object' && data.status !== null && 'status' in data.status
-        ? data.status.status
-        : typeof data.status === 'string' ? data.status : 'processing';
-        
-      if (statusValue === 'completed' || statusValue === 'error') {
-        console.log('Recognition process completed or has error:', statusValue);
+      const statusString = statusData?.status || (progressData?.status || '');
+      if (statusString === 'completed' || statusString === 'failed') {
+        console.log(`Recognition process ${statusString}`);
+        // Signal completion to parent component
+        onComplete(statusString);
+        // Disable polling after completion
         setPollingEnabled(false);
-        // Call onComplete to notify parent component
-        onComplete();
+      }
+      
+      // Also check completion_percentage - if it's 100%, consider it complete
+      const completionPercentage = statusData?.completion_percentage || progressData?.completion_percentage || 0;
+      if (completionPercentage >= 100 && statusString !== 'completed' && statusString !== 'failed') {
+        console.log(`Recognition process completed based on 100% completion`);
+        onComplete('completed');
+        // Disable polling after completion
+        setPollingEnabled(false);
       }
     }
   }, [data, onComplete]);
@@ -194,11 +220,25 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   };
 
   useEffect(() => {
-    if (isProcessing && !progress) {
+    if (isProcessing && !progress && !isLoading) {
       console.log('Processing but no progress data, forcing poll');
-      setPollingEnabled(true);
+      // Log the current component state for debugging
+      console.log('RecognitionProgress component state:', {
+        captureId,
+        isProcessing,
+        pollingEnabled,
+        hasData: !!data,
+        hasProgress: !!progress,
+        isLoading,
+        isError
+      });
+      
+      // Force enable polling if it's not already enabled
+      if (!pollingEnabled) {
+        setPollingEnabled(true);
+      }
     }
-  }, [isProcessing, progress]);
+  }, [captureId, isProcessing, pollingEnabled, data, progress, isLoading, isError]);
 
   useEffect(() => {
     console.log('RecognitionProgress component state:', {
