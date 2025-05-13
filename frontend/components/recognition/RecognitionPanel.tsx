@@ -130,7 +130,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   const processMutation = useMutation<any, Error, void>({
     mutationFn: async () => {
       console.log(`Starting recognition process for ID: ${captureId}`);
-      return await api.post(`/recognition/process/${captureId}`);
+      return await api.post(`/recognition/combined-recognition`, { video_id: captureId, save_output: true });
     },
     onSuccess: () => {
       console.log('Recognition process started successfully');
