@@ -145,7 +145,7 @@ class FacialRecognitionService:
             "python",
             str(script_path),
             video_path,
-            "--threshold", "0.4"  # Lower confidence threshold to detect more faces
+            "--threshold", "0.3"  # Even lower confidence threshold to detect more faces
         ]
         
         if output_file:
@@ -166,36 +166,56 @@ class FacialRecognitionService:
             
             # Check if the process was successful
             if process.returncode != 0:
-                logger.error(f"Speaker identification failed: {stderr}")
-                # Even if the process failed, we'll return a partial success with empty results
-                # This allows the recognition process to continue rather than fail completely
+                logger.error(f"Speaker identification failed with return code {process.returncode}")
+                logger.error(f"STDERR: {stderr}")
+                logger.error(f"STDOUT: {stdout}")
+                # This is a critical error that needs to be addressed
                 return {
-                    "success": True,  # Mark as success but with empty results
+                    "success": False,
                     "error": stderr,
                     "output_file": None,
                     "results_file": None,
                     "results": {"speakers": [], "total_speakers": 0},
-                    "message": "Speaker identification failed but processing continues"
+                    "message": "Speaker identification failed. Please check the logs for details."
                 }
             
             # Parse the output to get the output file path and results file path
             output_path = None
             results_path = None
             
+            # Log the full stdout for debugging
+            logger.info(f"Speaker identification stdout:\n{stdout}")
+            
             for line in stdout.splitlines():
                 if "Results saved to:" in line:
                     results_path = line.split(":", 1)[1].strip()
+                    logger.info(f"Found results path: {results_path}")
                 elif "Processed video saved to:" in line:
                     output_path = line.split(":", 1)[1].strip()
+                    logger.info(f"Found output path: {output_path}")
+                elif "No faces detected" in line:
+                    logger.warning("No faces were detected in the video")
+                elif "faces detected" in line:
+                    logger.info(f"Face detection info: {line}")
+                elif "confidence" in line.lower() or "threshold" in line.lower():
+                    logger.info(f"Confidence/threshold info: {line}")
             
             # Load the results file if it exists
-            results = {}
+            results = {"speakers": [], "total_speakers": 0}
             if results_path and os.path.exists(results_path):
                 try:
                     with open(results_path, 'r') as f:
                         results = json.load(f)
+                    logger.info(f"Loaded results file: {results_path}")
+                    logger.info(f"Results content: {results}")
+                    
+                    # Check if we have any speakers
+                    if 'speakers' in results and len(results['speakers']) == 0:
+                        logger.warning("No speakers detected in the video")
                 except Exception as e:
                     logger.error(f"Error loading results file: {str(e)}")
+            else:
+                logger.warning(f"Results file not found or path is None: {results_path}")
             
             return {
                 "success": True,

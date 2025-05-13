@@ -49,23 +49,25 @@ class VoiceRecognitionService:
             error_msg = f"Audio file not found: {audio_path}"
             logger.error(error_msg)
             return {
-                "success": True,  # Mark as success but with empty results
+                "success": False,
                 "error": error_msg,
                 "output_file": None,
-                "message": "No audio file found, but processing continues",
-                "transcript": "No audio available for transcription."
+                "message": "Audio file not found. Please check the audio extraction process.",
+                "transcript": "No audio file available for transcription."
             }
         
         # Check if the audio file has content (size > 0)
-        if os.path.getsize(audio_path) == 0:
-            error_msg = f"Audio file is empty: {audio_path}"
+        audio_size = os.path.getsize(audio_path)
+        logger.info(f"Audio file size: {audio_size} bytes")
+        if audio_size == 0:
+            error_msg = f"Audio file is empty (0 bytes): {audio_path}"
             logger.error(error_msg)
             return {
-                "success": True,  # Mark as success but with empty results
+                "success": False,
                 "error": error_msg,
                 "output_file": None,
-                "message": "Audio file is empty, but processing continues",
-                "transcript": "No audio content available for transcription."
+                "message": "Audio file is empty. Please check the audio extraction process.",
+                "transcript": "Empty audio file cannot be transcribed."
             }
         
         # Prepare the command
@@ -110,36 +112,40 @@ class VoiceRecognitionService:
                 stdout, stderr = process.communicate()
                 logger.error("Transcription process timed out after 5 minutes")
                 return {
-                    "success": True,  # Mark as success but with timeout information
+                    "success": False,  # This is a failure that needs to be addressed
                     "error": "Transcription process timed out after 5 minutes",
                     "output_file": None,
-                    "message": "Transcription timed out, but processing continues",
-                    "transcript": "[Transcription incomplete due to timeout]"
+                    "message": "Transcription failed due to timeout. The audio file may be too large or complex.",
+                    "transcript": "[Transcription failed: Process timed out after 5 minutes]"
                 }
             
             # Check if the process was successful
             if process.returncode != 0:
                 # Check for specific error messages
                 error_msg = stderr.strip()
+                logger.error(f"Transcription process returned error code {process.returncode}")
+                logger.error(f"STDERR: {error_msg}")
+                logger.error(f"STDOUT: {stdout.strip()}")
+                
                 if "Loading Whisper model" in stderr:
                     error_msg = "Failed to load Whisper model. The model may be corrupted or unavailable."
                     logger.error(f"Transcription failed: {error_msg}")
-                    # Return a placeholder transcript instead of failing
+                    # This is a critical error that needs to be fixed
                     return {
-                        "success": True,  # Mark as success but with placeholder results
+                        "success": False,
                         "error": error_msg,
                         "output_file": None,
-                        "message": "Transcription couldn't be performed due to model issues, but processing continues",
-                        "transcript": "[Transcription unavailable due to technical issues]"
+                        "message": "Transcription failed due to Whisper model loading issues. Please check the model installation.",
+                        "transcript": "[Transcription failed: Unable to load Whisper model]"
                     }
                 
                 logger.error(f"Transcription failed: {error_msg}")
                 return {
-                    "success": True,  # Mark as success but with error information
+                    "success": False,  # This is a failure that needs to be addressed
                     "error": error_msg,
                     "output_file": None,
-                    "message": "Transcription encountered an error, but processing continues",
-                    "transcript": "[Transcription unavailable: " + error_msg + "]"
+                    "message": "Transcription failed due to an error. Please check the logs for details.",
+                    "transcript": "[Transcription failed: " + error_msg + "]"
                 }
             
             # Parse the output to get the output file path

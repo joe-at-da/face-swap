@@ -15,6 +15,7 @@ interface CaptureData {
   facial_recognition_path: string | null;
   speaker_identification_path: string | null;
   speaker_identification_results: string | null;
+  recognition_results?: any; // Add this property for recognition results
   recognition_completed_at: string | null;
 }
 
@@ -39,7 +40,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   const [recognitionMessage, setRecognitionMessage] = useState<string>('');
 
   console.log('RecognitionPanel render state:', { isProcessing, showProgress, recognitionStatus });
-
+  
   // Fetch capture data to get recognition status
   const { data: capture, isLoading, isError, error, refetch } = useQuery<CaptureData>({
     queryKey: ['captureRecognition', captureId],
@@ -53,6 +54,58 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
     staleTime: 0, // Consider data always stale to ensure fresh data
     refetchOnWindowFocus: true, // Refetch when window regains focus
   });
+  
+  // Process the recognition results for display
+  const processRecognitionResults = useCallback(() => {
+    if (capture?.recognition_results) {
+      try {
+        // Parse the results if they're a string
+        const results = typeof capture.recognition_results === 'string' 
+          ? JSON.parse(capture.recognition_results) 
+          : capture.recognition_results;
+        
+        console.log('Processing recognition results:', results);
+        
+        // Check if we have speaker identification results
+        const hasSpeakers = results.speaker_identification && 
+          results.speaker_identification.results && 
+          results.speaker_identification.results.speakers && 
+          results.speaker_identification.results.speakers.length > 0;
+        
+        // Check if we have transcription results
+        const hasTranscript = 
+          (results.transcription && results.transcription.transcript && results.transcription.transcript.length > 0) ||
+          (results.results_summary && results.results_summary.transcript_text && results.results_summary.transcript_text.length > 0 && 
+           results.results_summary.transcript_text !== 'No transcript available.');
+        
+        // Set the recognition message based on the results
+        if (hasSpeakers && hasTranscript) {
+          const speakerCount = results.speaker_identification.results.speakers.length;
+          setRecognitionMessage(`Recognition completed successfully. ${speakerCount} speaker(s) identified and transcription available.`);
+        } else if (hasSpeakers) {
+          const speakerCount = results.speaker_identification.results.speakers.length;
+          setRecognitionMessage(`Recognition completed successfully. ${speakerCount} speaker(s) identified, but no transcription available.`);
+        } else if (hasTranscript) {
+          setRecognitionMessage('Recognition completed. No speakers were identified, but transcription is available.');
+        } else {
+          // Check if there are any messages in the results
+          const speakerMessage = results.speaker_identification?.message || results.results_summary?.speaker_identification_message || '';
+          const transcriptMessage = results.transcription?.message || results.results_summary?.transcription_message || '';
+          
+          if (speakerMessage || transcriptMessage) {
+            setRecognitionMessage(`Recognition completed. ${speakerMessage} ${transcriptMessage}`.trim());
+          } else {
+            setRecognitionMessage('Recognition completed, but no speakers or transcription were identified in this clip.');
+          }
+        }
+      } catch (error) {
+        console.error('Error processing recognition results:', error);
+        setRecognitionMessage('Recognition completed, but there was an error processing the results.');
+      }
+    } else {
+      setRecognitionMessage('Recognition completed, but no results were returned.');
+    }
+  }, [capture]);
   
   // Also fetch recognition status directly to ensure we have the most up-to-date information
   const { data: recognitionStatusData } = useQuery({
@@ -72,73 +125,29 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
     refetchInterval: isProcessing ? 2000 : false, // Poll every 2 seconds when processing
     staleTime: 0, // Consider data always stale to ensure fresh data
   });
-
-  // Helper function to format time in MM:SS format
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // Function to jump to a specific timestamp in the video
-  const jumpToTimestamp = (seconds: number) => {
-    if (videoElement) {
-      videoElement.currentTime = seconds;
-      videoElement.play().catch(err => console.error('Error playing video:', err));
-    }
-  };
-
-  // Function to start the recognition process
-  const startRecognition = useCallback(async () => {
-    if (!captureId || !videoElement) return;
-    
-    // Don't start recognition if it's already completed or processing
-    if (recognitionStatus === 'completed' || recognitionStatus === 'processing' || isProcessing) {
-      console.log(`Recognition already ${recognitionStatus}, not starting again`);
-      return;
-    }
-    
-    setIsProcessing(true);
-    setShowProgress(true);
-    
-    console.log(`Starting recognition processing for capture ID: ${captureId}`);
-    
-    try {
-      const response = await api.post('/recognition/combined-recognition', {
-        video_id: captureId,
-      });
-      
-      console.log('Recognition process started:', response);
-      
-      // Refetch capture data to get updated status
-      refetch();
-    } catch (error) {
-      console.error('Error starting recognition process:', error);
-      setIsProcessing(false);
-    }
-  }, [captureId, videoElement, refetch, recognitionStatus, isProcessing]);
-
-  // Process recognition mutation - used to start the recognition process
-  const processMutation = useMutation({
-    mutationFn: startRecognition,
+  
+  // Mutation to start the recognition process
+  const processMutation = useMutation<any, Error, void>({
+    mutationFn: async () => {
+      console.log(`Starting recognition process for ID: ${captureId}`);
+      return await api.post(`/recognition/process/${captureId}`);
+    },
     onSuccess: () => {
-      console.log('Recognition processing started successfully');
-      // We'll keep the processing state true until the progress component signals completion
+      console.log('Recognition process started successfully');
+      setIsProcessing(true);
+      setShowProgress(true);
+      setRecognitionStatus('processing');
+      refetch(); // Refetch to get the updated status
     },
     onError: (error) => {
-      console.error('Error in recognition processing:', error);
-      setIsProcessing(false);
-      setShowProgress(false);
+      console.error('Error starting recognition process:', error);
+      setRecognitionStatus('error');
     }
   });
-
+  
   // Handle button click to start recognition process
   const handleStartRecognition = () => {
-    // Don't start if already processing or completed
-    if (isProcessing || recognitionStatus === 'completed') {
-      console.log('Not starting recognition - already processing or completed');
-      return;
-    }
+    console.log('Starting recognition process...');
     processMutation.mutate();
   };
 
@@ -219,73 +228,60 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   
   // Effect to process direct recognition status updates
   useEffect(() => {
-    if (recognitionStatusData && 'success' in recognitionStatusData && recognitionStatusData.success) {
-      console.log('Direct recognition status data:', recognitionStatusData);
+    if (recognitionStatusData && recognitionStatusData.status) {
+      console.log('Recognition status data updated:', recognitionStatusData);
       
-      // Extract status information
-      let statusInfo: any = null;
-      
-      // Format 1: status is in recognitionStatusData.status
-      if ('status' in recognitionStatusData && recognitionStatusData.status) {
-        statusInfo = recognitionStatusData.status;
-      }
-      // Format 2: status is directly in recognitionStatusData
-      else if ('recognition_status' in recognitionStatusData) {
-        statusInfo = recognitionStatusData;
+      // Update the status if it's different
+      if (recognitionStatusData.status.status !== recognitionStatus) {
+        console.log(`Updating recognition status from direct query: ${recognitionStatusData.status.status}`);
+        setRecognitionStatus(recognitionStatusData.status.status);
       }
       
-      if (statusInfo) {
-        // Update recognition status if available
-        if ('status' in statusInfo && typeof statusInfo.status === 'string') {
-          console.log(`Setting recognition status from direct data: ${statusInfo.status}`);
-          setRecognitionStatus(statusInfo.status);
-          
-          // Update processing state based on status
-          if (statusInfo.status === 'completed' || statusInfo.status === 'failed') {
-            setIsProcessing(false);
-          } else if (statusInfo.status === 'processing' && !isProcessing) {
-            setIsProcessing(true);
-            setShowProgress(true);
-          }
-        }
-        // Also check for completion_percentage - if 100%, consider it complete
-        else if ('completion_percentage' in statusInfo && statusInfo.completion_percentage >= 100) {
-          console.log('Recognition completed based on 100% completion');
-          setRecognitionStatus('completed');
-          setIsProcessing(false);
-        }
+      // If status is completed or error, update the processing state
+      if (recognitionStatusData.status.status === 'completed' || recognitionStatusData.status.status === 'error') {
+        setIsProcessing(false);
       }
     }
-  }, [recognitionStatusData, isProcessing]);
+  }, [recognitionStatusData, recognitionStatus]);
+
+  // Helper function to format time in MM:SS format
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  // Function to jump to a specific timestamp in the video
+  const jumpToTimestamp = (seconds: number) => {
+    if (videoElement) {
+      videoElement.currentTime = seconds;
+      videoElement.play().catch(e => console.error('Error playing video:', e));
+    }
+  };
 
   return (
-    <div className="mt-6">
-      <h3 className="text-lg font-medium mb-2">Recognition</h3>
-      
-      {!recognitionStatus && !isProcessing && (
-        <div className="bg-gray-50 p-4 rounded border border-gray-200">
-          <p className="text-gray-700 mb-3">
-            No recognition data available for this capture. Process this capture for facial recognition and speaker identification.
-          </p>
-          <button
-            onClick={handleStartRecognition}
-            disabled={processMutation.isPending}
-            className={`px-4 py-2 rounded text-white ${processMutation.isPending ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-          >
-            {processMutation.isPending ? 'Starting...' : 'Start Recognition'}
-          </button>
+    <div className="space-y-4">
+      {/* Recognition Controls */}
+      <div className="bg-white p-4 rounded border border-gray-200">
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-medium">Recognition</h3>
+          {!isProcessing && recognitionStatus !== 'completed' && (
+            <button
+              onClick={handleStartRecognition}
+              disabled={isProcessing}
+              className="px-4 py-2 bg-primary text-white rounded hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Recognition
+            </button>
+          )}
         </div>
-      )}
-      
-      {(isProcessing || recognitionStatus === 'completed') && (
-        <div className="bg-gray-50 p-4 rounded border border-gray-200 mb-4">
-          <div className="flex justify-between items-start">
-            <h4 className="font-medium">Recognition Status</h4>
-          </div>
-          
-          <div className="mt-3">
+        
+        {/* Status and Progress */}
+        <div className="mt-4">
+          <div className="text-sm text-gray-600 mb-1">Status:</div>
+          <div className="bg-gray-50 p-3 rounded border border-gray-200">
             {isLoading ? (
-              <div className="text-sm text-gray-500">Loading recognition status...</div>
+              <div className="animate-pulse h-4 bg-gray-200 rounded w-1/4"></div>
             ) : isError ? (
               <div className="text-sm text-red-500">Error loading recognition status</div>
             ) : (
@@ -318,7 +314,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
             )}
           </div>
         </div>
-      )}
+      </div>
       
       {/* Speaker Results */}
       {recognitionStatus === 'completed' && speakerResults && speakerResults.segments && speakerResults.segments.length > 0 && (
@@ -361,10 +357,39 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         </div>
       )}
       
+      {/* Transcription Results */}
+      {recognitionStatus === 'completed' && recognitionResults && (
+        <div className="bg-white p-4 rounded border border-gray-200 mb-4">
+          <h4 className="font-medium mb-3">Transcription</h4>
+          {recognitionResults.transcription?.transcript || 
+           recognitionResults.results_summary?.transcript_text ? (
+            <div>
+              <div className="mt-2 p-4 bg-gray-50 rounded border border-gray-200">
+                <p className="text-sm whitespace-pre-wrap">
+                  {recognitionResults.transcription?.transcript || 
+                   recognitionResults.results_summary?.transcript_text}
+                </p>
+              </div>
+              {(recognitionResults.transcription?.message || 
+                recognitionResults.results_summary?.transcription_message) && (
+                <div className="mt-2">
+                  <p className="text-xs text-gray-500">
+                    {recognitionResults.transcription?.message || 
+                     recognitionResults.results_summary?.transcription_message}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No transcription results available</p>
+          )}
+        </div>
+      )}
+      
       {/* Show a message when completed but no speaker results */}
       {recognitionStatus === 'completed' && (!speakerResults || !speakerResults.segments || speakerResults.segments.length === 0) && (
         <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-          <p className="text-gray-700">Recognition completed, but no speakers were identified in this clip.</p>
+          <p className="text-gray-700">{recognitionMessage}</p>
         </div>
       )}
     </div>
