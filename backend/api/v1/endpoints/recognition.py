@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import sqlalchemy as sa
 from pathlib import Path
+import threading
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
@@ -40,6 +41,7 @@ async def process_combined_recognition(
 ):
     """
     Process combined facial and voice recognition for a video.
+    This endpoint starts the recognition process in the background and returns immediately.
     """
     try:
         logger.info(f"Processing combined recognition for video ID: {video_id}")
@@ -53,10 +55,89 @@ async def process_combined_recognition(
                 status_code=404,
                 content={"success": False, "error": f"Video with ID {video_id} not found"}
             )
+            
+        # Initialize or reset recognition status
+        video.recognition_status = "processing"
+        video.recognition_started_at = datetime.now()
+        
+        # Initialize progress tracking
+        progress_data = {
+            "status": "processing",
+            "steps": [],
+            "completion_percentage": 0,
+            "current_step": "initialization",
+            "start_time": datetime.now().isoformat(),
+            "last_update": datetime.now().isoformat()
+        }
+        
+        # Add initialization step
+        progress_data["steps"].append({
+            "name": "initialization",
+            "status": "completed",
+            "timestamp": datetime.now().isoformat(),
+            "message": "Recognition process initialized"
+        })
+        
+        # Save initial progress to database
+        video.recognition_progress = json.dumps(progress_data)
+        db.commit()
+        
+        # Start the background process
+        # This will return immediately and let the process run in the background
+        recognition_thread = threading.Thread(
+            target=run_recognition_process,
+            args=(video_id, save_output, current_user.id if current_user else None)
+        )
+        recognition_thread.daemon = True
+        recognition_thread.start()
+        
+        # Return immediate response to client
+        return {
+            "success": True,
+            "message": "Recognition process started in the background",
+            "video_id": video_id,
+            "status": "processing",
+            "check_status_url": f"/api/v1/recognition/detailed-status/{video_id}"
+        }
+    except Exception as e:
+        logger.exception(f"Error starting recognition process: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"Error starting recognition process: {str(e)}"}
+        )
+
+def run_recognition_process(video_id: int, save_output: bool = True, user_id: int = None):
+    """
+    Run the recognition process in a background thread.
+    This function should not be called directly from the API endpoint.
+    """
+    # Create a new database session for this thread
+    from sqlalchemy.orm import sessionmaker
+    from backend.db.session import engine
+    
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = SessionLocal()
+    
+    try:
+        logger.info(f"Starting background recognition process for video ID: {video_id}")
+        
+        # Get the video from the database
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        
+        if not video:
+            logger.error(f"Video with ID {video_id} not found in background process")
+            return
+            
+        # Update progress to indicate process has started
+        update_recognition_progress(db, video, "processing", 5, "Checking file availability")
         
         # Check if the video file exists
         video_path = video.video_path
         file_path = video.file_path
+        audio_path = video.audio_path
+        
+        # Log all file paths for debugging
+        logger.info(f"Video paths - video_path: {video_path}, file_path: {file_path}, audio_path: {audio_path}")
         
         # Try different possible file paths
         possible_paths = []
@@ -74,6 +155,12 @@ async def process_combined_recognition(
         if possible_paths:
             video_path = possible_paths[0]
             logger.info(f"Using video path: {video_path}")
+            
+            # Update the database with the correct video path if it was different
+            if video_path != video.video_path:
+                video.video_path = video_path
+                db.commit()
+                logger.info(f"Updated database with correct video path: {video_path}")
         else:
             # Log all attempted paths for debugging
             logger.error(f"No valid video file found for ID {video_id}. Attempted paths:")
@@ -82,188 +169,60 @@ async def process_combined_recognition(
             if file_path:
                 logger.error(f"  - file_path: {file_path} (exists: {os.path.exists(file_path)})")
             logger.error(f"  - temp_path: {temp_path} (exists: {os.path.exists(temp_path)})")
-                
-            return JSONResponse(
-                status_code=404,
-                content={"success": False, "error": f"Video file not found for video ID {video_id}"}
-            )
-        
-        # Get the video and audio paths - Parliament TV has separate streams for each
-        video_path = video.video_path
-        logger.info(f"Initial video_path from database: {video_path}")
-        
-        # Check if we need to extract audio from the video file
-        audio_path = video.audio_path
-        audio_file_path = video.audio_file_path if hasattr(video, 'audio_file_path') else None
-        
-        logger.info(f"Database audio paths - audio_path: {audio_path}, audio_file_path: {audio_file_path}")
-        
-        # First try audio_file_path (newer captures)
-        if audio_file_path and os.path.exists(audio_file_path):
-            audio_path = audio_file_path
-            logger.info(f"Using audio_file_path: {audio_path} (exists: {os.path.exists(audio_path)})")
-        # Then try audio_path
-        elif audio_path and os.path.exists(audio_path):
-            logger.info(f"Using audio_path: {audio_path} (exists: {os.path.exists(audio_path)})")
-        # If no audio path is found, check if we need to extract it from the video
-        elif video_path and os.path.exists(video_path):
-            # Extract audio from video if needed
-            audio_extract_dir = os.path.join(os.path.dirname(video_path), "audio_extracts")
-            os.makedirs(audio_extract_dir, exist_ok=True)
             
-            audio_extract_path = os.path.join(audio_extract_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}.audio.mp3")
+            # Update progress to indicate failure
+            update_recognition_progress(db, video, "failed", 0, "Video file not found")
+            return
             
-            if not os.path.exists(audio_extract_path):
-                logger.info(f"Extracting audio from video to: {audio_extract_path}")
-                try:
-                    # Use ffmpeg to extract audio
-                    cmd = [
-                        "ffmpeg", "-y", "-i", video_path, "-q:a", "0", "-map", "a", audio_extract_path
-                    ]
-                    process = subprocess.run(cmd, capture_output=True, text=True)
-                    if process.returncode != 0:
-                        logger.error(f"Failed to extract audio: {process.stderr}")
-                    else:
-                        logger.info(f"Successfully extracted audio to: {audio_extract_path}")
-                        # Update the database with the audio path
-                        video.audio_file_path = audio_extract_path
-                        db.commit()
-                except Exception as e:
-                    logger.error(f"Error extracting audio: {str(e)}")
-            
-            if os.path.exists(audio_extract_path):
-                audio_path = audio_extract_path
-                logger.info(f"Using extracted audio: {audio_path}")
-            else:
-                logger.warning(f"Failed to extract or find audio file")
-                audio_path = None
-        else:
-            logger.warning(f"No audio file found and no video to extract from")
-            audio_path = None
-            
-        # Log the final paths being used
-        logger.info(f"Final paths - Video: {video_path} (exists: {os.path.exists(video_path) if video_path else False}), Audio: {audio_path} (exists: {os.path.exists(audio_path) if audio_path else False})")
-        
-        # Determine which processing modes are available based on file availability
-        can_do_facial_recognition = video_path and os.path.exists(video_path)
-        can_do_transcription = audio_path and os.path.exists(audio_path)
-        
-        logger.info(f"Processing capabilities - Facial recognition: {can_do_facial_recognition}, Transcription: {can_do_transcription}")
-        
-        # Log detailed file information for debugging
-        if video_path and os.path.exists(video_path):
-            try:
-                video_size = os.path.getsize(video_path) / (1024 * 1024)  # Size in MB
-                # Use ffprobe to get video duration and format
-                probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration,format_name", "-of", "json", video_path]
-                probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-                if probe_result.returncode == 0:
-                    video_info = json.loads(probe_result.stdout)
-                    logger.info(f"Video file details - Size: {video_size:.2f} MB, Duration: {float(video_info['format']['duration']):.2f} seconds, Format: {video_info['format']['format_name']}")
-                else:
-                    logger.warning(f"Failed to get video details: {probe_result.stderr}")
-            except Exception as e:
-                logger.error(f"Error getting video file details: {str(e)}")
-        
+        # Check for audio file
+        possible_audio_paths = []
         if audio_path and os.path.exists(audio_path):
-            try:
-                audio_size = os.path.getsize(audio_path) / (1024 * 1024)  # Size in MB
-                # Use ffprobe to get audio duration and format
-                probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration,format_name", "-of", "json", audio_path]
-                probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-                if probe_result.returncode == 0:
-                    audio_info = json.loads(probe_result.stdout)
-                    logger.info(f"Audio file details - Size: {audio_size:.2f} MB, Duration: {float(audio_info['format']['duration']):.2f} seconds, Format: {audio_info['format']['format_name']}")
-                else:
-                    logger.warning(f"Failed to get audio details: {probe_result.stderr}")
-            except Exception as e:
-                logger.error(f"Error getting audio file details: {str(e)}")
-        
-        # Update the video record to indicate processing has started
-        try:
-            # Handle the case where recognition_progress might not exist yet
-            try:
-                if not video.recognition_progress:
-                    video.recognition_progress = json.dumps({"steps": []})
-            except AttributeError:
-                # If the column doesn't exist in the database yet, use in-memory tracking
-                logger.warning("recognition_progress column doesn't exist in the database yet")
-                # We'll still track progress in memory
-                video.recognition_progress = json.dumps({"steps": []})
+            possible_audio_paths.append(audio_path)
             
-            # Update video record with processing status
-            video.recognition_status = "processing"
-            video.recognition_started_at = datetime.now()
+        # Check for audio file in standard locations
+        audio_temp_path = f"/app/data/temp/capture_{video_id:04d}.wav"
+        if os.path.exists(audio_temp_path):
+            possible_audio_paths.append(audio_temp_path)
             
-            # Initialize progress tracking
-            progress = {
-                "status": "processing",
-                "started_at": datetime.now().isoformat(),
-                "steps": [{
-                    "name": "initialization",
-                    "status": "completed",
-                    "timestamp": datetime.now().isoformat()
-                }]
-            }
-            video.recognition_progress = json.dumps(progress)
+        audio_extract_path = f"/app/data/audio_extracts/capture_{video_id:04d}.wav"
+        if os.path.exists(audio_extract_path):
+            possible_audio_paths.append(audio_extract_path)
             
-            db.commit()
-            logger.info(f"Database updated with processing status for video ID: {video_id}")
-        except Exception as e:
-            logger.error(f"Failed to update database with processing status: {str(e)}")
-        
-        # We need at least one of the two to proceed
-        if not can_do_facial_recognition and not can_do_transcription:
-            logger.error(f"Both video and audio files not found. Video path: {video_path}, Audio path: {audio_path}")
-            return JSONResponse(
-                status_code=404,
-                content={"success": False, "error": f"Both video and audio files not found"}
-            )
-        
-        # Step 1: Process speaker identification (only if video is available)
-        speaker_result = None
-        if can_do_facial_recognition:
-            # Update progress with speaker identification started status
-            try:
-                # Check if recognition_progress column exists
-                if not hasattr(video, 'recognition_progress'):
-                    # Add the column if it doesn't exist
-                    try:
-                        engine = db.get_bind()
-                        if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
-                            logger.warning(f"recognition_progress column doesn't exist, adding it")
-                            sa.Table(video.__table__.name, sa.MetaData(),
-                                sa.Column('recognition_progress', sa.Text),
-                                extend_existing=True)
-                            engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
-                        # Set default value
-                        video.recognition_progress = json.dumps({"steps": []})
-                    except Exception as schema_error:
-                        logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
-                        # Continue with in-memory progress tracking
-                        video.recognition_progress = json.dumps({"steps": []})
-                
-                progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
-                progress["status"] = "processing"
-                progress["steps"].append({
-                    "name": "speaker_identification",
-                    "status": "started",
-                    "timestamp": datetime.now().isoformat()
-                })
-                video.recognition_progress = json.dumps(progress)
+        # If we found any valid audio paths, use the first one
+        if possible_audio_paths:
+            audio_path = possible_audio_paths[0]
+            logger.info(f"Using audio path: {audio_path}")
+            
+            # Update the database with the correct audio path if it was different
+            if audio_path != video.audio_path:
+                video.audio_path = audio_path
                 db.commit()
-                logger.info(f"Updated progress for speaker identification start: {video_id}")
-            except Exception as e:
-                logger.error(f"Failed to update progress for speaker identification: {str(e)}")
+                logger.info(f"Updated database with correct audio path: {audio_path}")
+        else:
+            logger.warning(f"No valid audio file found for ID {video_id}. Recognition will proceed with video only.")
             
-            logger.info(f"Processing speaker identification for video: {video_path}")
-            
-            # Define output file paths
-            speaker_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_speakers.json"
-            speaker_output_dir = os.path.dirname(video_path)
-            speaker_output_file = os.path.join(speaker_output_dir, speaker_output_filename) if save_output else None
-            
+        # Update progress to indicate file checks complete
+        update_recognition_progress(db, video, "processing", 10, "Files verified, starting recognition")
+        
+        # Initialize variables for recognition
+        can_do_facial_recognition = bool(video_path and os.path.exists(video_path))
+        can_do_transcription = bool(audio_path and os.path.exists(audio_path))
+        
+        # Process results
+        speaker_result = None
+        transcript_result = None
+        
+        # Step 1: Process facial recognition if video is available
+        if can_do_facial_recognition:
             try:
+                # Update progress for facial recognition start
+                update_recognition_progress(db, video, "processing", 25, "Starting facial recognition")
+                
+                # Define output file paths
+                speaker_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_speakers.json"
+                speaker_output_dir = os.path.dirname(video_path)
+                speaker_output_file = os.path.join(speaker_output_dir, speaker_output_filename) if save_output else None
+                
                 # Call the facial recognition service with the video file
                 logger.info(f"Starting facial recognition using video file: {video_path}")
                 speaker_result = facial_recognition_service.identify_speakers(
@@ -272,8 +231,12 @@ async def process_combined_recognition(
                 )
                 logger.info(f"Facial recognition completed with result: {speaker_result['success']}")
                 
-                if not speaker_result.get("success"):
-                    logger.error(f"Speaker identification failed: {speaker_result.get('error')}")
+                # Update progress after facial recognition
+                if speaker_result.get("success"):
+                    update_recognition_progress(db, video, "processing", 50, "Facial recognition completed successfully")
+                else:
+                    update_recognition_progress(db, video, "processing", 40, f"Facial recognition completed with errors: {speaker_result.get('error')}")
+                    
                     # Continue with transcription even if facial recognition fails
                     speaker_result = {
                         "success": False,
@@ -283,75 +246,46 @@ async def process_combined_recognition(
                         "output_file": None
                     }
             except Exception as e:
-                logger.exception(f"Exception in facial recognition service: {str(e)}")
-                # Continue with transcription even if facial recognition fails
+                logger.exception(f"Error in facial recognition: {str(e)}")
+                update_recognition_progress(db, video, "processing", 40, f"Error in facial recognition: {str(e)}")
                 speaker_result = {
                     "success": False,
-                    "error": f"Exception in facial recognition service: {str(e)}",
-                    "message": "Speaker identification failed but continuing with transcription",
+                    "error": f"Exception in facial recognition: {str(e)}",
+                    "message": "Speaker identification failed due to exception",
                     "results": {"speakers": [], "total_speakers": 0},
                     "output_file": None
                 }
         else:
-            logger.info(f"Skipping speaker identification as no video file is available")
+            logger.info(f"Skipping facial recognition as no video file is available")
             speaker_result = {
-                "success": True,
-                "message": "Speaker identification skipped as no video file is available",
+                "success": False,
+                "message": "Facial recognition skipped as no video file is available",
                 "results": {"speakers": [], "total_speakers": 0},
                 "output_file": None
             }
-        
+            
         # Step 2: Process transcription (only if audio is available)
-        transcript_result = None
         if can_do_transcription:
-            # Update progress with transcription started status
             try:
-                # Check if recognition_progress column exists
-                if not hasattr(video, 'recognition_progress'):
-                    # Add the column if it doesn't exist
-                    try:
-                        engine = db.get_bind()
-                        if not sa.inspect(engine).has_column(video.__table__.name, 'recognition_progress'):
-                            logger.warning(f"recognition_progress column doesn't exist, adding it")
-                            sa.Table(video.__table__.name, sa.MetaData(),
-                                sa.Column('recognition_progress', sa.Text),
-                                extend_existing=True)
-                            engine.execute(f"ALTER TABLE {video.__table__.name} ADD COLUMN IF NOT EXISTS recognition_progress TEXT")
-                        # Set default value
-                        video.recognition_progress = json.dumps({"steps": []})
-                    except Exception as schema_error:
-                        logger.error(f"Failed to add recognition_progress column: {str(schema_error)}")
-                        # Continue with in-memory progress tracking
-                        video.recognition_progress = json.dumps({"steps": []})
+                # Update progress for transcription start
+                update_recognition_progress(db, video, "processing", 60, "Starting audio transcription")
                 
-                progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
-                progress["status"] = "processing"
-                progress["steps"].append({
-                    "name": "transcription",
-                    "status": "started",
-                    "timestamp": datetime.now().isoformat()
-                })
-                video.recognition_progress = json.dumps(progress)
-                db.commit()
-                logger.info(f"Updated progress for transcription start: {video_id}")
-            except Exception as e:
-                logger.error(f"Failed to update progress for transcription: {str(e)}")
-            
-            logger.info(f"Processing transcription for audio: {audio_path}")
-            
-            # Create output file path for transcription
-            transcript_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
-            output_dir = os.path.dirname(audio_path)
-            transcript_output_file = os.path.join(output_dir, transcript_output_filename) if save_output else None
-            
-            # Process transcription with proper error handling using the audio file
-            try:
+                # Create output file path for transcription
+                transcript_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
+                output_dir = os.path.dirname(audio_path)
+                transcript_output_file = os.path.join(output_dir, transcript_output_filename) if save_output else None
+                
+                # Process transcription with proper error handling using the audio file
                 logger.info(f"Starting audio transcription using audio file: {audio_path}")
                 transcript_result = voice_recognition_service.transcribe_audio(audio_path, transcript_output_file)
                 logger.info(f"Audio transcription completed with result: {transcript_result['success']}")
                 
-                if not transcript_result.get("success"):
-                    logger.error(f"Transcription failed: {transcript_result.get('error')}")
+                # Update progress after transcription
+                if transcript_result.get("success"):
+                    update_recognition_progress(db, video, "processing", 75, "Audio transcription completed successfully")
+                else:
+                    update_recognition_progress(db, video, "processing", 65, f"Audio transcription completed with errors: {transcript_result.get('error')}")
+                    
                     # If facial recognition succeeded but transcription failed, return a partial success
                     if speaker_result and speaker_result.get("success"):
                         transcript_result = {
@@ -371,6 +305,7 @@ async def process_combined_recognition(
                         }
             except Exception as e:
                 logger.exception(f"Exception in transcription service: {str(e)}")
+                update_recognition_progress(db, video, "processing", 65, f"Error in transcription: {str(e)}")
                 transcript_result = {
                     "success": False,
                     "error": f"Exception in transcription service: {str(e)}",
@@ -378,39 +313,6 @@ async def process_combined_recognition(
                     "output_file": None,
                     "transcript": ""
                 }
-            
-            # Process speaker identification in audio if transcription succeeded
-            speaker_audio_result = None
-            if transcript_result and transcript_result.get("success"):
-                # Define output file path for speaker identification in audio
-                speaker_audio_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_speakers_audio.json"
-                speaker_audio_output_file = os.path.join(output_dir, speaker_audio_output_filename) if save_output else None
-                
-                # Process speaker identification in audio using the audio file
-                try:
-                    logger.info(f"Starting speaker identification in audio using audio file: {audio_path}")
-                    speaker_audio_result = voice_recognition_service.identify_speakers_in_audio(
-                        audio_path, 
-                        speaker_audio_output_file
-                    )
-                    logger.info(f"Speaker identification in audio completed with result: {speaker_audio_result['success']}")
-                    
-                    if not speaker_audio_result.get("success"):
-                        logger.error(f"Speaker identification in audio failed: {speaker_audio_result.get('error')}")
-                        speaker_audio_result = {
-                            "success": False,
-                            "error": f"Speaker identification in audio failed: {speaker_audio_result.get('error')}",
-                            "message": "Speaker identification in audio failed but transcription succeeded",
-                            "output_file": None
-                        }
-                except Exception as e:
-                    logger.exception(f"Exception in speaker identification in audio: {str(e)}")
-                    speaker_audio_result = {
-                        "success": False,
-                        "error": f"Exception in speaker identification in audio: {str(e)}",
-                        "message": "Speaker identification in audio failed due to exception",
-                        "output_file": None
-                    }
         else:
             logger.info(f"Skipping transcription as no audio file is available")
             transcript_result = {
@@ -419,7 +321,7 @@ async def process_combined_recognition(
                 "output_file": None,
                 "transcript": ""
             }
-        
+            
         # Step 3: Combine the results
         combined_result = {
             "success": True,
@@ -461,18 +363,7 @@ async def process_combined_recognition(
         # Update the database with the results and final progress
         try:
             # Update progress with completion status
-            try:
-                progress = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
-                progress["status"] = "completed"
-                progress["completed_at"] = datetime.now().isoformat()
-                progress["steps"].append({
-                    "name": "completion",
-                    "status": "completed",
-                    "timestamp": datetime.now().isoformat()
-                })
-                video.recognition_progress = json.dumps(progress)
-            except Exception as e:
-                logger.error(f"Failed to update progress with completion status: {str(e)}")
+            update_recognition_progress(db, video, "completed", 100, "Recognition process completed successfully")
             
             # Update video record with recognition results
             video.recognition_results = json.dumps(combined_result)
@@ -489,8 +380,129 @@ async def process_combined_recognition(
         
         return combined_result
     except Exception as e:
-        logger.exception(f"Error in combined recognition: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": f"Error in combined recognition: {str(e)}"}
-        )
+        logger.exception(f"Error in background recognition process: {str(e)}")
+        try:
+            # Update the database with the error
+            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+            if video:
+                video.recognition_status = "failed"
+                update_recognition_progress(db, video, "failed", 0, f"Recognition process failed: {str(e)}")
+                db.commit()
+        except Exception as db_error:
+            logger.error(f"Failed to update database with error status: {str(db_error)}")
+        return None
+    finally:
+        # Close the database session
+        db.close()
+
+def update_recognition_progress(db, video, status, completion_percentage, message):
+    """
+    Update the recognition progress in the database.
+    """
+    try:
+        # Get current progress data
+        progress_data = {}
+        if video.recognition_progress:
+            try:
+                progress_data = json.loads(video.recognition_progress)
+            except Exception:
+                progress_data = {"steps": []}
+        else:
+            progress_data = {"steps": []}
+            
+        # Update progress data
+        progress_data["status"] = status
+        progress_data["completion_percentage"] = completion_percentage
+        progress_data["current_step"] = status
+        progress_data["last_update"] = datetime.now().isoformat()
+        
+        # Add step
+        progress_data["steps"].append({
+            "name": status,
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+            "message": message,
+            "completion_percentage": completion_percentage
+        })
+        
+        # Update database
+        video.recognition_progress = json.dumps(progress_data)
+        video.recognition_status = "completed" if status == "completed" else "processing" if status == "processing" else "failed"
+        db.commit()
+        
+        # Log the update
+        logger.info(f"RECOGNITION PROGRESS for video ID {video.id} - {completion_percentage}% - {message}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Failed to update recognition progress: {str(e)}")
+        return False
+
+
+@router.get("/recognition-status/{video_id}", response_model=schemas.RecognitionStatusResponse)
+def get_recognition_status(video_id: int, db: Session = Depends(get_db)):
+    """
+    Get the status of the recognition process for a video.
+    This is a simple endpoint that returns the basic status.
+    """
+    try:
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        
+        if not video:
+            raise HTTPException(status_code=404, detail=f"Video with ID {video_id} not found")
+        
+        return {
+            "success": True,
+            "status": {
+                "status": video.recognition_status or "not_started",
+                "video_id": video_id,
+                "started_at": video.recognition_started_at,
+                "completed_at": video.recognition_completed_at,
+                "has_results": bool(video.recognition_results)
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting recognition status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting recognition status: {str(e)}")
+
+
+@router.get("/recognition/detailed-status/{video_id}", response_model=schemas.DetailedRecognitionStatusResponse)
+def get_detailed_recognition_status(video_id: int, db: Session = Depends(get_db)):
+    """
+    Get detailed status of the recognition process for a video.
+    This endpoint returns detailed progress information including steps and completion percentage.
+    """
+    try:
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        
+        if not video:
+            raise HTTPException(status_code=404, detail=f"Video with ID {video_id} not found")
+        
+        # Basic status information
+        status_info = {
+            "status": video.recognition_status or "not_started",
+            "video_id": video_id,
+            "started_at": video.recognition_started_at,
+            "completed_at": video.recognition_completed_at,
+            "has_results": bool(video.recognition_results)
+        }
+        
+        # Add progress information if available
+        if video.recognition_progress:
+            try:
+                progress_data = json.loads(video.recognition_progress)
+                status_info["progress"] = progress_data
+            except Exception as e:
+                logger.error(f"Error parsing progress data: {str(e)}")
+        
+        return {
+            "success": True,
+            "status": status_info
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting detailed recognition status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting detailed recognition status: {str(e)}")

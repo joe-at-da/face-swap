@@ -62,8 +62,8 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       queryKey: ['recognitionStatus', captureId],
       queryFn: async () => {
         try {
-          console.log(`Fetching recognition status for capture ID: ${captureId}`);
-          const response = await api.get(`/recognition/recognition-status/${captureId}`);
+          console.log(`Fetching detailed recognition status for capture ID: ${captureId}`);
+          const response = await api.get(`/recognition/detailed-status/${captureId}`);
           console.log('Recognition status raw response:', response);
           return response as ApiResponse;
         } catch (error) {
@@ -83,18 +83,35 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   useEffect(() => {
     console.log('Recognition progress data changed:', data);
     if (data && 'success' in data && data.success && 'status' in data && data.status) {
-      // Check if we have progress data
-      if ('progress' in data.status && data.status.progress) {
-        console.log('Setting progress data:', data.status.progress);
-        setProgress(data.status.progress);
+      // Make sure data.status is an object and not a string
+      if (typeof data.status === 'object' && data.status !== null) {
+        // Check if we have progress data
+        if ('progress' in data.status && data.status.progress) {
+          console.log('Setting progress data:', data.status.progress);
+          setProgress(data.status.progress);
+        } else {
+          // If no progress data yet, initialize with basic structure based on status
+          console.log('No progress data yet, using status:', data.status);
+          const statusString = typeof data.status.status === 'string' ? data.status.status : 'processing';
+          const initialProgress: ProgressData = {
+            status: statusString,
+            steps: [{
+              name: 'initialization',
+              status: statusString === 'processing' ? 'started' : statusString,
+              timestamp: new Date().toISOString()
+            }]
+          };
+          setProgress(initialProgress);
+        }
       } else {
-        // If no progress data yet, initialize with basic structure based on status
-        console.log('No progress data yet, using status:', data.status);
+        // Handle case where data.status is not an object
+        console.log('Status is not an object:', data.status);
+        const statusString = typeof data.status === 'string' ? data.status : 'processing';
         const initialProgress: ProgressData = {
-          status: data.status.status || 'processing',
+          status: statusString,
           steps: [{
             name: 'initialization',
-            status: data.status.status === 'processing' ? 'started' : data.status.status,
+            status: statusString === 'processing' ? 'started' : statusString,
             timestamp: new Date().toISOString()
           }]
         };
@@ -102,8 +119,12 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       }
       
       // Check if processing is complete or has error
-      if (data.status.status === 'completed' || data.status.status === 'error') {
-        console.log('Recognition process completed or has error:', data.status.status);
+      const statusValue = typeof data.status === 'object' && data.status !== null && 'status' in data.status
+        ? data.status.status
+        : typeof data.status === 'string' ? data.status : 'processing';
+        
+      if (statusValue === 'completed' || statusValue === 'error') {
+        console.log('Recognition process completed or has error:', statusValue);
         setPollingEnabled(false);
         // Call onComplete to notify parent component
         onComplete();
