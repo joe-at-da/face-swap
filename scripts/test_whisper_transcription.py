@@ -28,6 +28,8 @@ def main():
                         help="Directory to save the transcription results")
     parser.add_argument("--model", default="base", choices=["tiny", "base", "small", "medium"], 
                         help="Whisper model size to use")
+    parser.add_argument("--language", default="en", 
+                        help="Language code for transcription (e.g., 'en' for English)")
     
     args = parser.parse_args()
     
@@ -64,9 +66,9 @@ def main():
         logger.info(f"Model loaded in {load_time:.2f} seconds")
         
         # Transcribe the audio
-        logger.info(f"Starting transcription with {args.model} model...")
+        logger.info(f"Starting transcription with {args.model} model, language: {args.language}...")
         start_time = time.time()
-        result = model.transcribe(str(audio_file))
+        result = model.transcribe(str(audio_file), language=args.language)
         transcription_time = time.time() - start_time
         logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
         
@@ -75,6 +77,7 @@ def main():
             "text": result["text"],
             "segments": result["segments"],
             "language": result["language"],
+            "forced_language": args.language,
             "audio_file": str(audio_file),
             "model": args.model,
             "transcription_time": transcription_time,
