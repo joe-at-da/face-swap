@@ -164,22 +164,30 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
   };
 
   // Calculate overall progress percentage
-  const calculateProgress = (): number => {
+  const calculateProgress = () => {
     if (!progress) return 0;
     
-    // Try to get the completion percentage from different possible locations
-    if (typeof progress.completion_percentage === 'number') {
-      return progress.completion_percentage;
+    // If we have an overall completion percentage, use that
+    if (progress.completion_percentage !== undefined && progress.completion_percentage !== null) {
+      return Math.max(0, Math.min(100, progress.completion_percentage));
     }
     
-    // If we have steps, use the highest completion percentage from any step
+    // If we have steps with completion percentages, use the latest one
     if (progress.steps && progress.steps.length > 0) {
-      const maxStepProgress = Math.max(
-        ...progress.steps
-          .filter(step => typeof step.completion_percentage === 'number')
-          .map(step => step.completion_percentage || 0)
-      );
-      return maxStepProgress || 0;
+      // Find the latest step with a completion percentage
+      const stepsWithPercentage = progress.steps
+        .filter(step => step.completion_percentage !== undefined && step.completion_percentage !== null);
+      
+      if (stepsWithPercentage.length > 0) {
+        // Get the latest step with percentage
+        const latestStep = stepsWithPercentage[stepsWithPercentage.length - 1];
+        return Math.max(0, Math.min(100, latestStep.completion_percentage || 0));
+      }
+      
+      // Fallback: calculate based on completed steps
+      const completedSteps = progress.steps.filter(step => step.status === 'completed').length;
+      const totalSteps = progress.steps.length;
+      return totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
     }
     
     return 0;
@@ -291,7 +299,14 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
       {progress && progress.steps && progress.steps.length > 0 && (
         <div className="space-y-2">
           <h5 className="text-sm font-medium mb-2">Processing Steps</h5>
-          {progress.steps.map((step, index) => (
+          {/* Group steps by name to avoid duplicates and show only the latest status for each step */}
+          {Object.values(progress.steps.reduce((acc, step) => {
+            // Use the step name as the key and keep the latest step for each name
+            if (!acc[step.name] || new Date(step.timestamp) > new Date(acc[step.name].timestamp)) {
+              acc[step.name] = step;
+            }
+            return acc;
+          }, {} as Record<string, ProgressStep>)).map((step, index) => (
             <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
               <div className="flex items-center">
                 {step.status === 'completed' ? (
@@ -299,24 +314,24 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
                 ) : step.status === 'started' ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                  <div className="w-4 h-4 mr-2 rounded-full border-2 border-blue-600 border-t-transparent animate-spin"></div>
                 ) : step.status === 'error' ? (
                   <svg className="w-4 h-4 text-red-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                   </svg>
                 ) : (
-                  <svg className="w-4 h-4 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                  </svg>
+                  <div className="w-4 h-4 mr-2 rounded-full border border-gray-300"></div>
                 )}
-                <span className="text-sm">{getStepDisplayName(step.name)}</span>
+                <span className="text-sm capitalize">{step.name.replace(/_/g, ' ')}</span>
               </div>
               <div className="flex items-center">
                 {step.completion_percentage !== undefined && (
-                  <span className="text-xs mr-2">{step.completion_percentage}%</span>
+                  <span className="text-xs font-medium mr-2">{step.completion_percentage}%</span>
                 )}
-                <span className={`text-xs px-2 py-1 rounded-full ${getStepStatusClass(step.status)}`}>
-                  {step.status.charAt(0).toUpperCase() + step.status.slice(1)}
+                <span className={`text-xs font-medium px-2 py-1 rounded-full ${step.status === 'completed' ? 'bg-green-100 text-green-800' : step.status === 'started' ? 'bg-blue-100 text-blue-800' : step.status === 'error' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>
+                  {step.status === 'completed' ? 'Completed' : 
+                   step.status === 'started' ? 'In Progress' : 
+                   step.status === 'error' ? 'Error' : 'Pending'}
                 </span>
               </div>
             </div>

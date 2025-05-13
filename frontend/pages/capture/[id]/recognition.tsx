@@ -90,17 +90,77 @@ const RecognitionPage: React.FC = () => {
           ? JSON.parse(capture.recognition_results) 
           : capture.recognition_results;
         
+        console.log('Recognition results:', results);
         setRecognitionResults(results);
         
-        // Extract facial recognition results
+        // Extract facial recognition results - handle different possible formats
+        let faces: RecognizedFace[] = [];
+        
+        // Format 1: results.facial_recognition.faces
         if (results.facial_recognition && Array.isArray(results.facial_recognition.faces)) {
-          setFacialResults(results.facial_recognition.faces);
+          faces = results.facial_recognition.faces;
+        }
+        // Format 2: results.speaker_identification.results.speakers
+        else if (results.speaker_identification && results.speaker_identification.results && 
+                 Array.isArray(results.speaker_identification.results.speakers)) {
+          faces = results.speaker_identification.results.speakers.map((speaker: any) => ({
+            name: speaker.name || 'Unknown',
+            confidence: speaker.confidence || 0,
+            timestamp: speaker.timestamp || 0,
+            bbox: speaker.bbox || [0, 0, 0, 0]
+          }));
+        }
+        // Format 3: Direct speaker_identification with speakers array
+        else if (results.speaker_identification && Array.isArray(results.speaker_identification.speakers)) {
+          faces = results.speaker_identification.speakers.map((speaker: any) => ({
+            name: speaker.name || 'Unknown',
+            confidence: speaker.confidence || 0,
+            timestamp: speaker.timestamp || 0,
+            bbox: speaker.bbox || [0, 0, 0, 0]
+          }));
+        }
+        // Format 4: Direct speakers array in results
+        else if (Array.isArray(results.speakers)) {
+          faces = results.speakers.map((speaker: any) => ({
+            name: speaker.name || 'Unknown',
+            confidence: speaker.confidence || 0,
+            timestamp: speaker.timestamp || 0,
+            bbox: speaker.bbox || [0, 0, 0, 0]
+          }));
         }
         
-        // Extract speaker recognition results
+        console.log('Extracted faces:', faces);
+        setFacialResults(faces);
+        
+        // Extract speaker recognition results - handle different possible formats
+        let speakers: RecognizedSpeaker[] = [];
+        
+        // Format 1: results.speaker_identification.segments
         if (results.speaker_identification && Array.isArray(results.speaker_identification.segments)) {
-          setSpeakerResults(results.speaker_identification.segments);
+          speakers = results.speaker_identification.segments;
         }
+        // Format 2: results.speaker_identification.results.segments
+        else if (results.speaker_identification && results.speaker_identification.results && 
+                 Array.isArray(results.speaker_identification.results.segments)) {
+          speakers = results.speaker_identification.results.segments;
+        }
+        // Format 3: Direct segments array in results
+        else if (Array.isArray(results.segments)) {
+          speakers = results.segments;
+        }
+        // Format 4: Create speakers from faces if no segments are found
+        else if (faces.length > 0) {
+          speakers = faces.map((face: RecognizedFace) => ({
+            name: face.name,
+            confidence: face.confidence,
+            start_time: face.timestamp,
+            end_time: face.timestamp + 5, // Assume 5 seconds duration
+            text: 'No transcription available'
+          }));
+        }
+        
+        console.log('Extracted speakers:', speakers);
+        setSpeakerResults(speakers);
       } catch (error) {
         console.error('Error parsing recognition results:', error);
       }
@@ -113,17 +173,78 @@ const RecognitionPage: React.FC = () => {
         try {
           const response = await api.get(`/recognition/results/${id}`);
           if (response && response.results) {
-            setRecognitionResults(response.results);
+            const results = response.results;
+            console.log('Fetched recognition results:', results);
+            setRecognitionResults(results);
             
-            // Extract facial recognition results
-            if (response.results.facial_recognition && Array.isArray(response.results.facial_recognition.faces)) {
-              setFacialResults(response.results.facial_recognition.faces);
+            // Extract facial recognition results - handle different possible formats
+            let faces: RecognizedFace[] = [];
+            
+            // Format 1: results.facial_recognition.faces
+            if (results.facial_recognition && Array.isArray(results.facial_recognition.faces)) {
+              faces = results.facial_recognition.faces;
+            }
+            // Format 2: results.speaker_identification.results.speakers
+            else if (results.speaker_identification && results.speaker_identification.results && 
+                     Array.isArray(results.speaker_identification.results.speakers)) {
+              faces = results.speaker_identification.results.speakers.map((speaker: any) => ({
+                name: speaker.name || 'Unknown',
+                confidence: speaker.confidence || 0,
+                timestamp: speaker.timestamp || 0,
+                bbox: speaker.bbox || [0, 0, 0, 0]
+              }));
+            }
+            // Format 3: Direct speaker_identification with speakers array
+            else if (results.speaker_identification && Array.isArray(results.speaker_identification.speakers)) {
+              faces = results.speaker_identification.speakers.map((speaker: any) => ({
+                name: speaker.name || 'Unknown',
+                confidence: speaker.confidence || 0,
+                timestamp: speaker.timestamp || 0,
+                bbox: speaker.bbox || [0, 0, 0, 0]
+              }));
+            }
+            // Format 4: Direct speakers array in results
+            else if (Array.isArray(results.speakers)) {
+              faces = results.speakers.map((speaker: any) => ({
+                name: speaker.name || 'Unknown',
+                confidence: speaker.confidence || 0,
+                timestamp: speaker.timestamp || 0,
+                bbox: speaker.bbox || [0, 0, 0, 0]
+              }));
             }
             
-            // Extract speaker recognition results
-            if (response.results.speaker_identification && Array.isArray(response.results.speaker_identification.segments)) {
-              setSpeakerResults(response.results.speaker_identification.segments);
+            console.log('Extracted faces from fetched results:', faces);
+            setFacialResults(faces);
+            
+            // Extract speaker recognition results - handle different possible formats
+            let speakers: RecognizedSpeaker[] = [];
+            
+            // Format 1: results.speaker_identification.segments
+            if (results.speaker_identification && Array.isArray(results.speaker_identification.segments)) {
+              speakers = results.speaker_identification.segments;
             }
+            // Format 2: results.speaker_identification.results.segments
+            else if (results.speaker_identification && results.speaker_identification.results && 
+                     Array.isArray(results.speaker_identification.results.segments)) {
+              speakers = results.speaker_identification.results.segments;
+            }
+            // Format 3: Direct segments array in results
+            else if (Array.isArray(results.segments)) {
+              speakers = results.segments;
+            }
+            // Format 4: Create speakers from faces if no segments are found
+            else if (faces.length > 0) {
+              speakers = faces.map((face: RecognizedFace) => ({
+                name: face.name,
+                confidence: face.confidence,
+                start_time: face.timestamp,
+                end_time: face.timestamp + 5, // Assume 5 seconds duration
+                text: 'No transcription available'
+              }));
+            }
+            
+            console.log('Extracted speakers from fetched results:', speakers);
+            setSpeakerResults(speakers);
           }
         } catch (error) {
           console.error('Error fetching recognition results:', error);

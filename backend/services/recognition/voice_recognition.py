@@ -71,8 +71,8 @@ class VoiceRecognitionService:
             "python",
             str(script_path),
             audio_path,
-            "--input-type", "audio",
-            "--timeout", "300"  # Add a timeout to prevent hanging
+            "--input-type", "audio"
+            # The script doesn't support the --timeout parameter
         ]
         
         if output_file:

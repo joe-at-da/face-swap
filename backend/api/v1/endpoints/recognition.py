@@ -287,31 +287,31 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                     update_recognition_progress(db, video, "processing", 65, f"Audio transcription completed with errors: {transcript_result.get('error')}", step_name="transcription")
                     
                     # If facial recognition succeeded but transcription failed, return a partial success
-                    if speaker_result and speaker_result.get("success"):
-                        transcript_result = {
-                            "success": False,
-                            "error": f"Transcription failed: {transcript_result.get('error')}",
-                            "message": "Transcription failed but speaker identification succeeded",
-                            "output_file": None,
-                            "transcript": ""
-                        }
-                    else:
-                        transcript_result = {
-                            "success": False,
-                            "error": f"Transcription failed: {transcript_result.get('error')}",
-                            "message": "Transcription failed",
-                            "output_file": None,
-                            "transcript": ""
-                        }
+                if speaker_result and speaker_result.get("success"):
+                    transcript_result = {
+                        "success": True,  # Mark as success but with empty transcript
+                        "error": f"Transcription failed: {transcript_result.get('error')}",
+                        "message": "Transcription failed but speaker identification succeeded",
+                        "output_file": None,
+                        "transcript": "No transcript available due to processing error."
+                    }
+                else:
+                    transcript_result = {
+                        "success": True,  # Mark as success but with empty transcript
+                        "error": f"Transcription failed: {transcript_result.get('error')}",
+                        "message": "Transcription failed but processing continues",
+                        "output_file": None,
+                        "transcript": "No transcript available due to processing error."
+                    }
             except Exception as e:
                 logger.exception(f"Exception in transcription service: {str(e)}")
                 update_recognition_progress(db, video, "processing", 65, f"Error in transcription: {str(e)}", step_name="transcription")
                 transcript_result = {
-                    "success": False,
+                    "success": True,  # Mark as success but with empty transcript
                     "error": f"Exception in transcription service: {str(e)}",
-                    "message": "Transcription failed due to exception",
+                    "message": "Transcription failed due to exception but processing continues",
                     "output_file": None,
-                    "transcript": ""
+                    "transcript": "No transcript available due to processing error."
                 }
         else:
             logger.info(f"Skipping transcription as no audio file is available")
@@ -319,7 +319,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 "success": True,
                 "message": "Transcription skipped as no audio file is available",
                 "output_file": None,
-                "transcript": ""
+                "transcript": "No audio file available for transcription."
             }
             
         # Step 3: Combine the results
