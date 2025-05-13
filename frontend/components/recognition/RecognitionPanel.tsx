@@ -98,6 +98,18 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
             setRecognitionMessage('Recognition completed, but no speakers or transcription were identified in this clip.');
           }
         }
+        
+        // Set the recognition results
+        setRecognitionResults(results);
+        
+        // Process speaker segments if available
+        if (results.speaker_identification && 
+            results.speaker_identification.results && 
+            results.speaker_identification.results.segments) {
+          setSpeakerResults({
+            segments: results.speaker_identification.results.segments
+          });
+        }
       } catch (error) {
         console.error('Error processing recognition results:', error);
         setRecognitionMessage('Recognition completed, but there was an error processing the results.');
@@ -316,10 +328,39 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         </div>
       </div>
       
+      {/* Audio Transcription Status - Only shown when processing */}
+      {isProcessing && (
+        <div className="bg-white p-4 rounded border border-gray-200 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-medium">Audio Transcription</h4>
+            <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Part of recognition process</span>
+          </div>
+          <div className="p-4 bg-blue-50 rounded border border-blue-100 mb-2">
+            <div className="flex items-center">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+              <span className="text-sm font-medium text-blue-700">Transcribing audio...</span>
+            </div>
+            <div className="mt-3">
+              <div className="w-full bg-blue-200 rounded-full h-2.5">
+                <div className="bg-blue-600 h-2.5 rounded-full animate-pulse" style={{ width: '50%' }}></div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-blue-700">
+              The system is processing the audio file using speech recognition.
+              This may take several minutes depending on the length of the audio.
+            </p>
+            <p className="mt-1 text-xs text-gray-500">Refreshing status every 3 seconds...</p>
+          </div>
+        </div>
+      )}
+      
       {/* Speaker Results */}
       {recognitionStatus === 'completed' && speakerResults && speakerResults.segments && speakerResults.segments.length > 0 && (
         <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-          <h4 className="font-medium mb-3">Identified Speakers</h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-medium">Identified Speakers</h4>
+            <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">Completed</span>
+          </div>
           <div className="space-y-3 max-h-60 overflow-y-auto">
             {speakerResults.segments.map((segment, index) => (
               <div key={index} className="bg-gray-50 p-3 rounded border border-gray-200">
@@ -357,10 +398,13 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         </div>
       )}
       
-      {/* Transcription Results */}
+      {/* Transcription Results - Shows when completed */}
       {recognitionStatus === 'completed' && recognitionResults && (
         <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-          <h4 className="font-medium mb-3">Transcription</h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-medium">Audio Transcription Results</h4>
+            <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">Completed</span>
+          </div>
           {recognitionResults.transcription?.transcript || 
            recognitionResults.results_summary?.transcript_text ? (
             <div>
