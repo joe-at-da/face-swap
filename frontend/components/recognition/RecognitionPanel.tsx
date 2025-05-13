@@ -36,6 +36,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   const [recognitionStatus, setRecognitionStatus] = useState<string | undefined>(undefined);
   const [recognitionResults, setRecognitionResults] = useState<any | null>(null);
   const [speakerResults, setSpeakerResults] = useState<SpeakerResults | null>(null);
+  const [recognitionMessage, setRecognitionMessage] = useState<string>('');
 
   console.log('RecognitionPanel render state:', { isProcessing, showProgress, recognitionStatus });
 
@@ -188,6 +189,9 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         console.log('No recognition_status in capture data');
       }
       
+      // Process the recognition results for display
+      processRecognitionResults();
+      
       // Only set recognition status to completed if we have explicit recognition completion indicators
       if (capture.recognition_completed_at) {
         console.log('Recognition has a completed timestamp, ensuring UI reflects this');
@@ -211,7 +215,7 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
         }
       }
     }
-  }, [capture, isProcessing, recognitionStatus, speakerResults]);
+  }, [capture, isProcessing, recognitionStatus, speakerResults, processRecognitionResults]);
   
   // Effect to process direct recognition status updates
   useEffect(() => {

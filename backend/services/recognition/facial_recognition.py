@@ -145,7 +145,7 @@ class FacialRecognitionService:
             "python",
             str(script_path),
             video_path,
-            "--min-confidence", "0.4"  # Lower confidence threshold to detect more faces
+            "--threshold", "0.4"  # Lower confidence threshold to detect more faces
         ]
         
         if output_file:

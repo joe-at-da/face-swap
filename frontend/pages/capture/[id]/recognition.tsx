@@ -424,7 +424,7 @@ const RecognitionPage: React.FC = () => {
                   {recognitionResults && (
                     <div>
                       <h4 className="text-md font-medium mb-2">Summary</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
                           <h5 className="font-medium mb-2">Facial Recognition</h5>
                           {facialResults.length > 0 ? (
@@ -466,6 +466,33 @@ const RecognitionPage: React.FC = () => {
                             <p className="text-sm text-gray-500">No speaker identification results available</p>
                           )}
                         </div>
+                      </div>
+                      
+                      {/* Transcription Results */}
+                      <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4 mb-4">
+                        <h5 className="font-medium mb-2">Transcription</h5>
+                        {recognitionResults?.transcription?.transcript || 
+                         recognitionResults?.results_summary?.transcript_text ? (
+                          <div>
+                            <div className="mt-2 p-4 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+                              <p className="text-sm whitespace-pre-wrap">
+                                {recognitionResults?.transcription?.transcript || 
+                                 recognitionResults?.results_summary?.transcript_text}
+                              </p>
+                            </div>
+                            {(recognitionResults?.transcription?.message || 
+                              recognitionResults?.results_summary?.transcription_message) && (
+                              <div className="mt-2">
+                                <p className="text-xs text-gray-500">
+                                  {recognitionResults?.transcription?.message || 
+                                   recognitionResults?.results_summary?.transcription_message}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">No transcription results available</p>
+                        )}
                       </div>
                     </div>
                   )}

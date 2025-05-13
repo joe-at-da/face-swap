@@ -334,7 +334,10 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             "has_speaker_identification": has_speaker_identification,
             "has_transcription": has_transcription,
             "total_speakers": total_speakers,
-            "transcript_length": transcript_length
+            "transcript_length": transcript_length,
+            "transcript_text": transcript_result.get("transcript", "No transcript available.") if transcript_result else "No transcript available.",
+            "speaker_identification_message": speaker_result.get("message", "") if speaker_result else "",
+            "transcription_message": transcript_result.get("message", "") if transcript_result else ""
         }
         
         logger.info(f"Results summary for video ID {video_id}: {results_summary}")
