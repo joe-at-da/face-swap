@@ -44,14 +44,35 @@ class VoiceRecognitionService:
         """
         logger.info(f"Transcribing audio: {audio_path}")
         
+        # Check if audio file exists
+        if not os.path.exists(audio_path):
+            error_msg = f"Audio file not found: {audio_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "output_file": None
+            }
+        
         # Prepare the command
         script_path = self.scripts_dir / "parliament_transcription.py"
+        
+        # Check if script exists
+        if not os.path.exists(script_path):
+            error_msg = f"Transcription script not found: {script_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "output_file": None
+            }
         
         cmd = [
             "python",
             str(script_path),
             audio_path,
-            "--input-type", "audio"
+            "--input-type", "audio",
+            "--timeout", "300"  # Add a timeout to prevent hanging
         ]
         
         if output_file:
@@ -60,7 +81,7 @@ class VoiceRecognitionService:
         logger.info(f"Running command: {' '.join(cmd)}")
         
         try:
-            # Execute the command
+            # Execute the command with a timeout
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -68,14 +89,29 @@ class VoiceRecognitionService:
                 text=True
             )
             
-            stdout, stderr = process.communicate()
+            try:
+                stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                logger.error("Transcription process timed out after 5 minutes")
+                return {
+                    "success": False,
+                    "error": "Transcription process timed out after 5 minutes",
+                    "output_file": None
+                }
             
             # Check if the process was successful
             if process.returncode != 0:
-                logger.error(f"Transcription failed: {stderr}")
+                # Check for specific error messages
+                error_msg = stderr.strip()
+                if "Loading Whisper model" in stderr:
+                    error_msg = "Failed to load Whisper model. The model may be corrupted or unavailable."
+                
+                logger.error(f"Transcription failed: {error_msg}")
                 return {
                     "success": False,
-                    "error": stderr,
+                    "error": error_msg,
                     "output_file": None
                 }
             
@@ -94,6 +130,20 @@ class VoiceRecognitionService:
                         transcript = f.read()
                 except Exception as e:
                     logger.error(f"Error loading transcript file: {str(e)}")
+            elif not output_path:
+                logger.warning("No transcript output path found in command output")
+            elif not os.path.exists(output_path):
+                logger.warning(f"Transcript file not found at expected path: {output_path}")
+            
+            # If we have no transcript but the process completed successfully, this is suspicious
+            if not transcript and process.returncode == 0:
+                logger.warning("Process completed successfully but no transcript was generated")
+                return {
+                    "success": False,
+                    "error": "Transcription process completed but no transcript was generated",
+                    "output_file": output_path,
+                    "transcript": ""
+                }
             
             return {
                 "success": True,

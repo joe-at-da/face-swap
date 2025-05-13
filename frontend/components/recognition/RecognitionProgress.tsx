@@ -26,6 +26,8 @@ interface ProgressStep {
   name: string;
   status: string;
   timestamp: string;
+  message?: string;
+  completion_percentage?: number;
 }
 
 interface ProgressData {
@@ -34,6 +36,10 @@ interface ProgressData {
   error?: string;
   error_at?: string;
   steps: ProgressStep[];
+  completion_percentage?: number;
+  current_step?: string;
+  start_time?: string;
+  last_update?: string;
 }
 
 const RecognitionProgress: React.FC<RecognitionProgressProps> = ({ 
@@ -159,12 +165,24 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
 
   // Calculate overall progress percentage
   const calculateProgress = (): number => {
-    if (!progress || !progress.steps || progress.steps.length === 0) return 0;
+    if (!progress) return 0;
     
-    const totalSteps = progress.steps.length;
-    const completedSteps = progress.steps.filter(step => step.status === 'completed').length;
+    // Try to get the completion percentage from different possible locations
+    if (typeof progress.completion_percentage === 'number') {
+      return progress.completion_percentage;
+    }
     
-    return Math.floor((completedSteps / totalSteps) * 100);
+    // If we have steps, use the highest completion percentage from any step
+    if (progress.steps && progress.steps.length > 0) {
+      const maxStepProgress = Math.max(
+        ...progress.steps
+          .filter(step => typeof step.completion_percentage === 'number')
+          .map(step => step.completion_percentage || 0)
+      );
+      return maxStepProgress || 0;
+    }
+    
+    return 0;
   };
 
   useEffect(() => {
@@ -242,15 +260,15 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
         </span>
       </div>
       
-      {/* Overall progress status */}
+      {/* Overall progress bar */}
       <div className="mb-4">
-        <div className="flex justify-between items-center mb-1">
+        <div className="flex justify-between mb-1">
           <span className="text-sm font-medium">Overall Progress</span>
           <span className="text-sm font-medium">{calculateProgress()}%</span>
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2.5">
           <div 
-            className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+            className="bg-blue-600 h-2.5 rounded-full" 
             style={{ width: `${calculateProgress()}%` }}
           ></div>
         </div>
@@ -293,9 +311,14 @@ const RecognitionProgress: React.FC<RecognitionProgressProps> = ({
                 )}
                 <span className="text-sm">{getStepDisplayName(step.name)}</span>
               </div>
-              <span className={`text-xs px-2 py-1 rounded-full ${getStepStatusClass(step.status)}`}>
-                {step.status.charAt(0).toUpperCase() + step.status.slice(1)}
-              </span>
+              <div className="flex items-center">
+                {step.completion_percentage !== undefined && (
+                  <span className="text-xs mr-2">{step.completion_percentage}%</span>
+                )}
+                <span className={`text-xs px-2 py-1 rounded-full ${getStepStatusClass(step.status)}`}>
+                  {step.status.charAt(0).toUpperCase() + step.status.slice(1)}
+                </span>
+              </div>
             </div>
           ))}
         </div>

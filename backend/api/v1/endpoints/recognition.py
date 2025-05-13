@@ -129,7 +129,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             return
             
         # Update progress to indicate process has started
-        update_recognition_progress(db, video, "processing", 5, "Checking file availability")
+        update_recognition_progress(db, video, "processing", 5, "Checking file availability", step_name="initialization")
         
         # Check if the video file exists
         video_path = video.video_path
@@ -171,7 +171,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             logger.error(f"  - temp_path: {temp_path} (exists: {os.path.exists(temp_path)})")
             
             # Update progress to indicate failure
-            update_recognition_progress(db, video, "failed", 0, "Video file not found")
+            update_recognition_progress(db, video, "failed", 0, "Video file not found", step_name="file_check")
             return
             
         # Check for audio file
@@ -202,7 +202,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             logger.warning(f"No valid audio file found for ID {video_id}. Recognition will proceed with video only.")
             
         # Update progress to indicate file checks complete
-        update_recognition_progress(db, video, "processing", 10, "Files verified, starting recognition")
+        update_recognition_progress(db, video, "processing", 10, "Files verified, starting recognition", step_name="file_check")
         
         # Initialize variables for recognition
         can_do_facial_recognition = bool(video_path and os.path.exists(video_path))
@@ -216,7 +216,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
         if can_do_facial_recognition:
             try:
                 # Update progress for facial recognition start
-                update_recognition_progress(db, video, "processing", 25, "Starting facial recognition")
+                update_recognition_progress(db, video, "processing", 25, "Starting facial recognition", step_name="facial_recognition")
                 
                 # Define output file paths
                 speaker_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_speakers.json"
@@ -233,9 +233,9 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 
                 # Update progress after facial recognition
                 if speaker_result.get("success"):
-                    update_recognition_progress(db, video, "processing", 50, "Facial recognition completed successfully")
+                    update_recognition_progress(db, video, "processing", 50, "Facial recognition completed successfully", step_name="facial_recognition")
                 else:
-                    update_recognition_progress(db, video, "processing", 40, f"Facial recognition completed with errors: {speaker_result.get('error')}")
+                    update_recognition_progress(db, video, "processing", 40, f"Facial recognition completed with errors: {speaker_result.get('error')}", step_name="facial_recognition")
                     
                     # Continue with transcription even if facial recognition fails
                     speaker_result = {
@@ -247,7 +247,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                     }
             except Exception as e:
                 logger.exception(f"Error in facial recognition: {str(e)}")
-                update_recognition_progress(db, video, "processing", 40, f"Error in facial recognition: {str(e)}")
+                update_recognition_progress(db, video, "processing", 40, f"Error in facial recognition: {str(e)}", step_name="facial_recognition")
                 speaker_result = {
                     "success": False,
                     "error": f"Exception in facial recognition: {str(e)}",
@@ -268,7 +268,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
         if can_do_transcription:
             try:
                 # Update progress for transcription start
-                update_recognition_progress(db, video, "processing", 60, "Starting audio transcription")
+                update_recognition_progress(db, video, "processing", 60, "Starting audio transcription", step_name="transcription")
                 
                 # Create output file path for transcription
                 transcript_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
@@ -282,9 +282,9 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 
                 # Update progress after transcription
                 if transcript_result.get("success"):
-                    update_recognition_progress(db, video, "processing", 75, "Audio transcription completed successfully")
+                    update_recognition_progress(db, video, "processing", 75, "Audio transcription completed successfully", step_name="transcription")
                 else:
-                    update_recognition_progress(db, video, "processing", 65, f"Audio transcription completed with errors: {transcript_result.get('error')}")
+                    update_recognition_progress(db, video, "processing", 65, f"Audio transcription completed with errors: {transcript_result.get('error')}", step_name="transcription")
                     
                     # If facial recognition succeeded but transcription failed, return a partial success
                     if speaker_result and speaker_result.get("success"):
@@ -305,7 +305,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                         }
             except Exception as e:
                 logger.exception(f"Exception in transcription service: {str(e)}")
-                update_recognition_progress(db, video, "processing", 65, f"Error in transcription: {str(e)}")
+                update_recognition_progress(db, video, "processing", 65, f"Error in transcription: {str(e)}", step_name="transcription")
                 transcript_result = {
                     "success": False,
                     "error": f"Exception in transcription service: {str(e)}",
@@ -323,6 +323,22 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             }
             
         # Step 3: Combine the results
+        # Create a results summary with detailed information about what was processed
+        has_speaker_identification = speaker_result and speaker_result.get("success", False)
+        has_transcription = transcript_result and transcript_result.get("success", False)
+        total_speakers = len(speaker_result.get("results", {}).get("speakers", [])) if has_speaker_identification else 0
+        transcript_length = len(transcript_result.get("transcript", "")) if has_transcription else 0
+        
+        # Create the results summary
+        results_summary = {
+            "has_speaker_identification": has_speaker_identification,
+            "has_transcription": has_transcription,
+            "total_speakers": total_speakers,
+            "transcript_length": transcript_length
+        }
+        
+        logger.info(f"Results summary for video ID {video_id}: {results_summary}")
+        
         combined_result = {
             "success": True,
             "video_id": video_id,
@@ -336,6 +352,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 "message": "Transcription not performed",
                 "transcript": ""
             },
+            "results_summary": results_summary,
             "processing_details": {
                 "video_available": can_do_facial_recognition,
                 "audio_available": can_do_transcription,
@@ -363,7 +380,7 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
         # Update the database with the results and final progress
         try:
             # Update progress with completion status
-            update_recognition_progress(db, video, "completed", 100, "Recognition process completed successfully")
+            update_recognition_progress(db, video, "completed", 100, "Recognition process completed successfully", step_name="completion")
             
             # Update video record with recognition results
             video.recognition_results = json.dumps(combined_result)
@@ -386,7 +403,18 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
             if video:
                 video.recognition_status = "failed"
-                update_recognition_progress(db, video, "failed", 0, f"Recognition process failed: {str(e)}")
+                update_recognition_progress(db, video, "failed", 0, f"Recognition process failed: {str(e)}", step_name="error")
+                
+                # Add detailed error information to the progress data
+                try:
+                    progress_data = json.loads(video.recognition_progress) if video.recognition_progress else {"steps": []}
+                    progress_data["error"] = str(e)
+                    progress_data["error_at"] = datetime.now().isoformat()
+                    progress_data["status"] = "failed"
+                    video.recognition_progress = json.dumps(progress_data)
+                except Exception as json_error:
+                    logger.error(f"Failed to update progress data with error: {str(json_error)}")
+                
                 db.commit()
         except Exception as db_error:
             logger.error(f"Failed to update database with error status: {str(db_error)}")
@@ -395,9 +423,17 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
         # Close the database session
         db.close()
 
-def update_recognition_progress(db, video, status, completion_percentage, message):
+def update_recognition_progress(db, video, status, completion_percentage, message, step_name=None):
     """
     Update the recognition progress in the database.
+    
+    Args:
+        db: Database session
+        video: Video object
+        status: Status string (processing, completed, failed)
+        completion_percentage: Percentage of completion (0-100)
+        message: Message to display
+        step_name: Optional name of the current step (if different from status)
     """
     try:
         # Get current progress data
@@ -409,21 +445,40 @@ def update_recognition_progress(db, video, status, completion_percentage, messag
                 progress_data = {"steps": []}
         else:
             progress_data = {"steps": []}
+            # Initialize with start time if not present
+            progress_data["start_time"] = datetime.now().isoformat()
             
         # Update progress data
         progress_data["status"] = status
         progress_data["completion_percentage"] = completion_percentage
-        progress_data["current_step"] = status
+        progress_data["current_step"] = step_name or status
         progress_data["last_update"] = datetime.now().isoformat()
         
-        # Add step
-        progress_data["steps"].append({
-            "name": status,
-            "status": status,
+        # Add step if it's a new step or status change
+        step_to_add = {
+            "name": step_name or status,
+            "status": "completed" if status == "completed" else "error" if status == "failed" else "started",
             "timestamp": datetime.now().isoformat(),
             "message": message,
             "completion_percentage": completion_percentage
-        })
+        }
+        
+        # Check if we already have this step
+        existing_step = False
+        for step in progress_data.get("steps", []):
+            if step.get("name") == step_to_add["name"] and step.get("status") == step_to_add["status"]:
+                existing_step = True
+                break
+                
+        if not existing_step:
+            progress_data["steps"].append(step_to_add)
+        
+        # If completed or failed, add completion time
+        if status in ["completed", "failed"]:
+            progress_data["completed_at"] = datetime.now().isoformat()
+            if status == "failed":
+                progress_data["error"] = message
+                progress_data["error_at"] = datetime.now().isoformat()
         
         # Update database
         video.recognition_progress = json.dumps(progress_data)
