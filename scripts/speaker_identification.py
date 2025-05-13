@@ -558,6 +558,7 @@ def install_dependencies():
 
 def main():
     """Main function to run the speaker identification."""
+    global RECOGNITION_THRESHOLD
     parser = argparse.ArgumentParser(description="Speaker Identification for Parliament TV Videos")
     parser.add_argument("video_path", nargs="?", help="Path to the video file to process")
     parser.add_argument("--output", "-o", help="Path to save the output video")
@@ -590,7 +591,6 @@ def main():
         
         # Set the recognition threshold
         if args.threshold is not None:
-            global RECOGNITION_THRESHOLD
             RECOGNITION_THRESHOLD = args.threshold
             print(f"Setting recognition threshold to: {RECOGNITION_THRESHOLD}")
         
