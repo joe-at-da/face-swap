@@ -1682,7 +1682,7 @@ class ParliamentTVCapture:
                 duration_to_use = db_capture.duration
                 logger.info(f"Using duration from db_capture object: {duration_to_use} seconds")
             else:
-                duration_to_use = 300  # Default to 5 minutes if no duration specified
+                duration_to_use = 90  # Default to 90 seconds if no duration specified
                 logger.info(f"No valid duration found, using default: {duration_to_use} seconds")
         
         # Make sure duration is an integer
@@ -1691,7 +1691,7 @@ class ParliamentTVCapture:
             logger.info(f"Converted duration to integer: {duration_to_use}")
         except (ValueError, TypeError):
             logger.warning(f"Could not convert duration {duration_to_use} to integer, using default")
-            duration_to_use = 300
+            duration_to_use = 90
             
         # CRITICAL: Ensure we have a valid time marker
         if not start_position or start_position < 0:

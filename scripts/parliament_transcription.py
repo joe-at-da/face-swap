@@ -264,6 +264,9 @@ class ParliamentTranscriber:
         """Save the transcription in the specified format."""
         output_format = output_format.lower()
         
+        # Create output directory if it doesn't exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
         if output_format == "txt":
             with open(output_path, 'w') as f:
                 for segment in segments:
@@ -280,45 +283,39 @@ class ParliamentTranscriber:
                     "segments": [segment.to_dict() for segment in segments],
                     "metadata": {
                         "created_at": datetime.now().isoformat(),
-                        "num_segments": len(segments)
+                        "model": self.model_size,
+                        "language": self.language
                     }
                 }, f, indent=2)
         
         elif output_format == "docx":
             try:
                 from docx import Document
-                from docx.shared import Pt, RGBColor
+                from docx.shared import Pt
                 
                 doc = Document()
+                doc.add_heading(f"Parliament Transcription", 0)
                 
-                # Add title
-                title = doc.add_heading("Parliament TV Transcript", level=1)
+                # Add metadata
+                doc.add_paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d')}")
+                doc.add_paragraph(f"Model: {self.model_size}")
+                doc.add_paragraph(f"Language: {self.language}")
                 
-                # Add timestamp
-                timestamp = doc.add_paragraph()
-                timestamp.add_run(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                
-                # Add segments
+                # Add transcription
+                doc.add_heading("Transcription", 1)
                 for segment in segments:
                     p = doc.add_paragraph()
+                    p.add_run(f"[{self._format_time(segment.start)} - {self._format_time(segment.end)}] ").bold = True
                     
-                    # Add timestamp
-                    time_run = p.add_run(f"[{self._format_time(segment.start)} - {self._format_time(segment.end)}] ")
-                    time_run.font.size = Pt(9)
-                    time_run.font.color.rgb = RGBColor(128, 128, 128)
-                    
-                    # Add speaker if available
                     if segment.speaker:
-                        speaker_run = p.add_run(f"{segment.speaker}: ")
-                        speaker_run.bold = True
+                        p.add_run(f"{segment.speaker}: ").italic = True
                     
-                    # Add text
                     p.add_run(segment.text)
                 
                 doc.save(output_path)
             except ImportError:
-                logger.error("python-docx not installed. Cannot create DOCX file.")
-                # Fallback to TXT
+                logger.error("python-docx is not installed. Cannot create DOCX file.")
+                # Fallback to txt
                 output_path = output_path.with_suffix('.txt')
                 self._save_transcription(segments, output_path, "txt")
         
@@ -326,6 +323,10 @@ class ParliamentTranscriber:
             logger.warning(f"Unsupported format: {output_format}. Using TXT instead.")
             output_path = output_path.with_suffix('.txt')
             self._save_transcription(segments, output_path, "txt")
+        
+        # Log the output file path in a consistent format that can be parsed by the voice_recognition.py script
+        logger.info(f"Transcript saved to: {output_path}")
+        print(f"Transcript saved to: {output_path}")
     
     def _format_time(self, seconds: float) -> str:
         """Format time in seconds to HH:MM:SS."""

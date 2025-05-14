@@ -70,6 +70,41 @@ class VoiceRecognitionService:
                 "transcript": "Empty audio file cannot be transcribed."
             }
         
+        # Validate audio file with ffprobe to ensure it's a valid audio file
+        try:
+            ffprobe_cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "json",
+                audio_path
+            ]
+            result = subprocess.run(ffprobe_cmd, capture_output=True, text=True, check=True)
+            audio_info = json.loads(result.stdout)
+            duration = float(audio_info.get('format', {}).get('duration', 0))
+            logger.info(f"Audio duration: {duration} seconds")
+            
+            if duration <= 0:
+                error_msg = f"Audio file has invalid duration: {duration} seconds"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "output_file": None,
+                    "message": "Audio file has invalid duration. Please check the audio extraction process.",
+                    "transcript": "Invalid audio file cannot be transcribed."
+                }
+        except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
+            error_msg = f"Failed to validate audio file: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "output_file": None,
+                "message": "Failed to validate audio file. Please check the audio extraction process.",
+                "transcript": "Invalid audio file cannot be transcribed."
+            }
+        
         # Prepare the command
         script_path = self.scripts_dir / "parliament_transcription.py"
         
@@ -83,18 +118,22 @@ class VoiceRecognitionService:
                 "output_file": None
             }
         
+        # Ensure the output directory exists
+        if output_file:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
         cmd = [
             "python",
             str(script_path),
             audio_path,
-            "--input-type", "audio"
-            # The script doesn't support the --timeout parameter
+            "--input-type", "audio",
+            "--format", "txt"  # Explicitly specify format
         ]
         
         if output_file:
             cmd.extend(["--output", output_file])
         
-        logger.info(f"Running command: {' '.join(cmd)}")
+        logger.info(f"Running transcription command: {' '.join(cmd)}")
         
         try:
             # Execute the command with a timeout
@@ -106,17 +145,20 @@ class VoiceRecognitionService:
             )
             
             try:
-                stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+                stdout, stderr = process.communicate(timeout=600)  # 10 minute timeout (increased from 5)
+                logger.info(f"Transcription process stdout: {stdout}")
+                if stderr:
+                    logger.warning(f"Transcription process stderr: {stderr}")
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
-                logger.error("Transcription process timed out after 5 minutes")
+                logger.error("Transcription process timed out after 10 minutes")
                 return {
-                    "success": False,  # This is a failure that needs to be addressed
-                    "error": "Transcription process timed out after 5 minutes",
+                    "success": False,
+                    "error": "Transcription process timed out after 10 minutes",
                     "output_file": None,
                     "message": "Transcription failed due to timeout. The audio file may be too large or complex.",
-                    "transcript": "[Transcription failed: Process timed out after 5 minutes]"
+                    "transcript": "[Transcription failed: Process timed out after 10 minutes]"
                 }
             
             # Check if the process was successful
@@ -141,7 +183,7 @@ class VoiceRecognitionService:
                 
                 logger.error(f"Transcription failed: {error_msg}")
                 return {
-                    "success": False,  # This is a failure that needs to be addressed
+                    "success": False,
                     "error": error_msg,
                     "output_file": None,
                     "message": "Transcription failed due to an error. Please check the logs for details.",
@@ -151,9 +193,15 @@ class VoiceRecognitionService:
             # Parse the output to get the output file path
             output_path = None
             for line in stdout.splitlines():
-                if line.startswith("Transcript saved to:"):
-                    output_path = line.split(":", 1)[1].strip()
+                if "Transcript saved to:" in line:
+                    output_path = line.split("Transcript saved to:", 1)[1].strip()
+                    logger.info(f"Found transcript path in output: {output_path}")
                     break
+            
+            # If no output path was found in stdout, check if output_file was provided
+            if not output_path and output_file:
+                output_path = output_file
+                logger.info(f"Using provided output file path: {output_path}")
             
             # Load the transcript file if it exists
             transcript = ""
@@ -161,6 +209,7 @@ class VoiceRecognitionService:
                 try:
                     with open(output_path, 'r') as f:
                         transcript = f.read()
+                    logger.info(f"Successfully loaded transcript from {output_path}, length: {len(transcript)} characters")
                 except Exception as e:
                     logger.error(f"Error loading transcript file: {str(e)}")
             elif not output_path:
@@ -171,18 +220,48 @@ class VoiceRecognitionService:
             # If we have no transcript but the process completed successfully, this is suspicious
             if not transcript and process.returncode == 0:
                 logger.warning("Process completed successfully but no transcript was generated")
-                return {
-                    "success": False,
-                    "error": "Transcription process completed but no transcript was generated",
-                    "output_file": output_path,
-                    "transcript": ""
-                }
+                
+                # Check if there are any .txt files in the output directory that might be our transcript
+                if output_path:
+                    output_dir = os.path.dirname(output_path)
+                    txt_files = [f for f in os.listdir(output_dir) if f.endswith('.txt') and os.path.getsize(os.path.join(output_dir, f)) > 0]
+                    
+                    if txt_files:
+                        # Use the most recently modified file
+                        newest_file = max(txt_files, key=lambda f: os.path.getmtime(os.path.join(output_dir, f)))
+                        newest_path = os.path.join(output_dir, newest_file)
+                        logger.info(f"Found potential transcript file: {newest_path}")
+                        
+                        try:
+                            with open(newest_path, 'r') as f:
+                                transcript = f.read()
+                            logger.info(f"Loaded transcript from alternative file, length: {len(transcript)} characters")
+                            output_path = newest_path
+                        except Exception as e:
+                            logger.error(f"Error loading alternative transcript file: {str(e)}")
+                
+                if not transcript:
+                    return {
+                        "success": False,
+                        "error": "Transcription process completed but no transcript was generated",
+                        "output_file": output_path,
+                        "transcript": ""
+                    }
             
             return {
                 "success": True,
                 "output_file": output_path,
                 "transcript": transcript,
                 "message": "Transcription completed successfully"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in transcription: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "output_file": None,
+                "transcript": "[Transcription failed due to an unexpected error]"
             }
             
         except Exception as e:
