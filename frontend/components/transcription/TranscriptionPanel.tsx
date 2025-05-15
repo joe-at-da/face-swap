@@ -63,7 +63,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
       console.log('Capture API response:', response);
       return response as CaptureData;
     },
-    refetchInterval: 3000, // Poll every 3 seconds
+    refetchInterval: 30000, // Poll every 30 seconds
     staleTime: 0, // Consider data always stale to ensure fresh data
   });
 
@@ -395,7 +395,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Refreshing status every 3 seconds...
+              Refreshing status every 30 seconds...
             </div>
           </div>
         </div>
