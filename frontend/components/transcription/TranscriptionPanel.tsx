@@ -91,10 +91,28 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
   const { data: capture, isLoading: captureLoading, error: captureError, refetch } = useQuery<CaptureData>({
     queryKey: ['captureTranscription', captureId],
     queryFn: async () => {
-      console.log(`Fetching capture data for ID: ${captureId}`);
-      const response = await api.get(`/capture/${captureId}`);
-      console.log('Capture API response:', response);
-      return response.data as CaptureData;
+      if (!captureId) {
+        // Return a default capture data object instead of undefined
+        return {
+          id: 0,
+          status: 'unknown'
+        } as CaptureData;
+      }
+      
+      try {
+        console.log(`Fetching capture data for ID: ${captureId}`);
+        const response = await api.get(`/capture/${captureId}`);
+        console.log('Capture API response:', response);
+        return response.data as CaptureData;
+      } catch (error) {
+        console.error('Error fetching capture data:', error);
+        // Return a default capture data object with error information
+        return {
+          id: captureId,
+          status: 'error',
+          transcription_error: error instanceof Error ? error.message : String(error)
+        } as CaptureData;
+      }
     },
     enabled: !!captureId,
     refetchInterval: 5000, // Poll every 5 seconds for better progress updates
@@ -113,7 +131,15 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
   } = useQuery<TranscriptionStatus>({
     queryKey: ['transcriptionStatus', captureId, token],
     queryFn: async () => {
-      if (!captureId || !token) return null;
+      if (!captureId || !token) {
+        // Return a default status object instead of null
+        return {
+          id: captureId || 0,
+          status: 'not_started',
+          results_available: false
+        } as TranscriptionStatus;
+      }
+      
       try {
         // Use the same base URL as the successful capture API calls (port 8000)
         const response = await fetch(`http://localhost:8000/api/v1/audio-transcription/status/${captureId}`, {
@@ -121,14 +147,29 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
             'Authorization': `Bearer ${token}`
           }
         });
+        
         if (!response.ok) {
-          throw new Error(`Failed to fetch transcription status: ${response.statusText}`);
+          console.warn(`Failed to fetch transcription status: ${response.statusText}`);
+          // Return a default status object with error information
+          return {
+            id: captureId,
+            status: 'error',
+            error: `API Error: ${response.statusText}`,
+            results_available: false
+          } as TranscriptionStatus;
         }
+        
         const data = await response.json();
         return data;
       } catch (error) {
         console.error('Error fetching transcription status:', error);
-        throw error;
+        // Return a default status object with error information instead of throwing
+        return {
+          id: captureId,
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+          results_available: false
+        } as TranscriptionStatus;
       }
     },
     enabled: !!captureId && !!token,
@@ -203,7 +244,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
 
   // Fetch transcription results
   const fetchTranscriptionResults = useCallback(async () => {
-    if (!captureId) return;
+    if (!captureId || !token) return { success: false, message: 'Missing capture ID or token' };
 
     try {
       const response = await fetch(`http://localhost:8000/api/v1/audio-transcription/results/${captureId}`, {
@@ -221,14 +262,17 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
       if (data.success && data.results) {
         setTranscriptionResults(data.results);
         setShowTranscription(true);
+        return data;
       } else {
         toast.error('No transcription results available');
+        return { success: false, message: 'No transcription results available' };
       }
     } catch (err) {
       console.error('Error fetching transcription results:', err);
       toast.error(`Failed to fetch transcription results: ${err instanceof Error ? err.message : String(err)}`);
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-  }, [captureId]);
+  }, [captureId, token]);
 
   // Automatically fetch results when transcription is completed
   useEffect(() => {
@@ -536,7 +580,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         )}
       </div>
       
-      {!transcriptionStatus && !isProcessing && (
+      {(!transcriptionStatus || transcriptionStatus.status === 'not_started') && !isProcessing && (
         <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex items-start mb-4">
             <div className="bg-blue-100 p-2 rounded-full mr-3">
