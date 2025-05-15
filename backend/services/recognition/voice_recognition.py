@@ -127,7 +127,8 @@ class VoiceRecognitionService:
             str(script_path),
             audio_path,
             "--input-type", "audio",
-            "--format", "txt"  # Explicitly specify format
+            "--format", "txt",  # Explicitly specify format
+            "--language", "en"  # Explicitly specify English language
         ]
         
         if output_file:
