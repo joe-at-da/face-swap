@@ -279,26 +279,62 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 # Update progress after transcription
                 if transcript_result.get("success"):
                     update_recognition_progress(db, video, "processing", 75, "Audio transcription completed successfully", step_name="transcription")
+                    
+                    # Check if the transcript file exists in the audio_extracts directory
+                    audio_filename = os.path.basename(audio_path)
+                    audio_basename = os.path.splitext(audio_filename)[0]
+                    audio_dir = os.path.dirname(audio_path)
+                    
+                    # Try different possible transcript file patterns
+                    possible_transcript_files = [
+                        os.path.join(audio_dir, f"{audio_basename}_transcript.txt"),
+                        os.path.join(audio_dir, f"{audio_basename}.audio_transcript.txt"),
+                        os.path.join(audio_dir, f"{audio_basename}_transcription.txt"),
+                        os.path.join(audio_dir, f"{audio_basename}.txt")
+                    ]
+                    
+                    transcript_file = None
+                    transcript_content = ""
+                    
+                    # Check if any of the possible transcript files exist
+                    for file_path in possible_transcript_files:
+                        if os.path.exists(file_path):
+                            transcript_file = file_path
+                            try:
+                                with open(file_path, 'r') as f:
+                                    transcript_content = f.read()
+                                logger.info(f"Found transcript file: {file_path}")
+                                break
+                            except Exception as e:
+                                logger.error(f"Error reading transcript file {file_path}: {str(e)}")
+                    
+                    # Update the transcript_result with the actual transcript content if found
+                    if transcript_file and transcript_content:
+                        transcript_result["output_file"] = transcript_file
+                        transcript_result["transcript"] = transcript_content
+                        logger.info(f"Updated transcript_result with content from {transcript_file}")
+                    else:
+                        logger.warning(f"No transcript file found in {audio_dir} for {audio_basename}")
                 else:
                     update_recognition_progress(db, video, "processing", 65, f"Audio transcription completed with errors: {transcript_result.get('error')}", step_name="transcription")
                     
-                    # If facial recognition succeeded but transcription failed, return a partial success
-                if speaker_result and speaker_result.get("success"):
-                    transcript_result = {
-                        "success": True,  # Mark as success but with empty transcript
-                        "error": f"Transcription failed: {transcript_result.get('error')}",
-                        "message": "Transcription failed but speaker identification succeeded",
-                        "output_file": None,
-                        "transcript": "No transcript available due to processing error."
-                    }
-                else:
-                    transcript_result = {
-                        "success": True,  # Mark as success but with empty transcript
-                        "error": f"Transcription failed: {transcript_result.get('error')}",
-                        "message": "Transcription failed but processing continues",
-                        "output_file": None,
-                        "transcript": "No transcript available due to processing error."
-                    }
+                    # If transcription failed but facial recognition succeeded, return a partial success
+                    if speaker_result and speaker_result.get("success"):
+                        transcript_result = {
+                            "success": False,  # Mark as failed with error message
+                            "error": f"Transcription failed: {transcript_result.get('error')}",
+                            "message": "Transcription failed but speaker identification succeeded",
+                            "output_file": None,
+                            "transcript": "No transcript available due to processing error."
+                        }
+                    else:
+                        transcript_result = {
+                            "success": False,  # Mark as failed with error message
+                            "error": f"Transcription failed: {transcript_result.get('error')}",
+                            "message": "Transcription failed but processing continues",
+                            "output_file": None,
+                            "transcript": "No transcript available due to processing error."
+                        }
             except Exception as e:
                 logger.exception(f"Exception in transcription service: {str(e)}")
                 update_recognition_progress(db, video, "processing", 65, f"Error in transcription: {str(e)}", step_name="transcription")
@@ -321,9 +357,24 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
         # Step 3: Combine the results
         # Create a results summary with detailed information about what was processed
         has_speaker_identification = speaker_result and speaker_result.get("success", False)
-        has_transcription = transcript_result and transcript_result.get("success", False)
+        
+        # Check if we have a valid transcript file and content
+        has_transcript_file = transcript_result and transcript_result.get("output_file") is not None
+        has_transcript_content = transcript_result and transcript_result.get("transcript") and len(transcript_result.get("transcript", "")) > 0
+        
+        # Consider transcription successful if we have either a valid transcript file or content
+        has_transcription = has_transcript_file or has_transcript_content
+        
+        # Force success flag to true if we have transcript content
+        if has_transcript_content and transcript_result:
+            transcript_result["success"] = True
+            if "error" in transcript_result:
+                transcript_result.pop("error", None)
+            transcript_result["message"] = "Transcription completed successfully"
+            logger.info(f"Forcing transcription success flag to True because we have valid transcript content")
+        
         total_speakers = len(speaker_result.get("results", {}).get("speakers", [])) if has_speaker_identification else 0
-        transcript_length = len(transcript_result.get("transcript", "")) if has_transcription else 0
+        transcript_length = len(transcript_result.get("transcript", "")) if transcript_result else 0
         
         # Create the results summary
         results_summary = {
@@ -333,8 +384,15 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             "transcript_length": transcript_length,
             "transcript_text": transcript_result.get("transcript", "No transcript available.") if transcript_result else "No transcript available.",
             "speaker_identification_message": speaker_result.get("message", "") if speaker_result else "",
-            "transcription_message": transcript_result.get("message", "") if transcript_result else ""
+            "transcription_message": transcript_result.get("message", "") if transcript_result else "",
+            "transcript_file": transcript_result.get("output_file") if transcript_result else None
         }
+        
+        # Log detailed information about the transcript
+        if transcript_result:
+            logger.info(f"Transcript details: output_file={transcript_result.get('output_file')}, length={transcript_length}, success={transcript_result.get('success')}")
+        else:
+            logger.warning("No transcript_result available")
         
         logger.info(f"Results summary for video ID {video_id}: {results_summary}")
         

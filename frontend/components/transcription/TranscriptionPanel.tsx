@@ -126,8 +126,34 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
       const response = await api.get(`/audio-transcription/results/${captureId}`);
       console.log('Transcription results:', response);
       
-      if (response.success && response.results) {
-        setTranscriptionResults(response.results);
+      // Check for success and results in the response
+      if (response.success) {
+        // Check if results is available directly
+        if (response.results) {
+          console.log('Found results object in response:', response.results);
+          setTranscriptionResults(response.results);
+        } 
+        // Check if transcript is available directly in the response
+        else if (response.transcript) {
+          console.log('Found transcript directly in response:', response.transcript);
+          // Create a compatible results object with the transcript text
+          setTranscriptionResults({
+            text: response.transcript,
+            segments: [],
+            language: response.language || 'en'
+          });
+        }
+        // Check for transcript in the transcription field
+        else if (response.transcription && typeof response.transcription === 'object') {
+          console.log('Found transcription object:', response.transcription);
+          if (response.transcription.transcript) {
+            setTranscriptionResults({
+              text: response.transcription.transcript,
+              segments: [],
+              language: response.transcription.language || 'en'
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('Error fetching transcription results:', error);
@@ -155,10 +181,40 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
           if (capture.transcription_results) {
             console.log('Transcription results found, parsing...');
             try {
+              // Parse the results if they're a string
               const results = typeof capture.transcription_results === 'string' 
                 ? JSON.parse(capture.transcription_results)
                 : capture.transcription_results;
               console.log('Parsed transcription results:', results);
+              
+              // Check for different possible structures of the transcription results
+              if (results.transcription && results.transcription.transcript) {
+                console.log('Found transcript in results.transcription.transcript');
+                // Create a compatible results object with the transcript text
+                setTranscriptionResults({
+                  text: results.transcription.transcript,
+                  segments: [],
+                  language: results.transcription.language || 'en'
+                });
+                return;
+              } else if (results.transcript) {
+                console.log('Found transcript directly in results');
+                // Create a compatible results object with the transcript text
+                setTranscriptionResults({
+                  text: results.transcript,
+                  segments: [],
+                  language: results.language || 'en'
+                });
+                return;
+              } else if (results.results_summary && results.results_summary.transcript_text) {
+                console.log('Found transcript in results_summary.transcript_text');
+                setTranscriptionResults({
+                  text: results.results_summary.transcript_text,
+                  segments: [],
+                  language: 'en'
+                });
+                return;
+              }
               setTranscriptionResults(results);
             } catch (e) {
               console.error('Error parsing transcription results:', e);
@@ -466,7 +522,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
             {/* Full Text view */}
             {activeTab === 'fullText' && transcriptionResults && (
               <div className="bg-white rounded-lg border border-gray-200 p-4 max-h-[500px] overflow-y-auto">
-                {searchQuery ? (
+                {searchQuery && transcriptionResults.text ? (
                   <div className="text-sm text-gray-800 whitespace-pre-wrap" dangerouslySetInnerHTML={{
                     __html: transcriptionResults.text.replace(
                       new RegExp(`(${searchQuery})`, 'gi'),
@@ -475,7 +531,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
                   }} />
                 ) : (
                   <div className="text-sm text-gray-800 whitespace-pre-wrap">
-                    {transcriptionResults.text}
+                    {transcriptionResults.text || 'No transcript text available.'}
                   </div>
                 )}
               </div>
