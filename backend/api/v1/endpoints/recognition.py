@@ -179,12 +179,8 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
         if audio_path and os.path.exists(audio_path):
             possible_audio_paths.append(audio_path)
             
-        # Check for audio file in standard locations
-        audio_temp_path = f"/app/data/temp/capture_{video_id:04d}.wav"
-        if os.path.exists(audio_temp_path):
-            possible_audio_paths.append(audio_temp_path)
-            
-        audio_extract_path = f"/app/data/audio_extracts/capture_{video_id:04d}.wav"
+        # Check for audio file in standard locations            
+        audio_extract_path = f"/app/data/audio_extracts/capture_{video_id:04d}.audio.mp3"
         if os.path.exists(audio_extract_path):
             possible_audio_paths.append(audio_extract_path)
             

@@ -43,7 +43,7 @@ LANGUAGE = "en"
 SEGMENT_LENGTH = 30  # seconds
 OUTPUT_FORMATS = ["txt", "srt", "json", "docx"]
 TEMP_DIR = Path("/app/data/temp")
-OUTPUT_DIR = Path("/app/data/media/transcriptions")
+OUTPUT_DIR = Path("/app/data/temp/audio_extracts")
 
 class TranscriptionSegment:
     """Class representing a segment of transcription with timing information."""

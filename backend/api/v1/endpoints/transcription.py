@@ -615,7 +615,7 @@ def process_parliament_transcription(
             # Continue anyway, as the transcription script might handle this
         
         # Create output directory
-        output_dir = Path("/app/data/media/transcriptions")
+        output_dir = Path("/app/data/temp/audio_extracts")
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate output filename

@@ -244,9 +244,9 @@ def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = 
             return
         
         # Prepare the output path
-        output_dir = Path("/app/data/transcriptions")
+        output_dir = Path("/app/data/temp/audio_extracts")
         output_dir.mkdir(exist_ok=True, parents=True)
-        output_file = output_dir / f"capture_{capture_id:04d}_transcription.json"
+        output_file = output_dir / f"capture_{capture_id:04d}.audio_transcript.meta.json"
         
         # Run the transcription script
         cmd = [
