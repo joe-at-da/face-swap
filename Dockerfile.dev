@@ -11,6 +11,11 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     curl \
     python3-pip \
+    libsndfile1 \
+    libasound2-dev \
+    portaudio19-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
     && rm -rf /var/lib/apt/lists/* \
     && pip install yt-dlp
 

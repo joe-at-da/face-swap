@@ -267,31 +267,43 @@ class VoiceRecognitionService:
         except Exception as e:
             logger.error(f"Error in transcription: {str(e)}")
             return {
-                "success": False,
-                "error": str(e),
                 "output_file": None
             }
     
-    def identify_speakers_in_audio(self, audio_path: str, output_file: Optional[str] = None) -> Dict:
+    def identify_speakers_in_audio(self, audio_path: str, output_file: Optional[str] = None, model_size: str = "base") -> Dict:
         """
-        Identify speakers in an audio file using voice recognition.
+        Identify speakers in an audio file using voice recognition and diarization.
         
         Args:
             audio_path: Path to the audio file
             output_file: Optional path to save the output with speaker identification
+            model_size: Size of the model to use (tiny, base, small, medium, large)
             
         Returns:
             Dict with identification results
         """
-        logger.info(f"Identifying speakers in audio: {audio_path}")
+        logger.info(f"Identifying speakers in audio: {audio_path} with model size: {model_size}")
         
         # Prepare the command
         script_path = self.scripts_dir / "speaker_diarization.py"
         
+        # Check if the script exists
+        if not os.path.exists(script_path):
+            error_msg = f"Speaker diarization script not found: {script_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "output_file": None,
+                "results_file": None
+            }
+        
+        # Build the command
         cmd = [
             "python",
             str(script_path),
-            audio_path
+            audio_path,
+            "--model", model_size
         ]
         
         if output_file:
@@ -327,8 +339,10 @@ class VoiceRecognitionService:
             for line in stdout.splitlines():
                 if "Results saved to:" in line:
                     results_path = line.split(":", 1)[1].strip()
+                    logger.info(f"Found results path: {results_path}")
                 elif "Processed audio saved to:" in line:
                     output_path = line.split(":", 1)[1].strip()
+                    logger.info(f"Found output path: {output_path}")
             
             # Load the results file if it exists
             results = {}
@@ -336,14 +350,38 @@ class VoiceRecognitionService:
                 try:
                     with open(results_path, 'r') as f:
                         results = json.load(f)
+                    logger.info(f"Loaded diarization results: {len(results.get('segments', []))} segments, {len(results.get('speakers', {}))} speakers")
+                    
+                    # Check if we have any speakers
+                    if 'speakers' in results and len(results['speakers']) == 0:
+                        logger.warning("No speakers detected in the audio")
                 except Exception as e:
                     logger.error(f"Error loading results file: {str(e)}")
+            else:
+                logger.warning(f"Results file not found or path is None: {results_path}")
+            
+            # Enhance the results with additional information
+            enhanced_results = results.copy() if results else {}
+            
+            # Add summary information if not already present
+            if "summary" not in enhanced_results:
+                total_speakers = len(enhanced_results.get("speakers", {}))
+                total_segments = len(enhanced_results.get("segments", []))
+                total_duration = enhanced_results.get("processing_info", {}).get("total_duration", 0)
+                
+                enhanced_results["summary"] = {
+                    "total_speakers": total_speakers,
+                    "total_segments": total_segments,
+                    "total_duration": total_duration,
+                    "speakers_identified": any(s.get("matched", False) for s in enhanced_results.get("speakers", {}).values()),
+                    "processed_at": datetime.now().isoformat()
+                }
             
             return {
                 "success": True,
                 "output_file": output_path,
                 "results_file": results_path,
-                "results": make_json_serializable(results),
+                "results": make_json_serializable(enhanced_results),
                 "message": "Speaker identification completed successfully"
             }
             
@@ -360,7 +398,7 @@ class VoiceRecognitionService:
         """
         Combine transcription with speaker identification results.
         
-        Args:
+{{ ... }}
             transcription_path: Path to the transcription file
             speaker_results_path: Path to the speaker identification results file
             output_file: Optional path to save the combined output

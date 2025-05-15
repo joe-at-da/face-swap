@@ -28,6 +28,16 @@ transformers==4.35.2
 torch==2.6.0
 tensorflow==2.19.0
 
+# Speaker Diarization
+pyannote.audio==3.1.1
+soundfile==0.12.1
+numpy==1.24.3
+librosa==0.10.1
+torchaudio==2.6.0
+scipy==1.12.0
+speechbrain==0.5.15
+yt-dlp==2023.11.16
+
 # Cloud Storage
 boto3==1.29.3
 python-magic==0.4.27
