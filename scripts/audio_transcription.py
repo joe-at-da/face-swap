@@ -23,9 +23,11 @@ import os
 import json
 import argparse
 import logging
+import sys
 from pathlib import Path
 from datetime import datetime
 import subprocess
+from typing import Dict, List, Optional, Any, Tuple
 
 # Set up logging
 logging.basicConfig(
@@ -140,50 +142,170 @@ def transcribe_audio(audio_file, output_file=None, model_size="medium"):
     
     return transcription
 
-def perform_speaker_diarization(audio_file, transcription, output_file=None):
+def perform_speaker_diarization(audio_file, transcription, output_file=None, video_path=None):
     """
-    Perform speaker diarization on the audio file.
-    This is a placeholder for future implementation.
+    Perform speaker diarization on the audio file using the speaker diarization module.
     
     Args:
         audio_file: Path to the audio file
         transcription: Transcription data
         output_file: Path to save the diarization results
+        video_path: Optional path to the video file for facial recognition integration
         
     Returns:
         Dict with diarization results
     """
-    logger.info(f"Speaker diarization not yet implemented")
+    try:
+        # Add the scripts directory to the path if needed
+        script_dir = Path(__file__).parent.absolute()
+        if str(script_dir) not in sys.path:
+            sys.path.append(str(script_dir))
+        
+        # Import the speaker diarization module
+        try:
+            from speaker_diarization import SpeakerDiarizer
+            from voice_profile_manager import VoiceProfileManager
+        except ImportError as e:
+            logger.error(f"Failed to import speaker diarization modules: {e}")
+            raise ImportError(f"Speaker diarization modules not available: {e}")
+        
+        logger.info(f"Performing speaker diarization on: {audio_file}")
+        
+        # Initialize the speaker diarizer
+        diarizer = SpeakerDiarizer()
+        
+        # Update the voice database
+        logger.info("Updating voice database...")
+        diarizer.update_voice_database()
+        
+        # Perform diarization
+        logger.info("Running speaker diarization...")
+        audio_path = Path(audio_file)
+        diarization_results = diarizer.diarize_audio(audio_path)
+        
+        # Match speakers with known voices
+        logger.info("Matching speakers with known voices...")
+        diarization_results = diarizer.match_speakers_with_known_voices(diarization_results)
+        
+        # Combine with transcription
+        logger.info("Combining diarization with transcription...")
+        
+        # Import the voice recognition service for combining results
+        try:
+            # Add the backend directory to the path
+            backend_dir = script_dir.parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.append(str(backend_dir))
+                
+            from services.recognition.voice_recognition import VoiceRecognitionService
+            voice_service = VoiceRecognitionService()
+            
+            # Combine transcription with speakers
+            combined_results = voice_service.combine_transcription_with_speakers(
+                transcription, diarization_results
+            )
+            
+            # If video path is provided, try to combine with facial recognition
+            if video_path and os.path.exists(video_path):
+                logger.info(f"Integrating with facial recognition from video: {video_path}")
+                try:
+                    # Get facial recognition results from the video
+                    from services.recognition.facial_recognition import FacialRecognitionService
+                    facial_service = FacialRecognitionService()
+                    
+                    # Process video for facial recognition
+                    facial_results = facial_service.process_video(Path(video_path))
+                    
+                    # Combine audio and video recognition results
+                    if facial_results:
+                        logger.info("Combining audio and video recognition results...")
+                        combined_results = voice_service.combine_recognition_results(
+                            combined_results, facial_results
+                        )
+                except Exception as e:
+                    logger.error(f"Error in facial recognition integration: {e}")
+                    # Continue without facial recognition
+        except Exception as e:
+            logger.error(f"Error combining results: {e}")
+            # Fall back to basic combination
+            combined_results = {
+                "audio_file": audio_file,
+                "speakers": diarization_results.get("speakers", []),
+                "segments": []
+            }
+            
+            # Combine segments from transcription with speaker info
+            for segment in transcription["segments"]:
+                segment_start = segment["start"]
+                segment_end = segment["end"]
+                
+                # Find matching diarization segment
+                speaker_id = None
+                speaker_name = None
+                
+                for diar_segment in diarization_results.get("segments", []):
+                    # Check for overlap
+                    if (diar_segment["start"] <= segment_end and 
+                        diar_segment["end"] >= segment_start):
+                        speaker_id = diar_segment.get("speaker")
+                        break
+                
+                # Find speaker name if we have an ID
+                if speaker_id:
+                    for speaker in diarization_results.get("speakers", []):
+                        if speaker.get("id") == speaker_id:
+                            speaker_name = speaker.get("name")
+                            break
+                
+                # Add the combined segment
+                combined_results["segments"].append({
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": segment["text"],
+                    "speaker": speaker_id or "unknown",
+                    "speaker_name": speaker_name or "Unknown Speaker"
+                })
+        
+        # Save the results to a file if specified
+        if output_file:
+            with open(output_file, "w") as f:
+                json.dump(combined_results, f, indent=2)
+            logger.info(f"Combined diarization results saved to: {output_file}")
+        
+        return combined_results
     
-    # Placeholder for future implementation
-    diarization = {
-        "audio_file": audio_file,
-        "speakers": [],
-        "segments": []
-    }
-    
-    # For now, we'll just assign all segments to "Speaker 1"
-    for segment in transcription["segments"]:
-        diarization["segments"].append({
-            "speaker": "Speaker 1",
-            "start": segment["start"],
-            "end": segment["end"],
-            "text": segment["text"]
+    except Exception as e:
+        logger.error(f"Error in speaker diarization: {e}")
+        # Fall back to basic speaker assignment
+        diarization = {
+            "audio_file": audio_file,
+            "speakers": [],
+            "segments": []
+        }
+        
+        # Assign all segments to "Unknown Speaker"
+        for segment in transcription["segments"]:
+            diarization["segments"].append({
+                "speaker": "unknown",
+                "speaker_name": "Unknown Speaker",
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"]
+            })
+        
+        # Add a placeholder speaker
+        diarization["speakers"].append({
+            "id": "unknown",
+            "name": "Unknown Speaker"
         })
-    
-    # Add a placeholder speaker
-    diarization["speakers"].append({
-        "id": 1,
-        "name": "Speaker 1"
-    })
-    
-    # Save the results to a file if specified
-    if output_file:
-        with open(output_file, "w") as f:
-            json.dump(diarization, f, indent=2)
-        logger.info(f"Diarization saved to: {output_file}")
-    
-    return diarization
+        
+        # Save the results to a file if specified
+        if output_file:
+            with open(output_file, "w") as f:
+                json.dump(diarization, f, indent=2)
+            logger.info(f"Fallback diarization saved to: {output_file}")
+        
+        return diarization
 
 def main():
     parser = argparse.ArgumentParser(description="Transcribe audio files")
@@ -193,6 +315,7 @@ def main():
                         help="Whisper model size to use")
     parser.add_argument("--diarize", action="store_true", help="Perform speaker diarization")
     parser.add_argument("--diarize-output", help="Path to save the diarization results")
+    parser.add_argument("--video-path", help="Path to the video file for facial recognition integration")
     
     args = parser.parse_args()
     
@@ -209,7 +332,39 @@ def main():
         # Perform speaker diarization if requested
         if args.diarize:
             diarize_output = args.diarize_output or (args.output.replace(".json", "_diarized.json") if args.output else None)
-            perform_speaker_diarization(args.audio_file, transcription, diarize_output)
+            combined_results = perform_speaker_diarization(
+                args.audio_file, 
+                transcription, 
+                diarize_output,
+                args.video_path
+            )
+            
+            # Update the original transcription file with the combined results
+            if args.output and os.path.exists(args.output):
+                # Load the original transcription
+                with open(args.output, 'r') as f:
+                    original_data = json.load(f)
+                
+                # Add the speaker information to the original transcription
+                original_data["speakers"] = combined_results.get("speakers", [])
+                
+                # Update segments with speaker information
+                for i, segment in enumerate(original_data.get("segments", [])):
+                    if i < len(combined_results.get("segments", [])):
+                        combined_segment = combined_results["segments"][i]
+                        segment["speaker"] = combined_segment.get("speaker")
+                        segment["speaker_name"] = combined_segment.get("speaker_name")
+                        segment["speaker_confidence"] = combined_segment.get("speaker_confidence")
+                        segment["matched_with_video"] = combined_segment.get("matched_with_video", False)
+                
+                # Add combined results if available
+                if "combined_results" in combined_results:
+                    original_data["combined_results"] = combined_results["combined_results"]
+                
+                # Save the updated transcription
+                with open(args.output, 'w') as f:
+                    json.dump(original_data, f, indent=2)
+                logger.info(f"Updated transcription with speaker information: {args.output}")
         
         return 0
     except Exception as e:

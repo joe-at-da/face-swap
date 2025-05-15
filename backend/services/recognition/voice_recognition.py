@@ -398,7 +398,7 @@ class VoiceRecognitionService:
         """
         Combine transcription with speaker identification results.
         
-{{ ... }}
+        Args:
             transcription_path: Path to the transcription file
             speaker_results_path: Path to the speaker identification results file
             output_file: Optional path to save the combined output
@@ -406,56 +406,245 @@ class VoiceRecognitionService:
         Returns:
             Dict with combined results
         """
-        logger.info(f"Combining transcription with speaker identification")
+        logger.info(f"Combining transcription with speaker identification: {transcription_path} + {speaker_results_path}")
         
+        # Load the transcription
         try:
-            # Load the transcription file
-            if not os.path.exists(transcription_path):
-                return {
-                    "success": False,
-                    "error": f"Transcription file not found: {transcription_path}"
-                }
-            
-            # Load the speaker identification results file
-            if not os.path.exists(speaker_results_path):
-                return {
-                    "success": False,
-                    "error": f"Speaker identification results file not found: {speaker_results_path}"
-                }
-            
-            # Load the transcription
             with open(transcription_path, 'r') as f:
-                transcription = f.read()
-            
-            # Load the speaker identification results
+                transcription = json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading transcription: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error loading transcription: {str(e)}"
+            }
+        
+        # Load the speaker identification results
+        try:
             with open(speaker_results_path, 'r') as f:
                 speaker_results = json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading speaker identification results: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error loading speaker identification results: {str(e)}"
+            }
+        
+        # Combine the results
+        try:
+            # Create a mapping of time ranges to speakers
+            speaker_segments = speaker_results.get("segments", [])
+            time_to_speaker = {}
             
-            # Process and combine the results
-            # This is a placeholder for the actual implementation
-            # The actual implementation would depend on the format of the transcription and speaker results
+            for segment in speaker_segments:
+                start_time = segment.get("start_time", 0)
+                end_time = segment.get("end_time", 0)
+                speaker = segment.get("speaker", "")
+                speaker_name = segment.get("speaker_name", speaker)
+                
+                # Add to the mapping
+                time_to_speaker[(start_time, end_time)] = {
+                    "speaker": speaker,
+                    "name": speaker_name
+                }
+            
+            # Add speaker information to each segment in the transcription
+            segments = transcription.get("segments", [])
+            
+            for segment in segments:
+                start = segment.get("start", 0)
+                end = segment.get("end", 0)
+                
+                # Find the speaker for this segment
+                speaker_found = False
+                
+                for (speaker_start, speaker_end), speaker_info in time_to_speaker.items():
+                    # Check if there's an overlap
+                    if max(start, speaker_start) <= min(end, speaker_end):
+                        segment["speaker"] = speaker_info["speaker"]
+                        segment["speaker_name"] = speaker_info["name"]
+                        speaker_found = True
+                        break
+                
+                if not speaker_found:
+                    segment["speaker"] = "unknown"
+                    segment["speaker_name"] = "Unknown"
+            
+            # Create the combined results
             combined_results = {
-                "transcription": transcription,
-                "speakers": speaker_results
+                "text": transcription.get("text", ""),
+                "segments": segments,
+                "speakers": speaker_results.get("speakers", {}),
+                "language": transcription.get("language", "en"),
+                "combined_at": datetime.now().isoformat()
             }
             
-            # Save the combined results if output_file is provided
+            # Save to output file if provided
             if output_file:
-                os.makedirs(os.path.dirname(output_file), exist_ok=True)
                 with open(output_file, 'w') as f:
-                    json.dump(combined_results, f, indent=2)
+                    json.dump(combined_results, f, indent=2, default=str)
+                logger.info(f"Combined results saved to: {output_file}")
             
             return {
                 "success": True,
-                "output_file": output_file,
-                "results": make_json_serializable(combined_results),
-                "message": "Transcription combined with speaker identification successfully"
+                "combined_results": combined_results,
+                "output_file": output_file
             }
             
         except Exception as e:
             logger.error(f"Error combining transcription with speaker identification: {str(e)}")
             return {
                 "success": False,
-                "error": str(e),
-                "output_file": None
+                "error": f"Error combining results: {str(e)}"
+            }
+    
+    def combine_recognition_results(self, audio_path: str, video_path: str, transcription_path: Optional[str] = None, output_file: Optional[str] = None) -> Dict:
+        """
+        Combine audio-based speaker diarization with video-based facial recognition.
+        
+        Args:
+            audio_path: Path to the audio file
+            video_path: Path to the video file
+            transcription_path: Optional path to the transcription file
+            output_file: Optional path to save the combined output
+            
+        Returns:
+            Dict with combined recognition results
+        """
+        logger.info(f"Combining audio and video recognition for: {audio_path} and {video_path}")
+        
+        try:
+            # Step 1: Get audio-based speaker identification
+            audio_results = self.identify_speakers_in_audio(audio_path)
+            
+            if not audio_results.get("success", False):
+                logger.error(f"Failed to identify speakers in audio: {audio_results.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": f"Failed to identify speakers in audio: {audio_results.get('error', 'Unknown error')}"
+                }
+            
+            # Step 2: Get video-based face recognition
+            try:
+                from backend.services.recognition.facial_recognition import FacialRecognitionService
+                facial_service = FacialRecognitionService()
+                video_results = facial_service.identify_speakers_in_video(video_path)
+                
+                if not video_results.get("success", False):
+                    logger.warning(f"Failed to identify faces in video: {video_results.get('error', 'Unknown error')}")
+                    logger.warning("Proceeding with audio-only results")
+                    video_results = {"speakers": {}, "frames": []}
+                
+            except Exception as e:
+                logger.warning(f"Error in facial recognition: {str(e)}")
+                logger.warning("Proceeding with audio-only results")
+                video_results = {"speakers": {}, "frames": []}
+            
+            # Step 3: Align and combine results
+            combined_results = self._align_recognition_results(audio_results.get("results", {}), video_results)
+            
+            # Step 4: If transcription exists, add speaker information
+            if transcription_path and os.path.exists(transcription_path):
+                combined_transcription = self.combine_transcription_with_speakers(
+                    transcription_path, 
+                    audio_results.get("results_file", ""),
+                    output_file=output_file
+                )
+                
+                if combined_transcription.get("success", False):
+                    combined_results["transcription"] = combined_transcription.get("combined_results", {})
+                    logger.info("Successfully added transcription to combined results")
+            
+            # Save combined results if output file is provided
+            if output_file:
+                output_dir = os.path.dirname(output_file)
+                if output_dir and not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+                
+                with open(output_file, 'w') as f:
+                    json.dump(combined_results, f, indent=2, default=str)
+                logger.info(f"Combined recognition results saved to: {output_file}")
+            
+            return {
+                "success": True,
+                "combined_results": combined_results,
+                "output_file": output_file
+            }
+            
+        except Exception as e:
+            logger.error(f"Error combining recognition results: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error combining recognition results: {str(e)}"
+            }
+    
+    def _align_recognition_results(self, audio_results: Dict, video_results: Dict) -> Dict:
+        """
+        Align and combine audio-based speaker diarization with video-based facial recognition.
+        
+        Args:
+            audio_results: Results from audio-based speaker diarization
+            video_results: Results from video-based facial recognition
+            
+        Returns:
+            Dict with aligned and combined results
+        """
+        try:
+            # Extract speakers from both results
+            audio_speakers = audio_results.get("speakers", {})
+            video_speakers = video_results.get("speakers", {})
+            
+            # Create a mapping of speaker IDs to names from video recognition
+            video_id_to_name = {}
+            for speaker_id, speaker_info in video_speakers.items():
+                if speaker_info.get("name", "") != "Unknown":
+                    video_id_to_name[speaker_id] = speaker_info.get("name")
+            
+            # Update audio speakers with video recognition information
+            for speaker_id, speaker_info in audio_speakers.items():
+                # If the speaker is already matched, skip
+                if speaker_info.get("matched", False) and speaker_info.get("confidence", 0) > 0.7:
+                    continue
+                
+                # Try to match with video speakers based on name
+                speaker_name = speaker_info.get("name", "")
+                for video_id, video_name in video_id_to_name.items():
+                    if speaker_name == video_name:
+                        # Update with video recognition info
+                        speaker_info["matched_with_video"] = True
+                        speaker_info["video_speaker_id"] = video_id
+                        speaker_info["confidence"] = max(speaker_info.get("confidence", 0), 0.8)  # Boost confidence
+                        break
+            
+            # Update audio segments with improved speaker information
+            audio_segments = audio_results.get("segments", [])
+            for segment in audio_segments:
+                speaker_id = segment.get("speaker", "")
+                if speaker_id in audio_speakers:
+                    segment["speaker_name"] = audio_speakers[speaker_id].get("name", speaker_id)
+                    segment["speaker_confidence"] = audio_speakers[speaker_id].get("confidence", 0.0)
+                    segment["matched_with_video"] = audio_speakers[speaker_id].get("matched_with_video", False)
+            
+            # Create combined results
+            combined_results = {
+                "speakers": audio_speakers,
+                "segments": audio_segments,
+                "video_speakers": video_speakers,
+                "video_frames": video_results.get("frames", []),
+                "processing_info": {
+                    "combined_at": datetime.now().isoformat(),
+                    "audio_processing": audio_results.get("processing_info", {}),
+                    "video_processing": video_results.get("processing_info", {})
+                }
+            }
+            
+            return combined_results
+            
+        except Exception as e:
+            logger.error(f"Error aligning recognition results: {str(e)}")
+            # Return a basic structure with the original results
+            return {
+                "audio_results": audio_results,
+                "video_results": video_results,
+                "error": str(e)
             }

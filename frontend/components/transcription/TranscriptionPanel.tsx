@@ -18,6 +18,10 @@ interface TranscriptionSegment {
   start: number;
   end: number;
   text: string;
+  speaker?: string;
+  speaker_name?: string;
+  speaker_confidence?: number;
+  matched_with_video?: boolean;
   tokens?: number[];
   temperature?: number;
   avg_logprob?: number;
@@ -35,6 +39,10 @@ interface CaptureData {
   transcription_error?: string;
   audio_path?: string | null;
   audio_file_path?: string | null;
+  video_path?: string | null;
+  speaker_diarization_status?: string;
+  speaker_diarization_results?: string;
+  speaker_diarization_completed_at?: string;
 }
 
 const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audioElement }) => {
@@ -92,7 +100,8 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
     try {
       const response = await api.post('/audio-transcription/transcribe', {
         capture_id: captureId,
-        model_size: "medium"
+        model_size: "medium",
+        with_speaker_diarization: true // Enable speaker diarization
       });
       
       console.log('Transcription process started:', response);
@@ -454,33 +463,41 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
                   {filteredSegments.map((segment, index) => (
                     <div 
-                      key={index} 
-                      className={`p-4 rounded-lg border transition-all ${selectedSegment === index ? 'border-blue-400 bg-blue-50 shadow-sm' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'}`}
-                      onClick={() => setSelectedSegment(index)}
+                      key={segment.id} 
+                      className={`p-3 mb-2 rounded-md cursor-pointer transition-colors ${selectedSegment === segment.id ? 'bg-blue-100 border-blue-300' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}
+                      onClick={() => {
+                        setSelectedSegment(segment.id);
+                        jumpToTimestamp(segment.start);
+                      }}
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center">
-                          <div className="bg-gray-200 text-gray-700 px-2 py-1 rounded text-xs font-medium">
-                            {formatTime(segment.start)} - {formatTime(segment.end)}
-                          </div>
-                          <div className="ml-2 text-xs text-gray-500">
-                            {Math.round((segment.end - segment.start) * 10) / 10}s
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            jumpToTimestamp(segment.start);
-                          }}
-                          className="flex items-center px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          Play
-                        </button>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-medium text-gray-500">
+                          {formatTime(segment.start)} - {formatTime(segment.end)}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {Math.round((segment.end - segment.start) * 10) / 10}s
+                        </span>
                       </div>
+                      {segment.speaker_name && (
+                        <div className="flex items-center mb-2">
+                          <div 
+                            className={`px-2 py-1 rounded-full text-xs font-medium mr-2 ${segment.matched_with_video ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}
+                          >
+                            {segment.speaker_name}
+                            {segment.speaker_confidence && segment.speaker_confidence > 0.7 && (
+                              <span className="ml-1 text-xs">✓</span>
+                            )}
+                          </div>
+                          {segment.matched_with_video && (
+                            <span className="text-xs text-gray-500 flex items-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                              Video match
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <p className="text-sm text-gray-800">
                         {searchQuery ? (
                           <span dangerouslySetInnerHTML={{

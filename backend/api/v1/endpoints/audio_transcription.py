@@ -28,6 +28,7 @@ async def transcribe_audio(
     capture_id: int = Body(..., description="ID of the capture to transcribe"),
     model_size: str = Body("medium", description="Whisper model size to use"),
     save_output: bool = Body(True, description="Whether to save output files"),
+    with_speaker_diarization: bool = Body(False, description="Whether to perform speaker diarization"),
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
@@ -120,14 +121,14 @@ async def transcribe_audio(
         capture.transcription_status = "processing"
         db.commit()
         
-        # Run the transcription in a background task
-        background_tasks.add_task(
-            run_audio_transcription,
-            capture_id,
-            audio_path,
-            model_size,
-            save_output
-        )
+        # Run the transcription in the background
+        if background_tasks:
+            logger.info(f"Adding transcription task to background tasks")
+            background_tasks.add_task(run_audio_transcription, capture_id, audio_path, model_size, save_output, with_speaker_diarization)
+        else:
+            # Run in the current process (not recommended for production)
+            logger.info(f"Running transcription synchronously")
+            run_audio_transcription(capture_id, audio_path, model_size, save_output, with_speaker_diarization)
         
         return {
             "success": True,
@@ -231,7 +232,7 @@ async def get_transcription_results(
             content={"success": False, "error": str(e)}
         )
 
-def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = "medium", save_output: bool = True):
+def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = "medium", save_output: bool = True, with_speaker_diarization: bool = False):
     """
     Run audio transcription as a background task.
     """
@@ -257,6 +258,14 @@ def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = 
             "--model", model_size
         ]
         
+        # Add speaker diarization flag if requested
+        if with_speaker_diarization:
+            cmd.append("--diarize")
+            
+            # Check if we have a video path for this capture for facial recognition integration
+            if capture.video_path and os.path.exists(capture.video_path):
+                cmd.extend(["--video-path", capture.video_path])
+        
         logger.info(f"Running command: {' '.join(cmd)}")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
@@ -280,8 +289,22 @@ def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = 
                 "segments": transcription_data.get("segments", [])[:5],  # First 5 segments
                 "total_segments": len(transcription_data.get("segments", [])),
                 "audio_file": audio_path,
-                "model": model_size
+                "model": model_size,
+                "with_speaker_diarization": with_speaker_diarization
             }
+            
+            # If speaker diarization was performed, store the status
+            if with_speaker_diarization:
+                capture.speaker_diarization_status = "completed"
+                capture.speaker_diarization_completed_at = datetime.now()
+                
+                # Store speaker information if available
+                if "speakers" in transcription_data:
+                    summary["speakers"] = transcription_data.get("speakers", [])
+                    
+                # Store combined results if available
+                if "combined_results" in transcription_data:
+                    summary["combined_results"] = transcription_data.get("combined_results", {})
             
             # Update the capture record
             capture.transcription_status = "completed"

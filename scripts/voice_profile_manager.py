@@ -332,43 +332,70 @@ class VoiceProfileManager:
         Returns:
             Tuple[str, float]: Speaker name and confidence, or (None, 0.0) if no match
         """
-        if not self.known_voice_encodings:
-            logger.warning("No known voice encodings available for matching")
-            return None, 0.0
-        
         try:
-            # Import required libraries
-            try:
-                import torch
-                from scipy.spatial.distance import cosine
-                logger.info("Successfully imported required libraries for voice matching")
-            except ImportError as e:
-                logger.error(f"Failed to import required libraries: {e}")
-                return None, 0.0
-            
-            # Calculate cosine similarity with each known embedding
-            similarities = []
-            for known_embedding in self.known_voice_encodings:
-                # Calculate cosine similarity (1 - cosine distance)
-                similarity = 1.0 - cosine(embedding, known_embedding)
-                similarities.append(similarity)
-            
-            # Find the best match
-            if not similarities:
-                return None, 0.0
-                
-            best_idx = np.argmax(similarities)
-            best_similarity = similarities[best_idx]
-            
-            # Check if the similarity is above the threshold
-            if best_similarity >= threshold:
-                return self.known_voice_names[best_idx], float(best_similarity)
+            # Use match_voice_top_n and return the best match
+            top_matches = self.match_voice_top_n(embedding, n=1, threshold=threshold)
+            if top_matches:
+                return top_matches[0]["name"], top_matches[0]["confidence"]
             else:
-                return None, float(best_similarity)
+                return None, 0.0
             
         except Exception as e:
             logger.error(f"Error matching voice: {e}")
             return None, 0.0
+    
+    def match_voice_top_n(self, embedding: np.ndarray, n: int = 3, threshold: float = 0.7) -> List[Dict]:
+        """
+        Match a voice embedding with known voices and return top N matches.
+        
+        Args:
+            embedding: Voice embedding to match
+            n: Number of top matches to return
+            threshold: Similarity threshold (0-1)
+            
+        Returns:
+            List[Dict]: List of top N matches with name, confidence, and metadata
+        """
+        try:
+            # Check if we have any known voices
+            if not self.known_voice_names:
+                logger.warning("No known voice profiles available for matching")
+                return []
+            
+            # Import required libraries
+            try:
+                from scipy.spatial.distance import cosine
+                logger.info("Successfully imported required libraries for voice matching")
+            except ImportError as e:
+                logger.error(f"Failed to import required libraries: {e}")
+                return []
+            
+            # Calculate cosine similarity with each known embedding
+            similarities = []
+            for i, known_embedding in enumerate(self.known_voice_encodings):
+                # Calculate cosine similarity (1 - cosine distance)
+                similarity = 1.0 - cosine(embedding, known_embedding)
+                similarities.append((i, similarity))
+            
+            # Sort by similarity (highest first)
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            
+            # Get top N matches above threshold
+            top_matches = []
+            for i, similarity in similarities[:n]:
+                if similarity >= threshold:
+                    match = {
+                        "name": self.known_voice_names[i],
+                        "confidence": float(similarity),
+                        "metadata": self.known_voice_metadata[i] if i < len(self.known_voice_metadata) else {}
+                    }
+                    top_matches.append(match)
+            
+            return top_matches
+            
+        except Exception as e:
+            logger.error(f"Error matching voice top N: {e}")
+            return []
 
 def check_dependencies():
     """Check if required dependencies are installed."""
