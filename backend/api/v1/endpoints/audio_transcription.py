@@ -10,8 +10,9 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from pydantic import BaseModel
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
@@ -22,6 +23,128 @@ logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+class TranscriptionProgressInfo(BaseModel):
+    stage: Optional[str] = None
+    progress: Optional[int] = None
+    message: Optional[str] = None
+    estimated_completion: Optional[str] = None
+
+class TranscriptionResponse(BaseModel):
+    id: int
+    status: str
+    error: Optional[str] = None
+    results_available: bool = False
+    results_path: Optional[str] = None
+    progress: Optional[TranscriptionProgressInfo] = None
+
+def get_audio_path(capture_id: int, db: Session = None) -> Path:
+    """Get the audio file path for a capture"""
+    if db is None:
+        db = next(get_db())
+        
+    # Get the capture record
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail=f"Capture with ID {capture_id} not found")
+    
+    # Check if we have an audio file
+    audio_path = None
+    
+    # First try the audio path in the database
+    if hasattr(capture, 'audio_path') and capture.audio_path and os.path.exists(capture.audio_path):
+        audio_path = capture.audio_path
+        logger.info(f"Using audio path from database: {audio_path}")
+    
+    # If not found, try the standard audio extracts location
+    if not audio_path:
+        audio_path = f"/app/data/temp/audio_extracts/capture_{capture_id:04d}.audio.mp3"
+        if os.path.exists(audio_path):
+            logger.info(f"Using audio path from standard location: {audio_path}")
+        else:
+            # Try alternative format
+            audio_path = f"/app/data/temp/audio_extracts/capture_{capture_id}.audio.mp3"
+            if os.path.exists(audio_path):
+                logger.info(f"Using audio path from alternative location: {audio_path}")
+            else:
+                # Try raw audio files
+                for ext in ['.mp3', '.wav', '.m4a', '.aac']:
+                    test_path = f"/app/data/temp/capture_{capture_id:04d}{ext}"
+                    if os.path.exists(test_path):
+                        audio_path = test_path
+                        logger.info(f"Using raw audio file: {audio_path}")
+                        break
+    
+    if not audio_path:
+        raise HTTPException(status_code=404, detail=f"No audio file found for capture ID {capture_id}")
+    
+    return Path(audio_path)
+
+
+def get_capture_status(capture_id: int, db: Session = Depends(get_db)):
+    """Get the status of an audio transcription for a capture"""
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail=f"Capture with ID {capture_id} not found")
+    
+    # Check if transcription results are available
+    results_available = False
+    results_path = None
+    
+    if capture.transcription_status == "completed":
+        # Check if the transcription file exists
+        audio_path = get_audio_path(capture_id)
+        transcript_path = audio_path.with_suffix('.audio_transcript.txt')
+        
+        if transcript_path.exists():
+            results_available = True
+            results_path = str(transcript_path)
+    
+    # Check for progress information
+    progress_info = None
+    if capture.transcription_status == "processing":
+        audio_path = get_audio_path(capture_id)
+        progress_file_path = audio_path.with_suffix('.audio_transcript.meta.json.progress.json')
+        
+        if progress_file_path.exists():
+            try:
+                with open(progress_file_path, 'r') as f:
+                    progress_data = json.load(f)
+                    
+                # Calculate estimated completion time
+                estimated_completion = None
+                if 'timestamp' in progress_data and 'progress' in progress_data and progress_data['progress'] > 0:
+                    timestamp = datetime.fromisoformat(progress_data['timestamp'])
+                    progress_percent = progress_data['progress']
+                    
+                    if progress_percent > 0:
+                        # Estimate time remaining based on progress
+                        elapsed_time = datetime.now() - timestamp
+                        total_estimated_time = elapsed_time * (100 / progress_percent)
+                        remaining_time = total_estimated_time - elapsed_time
+                        
+                        # Only provide estimate if it's reasonable (less than 30 minutes)
+                        if remaining_time < timedelta(minutes=30):
+                            completion_time = datetime.now() + remaining_time
+                            estimated_completion = completion_time.isoformat()
+                
+                progress_info = TranscriptionProgressInfo(
+                    stage=progress_data.get('stage'),
+                    progress=progress_data.get('progress'),
+                    message=progress_data.get('message'),
+                    estimated_completion=estimated_completion
+                )
+            except Exception as e:
+                logger.error(f"Error reading progress file: {e}")
+    
+    return TranscriptionResponse(
+        id=capture_id,
+        status=capture.transcription_status or "not_started",
+        error=capture.transcription_error,
+        results_available=results_available,
+        results_path=results_path,
+        progress=progress_info
+    )
 
 @router.post("/transcribe")
 async def transcribe_audio(
@@ -124,18 +247,13 @@ async def transcribe_audio(
         # Run the transcription in the background
         if background_tasks:
             logger.info(f"Adding transcription task to background tasks")
-            background_tasks.add_task(run_audio_transcription, capture_id, audio_path, model_size, save_output, with_speaker_diarization)
+            background_tasks.add_task(run_audio_transcription, capture_id, model_size, with_speaker_diarization, db)
         else:
             # Run in the current process (not recommended for production)
             logger.info(f"Running transcription synchronously")
-            run_audio_transcription(capture_id, audio_path, model_size, save_output, with_speaker_diarization)
+            run_audio_transcription(capture_id, model_size, with_speaker_diarization, db)
         
-        return {
-            "success": True,
-            "message": f"Audio transcription started for capture ID: {capture_id}",
-            "status": "processing",
-            "audio_path": audio_path
-        }
+        return get_capture_status(capture_id, db)
         
     except Exception as e:
         logger.error(f"Error starting audio transcription: {str(e)}")
@@ -150,38 +268,7 @@ async def get_transcription_status(
     """
     Get the status of a transcription process for a specific capture.
     """
-    logger.info(f"Getting transcription status for capture ID: {capture_id}")
-    
-    # Get the capture from the database
-    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
-    if not capture:
-        return JSONResponse(
-            status_code=404,
-            content={"success": False, "error": f"Capture not found for ID {capture_id}"}
-        )
-    
-    # Get the transcription status
-    try:
-        status = {
-            "capture_id": capture_id,
-            "status": capture.transcription_status or "not_started",
-            "completed_at": capture.transcription_completed_at.isoformat() if capture.transcription_completed_at else None,
-            "has_results": bool(capture.transcription_results),
-            "transcription_path": capture.transcription_path
-        }
-    except AttributeError as e:
-        # Handle case where columns don't exist yet
-        logger.warning(f"Transcription status columns not available: {str(e)}")
-        status = {
-            "capture_id": capture_id,
-            "status": "not_started",
-            "completed_at": None,
-            "has_results": False,
-            "transcription_path": None,
-            "message": "Transcription tracking not fully set up in database"
-        }
-    
-    return {"success": True, "status": status}
+    return get_capture_status(capture_id, db)
 
 @router.get("/results/{capture_id}")
 async def get_transcription_results(
@@ -232,41 +319,73 @@ async def get_transcription_results(
             content={"success": False, "error": str(e)}
         )
 
-def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = "medium", save_output: bool = True, with_speaker_diarization: bool = False):
-    """
-    Run audio transcription as a background task.
-    """
-    db = next(get_db())
+def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diarization: bool, db: Session):
+    """Run the audio transcription process for a capture"""
     try:
-        # Get the capture record
+        # Get the capture
         capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
         if not capture:
             logger.error(f"Capture with ID {capture_id} not found")
             return
         
-        # Prepare the output path
-        output_dir = Path("/app/data/temp/audio_extracts")
-        output_dir.mkdir(exist_ok=True, parents=True)
-        output_file = output_dir / f"capture_{capture_id:04d}.audio_transcript.meta.json"
+        # Update status to processing
+        capture.transcription_status = "processing"
+        capture.transcription_error = None
+        db.commit()
+        
+        # Get paths
+        audio_path = get_audio_path(capture_id)
+        output_path = audio_path.with_suffix('.audio_transcript.meta.json')
+        
+        # Check if audio file exists
+        if not audio_path.exists():
+            logger.error(f"Audio file not found: {audio_path}")
+            capture.transcription_status = "error"
+            capture.transcription_error = f"Audio file not found: {audio_path}"
+            db.commit()
+            return
+        
+        # Get video path if available
+        video_path = None
+        if capture.video_path:
+            video_path = Path(capture.video_path)
+            if not video_path.exists():
+                logger.warning(f"Video file not found: {video_path}")
+                video_path = None
         
         # Run the transcription script
         cmd = [
-            "python",
-            "/app/scripts/audio_transcription.py",
-            audio_path,
-            "--output", str(output_file),
+            "python", "/app/scripts/audio_transcription.py",
+            str(audio_path),
+            "--output", str(output_path),
             "--model", model_size
         ]
         
-        # Add speaker diarization flag if requested
+        # Add speaker diarization if requested
         if with_speaker_diarization:
             cmd.append("--diarize")
             
-            # Check if we have a video path for this capture for facial recognition integration
-            if capture.video_path and os.path.exists(capture.video_path):
-                cmd.extend(["--video-path", capture.video_path])
+            # Add video path if available for facial recognition integration
+            if video_path:
+                cmd.extend(["--video-path", str(video_path)])
+            
+            # Add a reasonable timeout based on audio duration
+            # Get audio duration if available
+            timeout = 1800  # Default 30 minutes
+            try:
+                if hasattr(capture, 'duration') and capture.duration:
+                    # Set timeout to 10x the audio duration, with a minimum of 5 minutes
+                    # and maximum of 2 hours
+                    audio_duration = float(capture.duration)
+                    timeout = max(300, min(7200, int(audio_duration * 10)))
+                    logger.info(f"Setting timeout to {timeout}s based on audio duration of {audio_duration}s")
+            except Exception as e:
+                logger.warning(f"Error calculating timeout from duration: {e}")
+                
+            cmd.extend(["--timeout", str(timeout)])
         
-        logger.info(f"Running command: {' '.join(cmd)}")
+        # Run the command
+        logger.info(f"Running transcription command: {' '.join(cmd)}")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
         
@@ -279,7 +398,7 @@ def run_audio_transcription(capture_id: int, audio_path: str, model_size: str = 
         
         # Load the transcription results to store in the database
         try:
-            with open(output_file, 'r') as f:
+            with open(output_path, 'r') as f:
                 transcription_data = json.load(f)
                 
             # Store a summary in the database (full text and first few segments)

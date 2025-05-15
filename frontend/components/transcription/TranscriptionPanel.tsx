@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../utils/api';
+import { toast } from 'react-toastify';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface TranscriptionPanelProps {
   captureId: number;
@@ -45,26 +47,93 @@ interface CaptureData {
   speaker_diarization_completed_at?: string;
 }
 
+interface TranscriptionProgress {
+  stage?: string;
+  progress?: number;
+  message?: string;
+  estimated_completion?: string;
+}
+
+interface TranscriptionStatus {
+  id: number;
+  status: string;
+  error?: string;
+  results_available: boolean;
+  results_path?: string;
+  progress?: TranscriptionProgress;
+}
+
+interface CaptureData {
+  id: number;
+  name?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  audio_path?: string | null;
+  audio_file_path?: string | null;
+  video_path?: string | null;
+  duration?: number;
+  transcription_status?: string;
+  transcription_error?: string;
+  transcription_completed_at?: string;
+  transcription_results?: string;
+  speaker_diarization_status?: string;
+  speaker_diarization_completed_at?: string;
+}
+
 const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audioElement }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showTranscription, setShowTranscription] = useState(false);
-  const [transcriptionStatus, setTranscriptionStatus] = useState<string | undefined>(undefined);
   const [transcriptionResults, setTranscriptionResults] = useState<TranscriptionData | null>(null);
   const [selectedSegment, setSelectedSegment] = useState<number | null>(null);
 
-  console.log('TranscriptionPanel render state:', { isProcessing, showTranscription, transcriptionStatus });
-
-  // Fetch capture data to get transcription status
-  const { data: capture, isLoading, isError, error, refetch } = useQuery<CaptureData>({
+  // Fetch capture data
+  const { data: capture, isLoading: captureLoading, error: captureError, refetch } = useQuery<CaptureData>({
     queryKey: ['captureTranscription', captureId],
     queryFn: async () => {
       console.log(`Fetching capture data for ID: ${captureId}`);
       const response = await api.get(`/capture/${captureId}`);
       console.log('Capture API response:', response);
-      return response as CaptureData;
+      return response.data as CaptureData;
     },
-    refetchInterval: 30000, // Poll every 30 seconds
-    staleTime: 0, // Consider data always stale to ensure fresh data
+    enabled: !!captureId,
+    refetchInterval: 5000, // Poll every 5 seconds for better progress updates
+    staleTime: 0 // Consider data always stale to ensure fresh data
+  });
+
+  // Get authentication token
+  const { token } = useAuth();
+
+  // Fetch transcription status
+  const {
+    data: transcriptionStatus,
+    isLoading,
+    error,
+    refetch: refetchStatus
+  } = useQuery<TranscriptionStatus>({
+    queryKey: ['transcriptionStatus', captureId, token],
+    queryFn: async () => {
+      if (!captureId || !token) return null;
+      try {
+        // Use the same base URL as the successful capture API calls (port 8000)
+        const response = await fetch(`http://localhost:8000/api/v1/audio-transcription/status/${captureId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch transcription status: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('Error fetching transcription status:', error);
+        throw error;
+      }
+    },
+    enabled: !!captureId && !!token,
+    refetchInterval: 5000, // Poll every 5 seconds for better progress updates
+    refetchIntervalInBackground: true
   });
 
   // Helper function to format time in MM:SS format
@@ -83,202 +152,177 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
   };
 
   // Function to start the transcription process
-  const startTranscription = useCallback(async () => {
+  const startTranscription = async (withSpeakerDiarization: boolean = false) => {
     if (!captureId) return;
-    
-    // Don't start transcription if it's already completed or processing
-    if (transcriptionStatus === 'completed' || transcriptionStatus === 'processing' || isProcessing) {
-      console.log(`Transcription already ${transcriptionStatus}, not starting again`);
-      return;
-    }
-    
-    setIsProcessing(true);
-    setShowTranscription(true);
-    
-    console.log(`Starting transcription processing for capture ID: ${captureId}`);
-    
+
     try {
-      const response = await api.post('/audio-transcription/transcribe', {
-        capture_id: captureId,
-        model_size: "medium",
-        with_speaker_diarization: true // Enable speaker diarization
+      setIsProcessing(true);
+      const response = await fetch('http://localhost:8000/api/v1/audio-transcription/transcribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          capture_id: captureId,
+          model_size: 'medium',
+          with_speaker_diarization: withSpeakerDiarization
+        }),
       });
-      
-      console.log('Transcription process started:', response);
-      
-      // Refetch capture data to get updated status
+
+      if (!response.ok) {
+        throw new Error(`Failed to start transcription: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('Transcription started:', data);
+
+      // Start polling for status
       refetch();
-    } catch (error) {
-      console.error('Error starting transcription process:', error);
+      refetchStatus();
+    } catch (err) {
+      console.error('Error starting transcription:', err);
+      toast.error(`Failed to start transcription: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
       setIsProcessing(false);
     }
-  }, [captureId, refetch, transcriptionStatus, isProcessing]);
+  };
 
   // Process transcription mutation - used to start the transcription process
   const processMutation = useMutation({
-    mutationFn: startTranscription,
+    mutationFn: async () => {
+      return startTranscription(true);
+    },
     onSuccess: () => {
       console.log('Transcription processing started successfully');
     },
     onError: (error) => {
-      console.error('Error in transcription processing:', error);
-      setIsProcessing(false);
+      console.error('Error starting transcription:', error);
     }
   });
 
-  // Fetch transcription results when status is completed
+  // Fetch transcription results
   const fetchTranscriptionResults = useCallback(async () => {
-    if (!captureId || transcriptionStatus !== 'completed') return;
-    
-    try {
-      console.log(`Fetching transcription results for capture ID: ${captureId}`);
-      const response = await api.get(`/audio-transcription/results/${captureId}`);
-      console.log('Transcription results:', response);
-      
-      // Check for success and results in the response
-      if (response.success) {
-        // Check if results is available directly
-        if (response.results) {
-          console.log('Found results object in response:', response.results);
-          setTranscriptionResults(response.results);
-        } 
-        // Check if transcript is available directly in the response
-        else if (response.transcript) {
-          console.log('Found transcript directly in response:', response.transcript);
-          // Create a compatible results object with the transcript text
-          setTranscriptionResults({
-            text: response.transcript,
-            segments: [],
-            language: response.language || 'en'
-          });
-        }
-        // Check for transcript in the transcription field
-        else if (response.transcription && typeof response.transcription === 'object') {
-          console.log('Found transcription object:', response.transcription);
-          if (response.transcription.transcript) {
-            setTranscriptionResults({
-              text: response.transcription.transcript,
-              segments: [],
-              language: response.transcription.language || 'en'
-            });
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching transcription results:', error);
-    }
-  }, [captureId, transcriptionStatus]);
+    if (!captureId) return;
 
-  // Effect to update state based on capture data changes
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/audio-transcription/results/${captureId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch transcription results: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('Transcription results:', data);
+
+      if (data.success && data.results) {
+        setTranscriptionResults(data.results);
+        setShowTranscription(true);
+      } else {
+        toast.error('No transcription results available');
+      }
+    } catch (err) {
+      console.error('Error fetching transcription results:', err);
+      toast.error(`Failed to fetch transcription results: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [captureId]);
+
+  // Automatically fetch results when transcription is completed
   useEffect(() => {
-    if (capture) {
-      console.log('Capture data changed:', capture);
-      console.log('Current status in state:', { isProcessing, transcriptionStatus });
-      
-      // Check for transcription status
-      if (capture.transcription_status) {
-        console.log(`Setting transcription status to: ${capture.transcription_status}`);
-        setTranscriptionStatus(capture.transcription_status);
-        
-        // If status is completed or error, update the processing state
-        if (capture.transcription_status === 'completed' || capture.transcription_status === 'error') {
-          console.log(`Transcription process is ${capture.transcription_status}, updating UI state`);
-          setIsProcessing(false);
-          setShowTranscription(true);
-          
-          // Try to parse and set the transcription results if available
-          if (capture.transcription_results) {
-            console.log('Transcription results found, parsing...');
-            try {
-              // Parse the results if they're a string
-              const results = typeof capture.transcription_results === 'string' 
-                ? JSON.parse(capture.transcription_results)
-                : capture.transcription_results;
-              console.log('Parsed transcription results:', results);
-              
-              // Check for different possible structures of the transcription results
-              if (results.transcription && results.transcription.transcript) {
-                console.log('Found transcript in results.transcription.transcript');
-                // Create a compatible results object with the transcript text
-                setTranscriptionResults({
-                  text: results.transcription.transcript,
-                  segments: [],
-                  language: results.transcription.language || 'en'
-                });
-                return;
-              } else if (results.transcript) {
-                console.log('Found transcript directly in results');
-                // Create a compatible results object with the transcript text
-                setTranscriptionResults({
-                  text: results.transcript,
-                  segments: [],
-                  language: results.language || 'en'
-                });
-                return;
-              } else if (results.results_summary && results.results_summary.transcript_text) {
-                console.log('Found transcript in results_summary.transcript_text');
-                setTranscriptionResults({
-                  text: results.results_summary.transcript_text,
-                  segments: [],
-                  language: 'en'
-                });
-                return;
-              }
-              setTranscriptionResults(results);
-            } catch (e) {
-              console.error('Error parsing transcription results:', e);
-            }
-          } else {
-            // If no results in the capture data, fetch them separately
-            fetchTranscriptionResults();
-          }
-        } else if (capture.transcription_status === 'processing') {
-          // If status is processing, update the processing state
-          console.log('Transcription is still processing');
-          setIsProcessing(true);
-          setShowTranscription(true);
-        }
-      }
-      
-      // Check for transcription error
-      if (capture.transcription_error) {
-        console.log('Transcription error found:', capture.transcription_error);
-        setIsProcessing(false);
-        setTranscriptionStatus('error');
-        setShowTranscription(true);
-      }
-      
-      // Force update UI based on transcription_completed_at
-      if (capture.transcription_completed_at) {
-        console.log('Transcription has a completed timestamp:', capture.transcription_completed_at);
-        setIsProcessing(false);
-        setTranscriptionStatus('completed');
-        setShowTranscription(true);
-        
-        // Fetch results if we don't have them yet
-        if (!transcriptionResults) {
-          fetchTranscriptionResults();
-        }
-      }
-      
-      // Check if audio path exists
-      if (capture.audio_path === null && capture.audio_file_path === null) {
-        console.log('No audio path found in capture data');
-        setIsProcessing(false);
-        setTranscriptionStatus('error');
-        setShowTranscription(true);
+    if (transcriptionStatus && transcriptionStatus.status === 'completed' && 
+        transcriptionStatus.results_available && !transcriptionResults) {
+      console.log('Transcription completed, fetching results...');
+      fetchTranscriptionResults();
+    }
+  }, [transcriptionStatus, transcriptionResults, captureId, fetchTranscriptionResults]);
+
+  // Play specific segment when selected
+  useEffect(() => {
+    if (selectedSegment !== null && transcriptionResults && audioElement) {
+      const segment = transcriptionResults.segments[selectedSegment];
+      if (segment) {
+        console.log(`Playing segment ${selectedSegment} at ${segment.start}s`);
+        audioElement.currentTime = segment.start;
+        audioElement.play().catch(err => {
+          console.error('Error playing audio:', err);
+        });
       }
     }
-  }, [capture, isProcessing, transcriptionStatus, transcriptionResults, fetchTranscriptionResults]);
+  }, [selectedSegment, transcriptionResults, audioElement]);
+
+  // Render status message based on capture data
+  const renderCaptureStatusMessage = () => {
+    if (!capture) {
+      return null;
+    }
+
+    if (capture.transcription_error) {
+      return (
+        <div className="text-red-500 mb-2">
+          Error: {capture.transcription_error}
+        </div>
+      );
+    }
+
+    if (capture.transcription_completed_at) {
+      return (
+        <div className="text-green-500 mb-2">
+          Transcription completed at {new Date(capture.transcription_completed_at).toLocaleString()}
+        </div>
+      );
+    }
+
+    if (capture.transcription_status === 'processing') {
+      return (
+        <div className="text-blue-500 mb-2">
+          Transcription in progress...
+          <div className="text-sm text-gray-500 mt-2">
+            Checking for updates every 5 seconds...
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // Check if audio file is available
+  const isAudioAvailable = () => {
+    return capture && (capture.audio_path || capture.audio_file_path);
+  };
+
+  // Check if transcription is available
+  const isTranscriptionAvailable = () => {
+    return transcriptionStatus && transcriptionStatus.status === 'completed' && transcriptionResults !== null;
+  };
+
+  // Check if transcription is in progress
+  const isTranscriptionInProgress = () => {
+    return transcriptionStatus && transcriptionStatus.status === 'processing';
+  };
+
+  // Check if transcription has failed
+  const isTranscriptionFailed = () => {
+    return transcriptionStatus && transcriptionStatus.status === 'error';
+  };
+
+  // Check if transcription has not started
+  const isTranscriptionNotStarted = () => {
+    return !transcriptionStatus || transcriptionStatus.status === 'not_started';
+  };
 
   // Handle button click to start transcription process
   const handleStartTranscription = () => {
-    // Don't start if already processing or completed
-    if (isProcessing || transcriptionStatus === 'completed') {
+    if (isTranscriptionInProgress() || isTranscriptionAvailable()) {
       console.log('Not starting transcription - already processing or completed');
       return;
     }
-    processMutation.mutate();
+    
+    console.log('Starting transcription process...');
+    startTranscription(true); // Start with speaker diarization enabled
   };
 
   // State for search functionality and UI tabs
@@ -316,11 +360,170 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
     URL.revokeObjectURL(url);
   };
 
+  const renderProgressBar = (progress?: number) => {
+    if (progress === undefined) return null;
+    
+    return (
+      <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+        <div 
+          className="bg-blue-600 h-2.5 rounded-full" 
+          style={{ width: `${Math.min(100, progress)}%` }}
+        ></div>
+      </div>
+    );
+  };
+
+  const formatEstimatedTime = (isoString?: string) => {
+    if (!isoString) return null;
+    
+    try {
+      const estimatedTime = new Date(isoString);
+      const now = new Date();
+      const diffMs = estimatedTime.getTime() - now.getTime();
+      
+      if (diffMs <= 0) return "almost done";
+      
+      const diffMinutes = Math.round(diffMs / 60000);
+      if (diffMinutes < 1) return "less than a minute";
+      if (diffMinutes === 1) return "about 1 minute";
+      return `about ${diffMinutes} minutes`;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const getStageLabel = (stage?: string) => {
+    if (!stage) return "Processing";
+    
+    const stageLabels: Record<string, string> = {
+      "initializing": "Initializing",
+      "setup": "Setting up",
+      "voice_database": "Updating voice database",
+      "diarization": "Identifying speakers",
+      "fallback_diarization": "Using alternative speaker identification",
+      "speaker_matching": "Matching speakers",
+      "combining": "Combining results",
+      "facial_recognition": "Processing facial recognition",
+      "combining_video": "Combining audio and video data",
+      "fallback_combining": "Finalizing results",
+      "completed": "Completed",
+      "completed_with_errors": "Completed with some issues",
+      "error": "Error"
+    };
+    
+    return stageLabels[stage] || stage.charAt(0).toUpperCase() + stage.slice(1).replace(/_/g, ' ');
+  };
+
+  const renderStatus = () => {
+    if (!captureId) {
+      return <div className="text-gray-500">No capture selected</div>;
+    }
+
+    if (isLoading) {
+      return <div className="text-blue-500">Loading transcription status...</div>;
+    }
+
+    if (error) {
+      return <div className="text-red-500">Error: {error instanceof Error ? error.message : String(error)}</div>;
+    }
+
+    if (!transcriptionStatus) {
+      return <div className="text-gray-500">No transcription status available</div>;
+    }
+
+    if (transcriptionStatus.status === "error") {
+      return (
+        <div className="text-red-500">
+          Transcription failed: {transcriptionStatus.error || "Unknown error"}
+        </div>
+      );
+    }
+
+    if (transcriptionStatus.status === "processing") {
+      const progress = transcriptionStatus.progress;
+      const estimatedTimeRemaining = formatEstimatedTime(progress?.estimated_completion);
+      const stageLabel = getStageLabel(progress?.stage);
+      
+      return (
+        <div className="text-blue-500">
+          <div className="font-semibold mb-1">Transcription in progress</div>
+          {progress?.progress !== undefined && (
+            <div className="mb-2">
+              {renderProgressBar(progress.progress)}
+              <div className="text-sm flex justify-between">
+                <span>{stageLabel}: {progress.progress}%</span>
+                {estimatedTimeRemaining && (
+                  <span>Estimated time remaining: {estimatedTimeRemaining}</span>
+                )}
+              </div>
+            </div>
+          )}
+          {progress?.message && (
+            <div className="text-sm italic">{progress.message}</div>
+          )}
+          {!progress && (
+            <div className="text-sm">(checking status every 5 seconds)</div>
+          )}
+        </div>
+      );
+    }
+
+    if (transcriptionStatus.status === "completed" && transcriptionStatus.results_available) {
+      return (
+        <div className="text-green-500">
+          Transcription completed. Results available.
+        </div>
+      );
+    }
+
+    return <div className="text-gray-500">Status: {transcriptionStatus.status}</div>;
+  };
+
+  const handleCopyTranscription = () => {
+    if (transcriptionStatus && transcriptionStatus.status === 'completed' && transcriptionResults) {
+      navigator.clipboard.writeText(transcriptionResults.text)
+        .then(() => {
+          console.log('Transcription copied to clipboard');
+          toast.success('Transcription copied to clipboard');
+        })
+        .catch(err => {
+          console.error('Error copying to clipboard:', err);
+          toast.error('Failed to copy to clipboard');
+        });
+    }
+  };
+
+  const handleDownloadTranscription = () => {
+    if (transcriptionStatus && transcriptionStatus.status === 'completed' && transcriptionResults) {
+      // Create a blob with the transcription text
+      const blob = new Blob([transcriptionResults.text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create a temporary link and trigger download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcription_${captureId}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const handleViewTranscription = () => {
+    if (transcriptionStatus && transcriptionStatus.status === 'completed') {
+      fetchTranscriptionResults();
+      setShowTranscription(true);
+    }
+  };
+
   return (
     <div className="mt-6">
       <div className="flex justify-between items-center mb-3">
         <h3 className="text-lg font-medium">Audio Transcription</h3>
-        {transcriptionStatus === 'completed' && transcriptionResults && (
+        {transcriptionStatus && transcriptionStatus.status === 'completed' && transcriptionResults && (
           <button 
             onClick={exportTranscription}
             className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded flex items-center"
@@ -395,13 +598,26 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Refreshing status every 30 seconds...
+              Refreshing status every 5 seconds...
             </div>
           </div>
         </div>
       )}
       
-      {transcriptionStatus === 'completed' && transcriptionResults && (
+      {captureId && (
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm mb-4 overflow-hidden">
+          <div className="p-4 border-b border-gray-200 bg-gray-50">
+            <div className="flex justify-between items-center">
+              <h4 className="font-medium text-gray-800">Transcription Status</h4>
+            </div>
+          </div>
+          <div className="p-4">
+            {renderStatus()}
+          </div>
+        </div>
+      )}
+      
+      {transcriptionStatus && transcriptionStatus.status === 'completed' && transcriptionResults && (
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm mb-4 overflow-hidden">
           <div className="p-4 border-b border-gray-200 bg-gray-50">
             <div className="flex justify-between items-center">
@@ -567,7 +783,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         </div>
       )}
       
-      {transcriptionStatus === 'completed' && !transcriptionResults && (
+      {transcriptionStatus && transcriptionStatus.status === 'completed' && !transcriptionResults && (
         <div className="bg-yellow-50 p-6 rounded-lg border border-yellow-200 shadow-sm mb-4">
           <div className="flex items-start">
             <div className="bg-yellow-100 p-2 rounded-full mr-3">
@@ -594,7 +810,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         </div>
       )}
       
-      {transcriptionStatus === 'error' && (
+      {transcriptionStatus && transcriptionStatus.status === 'error' && (
         <div className="bg-red-50 p-6 rounded-lg border border-red-200 shadow-sm mb-4">
           <div className="flex items-start">
             <div className="bg-red-100 p-2 rounded-full mr-3">

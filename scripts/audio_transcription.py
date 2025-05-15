@@ -24,10 +24,13 @@ import json
 import argparse
 import logging
 import sys
+import time
+import signal
 from pathlib import Path
 from datetime import datetime
 import subprocess
 from typing import Dict, List, Optional, Any, Tuple
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # Set up logging
 logging.basicConfig(
@@ -142,7 +145,76 @@ def transcribe_audio(audio_file, output_file=None, model_size="medium"):
     
     return transcription
 
-def perform_speaker_diarization(audio_file, transcription, output_file=None, video_path=None):
+class TimeoutException(Exception):
+    """Exception raised when a function times out"""
+    pass
+
+def timeout_handler(signum, frame):
+    """Signal handler for timeouts"""
+    raise TimeoutException("Speaker diarization process timed out")
+
+def update_progress(progress_file, stage, progress, message=None):
+    """
+    Update the progress file with the current stage and progress percentage
+    
+    Args:
+        progress_file: Path to the progress file
+        stage: Current processing stage (e.g., 'diarization', 'speaker_matching')
+        progress: Progress percentage (0-100)
+        message: Optional status message
+    """
+    progress_data = {
+        "stage": stage,
+        "progress": progress,
+        "message": message,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    try:
+        with open(progress_file, 'w') as f:
+            json.dump(progress_data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error updating progress file: {e}")
+
+def run_with_timeout(func, args=None, kwargs=None, timeout_seconds=1800):
+    """
+    Run a function with a timeout
+    
+    Args:
+        func: Function to run
+        args: Arguments to pass to the function
+        kwargs: Keyword arguments to pass to the function
+        timeout_seconds: Timeout in seconds
+        
+    Returns:
+        Result of the function or None if it times out
+    """
+    if args is None:
+        args = []
+    if kwargs is None:
+        kwargs = {}
+    
+    result = [None]
+    exception = [None]
+    
+    def worker():
+        try:
+            result[0] = func(*args, **kwargs)
+        except Exception as e:
+            exception[0] = e
+    
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(worker)
+        try:
+            future.result(timeout=timeout_seconds)
+            if exception[0] is not None:
+                raise exception[0]
+            return result[0]
+        except TimeoutError:
+            logger.error(f"Function {func.__name__} timed out after {timeout_seconds} seconds")
+            raise TimeoutException(f"Function {func.__name__} timed out after {timeout_seconds} seconds")
+
+def perform_speaker_diarization(audio_file, transcription, output_file=None, video_path=None, max_duration=1800):
     """
     Perform speaker diarization on the audio file using the speaker diarization module.
     
@@ -151,10 +223,16 @@ def perform_speaker_diarization(audio_file, transcription, output_file=None, vid
         transcription: Transcription data
         output_file: Path to save the diarization results
         video_path: Optional path to the video file for facial recognition integration
+        max_duration: Maximum duration in seconds for the diarization process
         
     Returns:
         Dict with diarization results
     """
+    # Create a progress file in the same directory as the output file
+    progress_file = None
+    if output_file:
+        progress_file = Path(output_file).with_suffix('.progress.json')
+        update_progress(progress_file, "initializing", 0, "Starting speaker diarization")
     try:
         # Add the scripts directory to the path if needed
         script_dir = Path(__file__).parent.absolute()
@@ -167,28 +245,73 @@ def perform_speaker_diarization(audio_file, transcription, output_file=None, vid
             from voice_profile_manager import VoiceProfileManager
         except ImportError as e:
             logger.error(f"Failed to import speaker diarization modules: {e}")
+            if progress_file:
+                update_progress(progress_file, "error", 0, f"Failed to import speaker diarization modules: {e}")
             raise ImportError(f"Speaker diarization modules not available: {e}")
         
         logger.info(f"Performing speaker diarization on: {audio_file}")
+        if progress_file:
+            update_progress(progress_file, "setup", 10, "Initializing speaker diarizer")
         
         # Initialize the speaker diarizer
         diarizer = SpeakerDiarizer()
         
         # Update the voice database
         logger.info("Updating voice database...")
-        diarizer.update_voice_database()
+        if progress_file:
+            update_progress(progress_file, "voice_database", 20, "Updating voice database")
         
-        # Perform diarization
+        try:
+            diarizer.update_voice_database()
+        except Exception as e:
+            logger.warning(f"Error updating voice database, using fallback: {e}")
+            if progress_file:
+                update_progress(progress_file, "voice_database", 20, "Using fallback voice database")
+        
+        # Perform diarization with timeout
         logger.info("Running speaker diarization...")
+        if progress_file:
+            update_progress(progress_file, "diarization", 30, "Running speaker diarization")
+        
         audio_path = Path(audio_file)
-        diarization_results = diarizer.diarize_audio(audio_path)
+        try:
+            diarization_results = run_with_timeout(
+                diarizer.diarize_audio,
+                args=[audio_path],
+                timeout_seconds=max_duration/2  # Use half the max duration for this step
+            )
+        except TimeoutException as e:
+            logger.error(f"Speaker diarization timed out: {e}")
+            if progress_file:
+                update_progress(progress_file, "error", 30, f"Speaker diarization timed out after {max_duration/2} seconds")
+            # Use fallback diarization
+            logger.info("Using fallback diarization method")
+            if progress_file:
+                update_progress(progress_file, "fallback_diarization", 40, "Using fallback diarization method")
+            diarization_results = diarizer._fallback_diarization(audio_path)
         
         # Match speakers with known voices
         logger.info("Matching speakers with known voices...")
-        diarization_results = diarizer.match_speakers_with_known_voices(diarization_results)
+        if progress_file:
+            update_progress(progress_file, "speaker_matching", 60, "Matching speakers with known voices")
+        
+        try:
+            diarization_results = run_with_timeout(
+                diarizer.match_speakers_with_known_voices,
+                args=[diarization_results],
+                timeout_seconds=max_duration/4  # Use quarter of the max duration for this step
+            )
+        except TimeoutException as e:
+            logger.error(f"Speaker matching timed out: {e}")
+            if progress_file:
+                update_progress(progress_file, "error", 60, f"Speaker matching timed out after {max_duration/4} seconds")
+            # Continue with unmatched speakers
+            logger.info("Continuing with unmatched speakers")
         
         # Combine with transcription
         logger.info("Combining diarization with transcription...")
+        if progress_file:
+            update_progress(progress_file, "combining", 70, "Combining diarization with transcription")
         
         # Import the voice recognition service for combining results
         try:
@@ -201,32 +324,66 @@ def perform_speaker_diarization(audio_file, transcription, output_file=None, vid
             voice_service = VoiceRecognitionService()
             
             # Combine transcription with speakers
-            combined_results = voice_service.combine_transcription_with_speakers(
-                transcription, diarization_results
-            )
+            try:
+                combined_results = run_with_timeout(
+                    voice_service.combine_transcription_with_speakers,
+                    args=[transcription, diarization_results],
+                    timeout_seconds=max_duration/8  # Use eighth of the max duration for this step
+                )
+                if progress_file:
+                    update_progress(progress_file, "combining", 80, "Successfully combined transcription with speakers")
+            except TimeoutException as e:
+                logger.error(f"Combining transcription with speakers timed out: {e}")
+                if progress_file:
+                    update_progress(progress_file, "error", 70, f"Combining transcription with speakers timed out")
+                # Fall back to basic combination
+                raise Exception("Timeout during combination")
             
             # If video path is provided, try to combine with facial recognition
             if video_path and os.path.exists(video_path):
                 logger.info(f"Integrating with facial recognition from video: {video_path}")
+                if progress_file:
+                    update_progress(progress_file, "facial_recognition", 85, "Integrating with facial recognition")
+                
                 try:
                     # Get facial recognition results from the video
                     from services.recognition.facial_recognition import FacialRecognitionService
                     facial_service = FacialRecognitionService()
                     
-                    # Process video for facial recognition
-                    facial_results = facial_service.process_video(Path(video_path))
-                    
-                    # Combine audio and video recognition results
-                    if facial_results:
-                        logger.info("Combining audio and video recognition results...")
-                        combined_results = voice_service.combine_recognition_results(
-                            combined_results, facial_results
+                    # Process video for facial recognition with timeout
+                    try:
+                        facial_results = run_with_timeout(
+                            facial_service.process_video,
+                            args=[Path(video_path)],
+                            timeout_seconds=max_duration/8  # Use eighth of the max duration for this step
                         )
+                        
+                        # Combine audio and video recognition results
+                        if facial_results:
+                            logger.info("Combining audio and video recognition results...")
+                            if progress_file:
+                                update_progress(progress_file, "combining_video", 90, "Combining audio and video recognition results")
+                            
+                            combined_results = run_with_timeout(
+                                voice_service.combine_recognition_results,
+                                args=[combined_results, facial_results],
+                                timeout_seconds=max_duration/8  # Use eighth of the max duration for this step
+                            )
+                    except TimeoutException as e:
+                        logger.error(f"Facial recognition or combination timed out: {e}")
+                        if progress_file:
+                            update_progress(progress_file, "error", 85, f"Facial recognition integration timed out")
+                        # Continue without facial recognition
                 except Exception as e:
                     logger.error(f"Error in facial recognition integration: {e}")
+                    if progress_file:
+                        update_progress(progress_file, "error", 85, f"Error in facial recognition: {e}")
                     # Continue without facial recognition
         except Exception as e:
             logger.error(f"Error combining results: {e}")
+            if progress_file:
+                update_progress(progress_file, "fallback_combining", 75, f"Using fallback combination method: {e}")
+            
             # Fall back to basic combination
             combined_results = {
                 "audio_file": audio_file,
@@ -271,16 +428,23 @@ def perform_speaker_diarization(audio_file, transcription, output_file=None, vid
             with open(output_file, "w") as f:
                 json.dump(combined_results, f, indent=2)
             logger.info(f"Combined diarization results saved to: {output_file}")
+            
+            if progress_file:
+                update_progress(progress_file, "completed", 100, "Speaker diarization completed successfully")
         
         return combined_results
     
     except Exception as e:
         logger.error(f"Error in speaker diarization: {e}")
+        if progress_file:
+            update_progress(progress_file, "error", 50, f"Error in speaker diarization: {str(e)[:100]}")
+        
         # Fall back to basic speaker assignment
         diarization = {
             "audio_file": audio_file,
             "speakers": [],
-            "segments": []
+            "segments": [],
+            "error": str(e)
         }
         
         # Assign all segments to "Unknown Speaker"
@@ -304,6 +468,9 @@ def perform_speaker_diarization(audio_file, transcription, output_file=None, vid
             with open(output_file, "w") as f:
                 json.dump(diarization, f, indent=2)
             logger.info(f"Fallback diarization saved to: {output_file}")
+            
+            if progress_file:
+                update_progress(progress_file, "completed_with_errors", 100, "Speaker diarization completed with errors, using fallback")
         
         return diarization
 
@@ -316,6 +483,7 @@ def main():
     parser.add_argument("--diarize", action="store_true", help="Perform speaker diarization")
     parser.add_argument("--diarize-output", help="Path to save the diarization results")
     parser.add_argument("--video-path", help="Path to the video file for facial recognition integration")
+    parser.add_argument("--timeout", type=int, default=1800, help="Maximum duration in seconds for the diarization process")
     
     args = parser.parse_args()
     
