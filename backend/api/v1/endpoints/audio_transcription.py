@@ -427,7 +427,7 @@ def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diari
             
             # Update the capture record
             capture.transcription_status = "completed"
-            capture.transcription_path = str(output_file)
+            capture.transcription_path = str(output_path)
             capture.transcription_completed_at = datetime.now()
             capture.transcription_results = json.dumps(summary)
             db.commit()

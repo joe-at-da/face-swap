@@ -135,6 +135,7 @@ def transcribe_audio(audio_file, output_file=None, model_size="medium"):
     }
     
     # Save the results to a file if specified
+    output_path = None
     if output_file:
         output_path = Path(output_file)
         output_path.parent.mkdir(exist_ok=True, parents=True)
