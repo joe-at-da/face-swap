@@ -789,7 +789,7 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
                           )}
                         </div>
                       )}
-                      <p className="text-sm text-gray-800">
+                      <p className="text-sm text-blue-100">
                         {searchQuery ? (
                           <span dangerouslySetInnerHTML={{
                             __html: segment.text.replace(
@@ -829,16 +829,16 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
             
             {/* Full Text view */}
             {activeTab === 'fullText' && transcriptionResults && (
-              <div className="bg-white rounded-lg border border-gray-200 p-4 max-h-[500px] overflow-y-auto">
+              <div className="bg-gray-800 rounded-lg border border-gray-600 p-4 max-h-[500px] overflow-y-auto">
                 {searchQuery && transcriptionResults.text ? (
-                  <div className="text-sm text-gray-800 whitespace-pre-wrap" dangerouslySetInnerHTML={{
+                  <div className="text-sm text-blue-100 whitespace-pre-wrap" dangerouslySetInnerHTML={{
                     __html: transcriptionResults.text.replace(
                       new RegExp(`(${searchQuery})`, 'gi'),
                       '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>'
                     )
                   }} />
                 ) : (
-                  <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                  <div className="text-sm text-blue-100 whitespace-pre-wrap">
                     {transcriptionResults.text || 'No transcript text available.'}
                   </div>
                 )}
