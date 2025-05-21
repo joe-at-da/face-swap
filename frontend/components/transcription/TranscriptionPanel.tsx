@@ -792,12 +792,13 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
                           {Math.round((segment.end - segment.start) * 10) / 10}s
                         </span>
                       </div>
-                      {segment.speaker_name && (
+                      {/* Speaker information - show even if only speaker ID is available */}
+                      {(segment.speaker_name || segment.speaker) && (
                         <div className="flex items-center mb-2">
                           <div 
                             className={`px-2 py-1 rounded-full text-xs font-medium mr-2 ${segment.matched_with_video ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}
                           >
-                            {segment.speaker_name}
+                            {segment.speaker_name || `Speaker ${segment.speaker || 'Unknown'}`}
                             {segment.speaker_confidence && segment.speaker_confidence > 0.7 && (
                               <span className="ml-1 text-xs">✓</span>
                             )}
@@ -810,6 +811,14 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
                               Video match
                             </span>
                           )}
+                        </div>
+                      )}
+                      {/* If no speaker info but diarization was enabled, show a generic label */}
+                      {!segment.speaker_name && !segment.speaker && withDiarization && transcriptionStatus?.status === 'completed' && (
+                        <div className="flex items-center mb-2">
+                          <div className="px-2 py-1 rounded-full text-xs font-medium mr-2 bg-gray-100 text-gray-800">
+                            Speaker {index + 1}
+                          </div>
                         </div>
                       )}
                       <p className="text-sm text-blue-100">

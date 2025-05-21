@@ -231,217 +231,150 @@ def perform_speaker_diarization(audio_file, transcription, output_file=None, vid
         audio_file: Path to the audio file
         transcription: Transcription data
         output_file: Path to save the diarization results
-        video_path: Optional path to the video file for facial recognition integration
+        video_path: Path to the video file for facial recognition integration
         max_duration: Maximum duration in seconds for the diarization process
         
     Returns:
         Dict with diarization results
     """
-    # Create a progress file in the same directory as the output file
+    # Import our speaker diarizer
+    try:
+        from backend.utils.speaker_diarizer import SpeakerDiarizer
+    except ImportError:
+        logger.error("Could not import SpeakerDiarizer. Make sure the module is installed.")
+        # Return the original transcription without diarization
+        return transcription
+    
+    # Create a progress file if output_file is specified
     progress_file = None
     if output_file:
-        progress_file = Path(output_file).with_suffix('.progress.json')
-        update_progress(progress_file, "initializing", 0, "Starting speaker diarization")
+        progress_file = str(Path(output_file).with_suffix('.progress.json'))
+        update_progress(progress_file, "initializing", 0, "Initializing speaker diarization")
+    
     try:
-        # Add the scripts directory to the path if needed
-        script_dir = Path(__file__).parent.absolute()
-        if str(script_dir) not in sys.path:
-            sys.path.append(str(script_dir))
-        
-        # Import the speaker diarization module
-        try:
-            from speaker_diarization import SpeakerDiarizer
-            from voice_profile_manager import VoiceProfileManager
-        except ImportError as e:
-            logger.error(f"Failed to import speaker diarization modules: {e}")
-            if progress_file:
-                update_progress(progress_file, "error", 0, f"Failed to import speaker diarization modules: {e}")
-            raise ImportError(f"Speaker diarization modules not available: {e}")
-        
-        logger.info(f"Performing speaker diarization on: {audio_file}")
+        logger.info("Starting speaker diarization...")
         if progress_file:
-            update_progress(progress_file, "setup", 10, "Initializing speaker diarizer")
+            update_progress(progress_file, "processing", 10, "Processing audio for speaker diarization")
         
         # Initialize the speaker diarizer
         diarizer = SpeakerDiarizer()
         
-        # Update the voice database
-        logger.info("Updating voice database...")
+        # Check if we have any voice profiles
+        if not diarizer.known_embeddings:
+            logger.warning("No voice profiles found. Skipping diarization.")
+            return transcription
+        
         if progress_file:
-            update_progress(progress_file, "voice_database", 20, "Updating voice database")
+            update_progress(progress_file, "identifying_speakers", 30, "Identifying speakers")
         
-        try:
-            diarizer.update_voice_database()
-        except Exception as e:
-            logger.warning(f"Error updating voice database, using fallback: {e}")
-            if progress_file:
-                update_progress(progress_file, "voice_database", 20, "Using fallback voice database")
+        # Perform diarization using our speaker diarizer
+        diarization = run_with_timeout(
+            diarizer.diarize,
+            args=[audio_file, transcription, video_path],
+            timeout_seconds=max_duration
+        )
         
-        # Perform diarization with timeout
-        logger.info("Running speaker diarization...")
-        if progress_file:
-            update_progress(progress_file, "diarization", 30, "Running speaker diarization")
+        if diarization is None:
+            logger.error(f"Speaker diarization timed out after {max_duration} seconds")
+            # Return the original transcription without diarization
+            return transcription
         
-        audio_path = Path(audio_file)
-        try:
-            diarization_results = run_with_timeout(
-                diarizer.diarize_audio,
-                args=[audio_path],
-                timeout_seconds=max_duration/2  # Use half the max duration for this step
-            )
-        except TimeoutException as e:
-            logger.error(f"Speaker diarization timed out: {e}")
-            if progress_file:
-                update_progress(progress_file, "error", 30, f"Speaker diarization timed out after {max_duration/2} seconds")
-            # Use fallback diarization
-            logger.info("Using fallback diarization method")
-            if progress_file:
-                update_progress(progress_file, "fallback_diarization", 40, "Using fallback diarization method")
-            diarization_results = diarizer._fallback_diarization(audio_path)
+        # Extract unique speakers from the segments
+        speakers = []
+        speaker_ids = set()
         
-        # Match speakers with known voices
-        logger.info("Matching speakers with known voices...")
-        if progress_file:
-            update_progress(progress_file, "speaker_matching", 60, "Matching speakers with known voices")
+        for segment in diarization.get("segments", []):
+            if "speaker" in segment and segment["speaker"].get("id") is not None:
+                speaker_id = segment["speaker"]["id"]
+                if speaker_id not in speaker_ids:
+                    speaker_ids.add(speaker_id)
+                    speakers.append({
+                        "id": speaker_id,
+                        "name": segment["speaker"]["name"],
+                        "role": segment["speaker"].get("role", ""),
+                        "party": segment["speaker"].get("party", "")
+                    })
         
-        try:
-            diarization_results = run_with_timeout(
-                diarizer.match_speakers_with_known_voices,
-                args=[diarization_results],
-                timeout_seconds=max_duration/4  # Use quarter of the max duration for this step
-            )
-        except TimeoutException as e:
-            logger.error(f"Speaker matching timed out: {e}")
-            if progress_file:
-                update_progress(progress_file, "error", 60, f"Speaker matching timed out after {max_duration/4} seconds")
-            # Continue with unmatched speakers
-            logger.info("Continuing with unmatched speakers")
+        # Add unknown speaker if needed
+        if "Unknown Speaker" not in [s["name"] for s in speakers]:
+            speakers.append({
+                "id": "unknown",
+                "name": "Unknown Speaker",
+                "role": "",
+                "party": ""
+            })
         
-        # Combine with transcription
-        logger.info("Combining diarization with transcription...")
-        if progress_file:
-            update_progress(progress_file, "combining", 70, "Combining diarization with transcription")
+        # Add speakers to the diarization results
+        diarization["speakers"] = speakers
         
-        # Import the voice recognition service for combining results
-        try:
-            # Add the backend directory to the path
-            backend_dir = script_dir.parent / "backend"
-            if str(backend_dir) not in sys.path:
-                sys.path.append(str(backend_dir))
-                
-            from services.recognition.voice_recognition import VoiceRecognitionService
-            voice_service = VoiceRecognitionService()
+        # Add combined results for easier processing
+        combined_results = {
+            "transcript": diarization.get("text", ""),
+            "speakers": speakers,
+            "segments": []
+        }
+        
+        # Combine segments by speaker for easier reading
+        current_speaker_id = None
+        current_text = ""
+        current_start = 0
+        current_end = 0
+        
+        for segment in diarization.get("segments", []):
+            speaker_info = segment.get("speaker", {})
+            speaker_id = speaker_info.get("id")
             
-            # Combine transcription with speakers
-            try:
-                combined_results = run_with_timeout(
-                    voice_service.combine_transcription_with_speakers,
-                    args=[transcription, diarization_results],
-                    timeout_seconds=max_duration/8  # Use eighth of the max duration for this step
-                )
-                if progress_file:
-                    update_progress(progress_file, "combining", 80, "Successfully combined transcription with speakers")
-            except TimeoutException as e:
-                logger.error(f"Combining transcription with speakers timed out: {e}")
-                if progress_file:
-                    update_progress(progress_file, "error", 70, f"Combining transcription with speakers timed out")
-                # Fall back to basic combination
-                raise Exception("Timeout during combination")
-            
-            # If video path is provided, try to combine with facial recognition
-            if video_path and os.path.exists(video_path):
-                logger.info(f"Integrating with facial recognition from video: {video_path}")
-                if progress_file:
-                    update_progress(progress_file, "facial_recognition", 85, "Integrating with facial recognition")
-                
-                try:
-                    # Get facial recognition results from the video
-                    from services.recognition.facial_recognition import FacialRecognitionService
-                    facial_service = FacialRecognitionService()
-                    
-                    # Process video for facial recognition with timeout
-                    try:
-                        facial_results = run_with_timeout(
-                            facial_service.process_video,
-                            args=[Path(video_path)],
-                            timeout_seconds=max_duration/8  # Use eighth of the max duration for this step
-                        )
-                        
-                        # Combine audio and video recognition results
-                        if facial_results:
-                            logger.info("Combining audio and video recognition results...")
-                            if progress_file:
-                                update_progress(progress_file, "combining_video", 90, "Combining audio and video recognition results")
-                            
-                            combined_results = run_with_timeout(
-                                voice_service.combine_recognition_results,
-                                args=[combined_results, facial_results],
-                                timeout_seconds=max_duration/8  # Use eighth of the max duration for this step
-                            )
-                    except TimeoutException as e:
-                        logger.error(f"Facial recognition or combination timed out: {e}")
-                        if progress_file:
-                            update_progress(progress_file, "error", 85, f"Facial recognition integration timed out")
-                        # Continue without facial recognition
-                except Exception as e:
-                    logger.error(f"Error in facial recognition integration: {e}")
-                    if progress_file:
-                        update_progress(progress_file, "error", 85, f"Error in facial recognition: {e}")
-                    # Continue without facial recognition
-        except Exception as e:
-            logger.error(f"Error combining results: {e}")
-            if progress_file:
-                update_progress(progress_file, "fallback_combining", 75, f"Using fallback combination method: {e}")
-            
-            # Fall back to basic combination
-            combined_results = {
-                "audio_file": audio_file,
-                "speakers": diarization_results.get("speakers", []),
-                "segments": []
-            }
-            
-            # Combine segments from transcription with speaker info
-            for segment in transcription["segments"]:
-                segment_start = segment["start"]
-                segment_end = segment["end"]
-                
-                # Find matching diarization segment
-                speaker_id = None
-                speaker_name = None
-                
-                for diar_segment in diarization_results.get("segments", []):
-                    # Check for overlap
-                    if (diar_segment["start"] <= segment_end and 
-                        diar_segment["end"] >= segment_start):
-                        speaker_id = diar_segment.get("speaker")
-                        break
-                
-                # Find speaker name if we have an ID
-                if speaker_id:
-                    for speaker in diarization_results.get("speakers", []):
-                        if speaker.get("id") == speaker_id:
-                            speaker_name = speaker.get("name")
-                            break
-                
-                # Add the combined segment
+            if current_speaker_id is None:
+                # First segment
+                current_speaker_id = speaker_id
+                current_text = segment.get("text", "")
+                current_start = segment.get("start", 0)
+                current_end = segment.get("end", 0)
+            elif speaker_id == current_speaker_id:
+                # Same speaker, combine segments
+                current_text += " " + segment.get("text", "")
+                current_end = segment.get("end", current_end)
+            else:
+                # New speaker, add the previous combined segment
+                speaker_name = next((s["name"] for s in speakers if s["id"] == current_speaker_id), "Unknown Speaker")
                 combined_results["segments"].append({
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "text": segment["text"],
-                    "speaker": speaker_id or "unknown",
-                    "speaker_name": speaker_name or "Unknown Speaker"
+                    "speaker_id": current_speaker_id,
+                    "speaker_name": speaker_name,
+                    "text": current_text,
+                    "start": current_start,
+                    "end": current_end
                 })
+                
+                # Start a new combined segment
+                current_speaker_id = speaker_id
+                current_text = segment.get("text", "")
+                current_start = segment.get("start", 0)
+                current_end = segment.get("end", 0)
+        
+        # Add the last combined segment
+        if current_speaker_id is not None:
+            speaker_name = next((s["name"] for s in speakers if s["id"] == current_speaker_id), "Unknown Speaker")
+            combined_results["segments"].append({
+                "speaker_id": current_speaker_id,
+                "speaker_name": speaker_name,
+                "text": current_text,
+                "start": current_start,
+                "end": current_end
+            })
+        
+        # Add the combined results to the diarization
+        diarization["combined_results"] = combined_results
         
         # Save the results to a file if specified
         if output_file:
             with open(output_file, "w") as f:
-                json.dump(combined_results, f, indent=2)
+                json.dump(diarization, f, indent=2)
             logger.info(f"Combined diarization results saved to: {output_file}")
             
             if progress_file:
                 update_progress(progress_file, "completed", 100, "Speaker diarization completed successfully")
         
-        return combined_results
+        return diarization
     
     except Exception as e:
         logger.error(f"Error in speaker diarization: {e}")

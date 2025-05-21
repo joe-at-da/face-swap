@@ -241,14 +241,23 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Advanced search with full-text capabilities for clips and transcriptions
    - Batch processing functionality for operations on multiple clips
    - Enhanced transcription features:
-     - Automatic speaker diarization
-     - Transcription editing interface
-     - Transcription export to additional formats (SRT, TXT, DOCX)
-     - Real-time transcription updates during streaming
-     - Advanced search within transcriptions
-     - Custom parliamentary vocabulary for improved accuracy
-     - Multi-language support with automatic language detection
-     - Transcript comparison and version history
+     - ✅ Basic transcription with Whisper integration
+     - ✅ Transcription export to TXT format
+     - ✅ Basic speaker diarization infrastructure
+     - ✅ Speaker identification system:
+       - ✅ Backend implementation complete with audio-based speaker separation
+       - ✅ UI toggle for enabling speaker identification
+       - ✅ Voice profile database structure established
+       - ✅ Voice profile management interface for adding and managing speaker profiles
+       - ✅ Audio sample upload and management for voice profiles
+       - ✅ Integration with facial recognition for improved accuracy
+     - 🏗️ Transcription editing interface
+     - 🏗️ Additional export formats (SRT, JSON, DOCX)
+     - 🏗️ Real-time transcription updates during streaming
+     - 🏗️ Advanced search within transcriptions
+     - 🏗️ Custom parliamentary vocabulary for improved accuracy
+     - 🏗️ Multi-language support with automatic language detection
+     - 🏗️ Transcript comparison and version history
 
 #### 5. Documentation & Training
    - ✅ Comprehensive README with troubleshooting guide

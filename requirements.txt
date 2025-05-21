@@ -37,6 +37,7 @@ torchaudio==2.6.0
 scipy==1.12.0
 speechbrain==0.5.15
 yt-dlp==2023.11.16
+pydub==0.25.1
 
 # Cloud Storage
 boto3==1.29.3
