@@ -970,10 +970,17 @@ class ParliamentTVCapture:
                             audio_url = None
                             
                             # Try to derive audio URL from video URL
-                            if isinstance(video_url, str) and 'video=' in video_url and '.m3u8' in video_url:
-                                # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                            if isinstance(video_url, str) and '.m3u8' in video_url:
                                 import re
-                                audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                                # Handle different video URL formats
+                                if 'video=' in video_url:
+                                    # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                                    audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                                    logger.info(f"Derived audio URL from video URL using video= pattern: {audio_url}")
+                                elif re.search(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', video_url):
+                                    # For URLs like .../video-1920x1080p25-3000/index.m3u8, use the audio-eng-aaclc160 format
+                                    audio_url = re.sub(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', 'audio-eng-aaclc160', video_url)
+                                    logger.info(f"Derived audio URL from video URL using resolution pattern: {audio_url}")
                                 logger.info(f"Derived audio URL from video URL: {audio_url}")
                     else:
                         # No direct_stream key, assume the URL is already the direct stream URL
@@ -981,10 +988,17 @@ class ParliamentTVCapture:
                         audio_url = None
                         
                         # Try to derive audio URL from video URL
-                        if isinstance(video_url, str) and 'video=' in video_url and '.m3u8' in video_url:
-                            # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                        if isinstance(video_url, str) and '.m3u8' in video_url:
                             import re
-                            audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                            # Handle different video URL formats
+                            if 'video=' in video_url:
+                                # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                                audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                                logger.info(f"Derived audio URL from video URL using video= pattern: {audio_url}")
+                            elif re.search(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', video_url):
+                                # For URLs like .../video-1920x1080p25-3000/index.m3u8, use the audio-eng-aaclc160 format
+                                audio_url = re.sub(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', 'audio-eng-aaclc160', video_url)
+                                logger.info(f"Derived audio URL from video URL using resolution pattern: {audio_url}")
                             logger.info(f"Derived audio URL from video URL: {audio_url}")
                     
                     # Get event ID
@@ -1412,8 +1426,18 @@ class ParliamentTVCapture:
                     if 'audio-eng' in video_url:
                         potential_audio_url = video_url
                     else:
+                        # Handle different video URL formats for Parliament TV
+                        import re
+                        
                         # For URLs like .../video-1920x1080p25-3000/index.m3u8, use the audio-eng-aaclc160 format
-                        potential_audio_url = video_url.replace('video-1920x1080p25-3000', 'audio-eng-aaclc160')
+                        if re.search(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', video_url):
+                            # Use regex to match any resolution and bitrate pattern
+                            potential_audio_url = re.sub(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', 'audio-eng-aaclc160', video_url)
+                            logger.info(f"Matched video-resolution-bitrate pattern and replaced with audio-eng-aaclc160")
+                        else:
+                            # Fallback to the original replacement for backward compatibility
+                            potential_audio_url = video_url.replace('video-1920x1080p25-3000', 'audio-eng-aaclc160')
+                            logger.info(f"Using fallback replacement for audio URL")
                         
                     # Don't add eng= parameter as it's not needed with the correct path
                     audio_urls.append(potential_audio_url)
