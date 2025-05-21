@@ -793,6 +793,167 @@ class ParliamentTVCapture:
             logger.error(f"Failed to start capture: {str(e)}")
             return {"success": False, "error": f"Failed to start capture: {str(e)}"}
     
+    def start_synchronized_capture(self, url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> Dict:
+        """
+        Start capturing a Parliament TV video and audio stream simultaneously to ensure perfect synchronization.
+        
+        This method extracts both audio and video streams at the same time with identical start position and duration
+        parameters to ensure perfect synchronization. It also monitors and reports progress throughout the extraction.
+        """
+        logger.info(f"Starting synchronized capture for URL: {url}, capture_id: {capture_id}")
+        logger.info(f"Scheduled start: {scheduled_start}, Scheduled end: {scheduled_end}")
+        
+        try:
+            # Get a database session
+            db = next(get_db())
+            
+            # Get the capture from the database
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not db_capture:
+                error_msg = f"Capture {capture_id} not found in database"
+                logger.error(error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Extract the stream URL
+            stream_info = self.extract_stream_url(url)
+            if "error" in stream_info:
+                error_msg = f"Failed to extract stream URL: {stream_info['error']}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Get the video and audio URLs
+            video_url = stream_info.get("video_url")
+            audio_url = stream_info.get("audio_url")
+            
+            logger.info(f"Stream info: {stream_info}")
+            
+            # Verify we have a valid video URL for video capture
+            if not video_url:
+                # If we don't have a video URL but we have the original URL, check if it's a video URL
+                if "original_url" in stream_info and stream_info["original_url"] and "video" in stream_info["original_url"].lower():
+                    logger.warning(f"No video_url found in stream_info, using original URL")
+                    video_url = stream_info["original_url"]
+                else:
+                    error_msg = f"No video URL found in stream info: {stream_info}"
+                    logger.error(error_msg)
+                    self.log_capture(db, capture_id, "error", error_msg)
+                    return {"success": False, "error": error_msg}
+            
+            # Determine start position based on time marker
+            start_position = None
+            
+            # Check for time marker in stream_info
+            if "time_marker" in stream_info:
+                if isinstance(stream_info["time_marker"], dict) and "seconds" in stream_info["time_marker"]:
+                    start_position = stream_info["time_marker"]["seconds"]
+                    logger.info(f"Using time marker from stream_info: {start_position} seconds")
+                elif isinstance(stream_info["time_marker"], (int, float)):
+                    # Handle direct seconds value
+                    time_marker_seconds = stream_info["time_marker"]
+                    if time_marker_seconds > 0:
+                        start_position = time_marker_seconds
+                        logger.info(f"Using direct seconds time marker: {start_position} seconds")
+                else:
+                    logger.warning(f"Unknown time marker format: {stream_info['time_marker']}")
+            else:
+                logger.info("No time marker found in stream_info")
+            
+            # Store the stream info in the metadata
+            try:
+                # Create a metadata dictionary with the stream info
+                metadata = {
+                    "video_url": video_url,
+                    "audio_url": audio_url,
+                    "time_marker": stream_info.get("time_marker"),
+                    "original_url": stream_info.get("original_url"),
+                    "duration": duration
+                }
+                
+                # Update the capture record
+                db_capture.metadata = metadata
+                db_capture.status = "active"
+                db_capture.start_time = datetime.now()
+                db_capture.end_time = None
+                
+                db.commit()
+                logger.info(f"Stored metadata in database: {metadata}")
+            except Exception as e:
+                logger.error(f"Failed to store metadata in database: {str(e)}")
+            
+            # Start the synchronized extraction process
+            logger.info(f"Starting synchronized extraction for capture {capture_id}")
+            extraction_result = self.synchronized_extract(db, capture_id, start_position, duration)
+            
+            # Check if extraction was successful
+            if not extraction_result.get('success', False):
+                error_msg = f"Synchronized extraction failed: {extraction_result.get('error', 'Unknown error')}"
+                logger.error(error_msg)
+                self.log_capture(db, capture_id, "error", error_msg)
+                return {"success": False, "error": error_msg}
+            
+            # Update the capture record with the results
+            try:
+                db_capture.video_path = extraction_result.get('video_path')
+                db_capture.audio_path = extraction_result.get('audio_path')
+                db_capture.audio_file_path = extraction_result.get('audio_path')
+                db_capture.status = "completed"
+                db_capture.end_time = datetime.now()
+                
+                # Update metadata with extraction results
+                db_capture.metadata = {
+                    **(db_capture.metadata or {}),
+                    "extraction_completed_at": datetime.now().isoformat(),
+                    "video_success": extraction_result.get('video_success', False),
+                    "audio_success": extraction_result.get('audio_success', False),
+                    "video_path": extraction_result.get('video_path'),
+                    "audio_path": extraction_result.get('audio_path'),
+                    "start_position": extraction_result.get('start_position'),
+                    "duration": extraction_result.get('duration')
+                }
+                
+                db.commit()
+                logger.info(f"Updated capture record with extraction results")
+            except Exception as e:
+                logger.error(f"Failed to update capture record: {str(e)}")
+            
+            # Log the capture completion
+            self.log_capture(db, capture_id, "info", f"Completed synchronized capture for URL: {url}")
+            
+            return {
+                "success": True,
+                "message": f"Synchronized capture {capture_id} completed successfully",
+                "video_path": extraction_result.get('video_path'),
+                "audio_path": extraction_result.get('audio_path'),
+                "video_url": video_url,
+                "audio_url": audio_url
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to start synchronized capture: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {"success": False, "error": f"Failed to start synchronized capture: {str(e)}"}
+    
+    def start_synchronized_capture_async(self, url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> bool:
+        """Start synchronized capturing of Parliament TV audio and video streams asynchronously."""
+        logger.info(f"Starting async synchronized capture for URL: {url}, capture_id: {capture_id}")
+        
+        try:
+            # Start the synchronized capture in a separate thread
+            import threading
+            thread = threading.Thread(
+                target=self.start_synchronized_capture,
+                args=(url, capture_id, duration, scheduled_start, scheduled_end)
+            )
+            thread.daemon = True
+            thread.start()
+            logger.info(f"Started synchronized capture in background thread for capture {capture_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start async synchronized capture: {str(e)}")
+            return False
+    
     def start_capture_async(self, url: str, capture_id: int, duration: int = 1800, scheduled_start=None, scheduled_end=None) -> bool:
         """Start capturing a Parliament TV stream asynchronously."""
         logger.info(f"Starting async capture for URL: {url}, capture_id: {capture_id}")
@@ -1353,6 +1514,348 @@ class ParliamentTVCapture:
         
         return cmd
         
+    def synchronized_extract(self, db: Session, capture_id: int, start_position=None, duration=None) -> Dict:
+        """Extract audio and video simultaneously from Parliament TV to ensure perfect synchronization.
+        
+        This method runs two FFmpeg processes in parallel with identical start position and duration parameters
+        to ensure that audio and video are perfectly synchronized. It also monitors and reports progress.
+        """
+        logger.info(f"========== STARTING SYNCHRONIZED EXTRACTION for capture {capture_id} ===========")
+        
+        # Create a new database session for this extraction to avoid connection pool issues
+        try_new_session = False
+        if db is None:
+            try_new_session = True
+            try:
+                db = next(get_db())
+                logger.info(f"Created new database session for synchronized extraction of capture {capture_id}")
+            except Exception as e:
+                logger.error(f"Failed to create database session: {str(e)}")
+                return {"success": False, "error": f"Database error: {str(e)}"}
+        
+        try:
+            # Get the capture record
+            db_capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not db_capture:
+                logger.error(f"Capture {capture_id} not found")
+                return {"success": False, "error": f"Capture {capture_id} not found"}
+            
+            # Get metadata
+            metadata = db_capture.metadata or {}
+            
+            # Extract video and audio URLs from metadata
+            video_url = None
+            audio_url = None
+            
+            # Check for video_url in metadata
+            if metadata and 'video_url' in metadata:
+                video_url = metadata['video_url']
+                logger.info(f"Found video_url in metadata: {video_url}")
+            
+            # Check for audio_url in metadata
+            if metadata and 'audio_url' in metadata:
+                audio_url = metadata['audio_url']
+                logger.info(f"Found audio_url in metadata: {audio_url}")
+            
+            # If no audio_url, try to derive it from video_url
+            if not audio_url and video_url and '.m3u8' in video_url:
+                import re
+                # Handle different video URL formats
+                if 'video=' in video_url:
+                    # Replace video=XXXXX.m3u8 with audio_eng=64000.m3u8
+                    audio_url = re.sub(r'video=[0-9]+\.m3u8', 'audio_eng=64000.m3u8', video_url)
+                    logger.info(f"Derived audio URL from video URL using video= pattern: {audio_url}")
+                elif re.search(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', video_url):
+                    # For URLs like .../video-1920x1080p25-3000/index.m3u8, use the audio-eng-aaclc160 format
+                    audio_url = re.sub(r'video-[0-9]+x[0-9]+p[0-9]+-[0-9]+', 'audio-eng-aaclc160', video_url)
+                    logger.info(f"Derived audio URL from video URL using resolution pattern: {audio_url}")
+                else:
+                    # Fallback to the original replacement for backward compatibility
+                    audio_url = video_url.replace('video-1920x1080p25-3000', 'audio-eng-aaclc160')
+                    logger.info(f"Using fallback replacement for audio URL: {audio_url}")
+                
+                # Update metadata with the derived audio URL
+                metadata['audio_url'] = audio_url
+                db_capture.metadata = metadata
+                try:
+                    db.commit()
+                    logger.info(f"Updated metadata with derived audio URL")
+                except Exception as e:
+                    logger.error(f"Error updating metadata with derived audio URL: {str(e)}")
+            
+            # Validate URLs
+            if not video_url:
+                logger.error(f"No video URL found for capture {capture_id}")
+                return {"success": False, "error": "No video URL found"}
+            
+            if not audio_url:
+                logger.error(f"No audio URL found for capture {capture_id}")
+                return {"success": False, "error": "No audio URL found"}
+            
+            # Determine output paths
+            video_file = os.path.join(CAPTURE_DIR, f"{capture_id}.mp4")
+            audio_file = os.path.join(CAPTURE_DIR, f"{capture_id}.mp3")
+            
+            # Create progress log files
+            video_log = os.path.join(CAPTURE_DIR, f"{capture_id}_video_progress.log")
+            audio_log = os.path.join(CAPTURE_DIR, f"{capture_id}_audio_progress.log")
+            
+            # Ensure the output directory exists
+            os.makedirs(os.path.dirname(video_file), exist_ok=True)
+            
+            # Determine start position and duration
+            duration_to_use = duration
+            
+            # If start_position is not provided, check if there's a time marker in metadata
+            if start_position is None and metadata and 'time_marker' in metadata:
+                time_marker = metadata['time_marker']
+                if isinstance(time_marker, dict) and 'seconds' in time_marker:
+                    start_position = time_marker['seconds']
+                    logger.info(f"Using time marker from metadata: {start_position} seconds")
+                elif isinstance(time_marker, (int, float)):
+                    start_position = time_marker
+                    logger.info(f"Using direct seconds time marker: {start_position} seconds")
+            
+            # If duration is not provided, use a default or check metadata
+            if duration_to_use is None:
+                if metadata and 'duration' in metadata:
+                    duration_to_use = metadata['duration']
+                    logger.info(f"Using duration from metadata: {duration_to_use} seconds")
+                else:
+                    duration_to_use = 1800  # Default 30 minutes
+                    logger.info(f"Using default duration: {duration_to_use} seconds")
+            
+            # Store extraction parameters in metadata for future reference
+            try:
+                db_capture.metadata = {
+                    **(db_capture.metadata or {}),
+                    "video_extraction_start": start_position,
+                    "video_extraction_duration": duration_to_use,
+                    "audio_extraction_start": start_position,
+                    "audio_extraction_duration": duration_to_use,
+                    "extraction_started_at": datetime.now().isoformat()
+                }
+                db.commit()
+                logger.info(f"Stored extraction parameters in metadata")
+            except Exception as e:
+                logger.error(f"Error storing extraction parameters in metadata: {str(e)}")
+            
+            # Build FFmpeg commands for video and audio extraction
+            # VIDEO COMMAND
+            video_cmd = ["ffmpeg", "-y"]
+            video_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            video_cmd.extend(["-http_persistent", "1"])
+            video_cmd.extend(["-allowed_extensions", "ALL"])
+            video_cmd.extend(["-i", video_url])
+            
+            # Add seek position AFTER input for HLS streams
+            if start_position and start_position > 0:
+                video_cmd.extend(["-ss", str(start_position)])
+                logger.info(f"Added -ss {start_position} AFTER input for accurate video seeking")
+            
+            # Add duration AFTER seek position
+            if duration_to_use and duration_to_use > 0:
+                video_cmd.extend(["-t", str(duration_to_use)])
+                logger.info(f"Added duration limit -t {duration_to_use} for video")
+            
+            # Add video output options
+            video_cmd.extend([
+                "-c:v", "libx264",  # Use H.264 codec
+                "-preset", "fast",  # Encoding preset
+                "-crf", "22",      # Quality setting
+                "-an",              # No audio
+                "-hide_banner",     # Hide banner information
+                "-progress", video_log,  # Log progress to file
+                video_file           # Output file
+            ])
+            
+            # AUDIO COMMAND
+            audio_cmd = ["ffmpeg", "-y"]
+            audio_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            audio_cmd.extend(["-http_persistent", "1"])
+            audio_cmd.extend(["-allowed_extensions", "ALL"])
+            audio_cmd.extend(["-i", audio_url])
+            
+            # Add seek position AFTER input for HLS streams
+            if start_position and start_position > 0:
+                audio_cmd.extend(["-ss", str(start_position)])
+                logger.info(f"Added -ss {start_position} AFTER input for accurate audio seeking")
+            
+            # Add duration AFTER seek position
+            if duration_to_use and duration_to_use > 0:
+                audio_cmd.extend(["-t", str(duration_to_use)])
+                logger.info(f"Added duration limit -t {duration_to_use} for audio")
+            
+            # Add audio output options
+            audio_cmd.extend([
+                "-c:a", "libmp3lame",  # Use MP3 codec
+                "-q:a", "2",          # Quality setting for audio
+                "-vn",                 # No video
+                "-hide_banner",        # Hide banner information
+                "-progress", audio_log,  # Log progress to file
+                audio_file              # Output file
+            ])
+            
+            # Log commands
+            logger.info(f"Video extraction command: {' '.join(video_cmd)}")
+            logger.info(f"Audio extraction command: {' '.join(audio_cmd)}")
+            
+            # Start both processes
+            video_process = subprocess.Popen(video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            audio_process = subprocess.Popen(audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            logger.info(f"Started video extraction process with PID {video_process.pid}")
+            logger.info(f"Started audio extraction process with PID {audio_process.pid}")
+            
+            # Function to monitor progress
+            def monitor_progress():
+                import time
+                import re
+                
+                last_video_progress = 0
+                last_audio_progress = 0
+                
+                # Pattern to extract progress information
+                progress_pattern = re.compile(r'out_time_ms=([0-9]+)')
+                
+                while video_process.poll() is None or audio_process.poll() is None:
+                    # Read progress logs
+                    video_progress = 0
+                    audio_progress = 0
+                    
+                    try:
+                        if os.path.exists(video_log):
+                            with open(video_log, 'r') as f:
+                                content = f.read()
+                                match = progress_pattern.search(content)
+                                if match:
+                                    # Convert microseconds to seconds
+                                    video_progress = int(match.group(1)) / 1000000
+                    except Exception as e:
+                        logger.error(f"Error reading video progress: {str(e)}")
+                    
+                    try:
+                        if os.path.exists(audio_log):
+                            with open(audio_log, 'r') as f:
+                                content = f.read()
+                                match = progress_pattern.search(content)
+                                if match:
+                                    # Convert microseconds to seconds
+                                    audio_progress = int(match.group(1)) / 1000000
+                    except Exception as e:
+                        logger.error(f"Error reading audio progress: {str(e)}")
+                    
+                    # Only log if progress has changed
+                    if video_progress != last_video_progress or audio_progress != last_audio_progress:
+                        logger.info(f"Progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s")
+                        last_video_progress = video_progress
+                        last_audio_progress = audio_progress
+                        
+                        # Update progress in database
+                        try:
+                            db_capture.metadata = {
+                                **(db_capture.metadata or {}),
+                                "extraction_progress": {
+                                    "video": video_progress,
+                                    "audio": audio_progress,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            }
+                            db.commit()
+                        except Exception as e:
+                            logger.error(f"Error updating progress in database: {str(e)}")
+                    
+                    # Sleep to avoid CPU overuse
+                    time.sleep(1)
+                
+                return True
+            
+            # Start progress monitoring in a separate thread
+            import threading
+            monitor_thread = threading.Thread(target=monitor_progress)
+            monitor_thread.daemon = True
+            monitor_thread.start()
+            
+            # Wait for both processes to complete
+            video_stdout, video_stderr = video_process.communicate()
+                else:
+                    db_capture.status = "error"
+                    error_message = []
+                    if not video_success:
+                        error_message.append(f"Video extraction failed: {video_stderr.decode()[:200]}")
+                    if not audio_success:
+                        error_message.append(f"Audio extraction failed: {audio_stderr.decode()[:200]}")
+                    db_capture.error_message = " | ".join(error_message)
+                    logger.info(f"Updated capture status to 'error' with message: {db_capture.error_message}")
+                
+                # Update final metadata
+                db_capture.metadata = {
+                    **(db_capture.metadata or {}),
+                    "extraction_completed_at": datetime.now().isoformat(),
+                    "video_success": video_success,
+                    "audio_success": audio_success,
+                    "video_path": video_file if video_success else None,
+                    "audio_path": audio_file if audio_success else None
+                }
+                
+                db.commit()
+            except Exception as e:
+                logger.error(f"Error updating capture record with results: {str(e)}")
+            
+            # Clean up progress log files
+            try:
+                if os.path.exists(video_log):
+                    os.remove(video_log)
+                if os.path.exists(audio_log):
+                    os.remove(audio_log)
+            except Exception as e:
+                logger.error(f"Error cleaning up progress logs: {str(e)}")
+            
+            # Return results
+            result = {
+                "success": video_success and audio_success,
+                "video_success": video_success,
+                "audio_success": audio_success,
+                "video_path": video_file if video_success else None,
+                "audio_path": audio_file if audio_success else None,
+                "start_position": start_position,
+                "duration": duration_to_use
+            }
+            
+            # Close the database connection if we created it
+            if try_new_session and db is not None:
+                try:
+                    db.close()
+                    logger.debug(f"Closed database session for synchronized extraction of capture {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error closing database session: {str(e)}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in synchronized extraction: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Update capture status to error
+            try:
+                db_capture.status = "error"
+                db_capture.error_message = f"Synchronized extraction error: {str(e)}"
+                db.commit()
+                logger.info(f"Updated capture status to 'error'")
+            except Exception as db_error:
+                logger.error(f"Error updating capture status: {str(db_error)}")
+            
+            # Close the database connection if we created it
+            if try_new_session and db is not None:
+                try:
+                    db.close()
+                    logger.debug(f"Closed database session for synchronized extraction of capture {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error closing database session: {str(e)}")
+            
+            return {"success": False, "error": f"Synchronized extraction error: {str(e)}"}
+    
     def extract_audio(self, db: Session, capture_id: int) -> Dict:
         """Extract audio from Parliament TV - AUDIO ONLY, NEVER FROM VIDEO"""
         logger.info(f"========== STARTING AUDIO EXTRACTION for capture {capture_id} ===========")
