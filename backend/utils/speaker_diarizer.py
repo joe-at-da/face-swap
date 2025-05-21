@@ -16,6 +16,7 @@ import librosa
 import face_recognition
 from scipy.spatial.distance import cosine
 from pydub import AudioSegment
+from scipy import linalg
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class SpeakerDiarizer:
     Class for performing speaker diarization on audio files.
     Uses voice embeddings to identify speakers from a database of known voices.
     Can also use facial recognition to improve accuracy when video is available.
+    Also implements unsupervised speaker change detection using BIC segmentation.
     """
     
     def __init__(self):
@@ -46,6 +48,9 @@ class SpeakerDiarizer:
         self.known_embeddings = {}
         self.known_face_encodings = {}
         self.known_speakers = {}
+        self.min_segment_duration = 2.0  # Increased: Minimum duration between speaker changes (seconds)
+        self.bic_lambda = 1.5  # Increased: BIC penalty parameter (higher = fewer speaker changes)
+        self.similarity_threshold = 0.7  # Lowered: Threshold for considering segments from same speaker (lower = more likely to group)
         self.load_voice_profiles()
     
     def load_voice_profiles(self):
@@ -269,57 +274,112 @@ class SpeakerDiarizer:
         """
         logger.info(f"Performing speaker diarization on {audio_path}")
         
-        # Check if we have any known speakers
-        if not self.known_embeddings:
-            logger.warning("No known voice profiles found. Skipping diarization.")
-            return transcription
-        
         # Create a copy of the transcription to modify
         diarized_transcription = transcription.copy()
+        
+        # Detect speaker changes using BIC segmentation
+        speaker_changes = self._detect_speaker_changes(audio_path)
+        logger.info(f"Detected {len(speaker_changes)} speaker changes at: {speaker_changes}")
+        
+        # Group segments by speaker using detected change points
+        current_speaker_id = 1
+        last_speaker_id = None
+        
+        # Speaker memory system - track embeddings for each speaker ID
+        speaker_embeddings = {}  # speaker_id -> list of embeddings
+        speaker_segments = {}    # speaker_id -> count of segments
         
         # Process each segment
         for i, segment in enumerate(diarized_transcription.get("segments", [])):
             start_time = segment["start"]
             end_time = segment["end"]
+            segment_middle = (start_time + end_time) / 2
             
-            # Extract audio segment
+            # Check if this segment crosses a speaker change point
+            crosses_change = any(start_time < change < end_time for change in speaker_changes)
+            
+            # Extract audio segment embedding
             segment_embedding = self._process_audio_segment(audio_path, start_time, end_time)
+            if segment_embedding is None:
+                # Skip speaker analysis if we couldn't get an embedding
+                continue
             
-            # Match voice to profile
+            # Initialize speaker variables
             profile_id = None
             confidence = 0.0
+            best_speaker_id = None
+            best_similarity = -1.0
             
-            if segment_embedding is not None:
+            # Try to match with known profiles if we have embeddings
+            if self.known_embeddings:
                 profile_id, confidence = self._match_voice_to_profile(segment_embedding)
-            
-            # If video is available and we have a face, use it to confirm or improve match
-            if video_path and os.path.exists(video_path):
-                face_encodings = self._extract_face_encodings(video_path, start_time, end_time)
                 
-                if face_encodings:
-                    # Use the first face (assuming main speaker)
-                    face_profile_id = self._match_face_to_profile(face_encodings[0])
+                # If video is available and we have a face, use it to confirm or improve match
+                if video_path and os.path.exists(video_path):
+                    face_encodings = self._extract_face_encodings(video_path, start_time, end_time)
                     
-                    if face_profile_id:
-                        # If face and voice match, increase confidence
-                        if face_profile_id == profile_id:
-                            confidence += 0.2
-                        # If face matches someone else with high confidence, override voice match
-                        elif confidence < 0.8:
-                            profile_id = face_profile_id
-                            confidence = 0.8
+                    if face_encodings:
+                        # Use the first face (assuming main speaker)
+                        face_profile_id = self._match_face_to_profile(face_encodings[0])
+                        
+                        if face_profile_id:
+                            # If face and voice match, increase confidence
+                            if face_profile_id == profile_id:
+                                confidence += 0.2
+                            # If face matches someone else with high confidence, override voice match
+                            elif confidence < 0.8:
+                                profile_id = face_profile_id
+                                confidence = 0.8
+            
+            # Try to match with existing speakers in our memory
+            for speaker_id, embeddings in speaker_embeddings.items():
+                # Use average of all embeddings for this speaker
+                avg_embedding = np.mean(embeddings, axis=0)
+                similarity = 1 - cosine(avg_embedding, segment_embedding)
+                
+                # Keep track of best match
+                if similarity > best_similarity and similarity >= self.similarity_threshold:
+                    best_similarity = similarity
+                    best_speaker_id = speaker_id
+            
+            # Determine if this is a new speaker
+            is_new_speaker = False
+            
+            # If segment crosses a BIC change point, more likely to be a new speaker
+            if crosses_change and best_similarity < 0.85:  # Higher threshold when crossing change point
+                is_new_speaker = True
+            # If no good match with existing speakers
+            elif best_speaker_id is None:
+                is_new_speaker = True
+            
+            # Assign speaker ID
+            if is_new_speaker:
+                current_speaker_id = max(speaker_embeddings.keys(), default=0) + 1
+                speaker_embeddings[current_speaker_id] = [segment_embedding]
+                speaker_segments[current_speaker_id] = 1
+            else:
+                # Use the best matching speaker
+                current_speaker_id = best_speaker_id
+                # Add this embedding to the speaker's history (up to 5 most recent)
+                speaker_embeddings[current_speaker_id].append(segment_embedding)
+                if len(speaker_embeddings[current_speaker_id]) > 5:
+                    speaker_embeddings[current_speaker_id].pop(0)  # Remove oldest
+                speaker_segments[current_speaker_id] += 1
+            
+            last_speaker_id = current_speaker_id
             
             # Add speaker information to segment
             if profile_id and confidence > 0.7:
+                # Known speaker
                 speaker_info = self.known_speakers[profile_id].copy()
                 speaker_info["id"] = profile_id
                 speaker_info["confidence"] = confidence
                 segment["speaker"] = speaker_info
             else:
-                # Unknown speaker
+                # Unknown speaker with numeric ID
                 segment["speaker"] = {
                     "id": None,
-                    "name": "Unknown Speaker",
+                    "name": f"Speaker {current_speaker_id}",
                     "confidence": 0.0
                 }
         
@@ -366,3 +426,88 @@ class SpeakerDiarizer:
         except Exception as e:
             logger.error(f"Error processing audio segment: {e}")
             return None
+            
+    def _detect_speaker_changes(self, audio_path: str, window_size: float = 2.0, step_size: float = 0.5) -> List[float]:
+        """
+        Detect speaker changes in an audio file using BIC segmentation.
+        
+        Args:
+            audio_path: Path to the audio file
+            window_size: Size of the analysis window in seconds
+            step_size: Step size for sliding window in seconds
+            
+        Returns:
+            List of timestamps where speaker changes occur
+        """
+        try:
+            # Load audio file
+            y, sr = librosa.load(audio_path, sr=None)
+            duration = librosa.get_duration(y=y, sr=sr)
+            
+            # Convert window and step size to samples
+            window_samples = int(window_size * sr)
+            step_samples = int(step_size * sr)
+            
+            change_points = []
+            
+            # Slide window through audio
+            for i in range(0, len(y) - window_samples, step_samples):
+                # Skip if we're too close to the beginning or end
+                if i < window_samples or i > len(y) - 2 * window_samples:
+                    continue
+                    
+                # Get two adjacent windows
+                window1 = y[i - window_samples:i]
+                window2 = y[i:i + window_samples]
+                
+                # Compute MFCC features for both windows
+                mfcc1 = librosa.feature.mfcc(y=window1, sr=sr, n_mfcc=13)
+                mfcc2 = librosa.feature.mfcc(y=window2, sr=sr, n_mfcc=13)
+                
+                # Compute BIC score
+                bic_score = self._compute_bic(mfcc1.T, mfcc2.T)
+                
+                # If BIC score is above threshold, mark as change point
+                if bic_score > 0:
+                    change_time = i / sr
+                    # Only add if it's not too close to an existing change point
+                    if not change_points or min(abs(change_time - cp) for cp in change_points) > self.min_segment_duration:
+                        change_points.append(change_time)
+            
+            return sorted(change_points)
+            
+        except Exception as e:
+            logger.error(f"Error detecting speaker changes: {e}")
+            return []
+    
+    def _compute_bic(self, X1: np.ndarray, X2: np.ndarray) -> float:
+        """
+        Compute BIC score for two feature matrices.
+        
+        Args:
+            X1: Feature matrix for first window
+            X2: Feature matrix for second window
+            
+        Returns:
+            BIC score (positive value indicates different speakers)
+        """
+        # Combine the two windows
+        X = np.vstack((X1, X2))
+        
+        # Compute covariance matrices
+        n1 = X1.shape[0]
+        n2 = X2.shape[0]
+        n = n1 + n2
+        d = X1.shape[1]  # Feature dimension
+        
+        cov1 = np.cov(X1, rowvar=False) + 1e-10 * np.eye(d)
+        cov2 = np.cov(X2, rowvar=False) + 1e-10 * np.eye(d)
+        cov = np.cov(X, rowvar=False) + 1e-10 * np.eye(d)
+        
+        # Compute BIC
+        bic = 0.5 * (n * np.log(np.linalg.det(cov)) - n1 * np.log(np.linalg.det(cov1)) - n2 * np.log(np.linalg.det(cov2)))
+        
+        # Apply penalty
+        penalty = 0.5 * self.bic_lambda * (d + 0.5 * d * (d + 1)) * np.log(n)
+        
+        return bic - penalty

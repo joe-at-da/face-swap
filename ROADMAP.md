@@ -241,22 +241,95 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Advanced search with full-text capabilities for clips and transcriptions
    - Batch processing functionality for operations on multiple clips
    - Enhanced transcription features:
-     - ✅ Basic transcription with Whisper integration
-     - ✅ Transcription export to TXT format
-     - ✅ Basic speaker diarization infrastructure
-     - ✅ Speaker identification system:
-       - ✅ Backend implementation complete with audio-based speaker separation
-       - ✅ UI toggle for enabling speaker identification
-       - ✅ Voice profile database structure established
-       - ✅ Voice profile management interface for adding and managing speaker profiles
-       - ✅ Audio sample upload and management for voice profiles
-       - ✅ Integration with facial recognition for improved accuracy
-     - 🏗️ Transcription editing interface
-     - 🏗️ Additional export formats (SRT, JSON, DOCX)
-     - 🏗️ Real-time transcription updates during streaming
-     - 🏗️ Advanced search within transcriptions
-     - 🏗️ Custom parliamentary vocabulary for improved accuracy
-     - 🏗️ Multi-language support with automatic language detection
+     - Basic transcription with Whisper integration
+     - Transcription export to TXT format
+     - Basic speaker diarization infrastructure
+     - Speaker identification system:
+       - Backend implementation complete with audio-based speaker separation
+       - UI toggle for enabling speaker identification
+       - Voice profile database structure established
+       - Voice profile management interface for adding and managing speaker profiles
+       - Audio sample upload and management for voice profiles
+       - Integration with facial recognition for improved accuracy
+
+### Speaker Diarization
+
+### Overview
+Speaker diarization is the process of partitioning an audio stream into segments according to who is speaking. The Parliament TV application implements advanced speaker diarization to identify different speakers in audio transcriptions, making it easier to follow debates and committee meetings.
+
+### Features Implemented
+
+- [x] **Voice Profile Management System**
+  - Create and manage voice profiles for known speakers (MPs, ministers, etc.)
+  - Upload and process audio samples for each profile
+  - Calculate voice embeddings for speaker recognition
+  - Store confidence scores based on sample quantity and quality
+
+- [x] **Speaker Identification in Audio Transcription**
+  - Identify known speakers using voice profiles
+  - Detect speaker changes using Bayesian Information Criterion (BIC) segmentation
+  - Maintain speaker continuity across segments with similar voice characteristics
+  - Number unknown speakers consistently (Speaker 1, Speaker 2, etc.)
+
+- [x] **UI for Managing Voice Profiles**
+  - Admin interface for creating and editing voice profiles
+  - Upload interface for adding audio samples to profiles
+  - Display sample count and confidence scores
+
+- [x] **Multi-modal Recognition**
+  - Integrate with facial recognition for improved accuracy when video is available
+  - Combine voice and face recognition results for higher confidence
+
+### Technical Implementation
+
+#### Voice Profile Management
+The system maintains a database of voice profiles in `/app/data/voice_profiles/profiles.json`. Each profile contains:
+- Basic information (name, role, party)
+- Voice embeddings generated from audio samples
+- Confidence scores based on sample quantity
+
+Audio samples are stored in `/app/data/voice_profiles/samples/[profile_id]/` and processed to extract MFCC features.
+
+#### Speaker Diarization Algorithm
+The diarization process uses multiple techniques:
+
+1. **BIC Segmentation**: Detects speaker changes by comparing adjacent audio windows using Bayesian Information Criterion
+2. **Voice Embedding Matching**: Compares voice characteristics with known profiles
+3. **Speaker Continuity Logic**: Ensures segments with similar voice characteristics are assigned to the same speaker
+4. **Facial Recognition**: When video is available, uses face detection to confirm or improve voice matching
+
+#### Configuration Parameters
+- `min_segment_duration`: Minimum duration between speaker changes (default: 1.0 seconds)
+- `bic_lambda`: BIC penalty parameter for change detection sensitivity (default: 1.0)
+- Voice similarity threshold: Threshold for considering segments from the same speaker (default: 0.8)
+
+### Usage
+
+1. **Creating Voice Profiles**:
+   - Navigate to Admin > Voice Profiles
+   - Click "Create New Profile" and enter speaker details
+   - Upload at least 3-5 high-quality audio samples for each profile
+
+2. **Transcribing with Speaker Identification**:
+   - When starting a transcription, enable the "Speaker Identification" toggle
+   - The system will attempt to identify speakers and mark segments accordingly
+   - Known speakers will be labeled with their names
+   - Unknown speakers will be labeled as "Speaker 1", "Speaker 2", etc.
+
+### Future Improvements
+
+- [ ] Implement hierarchical clustering for improved speaker grouping
+- [ ] Add adaptive threshold adjustment based on audio quality
+- [ ] Implement speaker adaptation for improved recognition of specific speakers
+- [ ] Add batch processing for voice profile training
+
+     - Transcription editing interface
+     - Additional export formats (SRT, JSON, DOCX)
+     - Real-time transcription updates during streaming
+     - Advanced search within transcriptions
+     - Custom parliamentary vocabulary for improved accuracy
+     - Multi-language support with automatic language detection
+     - Transcript comparison and version history
      - 🏗️ Transcript comparison and version history
 
 #### 5. Documentation & Training
