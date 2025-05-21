@@ -42,8 +42,19 @@ WHISPER_MODEL_SIZE = "medium"  # tiny, base, small, medium, large
 LANGUAGE = "en"
 SEGMENT_LENGTH = 30  # seconds
 OUTPUT_FORMATS = ["txt", "srt", "json", "docx"]
-TEMP_DIR = Path("/app/data/temp")
-OUTPUT_DIR = Path("/app/data/temp/audio_extracts")
+
+# Check if we're running in Docker or locally
+if os.path.exists("/app"):
+    # Docker environment
+    TEMP_DIR = Path("/app/data/temp")
+    OUTPUT_DIR = Path("/app/data/temp/audio_extracts")
+    logger.info("Using Docker paths: %s, %s", TEMP_DIR, OUTPUT_DIR)
+else:
+    # Local environment
+    base_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    TEMP_DIR = base_dir / "data" / "temp"
+    OUTPUT_DIR = base_dir / "data" / "temp" / "audio_extracts"
+    logger.info("Using local paths: %s, %s", TEMP_DIR, OUTPUT_DIR)
 
 class TranscriptionSegment:
     """Class representing a segment of transcription with timing information."""

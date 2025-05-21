@@ -105,6 +105,62 @@ class TranscriptionService:
             Dictionary with transcription data
         """
         try:
+            # Verify the audio file exists and has content
+            import os
+            import subprocess
+            import json
+            
+            if not os.path.exists(video_path):
+                error_msg = f"Audio file not found: {video_path}"
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+            
+            # Check file size
+            file_size = os.path.getsize(video_path)
+            logger.info(f"Audio file size: {file_size} bytes")
+            if file_size == 0:
+                error_msg = f"Audio file is empty (0 bytes): {video_path}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            # Validate audio file with ffprobe
+            try:
+                ffprobe_cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration,bit_rate",
+                    "-show_streams",
+                    "-of", "json",
+                    video_path
+                ]
+                result = subprocess.run(ffprobe_cmd, capture_output=True, text=True, check=True)
+                audio_info = json.loads(result.stdout)
+                logger.info(f"Audio file info: {audio_info}")
+                
+                # Check if the file has audio streams
+                has_audio = False
+                for stream in audio_info.get('streams', []):
+                    if stream.get('codec_type') == 'audio':
+                        has_audio = True
+                        logger.info(f"Found audio stream: {stream}")
+                        break
+                
+                if not has_audio:
+                    logger.warning(f"No audio streams found in file: {video_path}")
+                    # Continue anyway, as the file might still be processable
+                
+                # Check duration
+                duration = float(audio_info.get('format', {}).get('duration', 0))
+                logger.info(f"Audio duration: {duration} seconds")
+                if duration <= 0:
+                    error_msg = f"Audio file has invalid duration: {duration} seconds"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                    
+            except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to validate audio file: {str(e)}")
+                # Continue anyway, as Whisper might still be able to process it
+            
             # Import whisper here to avoid import errors if not installed
             import whisper
             
@@ -112,21 +168,46 @@ class TranscriptionService:
             logger.info(f"Loading Whisper model: {self.model_size}")
             model = whisper.load_model(self.model_size)
             
-            # Transcribe the video
-            logger.info(f"Transcribing video: {video_path}")
+            # Transcribe the video with more detailed options
+            logger.info(f"Transcribing audio: {video_path}")
             result = model.transcribe(
                 video_path,
                 language=language,
-                verbose=True
+                verbose=True,
+                fp16=False,  # Use fp32 for better compatibility
+                task="transcribe",  # Explicitly set task to transcribe
+                initial_prompt="This is a Parliament TV recording with speakers discussing various topics."
             )
+            
+            # Check if the result contains any text
+            if not result.get("text", "").strip():
+                logger.warning(f"Whisper returned empty transcription for {video_path}")
+                
+                # If no text was found, try with a smaller model as fallback
+                if self.model_size != "base":
+                    logger.info(f"Trying with 'base' model as fallback")
+                    fallback_model = whisper.load_model("base")
+                    result = fallback_model.transcribe(
+                        video_path,
+                        language=language,
+                        verbose=True,
+                        fp16=False,
+                        task="transcribe"
+                    )
+            
+            # Log the result summary
+            logger.info(f"Transcription completed with {len(result.get('segments', []))} segments")
+            logger.info(f"Transcription text length: {len(result.get('text', ''))} characters")
             
             return result
             
-        except ImportError:
-            logger.error("Whisper is not installed. Cannot transcribe video.")
+        except ImportError as e:
+            logger.error(f"Whisper is not installed or has dependency issues: {str(e)}")
             raise
         except Exception as e:
             logger.error(f"Error during Whisper transcription: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise
     
     def _process_segments(self, segments: List[Dict], speaker_data: Optional[Dict] = None) -> List[Dict]:
