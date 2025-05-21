@@ -514,6 +514,21 @@ class ParliamentTVCapture:
             if "time_marker" in stream_info and stream_info["time_marker"]:
                 new_metadata["time_marker"] = stream_info["time_marker"]
                 
+            # Store the exact start position and duration for video extraction
+            # This will be used to ensure audio extraction uses the same parameters
+            time_marker_seconds = 0
+            if "time_marker" in stream_info:
+                if isinstance(stream_info["time_marker"], dict) and "seconds" in stream_info["time_marker"]:
+                    time_marker_seconds = stream_info["time_marker"]["seconds"]
+                elif isinstance(stream_info["time_marker"], (int, float)):
+                    time_marker_seconds = stream_info["time_marker"]
+            
+            # Store the exact parameters used for video extraction
+            new_metadata["video_extraction_start"] = time_marker_seconds
+            new_metadata["video_extraction_duration"] = duration
+            logger.info(f"Stored video extraction parameters: start={time_marker_seconds}, duration={duration}")
+            
+                
             # Update the metadata with the new dictionary
             try:
                 # First try the normal way - force it to be a proper JSON dictionary
@@ -1757,6 +1772,24 @@ class ParliamentTVCapture:
         # Log the final time marker and duration values before building the command
         logger.info(f"FINAL TIME MARKER: {start_position if start_position is not None else 'None'}")
         logger.info(f"FINAL DURATION: {duration_to_use if duration_to_use is not None else 'None'}")
+        
+        # Check if we have stored video extraction parameters for this capture
+        # This helps ensure audio and video are synchronized
+        try:
+            # Check if there's stored video extraction parameters in the metadata
+            if db_capture.metadata and isinstance(db_capture.metadata, dict):
+                if 'video_extraction_start' in db_capture.metadata and 'video_extraction_duration' in db_capture.metadata:
+                    stored_start = db_capture.metadata.get('video_extraction_start')
+                    stored_duration = db_capture.metadata.get('video_extraction_duration')
+                    
+                    if stored_start is not None and stored_duration is not None:
+                        logger.info(f"Found stored video extraction parameters: start={stored_start}, duration={stored_duration}")
+                        # Override the calculated values to ensure sync with video
+                        start_position = float(stored_start)
+                        duration_to_use = float(stored_duration)
+                        logger.info(f"Using stored video extraction parameters for audio to ensure synchronization")
+        except Exception as e:
+            logger.warning(f"Error checking for stored video extraction parameters: {str(e)}")
         
         # CRITICAL: Build the FFmpeg command directly for audio extraction to ensure proper ordering
         # For HLS streams, the correct order is:
