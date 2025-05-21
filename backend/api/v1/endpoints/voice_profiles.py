@@ -14,7 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel
 
-from backend.api.deps import get_db, get_current_user, get_current_active_superuser
+from backend.api.deps import get_db, get_current_user, get_current_user_with_roles
+from backend.db.models.user import UserRole
 from backend.db import models
 from backend.core.config import settings
 
@@ -113,7 +114,7 @@ async def list_voice_profiles(
 async def create_voice_profile(
     profile: VoiceProfileCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_superuser)
+    current_user: models.User = Depends(get_current_user_with_roles([UserRole.ADMIN]))
 ):
     """
     Create a new voice profile.
@@ -197,7 +198,7 @@ async def get_voice_profile(
 async def delete_voice_profile(
     profile_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_superuser)
+    current_user: models.User = Depends(get_current_user_with_roles([UserRole.ADMIN]))
 ):
     """
     Delete a voice profile.
@@ -235,7 +236,7 @@ async def upload_voice_sample(
     profile_id: str,
     audio_file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_superuser)
+    current_user: models.User = Depends(get_current_user_with_roles([UserRole.ADMIN]))
 ):
     """
     Upload a voice sample for a profile.
@@ -400,7 +401,7 @@ async def delete_voice_sample(
     profile_id: str,
     sample_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_superuser)
+    current_user: models.User = Depends(get_current_user_with_roles([UserRole.ADMIN]))
 ):
     """
     Delete a voice sample.
