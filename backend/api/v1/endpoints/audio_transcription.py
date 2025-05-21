@@ -93,58 +93,70 @@ def get_capture_status(capture_id: int, db: Session = Depends(get_db)):
     
     if capture.transcription_status == "completed":
         # Check if the transcription file exists
-        audio_path = get_audio_path(capture_id)
-        transcript_path = audio_path.with_suffix('.audio_transcript.txt')
-        
-        if transcript_path.exists():
-            results_available = True
-            results_path = str(transcript_path)
+        try:
+            audio_path = get_audio_path(capture_id)
+            transcript_path = audio_path.with_suffix('.audio_transcript.txt')
+            
+            if transcript_path.exists():
+                results_available = True
+                results_path = str(transcript_path)  # Convert Path to string
+        except Exception as e:
+            logger.error(f"Error checking transcript path: {e}")
     
     # Check for progress information
     progress_info = None
     if capture.transcription_status == "processing":
-        audio_path = get_audio_path(capture_id)
-        progress_file_path = audio_path.with_suffix('.audio_transcript.meta.json.progress.json')
-        
-        if progress_file_path.exists():
-            try:
-                with open(progress_file_path, 'r') as f:
-                    progress_data = json.load(f)
-                    
-                # Calculate estimated completion time
-                estimated_completion = None
-                if 'timestamp' in progress_data and 'progress' in progress_data and progress_data['progress'] > 0:
-                    timestamp = datetime.fromisoformat(progress_data['timestamp'])
-                    progress_percent = progress_data['progress']
-                    
-                    if progress_percent > 0:
-                        # Estimate time remaining based on progress
-                        elapsed_time = datetime.now() - timestamp
-                        total_estimated_time = elapsed_time * (100 / progress_percent)
-                        remaining_time = total_estimated_time - elapsed_time
+        try:
+            audio_path = get_audio_path(capture_id)
+            progress_file_path = audio_path.with_suffix('.audio_transcript.meta.json.progress.json')
+            
+            if progress_file_path.exists():
+                try:
+                    with open(str(progress_file_path), 'r') as f:  # Convert Path to string
+                        progress_data = json.load(f)
                         
-                        # Only provide estimate if it's reasonable (less than 30 minutes)
-                        if remaining_time < timedelta(minutes=30):
-                            completion_time = datetime.now() + remaining_time
-                            estimated_completion = completion_time.isoformat()
-                
-                progress_info = TranscriptionProgressInfo(
-                    stage=progress_data.get('stage'),
-                    progress=progress_data.get('progress'),
-                    message=progress_data.get('message'),
-                    estimated_completion=estimated_completion
-                )
-            except Exception as e:
-                logger.error(f"Error reading progress file: {e}")
+                    # Calculate estimated completion time
+                    estimated_completion = None
+                    if 'timestamp' in progress_data and 'progress' in progress_data and progress_data['progress'] > 0:
+                        timestamp = datetime.fromisoformat(progress_data['timestamp'])
+                        progress_percent = progress_data['progress']
+                        
+                        if progress_percent > 0:
+                            # Estimate time remaining based on progress
+                            elapsed_time = datetime.now() - timestamp
+                            total_estimated_time = elapsed_time * (100 / progress_percent)
+                            remaining_time = total_estimated_time - elapsed_time
+                            
+                            # Only provide estimate if it's reasonable (less than 30 minutes)
+                            if remaining_time < timedelta(minutes=30):
+                                completion_time = datetime.now() + remaining_time
+                                estimated_completion = completion_time.isoformat()
+                    
+                    progress_info = TranscriptionProgressInfo(
+                        stage=progress_data.get('stage'),
+                        progress=progress_data.get('progress'),
+                        message=progress_data.get('message'),
+                        estimated_completion=estimated_completion
+                    )
+                except Exception as e:
+                    logger.error(f"Error reading progress file: {e}")
+        except Exception as e:
+            logger.error(f"Error accessing progress file: {e}")
     
-    return TranscriptionResponse(
-        id=capture_id,
-        status=capture.transcription_status or "not_started",
-        error=capture.transcription_error,
-        results_available=results_available,
-        results_path=results_path,
-        progress=progress_info
-    )
+    # Use make_json_serializable to ensure all values are JSON serializable
+    response_data = {
+        "id": capture_id,
+        "status": capture.transcription_status or "not_started",
+        "error": capture.transcription_error,
+        "results_available": results_available,
+        "results_path": results_path,
+        "progress": progress_info.dict() if progress_info else None
+    }
+    
+    # Make all values JSON serializable
+    response_data = make_json_serializable(response_data)
+    
+    return TranscriptionResponse(**response_data)
 
 @router.post("/transcribe")
 async def transcribe_audio(
@@ -407,7 +419,7 @@ def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diari
                 "language": transcription_data.get("language", ""),
                 "segments": transcription_data.get("segments", [])[:5],  # First 5 segments
                 "total_segments": len(transcription_data.get("segments", [])),
-                "audio_file": audio_path,
+                "audio_file": str(audio_path),
                 "model": model_size,
                 "with_speaker_diarization": with_speaker_diarization
             }

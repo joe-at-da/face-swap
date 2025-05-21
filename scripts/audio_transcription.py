@@ -128,7 +128,7 @@ def transcribe_audio(audio_file, output_file=None, model_size="medium"):
         "text": result["text"],
         "segments": result["segments"],
         "language": result["language"],
-        "audio_file": audio_file,
+        "audio_file": str(audio_file),
         "model": model_size,
         "transcription_time": duration,
         "created_at": datetime.now().isoformat()
