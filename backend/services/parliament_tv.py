@@ -2014,12 +2014,10 @@ class ParliamentTVCapture:
         padded_capture_id = str(capture_id).zfill(4)
         logger.info(f"Using padded capture ID: {padded_capture_id}")
         
-        # Define the output audio file path and ensure directory exists with proper permissions
-        audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
+        # Always use the absolute Docker container path for audio files
+        audio_dir = "/app/data/temp/audio_extracts"
         
-        # Ensure the audio directory exists with proper permissions - use a more robust approach
-        # Define both relative and absolute paths
-        relative_audio_dir = os.path.join(str(self.temp_dir), "audio_extracts")
+        # Ensure the audio directory exists with proper permissions
         absolute_audio_dir = "/app/data/temp/audio_extracts"
         
         # Try multiple approaches to ensure directory exists and is writable
@@ -2530,9 +2528,31 @@ class ParliamentTVCapture:
                                     capture = db.query(Capture).filter(Capture.id == capture_id).first()
                                     if capture:
                                         # Update the audio_path field which is used by the recognition process
-                                        capture.audio_path = audio_file
+                                        # Ensure the path is a Docker container path
+                                        if not str(audio_file).startswith('/app/'):
+                                            # Convert to Docker container path
+                                            docker_audio_path = f"/app/data/temp/audio_extracts/{os.path.basename(audio_file)}"
+                                            logger.info(f"Converting local path {audio_file} to Docker path {docker_audio_path}")
+                                            capture.audio_path = docker_audio_path
+                                        else:
+                                            # Already a Docker path
+                                            capture.audio_path = audio_file
+                                            
+                                        # Also store the audio path in the metadata for redundancy
+                                        if not capture.metadata:
+                                            capture.metadata = {}
+                                        elif not isinstance(capture.metadata, dict):
+                                            # Convert to dict if it's not already
+                                            try:
+                                                capture.metadata = json.loads(capture.metadata) if isinstance(capture.metadata, str) else {}
+                                            except:
+                                                capture.metadata = {}
+                                                
+                                        # Store the audio path in the metadata
+                                        capture.metadata['audio_file_path'] = str(capture.audio_path)
+                                        
                                         db.commit()
-                                        logger.info(f"Updated database with audio file path: {audio_file}")
+                                        logger.info(f"Updated database with audio file path: {capture.audio_path}")
                                     else:
                                         logger.warning(f"Could not find capture {capture_id} to update audio path")
                                 except Exception as e:
