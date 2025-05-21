@@ -31,7 +31,8 @@ const VoiceProfilesPage = () => {
     queryKey: ['voiceProfiles'],
     queryFn: async () => {
       const response = await api.get('/voice-profiles');
-      return response.data;
+      // Handle both array response and {profiles: []} response format
+      return Array.isArray(response.data) ? response.data : (response.data?.profiles || []);
     },
     enabled: !!token,
     staleTime: 60000

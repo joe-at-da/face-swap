@@ -105,6 +105,7 @@ async def list_voice_profiles(
             if "confidence_score" not in profile:
                 profile["confidence_score"] = 0.0
         
+        # Return the profiles array directly
         return profiles
     except Exception as e:
         logger.error(f"Error listing voice profiles: {e}")
