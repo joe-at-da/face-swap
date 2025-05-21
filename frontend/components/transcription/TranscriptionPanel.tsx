@@ -95,7 +95,9 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         // Return a default capture data object instead of undefined
         return {
           id: 0,
-          status: 'unknown'
+          status: 'unknown',
+          transcription_status: 'not_started',
+          transcription_results: undefined
         } as CaptureData;
       }
       
@@ -103,13 +105,25 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         console.log(`Fetching capture data for ID: ${captureId}`);
         const response = await api.get(`/capture/${captureId}`);
         console.log('Capture API response:', response);
-        return response.data as CaptureData;
+        
+        // Ensure we always return a valid CaptureData object
+        if (response && response.data) {
+          return response.data as CaptureData;
+        } else {
+          console.warn('API returned empty response data');
+          return {
+            id: captureId,
+            status: 'unknown',
+            transcription_status: 'unknown'
+          } as CaptureData;
+        }
       } catch (error) {
         console.error('Error fetching capture data:', error);
         // Return a default capture data object with error information
         return {
           id: captureId,
           status: 'error',
+          transcription_status: 'error',
           transcription_error: error instanceof Error ? error.message : String(error)
         } as CaptureData;
       }
@@ -268,16 +282,19 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         console.log('Results structure:', Object.keys(data.results));
         console.log('Results text available:', !!data.results.text);
         console.log('Results segments available:', Array.isArray(data.results.segments) ? data.results.segments.length : 'not an array');
+        
+        // Make sure we have a valid TranscriptionData object
+        const processedResults = {
+          text: data.results.text || '',
+          segments: Array.isArray(data.results.segments) ? data.results.segments : [],
+          language: data.results.language || 'en'
+        };
+        
+        setTranscriptionResults(processedResults);
+        setShowTranscription(true);
+        return { success: true, results: processedResults };
       } else {
         console.error('No results property in response');
-      }
-
-      if (data.success && data.results) {
-        setTranscriptionResults(data.results);
-        setShowTranscription(true);
-        return data;
-      } else {
-        console.error('No valid transcription results', data);
         toast.error('No transcription results available');
         return { success: false, message: 'No transcription results available' };
       }

@@ -1391,11 +1391,16 @@ class ParliamentTVCapture:
             if not audio_urls and metadata and 'video_url' in metadata:
                 video_url = metadata['video_url']
                 if video_url and '.m3u8' in video_url:
-                    # Try to derive audio URL by replacing 'video' with 'audio' in the URL
-                    potential_audio_url = video_url.replace('video', 'audio')
-                    # Add audio quality parameter if not present
-                    if 'eng=' not in potential_audio_url:
-                        potential_audio_url = potential_audio_url.replace('.m3u8', '_eng=64000.m3u8')
+                    # Try to derive audio URL by replacing video path with audio path in the URL
+                    # The correct format is to use the audio-eng-aaclc160 path which is already in the stream info
+                    # Don't modify the URL if it already contains 'audio-eng'
+                    if 'audio-eng' in video_url:
+                        potential_audio_url = video_url
+                    else:
+                        # For URLs like .../video-1920x1080p25-3000/index.m3u8, use the audio-eng-aaclc160 format
+                        potential_audio_url = video_url.replace('video-1920x1080p25-3000', 'audio-eng-aaclc160')
+                        
+                    # Don't add eng= parameter as it's not needed with the correct path
                     audio_urls.append(potential_audio_url)
                     logger.info(f"Derived potential audio URL from video URL: {potential_audio_url}")
             
