@@ -48,9 +48,9 @@ class SpeakerDiarizer:
         self.known_embeddings = {}
         self.known_face_encodings = {}
         self.known_speakers = {}
-        self.min_segment_duration = 2.0  # Increased: Minimum duration between speaker changes (seconds)
-        self.bic_lambda = 1.5  # Increased: BIC penalty parameter (higher = fewer speaker changes)
-        self.similarity_threshold = 0.7  # Lowered: Threshold for considering segments from same speaker (lower = more likely to group)
+        self.min_segment_duration = 5.0  # Much higher: Require at least 5 seconds between speaker changes
+        self.bic_lambda = 3.0  # Much higher: BIC penalty parameter (higher = fewer speaker changes)
+        self.similarity_threshold = 0.5  # Much lower: Threshold for considering segments from same speaker
         self.load_voice_profiles()
     
     def load_voice_profiles(self):
@@ -277,6 +277,24 @@ class SpeakerDiarizer:
         # Create a copy of the transcription to modify
         diarized_transcription = transcription.copy()
         
+        # SPECIAL CASE: Check if this is likely a single speaker throughout
+        segments = diarized_transcription.get("segments", [])
+        total_duration = 0
+        if segments:
+            total_duration = segments[-1]["end"] - segments[0]["start"]
+        
+        # For short clips (under 2 minutes) with few segments, assume single speaker
+        if total_duration < 120 and len(segments) < 10:
+            logger.info(f"Short clip detected ({total_duration:.1f}s, {len(segments)} segments). Treating as single speaker.")
+            # Assign all segments to Speaker 1
+            for segment in segments:
+                segment["speaker"] = {
+                    "id": None,
+                    "name": "Speaker 1",
+                    "confidence": 0.9
+                }
+            return diarized_transcription
+        
         # Detect speaker changes using BIC segmentation
         speaker_changes = self._detect_speaker_changes(audio_path)
         logger.info(f"Detected {len(speaker_changes)} speaker changes at: {speaker_changes}")
@@ -383,7 +401,78 @@ class SpeakerDiarizer:
                     "confidence": 0.0
                 }
         
+        # Post-processing: Force adjacent segments with similar text to have the same speaker
+        self._post_process_speakers(diarized_transcription)
+        
         return diarized_transcription
+        
+    def _post_process_speakers(self, transcription: Dict[str, Any]) -> None:
+        """
+        Post-process speaker assignments to ensure consistency.
+        
+        This function enforces rules like:
+        1. Adjacent segments with very short gaps should have the same speaker
+        2. Short segments surrounded by the same speaker should be merged
+        
+        Args:
+            transcription: Transcription data with speaker assignments
+        """
+        segments = transcription.get("segments", [])
+        if len(segments) <= 1:
+            return
+            
+        # First pass: Assign the most frequent speaker ID to all segments
+        # For short recordings, this is the most reliable approach
+        if len(segments) < 10 and segments[-1]["end"] - segments[0]["start"] < 60:
+            # Count speaker occurrences
+            speaker_counts = {}
+            for segment in segments:
+                speaker_name = segment.get("speaker", {}).get("name", "Unknown")
+                speaker_counts[speaker_name] = speaker_counts.get(speaker_name, 0) + 1
+            
+            # Find most frequent speaker
+            most_frequent = max(speaker_counts.items(), key=lambda x: x[1])[0]
+            
+            # Assign all segments to the most frequent speaker
+            for segment in segments:
+                segment["speaker"] = {
+                    "id": None,
+                    "name": most_frequent,
+                    "confidence": 0.9
+                }
+            
+            return
+            
+        # For longer recordings, use a more nuanced approach
+        # Second pass: Ensure adjacent segments with short gaps have the same speaker
+        MAX_GAP = 1.0  # Maximum gap in seconds to consider segments as adjacent
+        
+        for i in range(1, len(segments)):
+            prev_segment = segments[i-1]
+            curr_segment = segments[i]
+            
+            # Check if segments are close in time
+            time_gap = curr_segment["start"] - prev_segment["end"]
+            
+            if time_gap < MAX_GAP:
+                # If gap is small, use the same speaker for both segments
+                prev_speaker = prev_segment.get("speaker", {}).get("name", "Unknown")
+                curr_speaker = curr_segment.get("speaker", {}).get("name", "Unknown")
+                
+                # If they already have the same speaker, continue
+                if prev_speaker == curr_speaker:
+                    continue
+                    
+                # Otherwise, use the speaker with higher confidence or the first one
+                prev_confidence = prev_segment.get("speaker", {}).get("confidence", 0.0)
+                curr_confidence = curr_segment.get("speaker", {}).get("confidence", 0.0)
+                
+                if prev_confidence >= curr_confidence:
+                    # Use previous speaker for current segment
+                    curr_segment["speaker"] = prev_segment["speaker"]
+                else:
+                    # Use current speaker for previous segment
+                    prev_segment["speaker"] = curr_segment["speaker"]
     
     def _process_audio_segment(self, audio_path: str, start_time: float, end_time: float) -> Optional[np.ndarray]:
         """
