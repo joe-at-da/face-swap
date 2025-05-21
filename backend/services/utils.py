@@ -2,6 +2,7 @@
 Utility functions for services
 """
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Union
 
 
@@ -18,6 +19,9 @@ def make_json_serializable(obj: Any) -> Any:
     try:
         if isinstance(obj, datetime):
             return obj.isoformat()
+        elif isinstance(obj, Path):
+            # Handle Path objects by converting to string
+            return str(obj)
         elif isinstance(obj, dict):
             return {k: make_json_serializable(v) for k, v in obj.items()}
         elif isinstance(obj, list):

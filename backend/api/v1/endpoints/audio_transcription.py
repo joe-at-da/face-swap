@@ -313,15 +313,18 @@ async def get_transcription_results(
         if capture.transcription_results:
             # Results are stored directly in the database
             results = json.loads(capture.transcription_results)
-        elif capture.transcription_path and os.path.exists(capture.transcription_path):
+        elif capture.transcription_path and os.path.exists(str(capture.transcription_path)):
             # Results are stored in a file
-            with open(capture.transcription_path, 'r') as f:
+            with open(str(capture.transcription_path), 'r') as f:
                 results = json.load(f)
         else:
             return JSONResponse(
                 status_code=404,
                 content={"success": False, "error": "Transcription results not found"}
             )
+        
+        # Ensure all values are JSON serializable
+        results = make_json_serializable(results)
         
         return {"success": True, "results": results}
     except Exception as e:
@@ -410,7 +413,7 @@ def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diari
         
         # Load the transcription results to store in the database
         try:
-            with open(output_path, 'r') as f:
+            with open(str(output_path), 'r') as f:  # Convert Path to string
                 transcription_data = json.load(f)
                 
             # Store a summary in the database (full text and first few segments)
@@ -419,7 +422,7 @@ def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diari
                 "language": transcription_data.get("language", ""),
                 "segments": transcription_data.get("segments", [])[:5],  # First 5 segments
                 "total_segments": len(transcription_data.get("segments", [])),
-                "audio_file": str(audio_path),
+                "audio_file": str(audio_path),  # Ensure Path is converted to string
                 "model": model_size,
                 "with_speaker_diarization": with_speaker_diarization
             }
