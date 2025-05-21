@@ -62,7 +62,7 @@ const ParliamentTVCapture: React.FC<ParliamentTVCaptureProps> = ({ onSuccess, on
   const [url, setUrl] = useState('https://parliamentlive.tv/event/index/c63e4bed-0da2-4d85-a742-e5d247a7aceb?in=12:23:30');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [duration, setDuration] = useState(10); // Default 10 seconds
+  const [duration, setDuration] = useState(30); // Default 30 seconds
   const [enableFacialRecognition, setEnableFacialRecognition] = useState(true);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);

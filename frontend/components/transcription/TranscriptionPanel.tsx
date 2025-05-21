@@ -258,12 +258,26 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
 
       const data = await response.json();
       console.log('Transcription results:', data);
+      
+      // Enhanced debugging
+      if (data.success === false) {
+        console.error('API returned success: false', data);
+      }
+      
+      if (data.results) {
+        console.log('Results structure:', Object.keys(data.results));
+        console.log('Results text available:', !!data.results.text);
+        console.log('Results segments available:', Array.isArray(data.results.segments) ? data.results.segments.length : 'not an array');
+      } else {
+        console.error('No results property in response');
+      }
 
       if (data.success && data.results) {
         setTranscriptionResults(data.results);
         setShowTranscription(true);
         return data;
       } else {
+        console.error('No valid transcription results', data);
         toast.error('No transcription results available');
         return { success: false, message: 'No transcription results available' };
       }
@@ -823,6 +837,52 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
                 Detected language: <span className="font-medium ml-1">{transcriptionResults.language}</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      
+      {transcriptionStatus && transcriptionStatus.status === 'completed' && transcriptionStatus.results_available && !transcriptionResults && (
+        <div className="bg-yellow-50 p-6 rounded-lg border border-yellow-200 shadow-sm mb-4">
+          <div className="flex items-start">
+            <div className="bg-yellow-100 p-2 rounded-full mr-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div>
+              <h4 className="font-medium text-yellow-800 mb-1">Transcription Results Available</h4>
+              <p className="text-yellow-700">
+                Transcription completed, but there was an issue displaying the results in the UI. You can access the transcription directly using the link below.
+              </p>
+              {capture?.transcription_path && (
+                <div className="mt-3 p-3 bg-white rounded border border-yellow-200">
+                  <p className="font-medium text-sm mb-2">Transcription File:</p>
+                  <code className="block bg-gray-50 p-2 rounded text-sm overflow-x-auto">
+                    {capture.transcription_path}
+                  </code>
+                  <a 
+                    href={`http://localhost:8000/api/v1/audio-transcription/results/${captureId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 px-3 py-1 text-sm bg-blue-100 hover:bg-blue-200 text-blue-800 rounded inline-flex items-center"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    View Transcription JSON
+                  </a>
+                </div>
+              )}
+              <button
+                onClick={handleStartTranscription}
+                className="mt-3 px-3 py-1 text-sm bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded inline-flex items-center"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Try Again
+              </button>
+            </div>
           </div>
         </div>
       )}

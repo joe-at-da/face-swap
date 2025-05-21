@@ -104,7 +104,7 @@ To integrate the Parliament TV capture solution with the backend API:
 def capture_parliament():
     data = request.json
     url = data.get('url')
-    duration = data.get('duration', 10)  # Default to 10 seconds
+    duration = data.get('duration', 30)  # Default to 30 seconds
     
     # Call the wrapper script
     result = subprocess.run([

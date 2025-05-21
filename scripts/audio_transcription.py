@@ -91,7 +91,7 @@ def validate_audio_file(file_path):
     except Exception as e:
         return False, f"Error validating audio file: {str(e)}"
 
-def transcribe_audio(audio_file, output_file=None, model_size="medium"):
+def transcribe_audio(audio_file, output_file=None, model_size="medium", language="en"):
     """
     Transcribe an audio file using Whisper model.
     
@@ -118,10 +118,18 @@ def transcribe_audio(audio_file, output_file=None, model_size="medium"):
     # Transcribe the audio
     logger.info("Starting transcription...")
     start_time = datetime.now()
-    result = model.transcribe(audio_file)
+    
+    # Use specified language or auto-detect if set to 'auto'
+    if language and language.lower() != 'auto':
+        logger.info(f"Using specified language: {language}")
+        result = model.transcribe(audio_file, language=language)
+    else:
+        logger.info("Using automatic language detection")
+        result = model.transcribe(audio_file)
+        
     end_time = datetime.now()
     duration = (end_time - start_time).total_seconds()
-    logger.info(f"Transcription completed in {duration:.2f} seconds")
+    logger.info(f"Transcription completed in {duration:.2f} seconds with detected language: {result['language']}")
     
     # Format the results with timestamps
     transcription = {
@@ -481,6 +489,7 @@ def main():
     parser.add_argument("--output", help="Path to save the transcription results")
     parser.add_argument("--model", default="medium", choices=["tiny", "base", "small", "medium", "large"], 
                         help="Whisper model size to use")
+    parser.add_argument("--language", default="en", help="Language code for transcription (e.g., 'en' for English, 'auto' for automatic detection)")
     parser.add_argument("--diarize", action="store_true", help="Perform speaker diarization")
     parser.add_argument("--diarize-output", help="Path to save the diarization results")
     parser.add_argument("--video-path", help="Path to the video file for facial recognition integration")
@@ -496,7 +505,7 @@ def main():
     
     try:
         # Transcribe the audio
-        transcription = transcribe_audio(args.audio_file, args.output, args.model)
+        transcription = transcribe_audio(args.audio_file, args.output, args.model, args.language)
         
         # Perform speaker diarization if requested
         if args.diarize:

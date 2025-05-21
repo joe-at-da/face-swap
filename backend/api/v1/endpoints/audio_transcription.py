@@ -162,6 +162,7 @@ def get_capture_status(capture_id: int, db: Session = Depends(get_db)):
 async def transcribe_audio(
     capture_id: int = Body(..., description="ID of the capture to transcribe"),
     model_size: str = Body("medium", description="Whisper model size to use"),
+    language: str = Body("en", description="Language code for transcription (e.g., 'en' for English, 'auto' for automatic detection)"),
     save_output: bool = Body(True, description="Whether to save output files"),
     with_speaker_diarization: bool = Body(False, description="Whether to perform speaker diarization"),
     background_tasks: BackgroundTasks = None,
@@ -259,11 +260,11 @@ async def transcribe_audio(
         # Run the transcription in the background
         if background_tasks:
             logger.info(f"Adding transcription task to background tasks")
-            background_tasks.add_task(run_audio_transcription, capture_id, model_size, with_speaker_diarization, db)
+            background_tasks.add_task(run_audio_transcription, capture_id, model_size, language, with_speaker_diarization, db)
         else:
             # Run in the current process (not recommended for production)
             logger.info(f"Running transcription synchronously")
-            run_audio_transcription(capture_id, model_size, with_speaker_diarization, db)
+            run_audio_transcription(capture_id, model_size, language, with_speaker_diarization, db)
         
         return get_capture_status(capture_id, db)
         
@@ -334,7 +335,7 @@ async def get_transcription_results(
             content={"success": False, "error": str(e)}
         )
 
-def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diarization: bool, db: Session):
+def run_audio_transcription(capture_id: int, model_size: str, language: str, with_speaker_diarization: bool, db: Session):
     """Run the audio transcription process for a capture"""
     try:
         # Get the capture
@@ -373,7 +374,8 @@ def run_audio_transcription(capture_id: int, model_size: str, with_speaker_diari
             "python", "/app/scripts/audio_transcription.py",
             str(audio_path),
             "--output", str(output_path),
-            "--model", model_size
+            "--model", model_size,
+            "--language", language
         ]
         
         # Add speaker diarization if requested
