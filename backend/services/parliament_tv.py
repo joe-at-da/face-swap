@@ -1778,6 +1778,41 @@ class ParliamentTVCapture:
             
             # Wait for both processes to complete
             video_stdout, video_stderr = video_process.communicate()
+            audio_stdout, audio_stderr = audio_process.communicate()
+            
+            # Wait for monitor thread to finish
+            monitor_thread.join(timeout=10)
+            
+            # Check results
+            video_success = video_process.returncode == 0
+            audio_success = audio_process.returncode == 0
+            
+            # Log results
+            if video_success:
+                logger.info(f"Video extraction completed successfully: {video_file}")
+            else:
+                logger.error(f"Video extraction failed with code {video_process.returncode}")
+                logger.error(f"Video stderr: {video_stderr.decode()}")
+            
+            if audio_success:
+                logger.info(f"Audio extraction completed successfully: {audio_file}")
+            else:
+                logger.error(f"Audio extraction failed with code {audio_process.returncode}")
+                logger.error(f"Audio stderr: {audio_stderr.decode()}")
+            
+            # Update capture record with results
+            try:
+                if video_success:
+                    db_capture.video_path = video_file
+                
+                if audio_success:
+                    db_capture.audio_path = audio_file
+                    db_capture.audio_file_path = audio_file
+                
+                # Update status based on results
+                if video_success and audio_success:
+                    db_capture.status = "completed"
+                    logger.info(f"Updated capture status to 'completed'")
                 else:
                     db_capture.status = "error"
                     error_message = []
