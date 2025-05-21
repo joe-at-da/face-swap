@@ -389,6 +389,9 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
     return !transcriptionStatus || transcriptionStatus.status === 'not_started';
   };
 
+  // State for speaker diarization option
+  const [withDiarization, setWithDiarization] = useState(true);
+
   // Handle button click to start transcription process
   const handleStartTranscription = () => {
     if (isTranscriptionInProgress() || isTranscriptionAvailable()) {
@@ -396,8 +399,8 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
       return;
     }
     
-    console.log('Starting transcription process...');
-    startTranscription(true); // Start with speaker diarization enabled
+    console.log(`Starting transcription process with speaker diarization: ${withDiarization}`);
+    startTranscription(withDiarization);
   };
 
   // State for search functionality and UI tabs
@@ -624,6 +627,26 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
               <p className="text-gray-600 mb-4">
                 Convert the audio to text with timestamps. This will create a searchable transcript of the parliamentary session.
               </p>
+              <div className="flex items-center mb-4">
+                <label className="inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={withDiarization} 
+                    onChange={(e) => setWithDiarization(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  <span className="ml-3 text-sm font-medium text-gray-700">Enable Speaker Identification</span>
+                </label>
+                <div className="ml-2 group relative">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                    Speaker identification will attempt to distinguish between different speakers in the audio and label each segment accordingly. This process takes longer but provides more detailed transcription results.
+                  </div>
+                </div>
+              </div>
               <button
                 onClick={handleStartTranscription}
                 disabled={processMutation.isPending}
