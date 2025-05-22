@@ -241,9 +241,8 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
                 <div className="relative" style={{ zIndex: 60 }}>
                   <Link href="/" className="flex items-center">
                     <svg className="h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <rect x="4" y="4" width="16" height="16" rx="1" strokeWidth="1.5" />
-                      <line x1="12" y1="4" x2="12" y2="20" strokeWidth="1.5" />
-                      <line x1="4" y1="12" x2="20" y2="12" strokeWidth="1.5" />
+                      <path d="M12 3L4 7v2h16V7l-8-4z" strokeWidth="1.5" />
+                      <path d="M6 9v10M10 9v10M14 9v10M18 9v10M4 19h16" strokeWidth="1.5" />
                     </svg>
                     <span className="text-xl font-bold text-white ml-2">The MP</span>
                   </Link>
