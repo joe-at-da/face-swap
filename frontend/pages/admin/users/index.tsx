@@ -33,7 +33,7 @@ const UserManagement: React.FC = () => {
   });
   
   // Fetch users
-  const { data: users, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery<{ items: User[] }>({
     queryKey: ['users', filters],
     queryFn: async () => {
       const params: Record<string, any> = {};
@@ -206,7 +206,7 @@ const UserManagement: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ) : !users || users.length === 0 ? (
+            ) : !data?.items || data.items.length === 0 ? (
               <div className="p-6 text-center text-gray-500">
                 No users found. Add a new user to get started.
               </div>
@@ -235,7 +235,7 @@ const UserManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-gray-800 divide-y divide-gray-700">
-                  {users.map((user: User) => (
+                  {data?.items.map((user: User) => (
                     <tr key={user.id} className="hover:bg-gray-700">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
