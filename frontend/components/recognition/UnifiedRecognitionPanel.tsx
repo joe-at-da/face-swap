@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
+import * as Path from 'path';
+import { api } from '../../utils/api';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -154,26 +156,27 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   const fetchAudioInfo = async () => {
     try {
-      // Try to get audio info from the video details endpoint
-      const response = await axios.get(`${API_BASE_URL}/parliament-tv/${captureId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      // Use the api utility to get capture details
+      const response = await api.get(`/capture/${captureId}`);
       
-      const videoData = response.data as {
+      const captureData = response as {
         file_path?: string;
+        video_path?: string;
+        audio_path?: string;
         url?: string;
       };
       
-      // Extract audio information from video data
-      if (videoData) {
+      // Extract audio information from capture data
+      if (captureData) {
         const audioInfo = {
-          file_path: videoData.file_path ? videoData.file_path.replace('.mp4', '.audio.mp3') : null,
-          file_name: videoData.file_path ? Path.basename(videoData.file_path).replace('.mp4', '.audio.mp3') : null,
-          source_url: videoData.url || null
+          file_path: captureData.audio_path || 
+                    (captureData.file_path ? captureData.file_path.replace('.mp4', '.audio.mp3') : null),
+          file_name: captureData.audio_path ? Path.basename(captureData.audio_path) : 
+                    (captureData.file_path ? Path.basename(captureData.file_path).replace('.mp4', '.audio.mp3') : null),
+          source_url: captureData.url || null
         };
         
+        console.log('Audio info:', audioInfo);
         setAudioInfo(audioInfo);
       }
     } catch (err) {

@@ -1,3 +1,8 @@
+/**
+ * @deprecated This component is deprecated and will be removed in a future release.
+ * Please use UnifiedRecognitionPanel instead.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../utils/api';

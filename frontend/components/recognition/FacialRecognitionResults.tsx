@@ -1,3 +1,8 @@
+/**
+ * @deprecated This component is deprecated and will be removed in a future release.
+ * Please use UnifiedRecognitionPanel instead.
+ */
+
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import MainLayout from '../../../components/layout/MainLayout';
 import { withAuth, useAuth } from '../../../contexts/AuthContext';
 import { UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
+import UnifiedRecognitionPanel from '../../../components/recognition/UnifiedRecognitionPanel';
+import { toast } from 'react-toastify';
 
 // Types
 interface Recognition {
@@ -51,7 +53,7 @@ interface RecognizedSpeaker {
 
 const RecognitionPage: React.FC = () => {
   const router = useRouter();
-  const { id, recognitionId } = router.query;
+  const { id } = router.query;
   const queryClient = useQueryClient();
   const { token } = useAuth();
   
@@ -119,141 +121,62 @@ const RecognitionPage: React.FC = () => {
             bbox: speaker.bbox || [0, 0, 0, 0]
           }));
         }
-        // Format 4: Direct speakers array in results
-        else if (Array.isArray(results.speakers)) {
-          faces = results.speakers.map((speaker: any) => ({
-            name: speaker.name || 'Unknown',
-            confidence: speaker.confidence || 0,
-            timestamp: speaker.timestamp || 0,
-            bbox: speaker.bbox || [0, 0, 0, 0]
-          }));
-        }
         
-        console.log('Extracted faces:', faces);
         setFacialResults(faces);
         
-        // Extract speaker recognition results - handle different possible formats
+        // Extract speaker identification results
         let speakers: RecognizedSpeaker[] = [];
         
         // Format 1: results.speaker_identification.segments
         if (results.speaker_identification && Array.isArray(results.speaker_identification.segments)) {
-          speakers = results.speaker_identification.segments;
+          speakers = results.speaker_identification.segments.map((segment: any) => ({
+            name: segment.speaker || 'Unknown',
+            confidence: segment.confidence || 0,
+            start_time: segment.start || 0,
+            end_time: segment.end || 0,
+            text: segment.text || ''
+          }));
         }
         // Format 2: results.speaker_identification.results.segments
         else if (results.speaker_identification && results.speaker_identification.results && 
                  Array.isArray(results.speaker_identification.results.segments)) {
-          speakers = results.speaker_identification.results.segments;
+          speakers = results.speaker_identification.results.segments.map((segment: any) => ({
+            name: segment.speaker || 'Unknown',
+            confidence: segment.confidence || 0,
+            start_time: segment.start || 0,
+            end_time: segment.end || 0,
+            text: segment.text || ''
+          }));
         }
-        // Format 3: Direct segments array in results
+        // Format 3: results.segments (direct)
         else if (Array.isArray(results.segments)) {
-          speakers = results.segments;
-        }
-        // Format 4: Create speakers from faces if no segments are found
-        else if (faces.length > 0) {
-          speakers = faces.map((face: RecognizedFace) => ({
-            name: face.name,
-            confidence: face.confidence,
-            start_time: face.timestamp,
-            end_time: face.timestamp + 5, // Assume 5 seconds duration
-            text: 'No transcription available'
+          speakers = results.segments.map((segment: any) => ({
+            name: segment.speaker || 'Unknown',
+            confidence: segment.confidence || 0,
+            start_time: segment.start || 0,
+            end_time: segment.end || 0,
+            text: segment.text || ''
           }));
         }
         
-        console.log('Extracted speakers:', speakers);
         setSpeakerResults(speakers);
       } catch (error) {
-        console.error('Error parsing recognition results:', error);
+        console.error('Error processing recognition results:', error);
       }
-    } 
-    // If recognition status indicates there are results but we don't have them in the capture object,
-    // we need to fetch them directly
-    else if (recognitionStatus?.status?.has_results && recognitionStatus?.status?.status === 'completed') {
-      // Fetch recognition results directly
-      const fetchRecognitionResults = async () => {
-        try {
-          const response = await api.get(`/recognition/results/${id}`);
-          if (response && response.results) {
-            const results = response.results;
-            console.log('Fetched recognition results:', results);
-            setRecognitionResults(results);
-            
-            // Extract facial recognition results - handle different possible formats
-            let faces: RecognizedFace[] = [];
-            
-            // Format 1: results.facial_recognition.faces
-            if (results.facial_recognition && Array.isArray(results.facial_recognition.faces)) {
-              faces = results.facial_recognition.faces;
-            }
-            // Format 2: results.speaker_identification.results.speakers
-            else if (results.speaker_identification && results.speaker_identification.results && 
-                     Array.isArray(results.speaker_identification.results.speakers)) {
-              faces = results.speaker_identification.results.speakers.map((speaker: any) => ({
-                name: speaker.name || 'Unknown',
-                confidence: speaker.confidence || 0,
-                timestamp: speaker.timestamp || 0,
-                bbox: speaker.bbox || [0, 0, 0, 0]
-              }));
-            }
-            // Format 3: Direct speaker_identification with speakers array
-            else if (results.speaker_identification && Array.isArray(results.speaker_identification.speakers)) {
-              faces = results.speaker_identification.speakers.map((speaker: any) => ({
-                name: speaker.name || 'Unknown',
-                confidence: speaker.confidence || 0,
-                timestamp: speaker.timestamp || 0,
-                bbox: speaker.bbox || [0, 0, 0, 0]
-              }));
-            }
-            // Format 4: Direct speakers array in results
-            else if (Array.isArray(results.speakers)) {
-              faces = results.speakers.map((speaker: any) => ({
-                name: speaker.name || 'Unknown',
-                confidence: speaker.confidence || 0,
-                timestamp: speaker.timestamp || 0,
-                bbox: speaker.bbox || [0, 0, 0, 0]
-              }));
-            }
-            
-            console.log('Extracted faces from fetched results:', faces);
-            setFacialResults(faces);
-            
-            // Extract speaker recognition results - handle different possible formats
-            let speakers: RecognizedSpeaker[] = [];
-            
-            // Format 1: results.speaker_identification.segments
-            if (results.speaker_identification && Array.isArray(results.speaker_identification.segments)) {
-              speakers = results.speaker_identification.segments;
-            }
-            // Format 2: results.speaker_identification.results.segments
-            else if (results.speaker_identification && results.speaker_identification.results && 
-                     Array.isArray(results.speaker_identification.results.segments)) {
-              speakers = results.speaker_identification.results.segments;
-            }
-            // Format 3: Direct segments array in results
-            else if (Array.isArray(results.segments)) {
-              speakers = results.segments;
-            }
-            // Format 4: Create speakers from faces if no segments are found
-            else if (faces.length > 0) {
-              speakers = faces.map((face: RecognizedFace) => ({
-                name: face.name,
-                confidence: face.confidence,
-                start_time: face.timestamp,
-                end_time: face.timestamp + 5, // Assume 5 seconds duration
-                text: 'No transcription available'
-              }));
-            }
-            
-            console.log('Extracted speakers from fetched results:', speakers);
-            setSpeakerResults(speakers);
-          }
-        } catch (error) {
-          console.error('Error fetching recognition results:', error);
-        }
-      };
-      
-      fetchRecognitionResults();
+    } else if (recognitionStatus?.results) {
+      // If we have results in the recognition status
+      try {
+        const results = typeof recognitionStatus.results === 'string' 
+          ? JSON.parse(recognitionStatus.results) 
+          : recognitionStatus.results;
+        
+        setRecognitionResults(results);
+        // Process results as above...
+      } catch (error) {
+        console.error('Error processing recognition status results:', error);
+      }
     }
-  }, [capture, recognitionStatus, id]);
+  }, [capture, recognitionStatus]);
 
   // Format time (convert seconds to MM:SS format)
   const formatTime = (seconds: number): string => {
@@ -261,90 +184,62 @@ const RecognitionPage: React.FC = () => {
     const secs = Math.floor(seconds % 60);
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
-
+  
   // Format date
   const formatDate = (dateString: string): string => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleString();
+    return new Date(dateString).toLocaleString();
   };
-
+  
   // Get confidence color class based on confidence value
   const getConfidenceColorClass = (confidence: number): string => {
-    if (confidence >= 0.8) return 'bg-green-100 text-green-800';
-    if (confidence >= 0.6) return 'bg-yellow-100 text-yellow-800';
-    return 'bg-red-100 text-red-800';
+    if (confidence >= 0.8) return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
+    if (confidence >= 0.6) return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300';
+    return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
   };
 
   return (
-    <MainLayout title={`Recognition Results | ${capture?.title || `Capture ${id}`}`}>
-      <div className="container mx-auto px-4 py-8">
+    <MainLayout title={`Recognition Results | ${capture?.title || 'Capture'} | Parliament Video Clip Manager`}>
+      <div className="container mx-auto p-6">
         <div className="mb-6">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              Recognition Results: {capture?.title || `Capture ${id}`}
-            </h1>
-            <Link href={`/capture/${id}`} className="text-primary hover:text-primary-dark">
-              Back to Capture
-            </Link>
-          </div>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            View facial and speaker recognition results
-          </p>
+          <Link href={`/capture/${id}`}>
+            <span className="text-blue-600 hover:text-blue-800 cursor-pointer">
+              &larr; Back to Capture Details
+            </span>
+          </Link>
         </div>
 
-        {isLoadingCapture || isLoadingRecognition ? (
-          <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-            <div className="animate-pulse flex space-x-4">
-              <div className="flex-1 space-y-4 py-1">
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
-                <div className="space-y-2">
-                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-5/6"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
-            {/* Status Bar */}
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-              <div className="flex flex-wrap items-center justify-between">
-                <div className="flex items-center">
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mr-2">Status:</span>
-                  <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
-                    ${recognitionStatus?.status?.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                      recognitionStatus?.status?.status === 'processing' ? 'bg-blue-100 text-blue-800' : 
-                      recognitionStatus?.status?.status === 'error' ? 'bg-red-100 text-red-800' : 
-                      'bg-gray-100 text-gray-800'}`}>
-                    {recognitionStatus?.status?.status || capture?.recognition_status || 'Not Started'}
-                  </span>
-                </div>
-                <div className="text-sm text-gray-600 dark:text-gray-400">
-                  {recognitionStatus?.status?.completed_at ? (
-                    <span>Completed: {formatDate(recognitionStatus.status.completed_at)}</span>
-                  ) : recognitionStatus?.status?.started_at ? (
-                    <span>Started: {formatDate(recognitionStatus.status.started_at)}</span>
-                  ) : capture?.recognition_completed_at ? (
-                    <span>Completed: {formatDate(capture.recognition_completed_at)}</span>
-                  ) : capture?.recognition_started_at ? (
-                    <span>Started: {formatDate(capture.recognition_started_at)}</span>
-                  ) : (
-                    <span>Not processed yet</span>
-                  )}
-                </div>
-              </div>
-            </div>
+        {/* Unified Recognition Panel */}
+        <div className="mb-8">
+          <UnifiedRecognitionPanel 
+            captureId={Number(id)} 
+            onProcessingComplete={() => {
+              toast.success('Recognition processing completed');
+              queryClient.invalidateQueries({ queryKey: ['capture', id] });
+              queryClient.invalidateQueries({ queryKey: ['recognition-status', id] });
+            }}
+          />
+        </div>
 
+        <div className="bg-gray-800 shadow overflow-hidden sm:rounded-lg">
+          <div className="px-4 py-5 sm:px-6 bg-gray-900">
+            <h3 className="text-lg leading-6 font-medium text-white">
+              Detailed Recognition Results
+            </h3>
+            <p className="mt-1 max-w-2xl text-sm text-gray-400">
+              {capture?.title}
+            </p>
+          </div>
+
+          <div className="border-t border-gray-700 px-4 py-5 sm:p-6">
             {/* Tabs */}
-            <div className="border-b border-gray-200 dark:border-gray-700">
+            <div className="border-b border-gray-700 mb-6">
               <nav className="flex -mb-px">
                 <button
                   onClick={() => setActiveTab('details')}
                   className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
                     activeTab === 'details'
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-blue-500 text-blue-500'
+                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'
                   }`}
                 >
                   Details
@@ -353,8 +248,8 @@ const RecognitionPage: React.FC = () => {
                   onClick={() => setActiveTab('facial')}
                   className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
                     activeTab === 'facial'
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-blue-500 text-blue-500'
+                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'
                   }`}
                 >
                   Facial Recognition
@@ -363,202 +258,148 @@ const RecognitionPage: React.FC = () => {
                   onClick={() => setActiveTab('speaker')}
                   className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
                     activeTab === 'speaker'
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-blue-500 text-blue-500'
+                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'
                   }`}
                 >
                   Speaker Identification
                 </button>
               </nav>
             </div>
-
-            {/* Tab Content */}
-            <div className="p-6">
-              {/* Details Tab */}
-              {activeTab === 'details' && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Recognition Details</h3>
-                  
-                  {/* Recognition Progress */}
-                  {capture?.recognition_progress && (
-                    <div className="mb-6">
-                      <h4 className="text-md font-medium mb-2">Progress</h4>
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
-                        {(() => {
-                          try {
-                            const progress = JSON.parse(capture.recognition_progress);
-                            return (
-                              <div>
-                                <div className="mb-2">
-                                  <span className="font-medium">Status:</span> {progress.status}
-                                </div>
-                                {progress.steps && progress.steps.length > 0 && (
-                                  <div>
-                                    <div className="font-medium mb-1">Steps:</div>
-                                    <ul className="list-disc pl-5 space-y-1">
-                                      {progress.steps.map((step: any, index: number) => (
-                                        <li key={index} className="text-sm">
-                                          <span className="font-medium">{step.name}:</span> {step.status}
-                                          {step.timestamp && <span className="text-gray-500 ml-2">({new Date(step.timestamp).toLocaleTimeString()})</span>}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
-                                {progress.error && (
-                                  <div className="mt-2 text-red-600">
-                                    <span className="font-medium">Error:</span> {progress.error}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          } catch (e) {
-                            return <div className="text-gray-500">Progress information not available</div>;
-                          }
-                        })()}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Summary of Results */}
-                  {recognitionResults && (
-                    <div>
-                      <h4 className="text-md font-medium mb-2">Summary</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
-                          <h5 className="font-medium mb-2">Facial Recognition</h5>
-                          {facialResults.length > 0 ? (
-                            <div>
-                              <p className="text-sm">{facialResults.length} faces detected</p>
-                              <div className="mt-2">
-                                <span className="text-sm font-medium">Recognized Individuals:</span>
-                                <div className="flex flex-wrap gap-2 mt-1">
-                                  {Array.from(new Set(facialResults.map(face => face.name))).map((name, index) => (
-                                    <span key={index} className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
-                                      {name}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No facial recognition results available</p>
-                          )}
-                        </div>
-                        
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
-                          <h5 className="font-medium mb-2">Speaker Identification</h5>
-                          {speakerResults.length > 0 ? (
-                            <div>
-                              <p className="text-sm">{speakerResults.length} speaker segments identified</p>
-                              <div className="mt-2">
-                                <span className="text-sm font-medium">Recognized Speakers:</span>
-                                <div className="flex flex-wrap gap-2 mt-1">
-                                  {Array.from(new Set(speakerResults.map(speaker => speaker.name))).map((name, index) => (
-                                    <span key={index} className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded-full">
-                                      {name}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No speaker identification results available</p>
-                          )}
-                        </div>
+            
+            {isLoadingCapture || isLoadingRecognition ? (
+              <div className="flex justify-center items-center h-32">
+                <div className="text-gray-400">Loading recognition results...</div>
+              </div>
+            ) : !capture || !recognitionStatus ? (
+              <div className="bg-red-900 border-l-4 border-red-500 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-red-300">Error loading recognition results. The capture may not exist or recognition has not been performed.</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {/* Details Tab */}
+                {activeTab === 'details' && (
+                  <div>
+                    <h3 className="text-lg font-medium text-white mb-4">Recognition Details</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-gray-900 p-4 rounded-lg">
+                        <h4 className="text-md font-medium text-white mb-2">Status Information</h4>
+                        <dl className="space-y-2">
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Status</dt>
+                            <dd className="text-sm text-gray-300">
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                recognitionStatus?.status?.status === 'completed' ? 'bg-green-900 text-green-300' : 
+                                recognitionStatus?.status?.status === 'processing' ? 'bg-blue-900 text-blue-300' : 
+                                recognitionStatus?.status?.status === 'failed' ? 'bg-red-900 text-red-300' : 
+                                'bg-gray-700 text-gray-300'
+                              }`}>
+                                {recognitionStatus?.status?.status || capture?.recognition_status || 'Not Started'}
+                              </span>
+                            </dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Started At</dt>
+                            <dd className="text-sm text-gray-300">
+                              {recognitionStatus?.status?.started_at ? formatDate(recognitionStatus.status.started_at) : 
+                               capture?.recognition_started_at ? formatDate(capture.recognition_started_at) : 'N/A'}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Completed At</dt>
+                            <dd className="text-sm text-gray-300">
+                              {recognitionStatus?.status?.completed_at ? formatDate(recognitionStatus.status.completed_at) : 
+                               capture?.recognition_completed_at ? formatDate(capture.recognition_completed_at) : 'N/A'}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Duration</dt>
+                            <dd className="text-sm text-gray-300">
+                              {recognitionStatus?.status?.started_at && recognitionStatus?.status?.completed_at ? 
+                                `${Math.round((new Date(recognitionStatus.status.completed_at).getTime() - new Date(recognitionStatus.status.started_at).getTime()) / 1000)} seconds` : 
+                                capture?.recognition_started_at && capture?.recognition_completed_at ?
+                                `${Math.round((new Date(capture.recognition_completed_at).getTime() - new Date(capture.recognition_started_at).getTime()) / 1000)} seconds` : 
+                                'N/A'}
+                            </dd>
+                          </div>
+                        </dl>
                       </div>
                       
-                      {/* Transcription Results */}
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-md p-4 mb-4">
-                        <h5 className="font-medium mb-2">Transcription</h5>
-                        {recognitionResults?.transcription?.transcript || 
-                         recognitionResults?.results_summary?.transcript_text ? (
-                          <div>
-                            <div className="mt-2 p-4 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-                              <p className="text-sm whitespace-pre-wrap">
-                                {recognitionResults?.transcription?.transcript || 
-                                 recognitionResults?.results_summary?.transcript_text}
-                              </p>
-                            </div>
-                            {(recognitionResults?.transcription?.message || 
-                              recognitionResults?.results_summary?.transcription_message) && (
-                              <div className="mt-2">
-                                <p className="text-xs text-gray-500">
-                                  {recognitionResults?.transcription?.message || 
-                                   recognitionResults?.results_summary?.transcription_message}
-                                </p>
-                              </div>
-                            )}
+                      <div className="bg-gray-900 p-4 rounded-lg">
+                        <h4 className="text-md font-medium text-white mb-2">Recognition Results</h4>
+                        <dl className="space-y-2">
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Speakers Identified</dt>
+                            <dd className="text-sm text-gray-300">
+                              {recognitionResults?.speaker_identification?.results?.speakers?.length || 
+                               recognitionResults?.speakers?.length || 0}
+                            </dd>
                           </div>
-                        ) : (
-                          <p className="text-sm text-gray-500">No transcription results available</p>
-                        )}
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Speaker Segments</dt>
+                            <dd className="text-sm text-gray-300">
+                              {recognitionResults?.speaker_identification?.results?.segments?.length || 
+                               recognitionResults?.segments?.length || 0}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Transcription Available</dt>
+                            <dd className="text-sm text-gray-300">
+                              {(recognitionResults?.transcription?.transcript || 
+                                recognitionResults?.results_summary?.transcript_text) ? 'Yes' : 'No'}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className="text-sm text-gray-400">Facial Recognition</dt>
+                            <dd className="text-sm text-gray-300">
+                              {recognitionResults?.facial_recognition ? 'Available' : 'Not Available'}
+                            </dd>
+                          </div>
+                        </dl>
                       </div>
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  {/* No Results Message */}
-                  {!recognitionResults && (
-                    <div className={`border-l-4 p-4 ${recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ? 'bg-red-50 border-red-400' : recognitionStatus?.status?.status === 'completed' ? 'bg-blue-50 border-blue-400' : 'bg-yellow-50 border-yellow-400'}`}>
-                      <div className="flex">
-                        <div className="ml-3">
-                          <p className={`text-sm ${recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ? 'text-red-700' : recognitionStatus?.status?.status === 'completed' ? 'text-blue-700' : 'text-yellow-700'}`}>
-                            {recognitionStatus?.status?.status === 'completed' || capture?.recognition_status === 'completed' ?
-                              'Recognition completed successfully, but no faces or speakers were detected in the media.' :
-                              recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error' ?
-                                'An error occurred during the recognition process.' :
-                                'No recognition results available. Try starting the recognition process.'}
-                          </p>
-                          {(recognitionStatus?.status?.status === 'error' || capture?.recognition_status === 'error') && (recognitionStatus?.status?.progress || capture?.recognition_progress) && (
-                            <p className="text-sm text-red-600 mt-2">
-                              {(() => {
-                                try {
-                                  const progress = recognitionStatus?.status?.progress || 
-                                    (capture?.recognition_progress ? JSON.parse(capture.recognition_progress) : {});
-                                  return progress.error || 'Unknown error occurred during recognition';
-                                } catch (e) {
-                                  return 'Error parsing recognition progress';
-                                }
-                              })()}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Facial Recognition Tab */}
-              {activeTab === 'facial' && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Facial Recognition Results</h3>
-                  
-                  {facialResults.length > 0 ? (
-                    <div>
+                {/* Facial Recognition Tab */}
+                {activeTab === 'facial' && (
+                  <div>
+                    <h3 className="text-lg font-medium text-white mb-4">Facial Recognition Results</h3>
+                    
+                    {facialResults.length > 0 ? (
                       <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                          <thead className="bg-gray-50 dark:bg-gray-900">
+                        <table className="min-w-full divide-y divide-gray-700">
+                          <thead className="bg-gray-900">
                             <tr>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                Person
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Name
                               </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                                 Confidence
                               </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                                 Timestamp
                               </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                Position
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Bounding Box
                               </th>
                             </tr>
                           </thead>
-                          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                          <tbody className="bg-gray-800 divide-y divide-gray-700">
                             {facialResults.map((face, index) => (
                               <tr key={index}>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                  <div className="text-sm font-medium text-white">
                                     {face.name}
                                   </div>
                                 </td>
@@ -567,58 +408,56 @@ const RecognitionPage: React.FC = () => {
                                     {Math.round(face.confidence * 100)}%
                                   </span>
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                                   {formatTime(face.timestamp)}
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                  {`(${Math.round(face.bbox[0])}, ${Math.round(face.bbox[1])}) - ${Math.round(face.bbox[2])}x${Math.round(face.bbox[3])}`}
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                                  {face.bbox ? `[${face.bbox.map(v => Math.round(v)).join(', ')}]` : 'N/A'}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="bg-gray-50 dark:bg-gray-900 p-6 text-center">
-                      <p className="text-gray-500 dark:text-gray-400">
-                        No facial recognition results available.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
+                    ) : (
+                      <div className="bg-gray-900 p-6 text-center">
+                        <p className="text-gray-400">
+                          No facial recognition results available.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              {/* Speaker Identification Tab */}
-              {activeTab === 'speaker' && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Speaker Identification Results</h3>
-                  
-                  {speakerResults.length > 0 ? (
-                    <div>
+                {/* Speaker Identification Tab */}
+                {activeTab === 'speaker' && (
+                  <div>
+                    <h3 className="text-lg font-medium text-white mb-4">Speaker Identification Results</h3>
+                    
+                    {speakerResults.length > 0 ? (
                       <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                          <thead className="bg-gray-50 dark:bg-gray-900">
+                        <table className="min-w-full divide-y divide-gray-700">
+                          <thead className="bg-gray-900">
                             <tr>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                                 Speaker
                               </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                                 Confidence
                               </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                                 Time Range
                               </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                                 Text
                               </th>
                             </tr>
                           </thead>
-                          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                          <tbody className="bg-gray-800 divide-y divide-gray-700">
                             {speakerResults.map((speaker, index) => (
                               <tr key={index}>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                  <div className="text-sm font-medium text-white">
                                     {speaker.name}
                                   </div>
                                 </td>
@@ -627,33 +466,33 @@ const RecognitionPage: React.FC = () => {
                                     {Math.round(speaker.confidence * 100)}%
                                   </span>
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                                   {formatTime(speaker.start_time)} - {formatTime(speaker.end_time)}
-                                  <div className="text-xs text-gray-400">
+                                  <div className="text-xs text-gray-500">
                                     ({Math.round(speaker.end_time - speaker.start_time)} seconds)
                                   </div>
                                 </td>
-                                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                                  {speaker.text || <span className="text-gray-400 italic">No text available</span>}
+                                <td className="px-6 py-4 text-sm text-gray-400">
+                                  {speaker.text || <span className="text-gray-500 italic">No text available</span>}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="bg-gray-50 dark:bg-gray-900 p-6 text-center">
-                      <p className="text-gray-500 dark:text-gray-400">
-                        No speaker identification results available.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                    ) : (
+                      <div className="bg-gray-900 p-6 text-center">
+                        <p className="text-gray-400">
+                          No speaker identification results available.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </MainLayout>
   );
