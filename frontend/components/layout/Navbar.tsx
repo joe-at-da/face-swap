@@ -18,7 +18,7 @@ const Navbar: React.FC = () => {
   };
 
   return (
-    <nav className="shadow-sm bg-white dark:bg-gray-800 transition-colors duration-200">
+    <nav className="shadow-sm bg-gray-800 transition-colors duration-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex">
@@ -38,12 +38,6 @@ const Navbar: React.FC = () => {
               </Link>
             </div>
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link href="/capture">
-                <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                  Parliament TV
-                </span>
-              </Link>
-              
               <Link href="/videos">
                 <span className="border-transparent text-gray-500 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-blue-400 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                   Video Gallery
@@ -188,11 +182,7 @@ const Navbar: React.FC = () => {
               </span>
             </Link>
             
-            <Link href="/capture">
-              <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">
-                Parliament TV
-              </span>
-            </Link>
+
             
             <Link href="/videos">
               <span className="border-transparent text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-100 block pl-3 pr-4 py-2 border-l-4 text-base font-medium cursor-pointer">

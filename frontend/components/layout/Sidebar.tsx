@@ -99,7 +99,7 @@ const Sidebar: React.FC = () => {
   ];
 
   return (
-    <div className="h-full border-r w-64 fixed bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 transition-colors duration-200">
+    <div className="h-full border-r w-64 fixed bg-gray-800 border-gray-700 transition-colors duration-200">
       <div className="h-full flex flex-col overflow-y-auto">
         <div className="flex-1 flex flex-col pt-5 pb-4">
           <div className="flex-1 px-2 space-y-1">
@@ -111,8 +111,8 @@ const Sidebar: React.FC = () => {
                   <span
                     className={`${
                       isActive
-                        ? 'text-primary dark:text-blue-400 bg-gray-100 dark:bg-gray-700'
-                        : 'text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                        ? 'text-blue-400 bg-gray-700'
+                        : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
                     } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
                   >
                     <div className="mr-3">
@@ -140,15 +140,11 @@ const Sidebar: React.FC = () => {
                       <span
                         className={`${
                           isActive
-                            ? 'text-primary'
-                            : 'text-secondary hover:text-primary'
-                        } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer`}
-                        style={{ 
-                          backgroundColor: isActive ? 'var(--hover-bg)' : 'transparent',
-                          color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)'
-                        }}
+                            ? 'text-blue-400 bg-gray-700'
+                            : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
+                        } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
                       >
-                        <div className="mr-3" style={{ color: isActive ? 'var(--color-primary)' : 'var(--text-secondary)' }}>
+                        <div className="mr-3">
                           {item.icon}
                         </div>
                         {item.name}

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-type Theme = 'light' | 'dark';
+type Theme = 'dark';
 
 interface ThemeContextType {
   theme: Theme;
@@ -14,75 +14,36 @@ interface ThemeProviderProps {
 }
 
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>('dark');
+  const [theme] = useState<Theme>('dark');
 
-  // Initialize theme from localStorage or system preference
+  // Always use dark mode
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    
-    const savedTheme = localStorage.getItem('theme') as Theme | null;
-    
-    if (savedTheme) {
-      setTheme(savedTheme);
-      console.log('Loaded saved theme:', savedTheme);
-    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      setTheme('dark');
-      console.log('Using system dark mode preference');
-    }
-    
-    // Add listener for system theme changes
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem('theme')) {
-        setTheme(e.matches ? 'dark' : 'light');
-      }
-    };
-    
-    // Add event listener with compatibility for older browsers
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener('change', handleChange);
-    }
-    
-    return () => {
-      if (mediaQuery.removeEventListener) {
-        mediaQuery.removeEventListener('change', handleChange);
-      }
-    };
+    localStorage.setItem('theme', 'dark');
   }, []);
 
-  // Update document with theme changes
+  // Apply dark mode styles
   useEffect(() => {
     if (typeof window === 'undefined') return;
     
     const htmlElement = document.documentElement;
     
-    if (theme === 'dark') {
-      htmlElement.setAttribute('data-theme', 'parliamentDark');
-      htmlElement.classList.add('dark');
-      document.body.classList.add('dark-mode');
-      document.body.style.backgroundColor = '#111827'; // Dark gray
-      document.body.style.color = '#ffffff';
-    } else {
-      htmlElement.setAttribute('data-theme', 'parliament');
-      htmlElement.classList.remove('dark');
-      document.body.classList.remove('dark-mode');
-      document.body.style.backgroundColor = '#ffffff'; // White
-      document.body.style.color = '#111827';
-    }
+    // Always use dark mode
+    htmlElement.setAttribute('data-theme', 'parliamentDark');
+    htmlElement.classList.add('dark');
+    document.body.classList.add('dark-mode');
+    document.body.style.backgroundColor = '#111827'; // Dark gray
+    document.body.style.color = '#ffffff';
     
     // Force a repaint to ensure styles are applied
     document.body.style.transition = 'background-color 0.3s ease, color 0.3s ease';
     
-    localStorage.setItem('theme', theme);
-    console.log('Theme changed to:', theme);
-  }, [theme]);
+    localStorage.setItem('theme', 'dark');
+  }, []);
 
+  // Keep the toggleTheme function for compatibility, but it does nothing now
   const toggleTheme = () => {
-    setTheme(prevTheme => {
-      const newTheme = prevTheme === 'light' ? 'dark' : 'light';
-      console.log('Toggling theme from', prevTheme, 'to', newTheme);
-      return newTheme;
-    });
+    console.log('Theme toggle disabled - always using dark mode');
   };
 
   return (
