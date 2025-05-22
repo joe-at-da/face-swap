@@ -58,7 +58,7 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
         {
           name: 'Capture',
           href: '/capture',
-          icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z M7 4v16M17 4v16',
+          icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
         },
         {
           name: 'Transcriptions',
@@ -92,7 +92,7 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
         {
           name: 'Admin Dashboard',
           href: '/admin',
-          icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z',
+          icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
         },
         {
           name: 'Users',
@@ -145,8 +145,10 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
               <div className="flex items-center h-16 flex-shrink-0 px-4 bg-gray-900">
                 <Link href="/" className="flex items-center">
                   <div className="flex-shrink-0">
-                    <svg className="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    <svg className="h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M3 3v18h18V3H3zm16 16H5V5h14v14z" strokeWidth="1.5" />
+                      <path d="M10 7v10M14 7v10" strokeWidth="1.5" />
+                      <path d="M7 10h10M7 14h10" strokeWidth="1.5" />
                     </svg>
                   </div>
                   <span className="text-xl font-bold text-white ml-2">The MP</span>
@@ -263,8 +265,10 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
             <div className="flex items-center justify-between h-16 px-4">
               <div className="flex items-center">
                 <Link href="/" className="flex items-center">
-                  <svg className="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  <svg className="h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M3 3v18h18V3H3zm16 16H5V5h14v14z" strokeWidth="1.5" />
+                    <path d="M10 7v10M14 7v10" strokeWidth="1.5" />
+                    <path d="M7 10h10M7 14h10" strokeWidth="1.5" />
                   </svg>
                   <span className="text-xl font-bold text-white ml-2">The MP</span>
                 </Link>
