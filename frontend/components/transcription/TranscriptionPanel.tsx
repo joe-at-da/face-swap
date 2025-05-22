@@ -256,6 +256,47 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
     }
   });
 
+  // Merge adjacent segments from the same speaker
+  const mergeSegmentsBySpeaker = useCallback((segments: TranscriptionSegment[]): TranscriptionSegment[] => {
+    if (!segments || segments.length <= 1) return segments;
+    
+    const mergedSegments: TranscriptionSegment[] = [];
+    let currentSegment = { ...segments[0] };
+    
+    for (let i = 1; i < segments.length; i++) {
+      const nextSegment = segments[i];
+      
+      // Check if this segment has the same speaker as the current merged segment
+      const sameSpeaker = 
+        (currentSegment.speaker === nextSegment.speaker) || 
+        (currentSegment.speaker_name === nextSegment.speaker_name);
+      
+      // If same speaker and not a long pause (less than 2 seconds), merge them
+      if (sameSpeaker && (nextSegment.start - currentSegment.end < 2.0)) {
+        // Update the end time and append the text
+        currentSegment.end = nextSegment.end;
+        currentSegment.text += ' ' + nextSegment.text;
+        
+        // Keep the higher confidence if available
+        if (nextSegment.speaker_confidence && currentSegment.speaker_confidence) {
+          currentSegment.speaker_confidence = Math.max(
+            currentSegment.speaker_confidence, 
+            nextSegment.speaker_confidence
+          );
+        }
+      } else {
+        // Different speaker or long pause, add the current segment to results and start a new one
+        mergedSegments.push(currentSegment);
+        currentSegment = { ...nextSegment };
+      }
+    }
+    
+    // Add the last segment
+    mergedSegments.push(currentSegment);
+    
+    return mergedSegments;
+  }, []);
+
   // Fetch transcription results
   const fetchTranscriptionResults = useCallback(async () => {
     if (!captureId || !token) return { success: false, message: 'Missing capture ID or token' };
@@ -283,10 +324,14 @@ const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ captureId, audi
         console.log('Results text available:', !!data.results.text);
         console.log('Results segments available:', Array.isArray(data.results.segments) ? data.results.segments.length : 'not an array');
         
+        // Process segments to merge those from the same speaker
+        const rawSegments = Array.isArray(data.results.segments) ? data.results.segments : [];
+        const mergedSegments = mergeSegmentsBySpeaker(rawSegments);
+        
         // Make sure we have a valid TranscriptionData object
         const processedResults = {
           text: data.results.text || '',
-          segments: Array.isArray(data.results.segments) ? data.results.segments : [],
+          segments: mergedSegments,
           language: data.results.language || 'en'
         };
         
