@@ -4,6 +4,7 @@ import MainLayout from '../components/layout/MainLayout';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../utils/api';
 import Link from 'next/link';
+import { Card, Button } from '../components/ui';
 
 interface DashboardStats {
   totalClips: number;
@@ -163,44 +164,43 @@ const Dashboard: React.FC = () => {
     <MainLayout>
       <div className="p-6">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <button 
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <Button 
             onClick={handleLogout}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
+            variant="danger"
           >
             Logout
-          </button>
+          </Button>
         </div>
 
         {user && (
-          <div className="bg-gray-800 p-4 rounded mb-6">
+          <Card className="mb-6">
             <p className="text-white">Welcome, {user.email}</p>
             <p className="text-gray-400">Role: {user.role}</p>
-          </div>
+          </Card>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-blue-900 p-6 rounded shadow">
-            <h3 className="text-xl font-semibold mb-2">Total Clips</h3>
-            <p className="text-3xl font-bold">{stats.totalClips}</p>
-          </div>
-          <div className="bg-green-900 p-6 rounded shadow">
-            <h3 className="text-xl font-semibold mb-2">Recent Clips</h3>
-            <p className="text-3xl font-bold">{stats.recentClips}</p>
-          </div>
-          <div className="bg-yellow-900 p-6 rounded shadow">
-            <h3 className="text-xl font-semibold mb-2">Pending Captures</h3>
-            <p className="text-3xl font-bold">{stats.pendingCaptures}</p>
-          </div>
-          <div className="bg-purple-900 p-6 rounded shadow">
-            <h3 className="text-xl font-semibold mb-2">Scheduled Posts</h3>
-            <p className="text-3xl font-bold">{stats.scheduledPosts}</p>
-          </div>
+          <Card className="bg-gray-700">
+            <h3 className="text-xl font-semibold mb-2 text-white">Total Clips</h3>
+            <p className="text-3xl font-bold text-blue-400">{stats.totalClips}</p>
+          </Card>
+          <Card className="bg-gray-700">
+            <h3 className="text-xl font-semibold mb-2 text-white">Recent Clips</h3>
+            <p className="text-3xl font-bold text-green-400">{stats.recentClips}</p>
+          </Card>
+          <Card className="bg-gray-700">
+            <h3 className="text-xl font-semibold mb-2 text-white">Pending Captures</h3>
+            <p className="text-3xl font-bold text-yellow-400">{stats.pendingCaptures}</p>
+          </Card>
+          <Card className="bg-gray-700">
+            <h3 className="text-xl font-semibold mb-2 text-white">Scheduled Posts</h3>
+            <p className="text-3xl font-bold text-purple-400">{stats.scheduledPosts}</p>
+          </Card>
         </div>
 
-        <div className="bg-gray-800 p-6 rounded shadow mb-8">
-          <h2 className="text-xl font-semibold mb-4">Storage Usage</h2>
-          <div className="flex justify-between mb-2">
+        <Card className="mb-8" title="Storage Usage">
+          <div className="flex justify-between mb-2 text-gray-300">
             <span>Used: {stats.storageUsed}</span>
             <span>Total: {stats.storageTotal}</span>
           </div>
@@ -210,12 +210,11 @@ const Dashboard: React.FC = () => {
               style={{ width: `${(parseInt(stats.storageUsed) / parseInt(stats.storageTotal) * 100) || 0}%` }}
             ></div>
           </div>
-        </div>
+        </Card>
 
-        <div className="bg-gray-800 p-6 rounded shadow">
-          <h2 className="text-xl font-semibold mb-4">Recent Clips</h2>
+        <Card title="Recent Clips">
           {clipsLoading ? (
-            <p>Loading clips...</p>
+            <p className="text-gray-300">Loading clips...</p>
           ) : recentClipsData?.items?.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {recentClipsData.items.map((clip: Clip) => (
@@ -228,7 +227,7 @@ const Dashboard: React.FC = () => {
                     />
                   </div>
                   <div className="p-4">
-                    <h3 className="font-semibold mb-2">{clip.title}</h3>
+                    <h3 className="font-semibold mb-2 text-white">{clip.title}</h3>
                     <div className="flex justify-between text-sm text-gray-400">
                       <span>{formatDuration(clip.duration)}</span>
                       <span>{formatDate(clip.created_at)}</span>
@@ -238,23 +237,22 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
           ) : (
-            <p>No clips found.</p>
+            <p className="text-gray-300">No clips found.</p>
           )}
-        </div>
+        </Card>
 
         <div className="mt-8">
-          <Link href="/clips/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-            Create New Clip
+          <Link href="/clips/new">
+            <Button variant="primary">Create New Clip</Button>
           </Link>
         </div>
 
         {token && (
-          <div className="mt-8 p-4 bg-gray-800 rounded">
-            <h3 className="text-lg font-semibold mb-2">Authentication Token</h3>
-            <div className="bg-gray-900 p-2 rounded text-xs font-mono break-all">
+          <Card className="mt-8" title="Authentication Token">
+            <div className="bg-gray-900 p-2 rounded text-xs font-mono break-all text-gray-300">
               {token}
             </div>
-          </div>
+          </Card>
         )}
       </div>
     </MainLayout>
