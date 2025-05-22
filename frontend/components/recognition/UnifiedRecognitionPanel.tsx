@@ -73,6 +73,15 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   }, [captureId]);
 
   useEffect(() => {
+    return () => {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        console.log('Cleared refresh interval on unmount');
+      }
+    };
+  }, [refreshInterval]);
+
+  useEffect(() => {
     // If processing is completed, stop polling
     if (recognitionStatus?.status === 'completed' && refreshInterval) {
       clearInterval(refreshInterval);
@@ -89,18 +98,22 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       
       // First try to get detailed status
       try {
+        console.log('Fetching detailed status for captureId:', captureId);
         const detailedResponse = await api.get(`/recognition/detailed-status/${captureId}`);
         
-        const detailedData = detailedResponse as { success: boolean; status: any };
+        console.log('Detailed status response:', detailedResponse);
+        const detailedData = detailedResponse as { success: boolean; status?: string; video_id?: number; progress?: any; completion_percentage?: number; started_at?: string; completed_at?: string };
         if (detailedData.success) {
-          const statusData = detailedData.status;
+          // The backend returns the status information directly in the response, not nested under a 'status' property
+          const statusData = detailedData;
           
           // Map the backend status format to our component's format
           const mappedStatus: RecognitionStatus = {
-            status: statusData.status,
+            status: statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed" || 'not_started',
             started_at: statusData.started_at,
             completed_at: statusData.completed_at,
-            progress: statusData.progress?.completion_percentage || 0,
+            // Use completion_percentage directly if available, otherwise try to get it from progress
+            progress: statusData.completion_percentage || statusData.progress?.completion_percentage || 0,
             steps: []
           };
           
@@ -122,17 +135,21 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         }
       } catch (detailedErr) {
         // If detailed status fails, fall back to basic status
-        const basicResponse = await api.get(`/recognition-status/${captureId}`);
+        console.log('Falling back to basic status endpoint for captureId:', captureId);
+        const basicResponse = await api.get(`/recognition/recognition-status/${captureId}`);
         
-        const basicData = basicResponse as { success: boolean; status: any };
+        console.log('Basic status response:', basicResponse);
+        const basicData = basicResponse as { success: boolean; status?: string; video_id?: number; started_at?: string; completed_at?: string };
         if (basicData.success) {
-          const statusData = basicData.status;
+          // The backend returns the status information directly in the response, not nested under a 'status' property
+          const statusData = basicData;
           
           // Map the basic status
           const mappedStatus: RecognitionStatus = {
-            status: statusData.status,
+            status: statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed" || 'not_started',
             started_at: statusData.started_at,
-            completed_at: statusData.completed_at
+            completed_at: statusData.completed_at,
+            progress: 0 // No progress info in basic status
           };
           
           setRecognitionStatus(mappedStatus);
@@ -220,6 +237,18 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         toast.success('Recognition process started successfully');
         // Fetch the updated status
         fetchStatus();
+        
+        // Set up polling to regularly check status
+        if (refreshInterval) {
+          clearInterval(refreshInterval);
+        }
+        
+        // Poll every 3 seconds
+        const interval = setInterval(() => {
+          fetchStatus();
+        }, 3000);
+        
+        setRefreshInterval(interval);
       } else {
         const errorMessage = responseData.error || responseData.message || 'Failed to start recognition process';
         setError(errorMessage);
@@ -474,8 +503,36 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         </div>
       )}
 
+      {/* Completed State */}
+      {recognitionStatus?.status === 'completed' && (
+        <div className="bg-green-900 border border-green-700 text-white px-4 py-3 rounded mb-4">
+          <div className="flex items-center mb-2">
+            <svg className="w-5 h-5 text-green-300 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            <h3 className="font-bold">Processing completed</h3>
+          </div>
+          
+          <div className="text-sm">
+            {recognitionStatus.started_at && recognitionStatus.completed_at && (
+              <div className="mb-1">
+                Duration: {formatDuration((new Date(recognitionStatus.completed_at).getTime() - new Date(recognitionStatus.started_at).getTime()) / 1000)}
+              </div>
+            )}
+          </div>
+          
+          {/* Add a button to view results if needed */}
+          <button
+            onClick={() => fetchStatus()}
+            className="mt-3 bg-green-700 hover:bg-green-800 text-white py-1 px-3 rounded text-sm"
+          >
+            View Results
+          </button>
+        </div>
+      )}
+
       {/* Not Started State */}
-      {(!recognitionStatus || !recognitionStatus.status || ['not_started', 'completed'].includes(recognitionStatus.status)) && (
+      {(!recognitionStatus || !recognitionStatus.status || recognitionStatus.status === 'not_started') && (
         <div className="bg-gray-900 rounded-lg p-6 mb-6">
           <h3 className="text-lg font-semibold mb-4">Start Recognition Process</h3>
           
