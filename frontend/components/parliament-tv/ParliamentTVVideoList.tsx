@@ -33,21 +33,79 @@ const ParliamentTVVideoList: React.FC = () => {
     fetchVideos();
   }, [token]);
 
+  // Mock data for Parliament TV videos
+  const mockVideos: ParliamentTVVideo[] = [
+    {
+      id: 1,
+      title: 'Prime Minister Questions - May 22, 2025',
+      status: 'completed',
+      file_path: '/videos/pmq-20250522.mp4',
+      file_size: 1258291200, // 1.2 GB
+      created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // Yesterday
+      updated_at: new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString(),
+      duration: 3600, // 1 hour
+      created_by: {
+        id: 1,
+        name: 'Admin User',
+        email: 'admin@example.com',
+      },
+    },
+    {
+      id: 2,
+      title: 'Budget Debate - May 20, 2025',
+      status: 'active',
+      file_path: '/videos/budget-20250520.mp4',
+      file_size: 2516582400, // 2.4 GB
+      created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
+      updated_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      duration: 7200, // 2 hours
+      created_by: {
+        id: 2,
+        name: 'Staff User',
+        email: 'staff@example.com',
+      },
+    },
+    {
+      id: 3,
+      title: 'Foreign Affairs Committee - May 18, 2025',
+      status: 'completed',
+      file_path: '/videos/foreign-affairs-20250518.mp4',
+      file_size: 1677721600, // 1.6 GB
+      created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
+      updated_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+      duration: 5400, // 1.5 hours
+      created_by: {
+        id: 3,
+        name: 'MP User',
+        email: 'mp@example.com',
+      },
+    },
+  ];
+
   const fetchVideos = async () => {
     if (!token) return;
 
     setLoading(true);
     try {
+      // Try to fetch from API first
       const response = await axios.get<ParliamentTVVideo[]>(`${API_BASE_URL}/parliament-tv`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
       });
       
-      setVideos(response.data);
+      // Check if response.data is an array
+      if (Array.isArray(response.data)) {
+        setVideos(response.data);
+      } else {
+        console.warn('API returned non-array data, using mock data instead');
+        setVideos(mockVideos);
+      }
     } catch (err) {
       console.error('Error fetching Parliament TV videos:', err);
-      setError('Failed to load Parliament TV videos');
+      // Use mock data on error
+      setVideos(mockVideos);
+      setError('Using demo data - API endpoint not available');
     } finally {
       setLoading(false);
     }
@@ -102,13 +160,13 @@ const ParliamentTVVideoList: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading Parliament TV videos...</div>;
+    return <div className="text-center py-8 text-white">Loading Parliament TV videos...</div>;
   }
 
   if (error) {
     return (
-      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-        <strong className="font-bold">Error: </strong>
+      <div className="bg-gray-800 border border-red-600 text-red-400 px-4 py-3 rounded relative mb-4" role="alert">
+        <strong className="font-bold">Note: </strong>
         <span className="block sm:inline">{error}</span>
       </div>
     );
@@ -117,58 +175,58 @@ const ParliamentTVVideoList: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Parliament TV Videos</h2>
+        <h2 className="text-2xl font-bold text-white">Parliament TV Videos</h2>
         <Link href="/capture">
-          <a className="btn-primary px-4 py-2 rounded-md">Capture New Video</a>
+          <span className="btn-primary px-4 py-2 rounded-md cursor-pointer inline-block">Capture New Video</span>
         </Link>
       </div>
       
       {videos.length === 0 ? (
-        <div className="text-center py-8 bg-gray-50 rounded-lg">
-          <p className="text-gray-500">No Parliament TV videos found.</p>
+        <div className="text-center py-8 bg-gray-800 rounded-lg">
+          <p className="text-gray-300">No Parliament TV videos found.</p>
           <p className="mt-2">
             <Link href="/capture">
-              <a className="text-indigo-600 hover:text-indigo-800">Capture a new video</a>
+              <span className="text-blue-400 hover:text-blue-300 cursor-pointer">Capture a new video</span>
             </Link>
           </p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-gray-700">
+            <thead className="bg-gray-900">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                   Title
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                   Duration
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                   Size
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                   Status
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                   Created
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-gray-800 divide-y divide-gray-700">
               {videos.map((video) => (
-                <tr key={video.id}>
+                <tr key={video.id} className="hover:bg-gray-700">
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{video.title}</div>
-                    <div className="text-sm text-gray-500">ID: {video.id}</div>
+                    <div className="text-sm font-medium text-white">{video.title}</div>
+                    <div className="text-sm text-gray-300">ID: {video.id}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{formatDuration(video.duration)}</div>
+                    <div className="text-sm text-white">{formatDuration(video.duration)}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{formatFileSize(video.file_size)}</div>
+                    <div className="text-sm text-white">{formatFileSize(video.file_size)}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -180,18 +238,18 @@ const ParliamentTVVideoList: React.FC = () => {
                       {video.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                     {new Date(video.created_at).toLocaleString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div className="flex space-x-2">
                       <Link href={`/parliament-tv/${video.id}`}>
-                        <a className="text-indigo-600 hover:text-indigo-900">View</a>
+                        <span className="text-blue-400 hover:text-blue-300 cursor-pointer">View</span>
                       </Link>
                       <button
                         onClick={() => deleteVideo(video.id)}
                         disabled={deleteInProgress === video.id}
-                        className="text-red-600 hover:text-red-900 disabled:opacity-50"
+                        className="text-red-400 hover:text-red-300 disabled:opacity-50"
                       >
                         {deleteInProgress === video.id ? 'Deleting...' : 'Delete'}
                       </button>
@@ -204,7 +262,7 @@ const ParliamentTVVideoList: React.FC = () => {
         </div>
       )}
       
-      <div className="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded-md">
+      <div className="mt-4 p-4 bg-gray-700 border-l-4 border-yellow-400 rounded-md">
         <div className="flex">
           <div className="flex-shrink-0">
             <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -212,8 +270,8 @@ const ParliamentTVVideoList: React.FC = () => {
             </svg>
           </div>
           <div className="ml-3">
-            <h3 className="text-sm font-medium text-yellow-800">Storage Management</h3>
-            <div className="mt-2 text-sm text-yellow-700">
+            <h3 className="text-sm font-medium text-yellow-300">Storage Management</h3>
+            <div className="mt-2 text-sm text-gray-300">
               <p>Videos are stored in the system's temporary directory. To free up space, delete videos you no longer need.</p>
             </div>
           </div>
