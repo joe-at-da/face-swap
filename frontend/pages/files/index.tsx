@@ -3,11 +3,12 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import MainLayout from '../../components/layout/MainLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { api } from '../../utils/api';
+import { Button, Card, Badge, Input, Select } from '../../components/ui';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -87,7 +88,7 @@ const FileGalleryPage: React.FC = () => {
     const allFiles: FileItem[] = [];
     
     // Add videos
-    if (videos) {
+    if (videos && Array.isArray(videos)) {
       videos.forEach((video: any) => {
         allFiles.push({
           id: `video-${video.path}`,
@@ -305,10 +306,10 @@ const FileGalleryPage: React.FC = () => {
   };
   
   return (
-    <MainLayout>
+    <DarkLayout>
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">File Gallery</h1>
+          <h1 className="text-2xl font-bold text-white">File Gallery</h1>
           <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
             New Capture
           </Link>
@@ -484,7 +485,7 @@ const FileGalleryPage: React.FC = () => {
           </div>
         )}
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

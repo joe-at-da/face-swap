@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import MainLayout from '../../components/layout/MainLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import { withAuth } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
+import { Button, Card, Badge, Input, Select } from '../../components/ui';
 
 interface VideoClip {
   id: number;
@@ -165,10 +166,10 @@ const VideoClipsPage: React.FC = () => {
   };
 
   return (
-    <MainLayout title="Video Clips | Parliament Video Clip Manager">
+    <DarkLayout title="Video Clips | Parliament Video Clip Manager">
       <div className="page-container">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Video Clips</h1>
+          <h1 className="text-3xl font-bold text-gray-200">Video Clips</h1>
           <Link href="/clips/new">
             <span className="btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block">
               Create New Clip
@@ -370,7 +371,7 @@ const VideoClipsPage: React.FC = () => {
           )}
         </div>
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

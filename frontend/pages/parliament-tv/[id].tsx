@@ -3,10 +3,11 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
-import MainLayout from '../../components/layout/MainLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import Link from 'next/link';
 import UnifiedRecognitionPanel from '../../components/recognition/UnifiedRecognitionPanel';
 import { toast } from 'react-toastify';
+import { Button, Card, Badge } from '../../components/ui';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -134,7 +135,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
 
   if (loading) {
     return (
-      <MainLayout>
+      <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-8">Loading video details...</div>
         </div>
@@ -144,7 +145,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
 
   if (error) {
     return (
-      <MainLayout>
+      <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
             <strong className="font-bold">Error: </strong>
@@ -178,7 +179,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
   // Video URL is defined at the top of the component
 
   return (
-    <MainLayout>
+    <DarkLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6 flex justify-between items-center">
           <div>
@@ -196,9 +197,9 @@ const ParliamentTVVideoDetail: React.FC = () => {
           </button>
         </div>
 
-        <div className="bg-white shadow overflow-hidden sm:rounded-lg mb-6">
-          <div className="px-4 py-5 sm:px-6 bg-gray-50">
-            <h3 className="text-lg leading-6 font-medium text-gray-900">Video Details</h3>
+        <Card className="overflow-hidden">
+          <div className="px-4 py-5 sm:px-6 bg-gray-800">
+            <h3 className="text-lg leading-6 font-medium text-white">Video Details</h3>
           </div>
           <div className="border-t border-gray-200">
             <dl>
@@ -252,11 +253,11 @@ const ParliamentTVVideoDetail: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-          <div className="px-4 py-5 sm:px-6 bg-gray-50">
-            <h3 className="text-lg leading-6 font-medium text-gray-900">Video Player</h3>
+        <Card className="overflow-hidden mt-6">
+          <div className="px-4 py-5 sm:px-6 bg-gray-800">
+            <h3 className="text-lg leading-6 font-medium text-white">Video Player</h3>
           </div>
-          <div className="border-t border-gray-200 p-4">
+          <div className="border-t border-gray-700 p-4">
             <div className="aspect-w-16 aspect-h-9">
               <video 
                 controls 
@@ -270,14 +271,15 @@ const ParliamentTVVideoDetail: React.FC = () => {
             
             {/* Audio Player Section */}
             <div className="mt-6">
-              <h4 className="text-lg font-medium text-gray-900 mb-2">Audio Track</h4>
+              <h4 className="text-lg font-medium text-white mb-2">Audio Track</h4>
               <div className="flex items-center mb-2">
-                <button
+                <Button
                   onClick={() => setShowAudioPlayer(!showAudioPlayer)}
-                  className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-colors mr-2"
+                  variant="primary"
+                  className="mr-2"
                 >
                   {showAudioPlayer ? 'Hide Audio Player' : 'Show Audio Player'}
-                </button>
+                </Button>
                 
                 <label className="inline-flex items-center cursor-pointer ml-2">
                   <input 
@@ -287,7 +289,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
                     onChange={() => setSyncPlayback(!syncPlayback)}
                   />
                   <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                  <span className="ml-3 text-sm font-medium text-gray-900">Synchronize audio and video playback</span>
+                  <span className="ml-3 text-sm font-medium text-gray-300">Synchronize audio and video playback</span>
                 </label>
               </div>
               
@@ -300,14 +302,14 @@ const ParliamentTVVideoDetail: React.FC = () => {
                   >
                     Your browser does not support the audio element.
                   </audio>
-                  <div className="mt-2 text-xs text-gray-500">
+                  <div className="mt-2 text-xs text-gray-400">
                     <p>Audio URL: {audioUrl}</p>
                   </div>
                 </div>
               )}
             </div>
             
-            <div className="mt-4 text-sm text-gray-500">
+            <div className="mt-4 text-sm text-gray-400">
               <p>Note: If the video or audio doesn't play, it may be in a format not supported by your browser or the file may not be accessible.</p>
               <p>For best results, play both the video and audio simultaneously.</p>
             </div>
@@ -327,16 +329,16 @@ const ParliamentTVVideoDetail: React.FC = () => {
 
         <div className="mt-8 flex justify-between">
           <Link href="/parliament-tv/videos">
-            <a className="text-indigo-600 hover:text-indigo-900">Back to videos</a>
+            <span className="text-blue-400 hover:text-blue-300">Back to videos</span>
           </Link>
           <Link href={`/capture/create-clip?source=${id}`}>
-            <a className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded">
+            <Button variant="primary">
               Create Clip from This Video
-            </a>
+            </Button>
           </Link>
         </div>
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 
