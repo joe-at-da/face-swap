@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import Link from 'next/link';
-import MainLayout from '../../components/layout/MainLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import AudioExtractor from '../../components/AudioExtractor';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
+import { Button, Card, Badge, Input, Select } from '../../components/ui';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -247,70 +248,71 @@ const VideoGalleryPage: React.FC = () => {
 
   if (loading) {
     return (
-      <MainLayout>
+      <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex justify-center items-center h-64">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-400"></div>
           </div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
 
   if (error) {
     return (
-      <MainLayout>
+      <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+          <div className="bg-gray-800 border border-red-600 text-red-400 px-4 py-3 rounded relative mb-4" role="alert">
             <strong className="font-bold">Error: </strong>
             <span className="block sm:inline">{error}</span>
           </div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
-
   return (
-    <MainLayout>
+    <DarkLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <AudioExtractor token={token || ''} apiBaseUrl={API_BASE_URL} />
         
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Video Gallery</h1>
+          <h1 className="text-2xl font-bold text-white">Video Gallery</h1>
           <div className="flex space-x-2">
             {user?.role === UserRole.ADMIN && videos.length > 0 && (
-              <button 
+              <Button 
                 onClick={handleDeleteAllClick}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                variant="danger"
                 disabled={isDeleting}
               >
                 {isDeleting ? 'Deleting...' : 'Delete All Videos'}
-              </button>
+              </Button>
             )}
-            <Link href="/capture" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-              New Capture
+            <Link href="/capture">
+              <Button variant="primary">New Capture</Button>
             </Link>
           </div>
         </div>
-
+  
         {videos.length === 0 ? (
-          <div className="bg-white rounded-lg shadow p-6 text-center">
-            <p className="text-gray-500">No videos available.</p>
-            <Link href="/capture" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
-              Start a new capture
-            </Link>
-          </div>
+          <Card>
+            <div className="text-center">
+              <p className="text-gray-400">No videos available.</p>
+              <Link href="/capture" className="text-blue-400 hover:text-blue-300 mt-2 inline-block">
+                Start a new capture
+              </Link>
+            </div>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {videos.map((video) => (
-              <div 
+              <Card 
                 key={video.path} 
-                className="bg-white rounded-lg shadow overflow-hidden hover:shadow-lg transition-shadow duration-300 cursor-pointer"
+                className="hover:bg-gray-700 transition-colors duration-300 cursor-pointer"
                 onClick={() => handleVideoClick(video)}
               >
-                <div className="aspect-w-16 aspect-h-9 bg-gray-200">
+                <div className="aspect-w-16 aspect-h-9 bg-gray-800">
                   <div className="flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -318,11 +320,11 @@ const VideoGalleryPage: React.FC = () => {
                 </div>
                 <div className="p-4">
                   <div className="flex justify-between items-start">
-                    <h3 className="font-semibold text-lg mb-2 truncate">{video.title || video.filename}</h3>
+                    <h3 className="font-semibold text-lg mb-2 truncate text-white">{video.title || video.filename}</h3>
                     {user?.role === UserRole.ADMIN && (
                       <button 
                         onClick={(e) => handleDeleteClick(e, video)}
-                        className="text-red-600 hover:text-red-800"
+                        className="text-red-400 hover:text-red-300"
                         title="Delete video"
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -331,7 +333,7 @@ const VideoGalleryPage: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  <div className="text-sm text-gray-600 space-y-1">
+                  <div className="text-sm text-gray-400 space-y-1">
                     <div>
                       <span className="font-medium">Size:</span> {formatFileSize(video.size)}
                     </div>
@@ -339,7 +341,7 @@ const VideoGalleryPage: React.FC = () => {
                       <span className="font-medium">Duration:</span> {formatDuration(video.duration)}
                     </div>
                     <div>
-                      <span className="font-medium">Status:</span> {video.status}
+                      <span className="font-medium">Status:</span> <Badge>{video.status}</Badge>
                     </div>
                     <div>
                       <span className="font-medium">Created by:</span> {video.created_by}
@@ -347,64 +349,64 @@ const VideoGalleryPage: React.FC = () => {
                   </div>
                   {video.capture_id && (
                     <div className="mt-3">
-                      <Link href={`/capture/${video.capture_id}`} className="text-blue-600 hover:text-blue-800 text-sm">
+                      <Link href={`/capture/${video.capture_id}`} className="text-blue-400 hover:text-blue-300 text-sm">
                         View Capture Details
                       </Link>
                     </div>
                   )}
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         )}
 
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && videoToDelete && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg max-w-md w-full p-6">
-              <h3 className="text-lg font-medium mb-4">Confirm Deletion</h3>
-              <p className="mb-4">Are you sure you want to delete the video "{videoToDelete.title || videoToDelete.filename}"?</p>
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <Card className="max-w-md w-full">
+              <h3 className="text-lg font-medium mb-4 text-white">Confirm Deletion</h3>
+              <p className="mb-4 text-gray-300">Are you sure you want to delete the video "{videoToDelete.title || videoToDelete.filename}"?</p>
               <div className="flex justify-end space-x-2">
-                <button 
+                <Button 
                   onClick={closeDeleteConfirm}
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  variant="secondary"
                 >
                   Cancel
-                </button>
-                <button 
+                </Button>
+                <Button 
                   onClick={() => deleteVideo(videoToDelete)}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                  variant="danger"
                   disabled={isDeleting}
                 >
                   {isDeleting ? 'Deleting...' : 'Delete'}
-                </button>
+                </Button>
               </div>
-            </div>
+            </Card>
           </div>
         )}
 
         {/* Delete All Confirmation Modal */}
         {showDeleteAllConfirm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg max-w-md w-full p-6">
-              <h3 className="text-lg font-medium mb-4">Confirm Delete All</h3>
-              <p className="mb-4">Are you sure you want to delete all videos? This action cannot be undone.</p>
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <Card className="max-w-md w-full">
+              <h3 className="text-lg font-medium mb-4 text-white">Confirm Delete All</h3>
+              <p className="mb-4 text-gray-300">Are you sure you want to delete all videos? This action cannot be undone.</p>
               <div className="flex justify-end space-x-2">
-                <button 
+                <Button 
                   onClick={closeDeleteAllConfirm}
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  variant="secondary"
                 >
                   Cancel
-                </button>
-                <button 
+                </Button>
+                <Button 
                   onClick={deleteAllVideos}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                  variant="danger"
                   disabled={isDeleting}
                 >
                   {isDeleting ? 'Deleting...' : 'Delete All'}
-                </button>
+                  </Button>
               </div>
-            </div>
+            </Card>
           </div>
         )}
 
@@ -610,7 +612,7 @@ const VideoGalleryPage: React.FC = () => {
           </div>
         )}
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

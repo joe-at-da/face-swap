@@ -6,6 +6,7 @@ import { withAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
 import ParliamentTVCapture from '../../components/parliament-tv/ParliamentTVCapture';
+import { Card, Button, Badge, Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell, Select } from '../../components/ui';
 
 interface CaptureSession {
   id: number;
@@ -108,39 +109,40 @@ const CaptureListPage: React.FC = () => {
     }
   };
 
-  // Get status badge color
-  const getStatusBadgeClass = (status: string): string => {
+  // Get status badge variant
+  const getStatusBadgeVariant = (status: string): 'success' | 'primary' | 'danger' | 'warning' | 'secondary' => {
     switch (status) {
       case 'active':
-        return 'bg-green-100 text-green-800';
+        return 'success';
       case 'completed':
-        return 'bg-blue-100 text-blue-800';
+        return 'primary';
       case 'failed':
-        return 'bg-red-100 text-red-800';
+        return 'danger';
       case 'processing':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'warning';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'secondary';
     }
   };
 
   return (
     <MainLayout title="Capture Sessions | Parliament Video Clip Manager">
       <div className="page-container">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Capture Sessions</h1>
-          <button
-            onClick={() => setShowCaptureForm(!showCaptureForm)}
-            className="btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block"
-          >
-            {showCaptureForm ? 'Hide Capture Form' : 'Start New Capture'}
-          </button>
+        <div className="mb-6 flex justify-between items-center">
+          <h1 className="text-3xl font-bold text-white">Parliament TV Capture</h1>
+          <div>
+            <Button
+              onClick={() => setShowCaptureForm(!showCaptureForm)}
+              variant="primary"
+            >
+              {showCaptureForm ? 'Hide Capture Form' : 'Start New Capture'}
+            </Button>
+          </div>
         </div>
         
         {/* Capture Form Section */}
         {showCaptureForm && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-lg font-medium text-gray-800 mb-4">Start New Capture</h2>
+          <Card className="mb-6" title="Start a New Capture">
             <ParliamentTVCapture 
               onSuccess={() => {
                 setShowCaptureForm(false);
@@ -150,217 +152,118 @@ const CaptureListPage: React.FC = () => {
                 console.error('Capture error:', error);
               }}
             />
-          </div>
+          </Card>
         )}
 
         {/* Filters */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-end space-y-4 md:space-y-0 md:space-x-4">
-            <div className="w-full md:w-48">
-              <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
-                Status
-              </label>
-              <select
-                id="status"
+        <Card title="Capture Sessions">
+          <div className="flex justify-between items-center mb-4">
+            <div></div>
+            <div className="flex items-center">
+              <Select
+                id="status-filter"
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
-                className="form-input"
-              >
-                <option value="">All Statuses</option>
-                <option value="active">Active</option>
-                <option value="completed">Completed</option>
-                <option value="processing">Processing</option>
-                <option value="failed">Failed</option>
-              </select>
-            </div>
-            
-            <div>
-              <button
-                type="button"
+                options={[
+                  { value: '', label: 'All Statuses' },
+                  { value: 'active', label: 'Active' },
+                  { value: 'completed', label: 'Completed' },
+                  { value: 'failed', label: 'Failed' },
+                  { value: 'processing', label: 'Processing' }
+                ]}
+                className="w-48"
+              />
+              <Button
                 onClick={() => refetch()}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                variant="secondary"
+                className="ml-3"
               >
                 Refresh
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Active Captures Section */}
-        <div className="bg-white rounded-lg shadow mb-6 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-800">Active Captures</h2>
-          </div>
-          
-          <div className="overflow-x-auto">
-            {isLoading ? (
-              <div className="p-6 text-center text-gray-500">Loading capture sessions...</div>
-            ) : isError ? (
-              <div className="p-6 text-center text-red-500">Error loading capture sessions</div>
-            ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Title
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Started
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Duration
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {captureSessions?.filter((capture: CaptureSession) => capture.status === 'active').length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
-                        No active capture sessions
-                      </td>
-                    </tr>
-                  ) : (
-                    captureSessions
-                      ?.filter((capture: CaptureSession) => capture.status === 'active')
-                      .map((capture: CaptureSession) => (
-                        <tr key={capture.id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium text-gray-900">{capture.title}</div>
-                            <div className="text-sm text-gray-500">By {capture.created_by?.name || 'Unknown'}</div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-500">{formatDate(capture.start_time)}</div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-500">{getCaptureDuration(capture)}</div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeClass(capture.status)}`}>
-                              {capture.status.charAt(0).toUpperCase() + capture.status.slice(1)}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <Link href={`/capture/${capture.id}`}>
-                              <span className="text-primary hover:text-primary-dark mr-3 cursor-pointer">
-                                View
-                              </span>
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => handleStopCapture(capture.id)}
-                              className="text-red-600 hover:text-red-900"
-                              disabled={stopCaptureMutation.isPending}
-                            >
-                              {stopCaptureMutation.isPending && stopCaptureMutation.variables === capture.id
-                                ? 'Stopping...'
-                                : 'Stop'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {/* All Captures Section */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-medium text-gray-800">All Capture Sessions</h2>
           </div>
           
-          <div className="overflow-x-auto">
+          <div>
             {isLoading ? (
-              <div className="p-6 text-center text-gray-500">Loading capture sessions...</div>
+              <div className="py-4 text-center">
+                <p className="text-gray-400">Loading capture sessions...</p>
+              </div>
             ) : isError ? (
-              <div className="p-6 text-center text-red-500">Error loading capture sessions</div>
-            ) : captureSessions?.length === 0 ? (
-              <div className="p-6 text-center text-gray-500">
-                No capture sessions found. Start a new capture to begin recording from Parliament TV.
+              <div className="py-4 text-center">
+                <p className="text-red-400">Error loading capture sessions. Please try again.</p>
+              </div>
+            ) : !captureSessions || captureSessions.length === 0 ? (
+              <div className="py-4 text-center">
+                <p className="text-gray-400">No capture sessions found.</p>
               </div>
             ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Title
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Started
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Duration
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      File Size
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableHeaderCell>Title</TableHeaderCell>
+                    <TableHeaderCell>Started</TableHeaderCell>
+                    <TableHeaderCell>Duration</TableHeaderCell>
+                    <TableHeaderCell>File Size</TableHeaderCell>
+                    <TableHeaderCell>Status</TableHeaderCell>
+                    <TableHeaderCell>Actions</TableHeaderCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
                   {captureSessions?.map((capture: CaptureSession) => (
-                    <tr key={capture.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-gray-900">{capture.title}</div>
-                        <div className="text-sm text-gray-500">By {capture.created_by?.name || 'Unknown'}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-500">{formatDate(capture.start_time)}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-500">{getCaptureDuration(capture)}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-500">{formatFileSize(capture.file_size)}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeClass(capture.status)}`}>
+                    <TableRow key={capture.id}>
+                      <TableCell>
+                        <div className="text-sm font-medium text-white">{capture.title}</div>
+                        <div className="text-sm text-gray-400">By {capture.created_by?.name || 'Unknown'}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm text-gray-300">{formatDate(capture.start_time)}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm text-gray-300">{getCaptureDuration(capture)}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm text-gray-300">{formatFileSize(capture.file_size)}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={getStatusBadgeVariant(capture.status)}>
                           {capture.status.charAt(0).toUpperCase() + capture.status.slice(1)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <Link href={`/capture/${capture.id}`}>
-                          <span className="text-primary hover:text-primary-dark mr-3 cursor-pointer">
-                            View
-                          </span>
-                        </Link>
-                        {capture.status === 'active' && (
-                          <button
-                            type="button"
-                            onClick={() => handleStopCapture(capture.id)}
-                            className="text-red-600 hover:text-red-900 mr-3"
-                            disabled={stopCaptureMutation.isPending}
-                          >
-                            {stopCaptureMutation.isPending && stopCaptureMutation.variables === capture.id
-                              ? 'Stopping...'
-                              : 'Stop'}
-                          </button>
-                        )}
-                        {capture.status === 'completed' && (
-                          <Link href={`/clips/new?source_type=capture&source_id=${capture.id}`}>
-                            <span className="text-primary hover:text-primary-dark cursor-pointer">
-                              Create Clip
-                            </span>
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex space-x-3">
+                          <Link href={`/capture/${capture.id}`}>
+                            <Button size="sm" variant="primary">View</Button>
                           </Link>
-                        )}
-                      </td>
-                    </tr>
+                          {capture.status === 'active' && (
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              onClick={() => handleStopCapture(capture.id)}
+                              disabled={stopCaptureMutation.isPending}
+                            >
+                              {stopCaptureMutation.isPending && stopCaptureMutation.variables === capture.id
+                                ? 'Stopping...'
+                                : 'Stop'}
+                            </Button>
+                          )}
+                          {capture.status === 'completed' && (
+                            <Link href={`/clips/new?source_type=capture&source_id=${capture.id}`}>
+                              <Button size="sm" variant="secondary">Create Clip</Button>
+                            </Link>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             )}
           </div>
         </div>

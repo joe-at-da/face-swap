@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import MainLayout from '../../components/layout/MainLayout';
 import { useAuth, withAuth, UserRole } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
+import { Card, Button, Badge, Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell, Input, Select } from '../../components/ui';
 
 // Types
 interface Transcription {
@@ -178,221 +179,177 @@ const TranscriptionsPage: React.FC = () => {
     return date.toLocaleString();
   };
   
-  // Get status badge color
-  const getStatusBadgeColor = (status: string) => {
-    switch (status) {
-      case 'ready':
+  // Get status badge variant
+  const getStatusBadgeVariant = (status: string): 'success' | 'primary' | 'danger' | 'warning' | 'secondary' => {
+    switch (status.toLowerCase()) {
       case 'completed':
-        return 'bg-green-100 text-green-800';
+        return 'success';
       case 'processing':
-        return 'bg-blue-100 text-blue-800';
+        return 'warning';
       case 'failed':
-      case 'error':
-        return 'bg-red-100 text-red-800';
+        return 'danger';
+      case 'pending':
+        return 'primary';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'secondary';
     }
   };
   
-  // Get type badge color
-  const getTypeBadgeColor = (type: string, subtype?: string) => {
+  // Get type badge variant
+  const getTypeBadgeVariant = (type: string, subtype?: string): 'primary' | 'success' | 'info' | 'warning' | 'secondary' => {
     if (type === 'transcription') {
-      return 'bg-purple-100 text-purple-800';
-    } else if (type === 'recognition') {
+      return 'info';
+    }
+    
+    if (type === 'recognition') {
       switch (subtype) {
         case 'facial':
-          return 'bg-indigo-100 text-indigo-800';
+          return 'primary';
         case 'voice':
-          return 'bg-pink-100 text-pink-800';
+          return 'success';
         case 'combined':
-          return 'bg-teal-100 text-teal-800';
+          return 'warning';
         default:
-          return 'bg-gray-100 text-gray-800';
+          return 'secondary';
       }
     }
-    return 'bg-gray-100 text-gray-800';
+    
+    return 'secondary';
   };
 
   return (
     <MainLayout title="Transcriptions | Parliament Video Clip Manager">
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Transcriptions</h1>
-          <Link href="/capture" className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary">
-            View Captures
-          </Link>
-        </div>
-        
-        {isLoadingCaptures || isLoadingTranscriptions ? (
-          <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-            <div className="animate-pulse flex space-x-4">
-              <div className="flex-1 space-y-4 py-1">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="space-y-2">
-                  <div className="h-4 bg-gray-200 rounded"></div>
-                  <div className="h-4 bg-gray-200 rounded w-5/6"></div>
-                </div>
-              </div>
-            </div>
+      <div className="page-container">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0">
+          <h1 className="text-3xl font-bold text-white">Transcriptions & Recognitions</h1>
+          
+          <div className="flex space-x-2">
+            <Link href="/recognition">
+              <Button variant="primary">Start Recognition</Button>
+            </Link>
           </div>
-        ) : !isLoadingTranscriptions && !isLoadingRecognitions && combinedResults.length > 0 ? (
-          <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
-            {/* Filters */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    placeholder="Search transcriptions..."
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <div className="flex space-x-2">
-                  <button
-                    className={`px-3 py-1 rounded-md ${selectedStatus === 'all' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-800'}`}
-                    onClick={() => setSelectedStatus('all')}
-                  >
-                    All ({statusCounts.all})
-                  </button>
-                  <button
-                    className={`px-3 py-1 rounded-md ${selectedStatus === 'ready' ? 'bg-primary text-white' : 'bg-green-100 text-green-800'}`}
-                    onClick={() => setSelectedStatus('ready')}
-                  >
-                    Ready ({statusCounts.ready})
-                  </button>
-                  <button
-                    className={`px-3 py-1 rounded-md ${selectedStatus === 'processing' ? 'bg-primary text-white' : 'bg-blue-100 text-blue-800'}`}
-                    onClick={() => setSelectedStatus('processing')}
-                  >
-                    Processing ({statusCounts.processing})
-                  </button>
-                  <button
-                    className={`px-3 py-1 rounded-md ${selectedStatus === 'failed' ? 'bg-primary text-white' : 'bg-red-100 text-red-800'}`}
-                    onClick={() => setSelectedStatus('failed')}
-                  >
-                    Failed ({statusCounts.failed})
-                  </button>
-                </div>
+        </div>
+        {isLoadingTranscriptions || isLoadingRecognitions || isLoadingCaptures ? (
+          <Card>
+            <div className="flex justify-center items-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+            </div>
+          </Card>
+        ) : combinedResults && combinedResults.length > 0 ? (
+          <Card>
+            <div className="flex flex-col md:flex-row md:items-end space-y-4 md:space-y-0 md:space-x-4 mb-6">
+              <div className="w-full md:w-64">
+                <Input
+                  type="text"
+                  id="search"
+                  label="Search"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search by title..."
+                  fullWidth
+                />
+              </div>
+              
+              <div className="w-full md:w-48">
+                <Select
+                  id="status"
+                  label="Status"
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatus(e.target.value)}
+                  options={[
+                    { value: 'all', label: 'All Statuses' },
+                    { value: 'completed', label: 'Completed' },
+                    { value: 'processing', label: 'Processing' },
+                    { value: 'failed', label: 'Failed' },
+                    { value: 'pending', label: 'Pending' }
+                  ]}
+                  fullWidth
+                />
               </div>
             </div>
             
             {/* Transcription List */}
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-800">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Capture
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Type
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Details
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Created
-                    </th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-                  {filteredResults.map((result: CombinedResult) => {
-                    // Find the associated capture
-                    const capture = captures?.find((c: CaptureSession) => c.id === result.capture_id);
-                    const captureTitle = capture?.title || `Capture ${result.capture_id}`;
-                    
-                    return (
-                      <tr key={result.id}>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white">
-                            {captureTitle}
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Capture</TableHeaderCell>
+                  <TableHeaderCell>Type</TableHeaderCell>
+                  <TableHeaderCell>Status</TableHeaderCell>
+                  <TableHeaderCell>Created</TableHeaderCell>
+                  <TableHeaderCell>Actions</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredResults.map((result) => {
+                  const captureTitle = captures?.find((c: CaptureSession) => c.id === result.capture_id)?.title || `Capture #${result.capture_id}`;
+                  
+                  return (
+                    <TableRow key={`${result.type}-${result.originalId}`}>
+                      <TableCell>
+                        <div className="text-sm font-medium text-white">{captureTitle}</div>
+                        <div className="text-sm text-gray-400">ID: {result.capture_id}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={getTypeBadgeVariant(result.type, result.subtype)}>
+                          {result.type === 'transcription' ? 'Transcription' : 
+                           result.subtype === 'facial' ? 'Facial Recognition' : 
+                           result.subtype === 'voice' ? 'Voice Recognition' : 
+                           'Combined Recognition'}
+                        </Badge>
+                        {result.type === 'transcription' && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            Language: {result.language || 'Unknown'}
                           </div>
-                          <div className="text-sm text-gray-500 dark:text-gray-400">
-                            ID: {result.capture_id}
+                        )}
+                        {result.type === 'recognition' && result.confidence !== undefined && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            {Math.round(result.confidence * 100)}% confidence
                           </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getTypeBadgeColor(result.type, result.subtype)}`}>
-                            {result.type.charAt(0).toUpperCase() + result.type.slice(1)}
-                            {result.subtype && ` (${result.subtype})`}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {result.type === 'transcription' && (
-                            <div className="text-sm text-gray-900 dark:text-white">
-                              {result.language?.toUpperCase()}
-                              {result.segments && (
-                                <div className="text-xs text-gray-500 mt-1">
-                                  {result.segments.length} segments
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {result.type === 'recognition' && (
-                            <div className="text-sm text-gray-900 dark:text-white">
-                              {result.subtype === 'facial' ? 'Face Recognition' : 
-                               result.subtype === 'voice' ? 'Voice Recognition' : 
-                               'Combined Recognition'}
-                              {result.confidence !== undefined && (
-                                <div className="text-xs text-gray-500 mt-1">
-                                  {Math.round(result.confidence * 100)}% confidence
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeColor(result.status)}`}>
-                            {result.status}
-                          </span>
-                          {result.error_message && (
-                            <div className="text-xs text-red-600 mt-1 truncate max-w-xs" title={result.error_message}>
-                              {result.error_message}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                          {formatDate(result.created_at)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          {result.type === 'transcription' ? (
-                            <Link href={`/capture/${result.capture_id}/transcription?id=${result.originalId}`} className="text-primary hover:text-primary-dark mr-3">
-                              View
-                            </Link>
-                          ) : (
-                            <Link href={`/capture/${result.capture_id}/recognition?id=${result.originalId}`} className="text-primary hover:text-primary-dark mr-3">
-                              View
-                            </Link>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={getStatusBadgeVariant(result.status)}>
+                          {result.status}
+                        </Badge>
+                        {result.error_message && (
+                          <div className="text-xs text-red-400 mt-1 truncate max-w-xs" title={result.error_message}>
+                            {result.error_message}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm text-gray-300">{formatDate(result.created_at)}</div>
+                      </TableCell>
+                      <TableCell>
+                        {result.type === 'transcription' ? (
+                          <Link href={`/capture/${result.capture_id}/transcription?id=${result.originalId}`}>
+                            <Button size="sm" variant="primary">View</Button>
+                          </Link>
+                        ) : (
+                          <Link href={`/capture/${result.capture_id}/recognition?id=${result.originalId}`}>
+                            <Button size="sm" variant="primary">View</Button>
+                          </Link>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
             
             {filteredResults.length === 0 && (
               <div className="p-6 text-center">
-                <p className="text-gray-500 dark:text-gray-400">
+                <p className="text-gray-400">
                   No transcriptions match your filters. Try adjusting your search criteria.
                 </p>
               </div>
             )}
-          </div>
+          </Card>
         ) : (
-          <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
+          <Card>
             <div className="text-center py-12">
               <svg
-                className="mx-auto h-16 w-16 text-gray-400 dark:text-gray-500"
+                className="mx-auto h-16 w-16 text-gray-500"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -405,19 +362,19 @@ const TranscriptionsPage: React.FC = () => {
                   d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                 ></path>
               </svg>
-              <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">
+              <h3 className="mt-4 text-lg font-medium text-white">
                 No Transcriptions Found
               </h3>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              <p className="mt-2 text-sm text-gray-400">
                 Start by creating a transcription for one of your Parliament TV captures.
               </p>
               <div className="mt-6">
-                <Link href="/capture" className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary">
-                  Go to Captures
+                <Link href="/capture">
+                  <Button variant="primary">Go to Captures</Button>
                 </Link>
               </div>
             </div>
-          </div>
+          </Card>
         )}
       </div>
     </MainLayout>
