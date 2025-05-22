@@ -474,7 +474,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       )}
 
       {/* Not Started State */}
-      {(!recognitionStatus || recognitionStatus.status === 'not_started') && (
+      {(!recognitionStatus || !recognitionStatus.status || ['not_started', 'completed'].includes(recognitionStatus.status)) && (
         <div className="bg-gray-900 rounded-lg p-6 mb-6">
           <h3 className="text-lg font-semibold mb-4">Start Recognition Process</h3>
           
