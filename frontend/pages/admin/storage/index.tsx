@@ -309,7 +309,7 @@ const StorageManagement: React.FC = () => {
                 <div className="p-6">
                   <div className="mb-6">
                     <h3 className="text-sm font-medium text-white mb-3">Oldest Video Clips</h3>
-                    {storageStats.oldest_files.clips.length === 0 ? (
+                    {!storageStats.oldest_files?.clips || storageStats.oldest_files.clips.length === 0 ? (
                       <p className="text-sm text-gray-400">No video clips found</p>
                     ) : (
                       <div className="overflow-x-auto">
@@ -334,7 +334,7 @@ const StorageManagement: React.FC = () => {
                             </tr>
                           </thead>
                           <tbody className="bg-gray-800 divide-y divide-gray-700">
-                            {storageStats.oldest_files.clips.map((clip) => (
+                            {storageStats.oldest_files?.clips?.map((clip) => (
                               <tr key={clip.id} className="hover:bg-gray-700">
                                 <td className="px-4 py-3 whitespace-nowrap">
                                   <div className="text-sm font-medium text-white">{clip.title}</div>
@@ -373,7 +373,7 @@ const StorageManagement: React.FC = () => {
                   
                   <div>
                     <h3 className="text-sm font-medium text-white mb-3">Oldest Capture Sessions</h3>
-                    {storageStats.oldest_files.captures.length === 0 ? (
+                    {!storageStats.oldest_files?.captures || storageStats.oldest_files.captures.length === 0 ? (
                       <p className="text-sm text-gray-400">No capture sessions found</p>
                     ) : (
                       <div className="overflow-x-auto">
@@ -398,7 +398,7 @@ const StorageManagement: React.FC = () => {
                             </tr>
                           </thead>
                           <tbody className="bg-gray-800 divide-y divide-gray-700">
-                            {storageStats.oldest_files.captures.map((capture) => (
+                            {storageStats.oldest_files?.captures?.map((capture) => (
                               <tr key={capture.id} className="hover:bg-gray-700">
                                 <td className="px-4 py-3 whitespace-nowrap">
                                   <div className="text-sm font-medium text-white">{capture.title}</div>
