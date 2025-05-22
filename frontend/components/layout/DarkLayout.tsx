@@ -128,7 +128,7 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
   const adminItems = adminCategories.flatMap(category => category.items);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className="min-h-screen bg-gray-900 text-white" style={{ position: 'relative' }}>
       <Head>
         <title>{title}</title>
         <meta name="description" content={description} />
@@ -139,120 +139,50 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
       <div className="flex h-screen overflow-hidden">
         {/* Sidebar for desktop */}
         {isAuthenticated && (
-          <div className="hidden md:flex md:flex-col md:w-64 md:fixed md:inset-y-0 md:bg-gray-800 md:border-r md:border-gray-700">
-            <div className="flex-1 flex flex-col min-h-0">
-              {/* Logo */}
-              <div className="flex items-center h-16 flex-shrink-0 px-4 bg-gray-900">
-                <Link href="/" className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <path d="M3 3v18h18V3H3zm16 16H5V5h14v14z" strokeWidth="1.5" />
-                      <path d="M10 7v10M14 7v10" strokeWidth="1.5" />
-                      <path d="M7 10h10M7 14h10" strokeWidth="1.5" />
-                    </svg>
-                  </div>
-                  <span className="text-xl font-bold text-white ml-2">The MP</span>
-                </Link>
-              </div>
-
-              {/* Navigation */}
-              <div className="flex-1 flex flex-col pt-5 pb-4 overflow-y-auto">
-                <nav className="mt-5 flex-1 px-2 space-y-1">
-                  {/* Regular navigation categories */}
-                  {navigationCategories.map((category) => (
-                    <div key={category.name} className="mb-6">
-                      <div className="px-2 mb-2">
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <div className="hidden md:flex md:flex-shrink-0 z-50">
+            <div className="flex flex-col w-64">
+              <div className="flex flex-col flex-grow pt-5 pb-4 overflow-y-auto bg-gray-800">
+                <div className="flex items-center flex-shrink-0 px-4">
+                  <span className="text-xl font-bold text-white">The MP</span>
+                </div>
+                <div className="mt-5 flex-1 flex flex-col">
+                  <nav className="flex-1 px-2 space-y-1">
+                    {navigationCategories.map((category) => (
+                      <div key={category.name} className="mb-4">
+                        <h3 className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                           {category.name}
                         </h3>
-                      </div>
-                      {category.items.map((item) => {
-                        const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
-                        return (
-                          <Link 
-                            key={item.name} 
-                            href={item.href}
-                            className={`${
-                              isActive
-                                ? 'text-blue-400 bg-gray-700'
-                                : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
-                            } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
-                          >
-                            <svg
-                              className="mr-3 h-5 w-5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                              xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                            </svg>
-                            {item.name}
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ))}
-
-                  {/* Admin section */}
-                  {user?.role === UserRole.ADMIN && (
-                    <>
-                      {adminCategories.map((category) => (
-                        <div key={category.name} className="mb-6">
-                          <div className="px-2 mb-2">
-                            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                              {category.name}
-                            </h3>
-                          </div>
+                        <div className="mt-1 space-y-1">
                           {category.items.map((item) => {
                             const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
                             return (
-                              <Link 
-                                key={item.name} 
-                                href={item.href}
-                                className={`${
-                                  isActive
-                                    ? 'text-blue-400 bg-gray-700'
-                                    : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
-                                } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
-                              >
-                                <svg
-                                  className="mr-3 h-5 w-5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                  xmlns="http://www.w3.org/2000/svg"
+                              <div key={item.name} className="relative" style={{ zIndex: 60 }}>
+                                <Link 
+                                  href={item.href}
+                                  className={`${
+                                    isActive
+                                      ? 'text-blue-400 bg-gray-700'
+                                      : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
+                                  } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200 block`}
                                 >
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                                </svg>
-                                {item.name}
-                              </Link>
+                                  <svg
+                                    className="mr-3 h-5 w-5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                                  </svg>
+                                  {item.name}
+                                </Link>
+                              </div>
                             );
                           })}
                         </div>
-                      ))}
-                    </>
-                  )}
-                </nav>
-              </div>
-
-              {/* User info */}
-              <div className="flex-shrink-0 flex border-t border-gray-700 p-4">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center">
-                      {user?.name?.charAt(0) || 'U'}
-                    </div>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-sm font-medium text-white truncate">{user?.name}</p>
-                    <button
-                      onClick={logout}
-                      className="text-xs font-medium text-gray-300 hover:text-gray-200"
-                    >
-                      Logout
-                    </button>
-                  </div>
+                      </div>
+                    ))}
+                  </nav>
                 </div>
               </div>
             </div>
@@ -261,51 +191,30 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
 
         {/* Mobile menu button */}
         {isAuthenticated && (
-          <div className="md:hidden fixed top-0 left-0 right-0 z-10 bg-gray-800 border-b border-gray-700">
+          <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 border-b border-gray-700">
             <div className="flex items-center justify-between h-16 px-4">
               <div className="flex items-center">
-                <Link href="/" className="flex items-center">
-                  <svg className="h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M3 3v18h18V3H3zm16 16H5V5h14v14z" strokeWidth="1.5" />
-                    <path d="M10 7v10M14 7v10" strokeWidth="1.5" />
-                    <path d="M7 10h10M7 14h10" strokeWidth="1.5" />
-                  </svg>
-                  <span className="text-xl font-bold text-white ml-2">The MP</span>
-                </Link>
+                <div className="relative" style={{ zIndex: 60 }}>
+                  <Link href="/" className="flex items-center">
+                    <svg className="h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M3 3v18h18V3H3zm16 16H5V5h14v14z" strokeWidth="1.5" />
+                      <path d="M10 7v10M14 7v10" strokeWidth="1.5" />
+                      <path d="M7 10h10M7 14h10" strokeWidth="1.5" />
+                    </svg>
+                    <span className="text-xl font-bold text-white ml-2">The MP</span>
+                  </Link>
+                </div>
               </div>
               <button
                 type="button"
-                className="text-gray-300 hover:text-white focus:outline-none"
+                className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               >
-                <svg
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Mobile menu */}
-        {isAuthenticated && (
-          <div 
-            className={`md:hidden fixed inset-0 z-20 bg-gray-900 bg-opacity-90 ${mobileMenuOpen ? 'block' : 'hidden'}`}
-          >
-            <div className="pt-16 pb-3 px-2 space-y-1 sm:px-3">
-              <div className="flex justify-end p-2">
-                <button
-                  type="button"
-                  className="text-gray-300 hover:text-white focus:outline-none"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
+                <span className="sr-only">Open main menu</span>
+                {mobileMenuOpen ? (
                   <svg
-                    className="h-6 w-6"
+                    className="block h-6 w-6"
+                    xmlns="http://www.w3.org/2000/svg"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -313,15 +222,32 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
-                </button>
-              </div>
+                ) : (
+                  <svg
+                    className="block h-6 w-6"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
 
-              {/* Mobile navigation items */}
-              {navigationItems.map((item) => {
-                const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
-                return (
-                  <Link
-                    key={item.name}
+        {/* Mobile menu */}
+        {isAuthenticated && (
+          <div className="md:hidden" style={{ position: 'relative' }}>
+            {/* Mobile navigation items */}
+            {navigationItems.map((item) => {
+              const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
+              return (
+                <div key={item.name} className="relative" style={{ zIndex: 60 }}>
+                  <Link 
                     href={item.href}
                     className={`${
                       isActive
@@ -344,24 +270,25 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
                       {item.name}
                     </div>
                   </Link>
-                );
-              })}
+                </div>
+              );
+            })}
 
-              {/* Admin section for mobile */}
-              {user?.role === UserRole.ADMIN && (
-                <>
-                  <div className="pt-4 pb-2">
-                    <div className="px-3">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        Administration
-                      </h3>
-                    </div>
+            {/* Admin section for mobile */}
+            {user?.role === UserRole.ADMIN && (
+              <>
+                <div className="pt-4 pb-2">
+                  <div className="px-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                      Administration
+                    </h3>
                   </div>
-                  {adminItems.map((item) => {
-                    const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
-                    return (
-                      <Link
-                        key={item.name}
+                </div>
+                {adminItems.map((item) => {
+                  const isActive = router.pathname === item.href || router.pathname.startsWith(`${item.href}/`);
+                  return (
+                    <div key={item.name} className="relative" style={{ zIndex: 60 }}>
+                      <Link 
                         href={item.href}
                         className={`${
                           isActive
@@ -384,26 +311,26 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
                           {item.name}
                         </div>
                       </Link>
-                    );
-                  })}
-                </>
-              )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
 
-              {/* Mobile user info */}
-              <div className="pt-4 mt-4 border-t border-gray-700">
-                <div className="flex items-center px-3 py-2">
-                  <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center">
-                    {user?.name?.charAt(0) || 'U'}
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-sm font-medium text-white">{user?.name}</p>
-                    <button
-                      onClick={logout}
-                      className="text-xs font-medium text-gray-300 hover:text-gray-200"
-                    >
-                      Logout
-                    </button>
-                  </div>
+            {/* Mobile user info */}
+            <div className="pt-4 mt-4 border-t border-gray-700">
+              <div className="flex items-center px-3 py-2">
+                <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                  {user?.name?.charAt(0) || 'U'}
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm font-medium text-white">{user?.name}</p>
+                  <button
+                    onClick={logout}
+                    className="text-xs font-medium text-gray-300 hover:text-gray-200"
+                  >
+                    Logout
+                  </button>
                 </div>
               </div>
             </div>
@@ -412,12 +339,14 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
 
         {/* Main content */}
         <div className="flex flex-col w-0 flex-1 overflow-hidden">
-          <main className={`flex-1 relative z-0 overflow-y-auto focus:outline-none ${isAuthenticated ? 'md:pt-0 pt-16' : ''}`}>
+          <main className="flex-1 relative z-0 overflow-y-auto focus:outline-none" style={{ position: 'relative' }}>
             <div className="py-6">
               <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-                {isAuthenticated && (
-                  <h1 className="text-2xl font-semibold text-white mb-4">{title}</h1>
+                {title && (
+                  <h1 className="text-2xl font-semibold text-white mb-6">{title}</h1>
                 )}
+              </div>
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
                 <div className="py-4">{children}</div>
               </div>
             </div>
