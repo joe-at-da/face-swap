@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -13,14 +13,16 @@ interface UnifiedRecognitionPanelProps {
   onProcessingComplete?: () => void;
 }
 
+interface RecognitionStep {
+  name: string;
+  status: 'waiting' | 'in_progress' | 'completed' | 'failed';
+  progress?: number;
+}
+
 interface RecognitionStatus {
   status: 'not_started' | 'scheduled' | 'processing' | 'completed' | 'failed';
   progress?: number;
-  steps?: Array<{
-    name: string;
-    status: 'waiting' | 'in_progress' | 'completed' | 'failed';
-    progress?: number;
-  }>;
+  steps?: RecognitionStep[];
   error?: string;
   started_at?: string;
   completed_at?: string;
@@ -30,6 +32,12 @@ interface RecognitionStatus {
 interface TranscriptionOptions {
   enableSpeakerIdentification: boolean;
   enableFacialRecognition: boolean;
+}
+
+interface AudioInfo {
+  file_path: string | null;
+  file_name: string | null;
+  source_url: string | null;
 }
 
 const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
@@ -48,7 +56,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
-  const [audioInfo, setAudioInfo] = useState<any>(null);
+  const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
 
   useEffect(() => {
     if (captureId) {
@@ -73,7 +81,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         onProcessingComplete();
       }
     }
-  }, [recognitionStatus?.status]);
+  }, [recognitionStatus?.status, refreshInterval, onProcessingComplete]);
 
   const fetchStatus = async () => {
     try {
@@ -81,13 +89,9 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       
       // First try to get detailed status
       try {
-        const detailedResponse = await axios.get(`${API_BASE_URL}/recognition/detailed-status/${captureId}`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
+        const detailedResponse = await api.get(`/recognition/detailed-status/${captureId}`);
         
-        const detailedData = detailedResponse.data as { success: boolean; status: any };
+        const detailedData = detailedResponse as { success: boolean; status: any };
         if (detailedData.success) {
           const statusData = detailedData.status;
           
@@ -118,13 +122,9 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         }
       } catch (detailedErr) {
         // If detailed status fails, fall back to basic status
-        const basicResponse = await axios.get(`${API_BASE_URL}/recognition-status/${captureId}`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
+        const basicResponse = await api.get(`/recognition-status/${captureId}`);
         
-        const basicData = basicResponse.data as { success: boolean; status: any };
+        const basicData = basicResponse as { success: boolean; status: any };
         if (basicData.success) {
           const statusData = basicData.status;
           
@@ -183,39 +183,76 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       console.error('Error fetching audio info:', err);
     }
   };
-  
-  // Helper function to get file name from path
-  const Path = {
-    basename: (path: string) => {
-      return path.split('/').pop() || path;
-    }
+
+  // Helper function to get basename from path
+  const basename = (path: string) => {
+    return path.split('/').pop() || path;
   };
 
   const startRecognitionProcess = async () => {
     try {
       setIsStartingProcess(true);
+      setError('');
       
-      // Use the combined recognition endpoint
-      const response = await axios.post(`${API_BASE_URL}/combined-recognition`, {
-        video_id: captureId,
-        save_output: true
-      }, {
-        headers: {
-          Authorization: `Bearer ${token}`
+      // Check if we have valid capture data before proceeding
+      if (!captureId) {
+        setError('Invalid capture ID');
+        toast.error('Cannot start recognition: Invalid capture ID');
+        return;
+      }
+      
+      // Prepare the request data
+      const requestData = {
+        capture_id: captureId,
+        options: {
+          enable_speaker_identification: transcriptionOptions.enableSpeakerIdentification,
+          enable_facial_recognition: transcriptionOptions.enableFacialRecognition
         }
-      });
+      };
       
-      const responseData = response.data as { success: boolean; error?: string };
+      // Call the combined recognition endpoint
+      const response = await api.post('/recognition/combined', requestData);
+      
+      const responseData = response as { success: boolean; message?: string; error?: string };
       
       if (responseData.success) {
         toast.success('Recognition process started successfully');
-        fetchStatus(); // Refresh status immediately
+        // Fetch the updated status
+        fetchStatus();
       } else {
-        toast.error(responseData.error || 'Failed to start recognition process');
+        const errorMessage = responseData.error || responseData.message || 'Failed to start recognition process';
+        setError(errorMessage);
+        toast.error(errorMessage);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error starting recognition process:', err);
-      toast.error('Failed to start recognition process');
+      
+      // Handle different error scenarios
+      let errorMessage = 'Failed to start recognition process';
+      
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        if (err.response.status === 400) {
+          errorMessage = 'Invalid request: ' + (err.response.data?.message || 'Bad request');
+        } else if (err.response.status === 401) {
+          errorMessage = 'Authentication error: Please log in again';
+        } else if (err.response.status === 403) {
+          errorMessage = 'You do not have permission to perform this action';
+        } else if (err.response.status === 404) {
+          errorMessage = 'Capture not found or recognition service unavailable';
+        } else if (err.response.status === 409) {
+          errorMessage = 'Recognition process is already in progress for this capture';
+        } else if (err.response.status >= 500) {
+          errorMessage = 'Server error: ' + (err.response.data?.message || 'Please try again later');
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        errorMessage = 'No response from server. Please check your network connection.';
+      }
+      
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsStartingProcess(false);
     }
@@ -229,53 +266,126 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   };
 
   const getStepName = (index: number): string => {
-    const stepNames = [
-      'Audio Extraction',
-      'Transcription',
-      'Speaker Identification',
-      'Facial Recognition'
-    ];
-    return stepNames[index] || `Step ${index + 1}`;
+    switch (index) {
+      case 0: return 'Initialization';
+      case 1: return 'Audio Processing';
+      case 2: return 'Speaker Recognition';
+      case 3: return 'Facial Recognition';
+      case 4: return 'Transcription';
+      default: return `Step ${index + 1}`;
+    }
   };
 
   const getStatusColor = (status: string): string => {
     switch (status) {
       case 'not_started':
-        return 'text-gray-500';
+        return 'text-gray-300';
       case 'scheduled':
-        return 'text-blue-500';
+        return 'text-blue-300';
       case 'processing':
-        return 'text-yellow-500';
+        return 'text-blue-300';
       case 'completed':
-        return 'text-green-500';
+        return 'text-green-300';
       case 'failed':
-        return 'text-red-500';
+        return 'text-red-300';
       default:
-        return 'text-gray-500';
+        return 'text-gray-300';
     }
   };
 
   const getStatusBgColor = (status: string): string => {
     switch (status) {
       case 'not_started':
-        return 'bg-gray-100';
+        return 'bg-gray-700';
       case 'scheduled':
-        return 'bg-blue-100';
+        return 'bg-blue-900';
       case 'processing':
-        return 'bg-yellow-100';
+        return 'bg-blue-900';
       case 'completed':
-        return 'bg-green-100';
+        return 'bg-green-900';
       case 'failed':
-        return 'bg-red-100';
+        return 'bg-red-900';
       default:
-        return 'bg-gray-100';
+        return 'bg-gray-700';
     }
   };
+
+  // Calculate estimated time remaining based on progress and start time
+  const calculateTimeRemaining = (startedAt: string, progress: number): string => {
+    if (!startedAt || progress <= 0) return 'Calculating...';
+    
+    const startTime = new Date(startedAt).getTime();
+    const currentTime = new Date().getTime();
+    const elapsedMs = currentTime - startTime;
+    
+    // Calculate total time based on elapsed time and progress
+    const totalEstimatedMs = (elapsedMs / progress) * 100;
+    const remainingMs = totalEstimatedMs - elapsedMs;
+    
+    // Convert to minutes and seconds
+    const remainingMinutes = Math.floor(remainingMs / 60000);
+    const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
+    
+    if (remainingMinutes > 0) {
+      return `${remainingMinutes} min ${remainingSeconds} sec`;
+    } else {
+      return `${remainingSeconds} seconds`;
+    }
+  };
+  
+  // Render enhanced progress bar with steps
+  const renderProgressBar = (progress: number, steps: RecognitionStep[] = []) => {
+    // Calculate color based on progress
+    const getProgressColor = () => {
+      if (progress < 30) return 'bg-blue-600';
+      if (progress < 60) return 'bg-indigo-500';
+      if (progress < 90) return 'bg-purple-500';
+      return 'bg-green-500';
+    };
+    
+    return (
+      <div className="space-y-2">
+        {/* Main progress bar */}
+        <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+          <div 
+            className={`h-full ${getProgressColor()} transition-all duration-500 ease-out`}
+            style={{ width: `${progress}%` }}
+          ></div>
+        </div>
+        
+        {/* Progress percentage */}
+        <div className="flex justify-between text-xs text-gray-300">
+          <span>{progress.toFixed(1)}% Complete</span>
+          {progress < 100 && (
+            <span>{100 - progress.toFixed(1)}% Remaining</span>
+          )}
+        </div>
+        
+        {/* Step indicators */}
+        {steps.length > 0 && (
+          <div className="grid grid-cols-5 gap-2 mt-3">
+            {steps.map((step, index) => (
+              <div key={index} className="text-center">
+                <div className={`h-1.5 rounded-full ${
+                  step.status === 'completed' ? 'bg-green-500' : 
+                  step.status === 'in_progress' ? 'bg-blue-500' : 
+                  step.status === 'failed' ? 'bg-red-500' : 'bg-gray-700'
+                }`}></div>
+                <div className="text-xs mt-1 text-gray-300">
+                  {step.name || getStepName(index)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (loading && !recognitionStatus) {
     return (
       <div className="bg-gray-800 text-white rounded-lg p-6 mb-6">
-        <div className="flex justify-center items-center h-40">
+        <div className="flex justify-center items-center h-32">
           <div className="spinner"></div>
         </div>
       </div>
@@ -322,179 +432,141 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         )}
       </div>
 
-      {/* Recognition Progress */}
+      {/* Processing Status */}
       {recognitionStatus?.status === 'processing' && (
-        <div className="bg-gray-700 rounded-lg p-4 mb-6">
-          <h3 className="text-lg font-semibold mb-3">Recognition Progress</h3>
-          
-          <div className="mb-4">
-            <div className="flex justify-between mb-1">
-              <span>Overall Progress</span>
-              <span>{recognitionStatus.progress || 0}%</span>
+        <div className="bg-blue-900 border border-blue-700 text-white px-4 py-3 rounded mb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="spinner-sm mr-3"></div>
+              <h3 className="font-bold">Processing in progress</h3>
             </div>
-            <div className="w-full bg-gray-600 rounded-full h-2.5">
-              <div 
-                className="bg-blue-500 h-2.5 rounded-full" 
-                style={{ width: `${recognitionStatus.progress || 0}%` }}
-              ></div>
-            </div>
-          </div>
-          
-          <div className="space-y-3">
-            <h4 className="font-medium">Processing Steps</h4>
-            {recognitionStatus.steps ? (
-              recognitionStatus.steps.map((step, index) => (
-                <div key={index} className="bg-gray-800 rounded-lg p-3">
-                  <div className="flex justify-between items-center mb-1">
-                    <div className="flex items-center">
-                      {step.status === 'completed' ? (
-                        <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                      ) : step.status === 'in_progress' ? (
-                        <div className="spinner-xs mr-2"></div>
-                      ) : (
-                        <div className="w-4 h-4 mr-2"></div>
-                      )}
-                      <span>{getStepName(index)}</span>
-                    </div>
-                    <span className={`text-sm px-2 py-0.5 rounded-full ${
-                      step.status === 'completed' ? 'bg-green-900 text-green-300' :
-                      step.status === 'in_progress' ? 'bg-blue-900 text-blue-300' :
-                      step.status === 'failed' ? 'bg-red-900 text-red-300' :
-                      'bg-gray-900 text-gray-300'
-                    }`}>
-                      {step.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                  {step.status === 'in_progress' && step.progress !== undefined && (
-                    <div className="w-full bg-gray-600 rounded-full h-1.5 mt-2">
-                      <div 
-                        className="bg-blue-500 h-1.5 rounded-full" 
-                        style={{ width: `${step.progress}%` }}
-                      ></div>
-                    </div>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="text-gray-400">No step information available</div>
+            {recognitionStatus.started_at && (
+              <div className="text-sm text-blue-300">
+                Started {new Date(recognitionStatus.started_at).toLocaleTimeString()}
+              </div>
             )}
           </div>
+          
+          {recognitionStatus.progress !== undefined && (
+            <div className="mt-4">
+              {renderProgressBar(recognitionStatus.progress, recognitionStatus.steps || [])}
+            </div>
+          )}
+          
+          {/* Estimated time remaining */}
+          {recognitionStatus.progress && recognitionStatus.progress > 0 && recognitionStatus.started_at && (
+            <div className="mt-3 text-sm text-blue-300">
+              <div className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>
+                  {recognitionStatus.progress < 100 ? (
+                    <>Estimated time remaining: {calculateTimeRemaining(recognitionStatus.started_at, recognitionStatus.progress)}</>
+                  ) : (
+                    'Finishing up...'
+                  )}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Start Recognition Form */}
-      {recognitionStatus?.status === 'not_started' && (
-        <div className="bg-gray-700 rounded-lg p-4 mb-6">
-          <h3 className="text-lg font-semibold mb-3">Start Recognition Process</h3>
+      {/* Not Started State */}
+      {(!recognitionStatus || recognitionStatus.status === 'not_started') && (
+        <div className="bg-gray-900 rounded-lg p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-4">Start Recognition Process</h3>
           
-          <div className="mb-4">
-            <p className="text-gray-300 mb-3">
-              Convert the audio to text with timestamps. This will create a searchable transcript of the parliamentary session.
-            </p>
+          <div className="mb-6">
+            <div className="mb-4">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                  checked={transcriptionOptions.enableSpeakerIdentification}
+                  onChange={() => handleOptionChange('enableSpeakerIdentification')}
+                />
+                <span>Enable Speaker Identification</span>
+              </label>
+              <p className="text-sm text-gray-400 ml-6 mt-1">
+                Identifies who is speaking in each segment of the audio
+              </p>
+            </div>
             
-            <div className="space-y-3">
-              <div className="flex items-center">
-                <label className="inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={transcriptionOptions.enableSpeakerIdentification}
-                    onChange={() => handleOptionChange('enableSpeakerIdentification')}
-                  />
-                  <div className="relative w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                  <span className="ml-3 text-gray-200">Enable Speaker Identification</span>
-                </label>
-                <div className="ml-2 text-gray-400 cursor-pointer group relative">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 p-2 bg-gray-900 text-xs text-gray-300 rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity">
-                    Uses voice recognition to identify and tag speakers in the transcript
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex items-center">
-                <label className="inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={transcriptionOptions.enableFacialRecognition}
-                    onChange={() => handleOptionChange('enableFacialRecognition')}
-                  />
-                  <div className="relative w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                  <span className="ml-3 text-gray-200">Enable Facial Recognition</span>
-                </label>
-                <div className="ml-2 text-gray-400 cursor-pointer group relative">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 p-2 bg-gray-900 text-xs text-gray-300 rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity">
-                    Detects and identifies faces in the video to enhance speaker recognition
-                  </div>
-                </div>
-              </div>
+            <div>
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                  checked={transcriptionOptions.enableFacialRecognition}
+                  onChange={() => handleOptionChange('enableFacialRecognition')}
+                />
+                <span>Enable Facial Recognition</span>
+              </label>
+              <p className="text-sm text-gray-400 ml-6 mt-1">
+                Identifies faces in the video and matches them with speakers
+              </p>
             </div>
           </div>
           
           <button
             onClick={startRecognitionProcess}
             disabled={isStartingProcess}
-            className="flex items-center justify-center w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className={`w-full py-2 px-4 rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
+              isStartingProcess 
+                ? 'bg-gray-600 text-gray-300 cursor-not-allowed' 
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
           >
             {isStartingProcess ? (
-              <>
+              <div className="flex justify-center items-center">
                 <div className="spinner-xs mr-2"></div>
-                Starting...
-              </>
+                <span>Starting Process...</span>
+              </div>
             ) : (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Start Recognition Process
-              </>
+              'Start Recognition Process'
             )}
           </button>
         </div>
       )}
 
-      {/* Completed Results Summary */}
-      {recognitionStatus?.status === 'completed' && recognitionStatus.results && (
-        <div className="bg-gray-700 rounded-lg p-4 mb-6">
-          <h3 className="text-lg font-semibold mb-3">Recognition Results</h3>
+      {/* Completed State */}
+      {recognitionStatus?.status === 'completed' && (
+        <div className="bg-green-900 border border-green-700 text-white px-4 py-3 rounded mb-4">
+          <div className="flex items-center mb-2">
+            <svg className="w-5 h-5 text-green-300 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            <h3 className="font-bold">Processing completed</h3>
+          </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div className="bg-gray-800 rounded-lg p-3">
-              <h4 className="font-medium text-gray-300 mb-2">Transcription</h4>
-              <div className="text-gray-200">
-                <div className="flex justify-between mb-1">
-                  <span>Total Duration</span>
-                  <span>{recognitionStatus.results.duration_seconds ? formatDuration(recognitionStatus.results.duration_seconds) : 'N/A'}</span>
-                </div>
-                <div className="flex justify-between mb-1">
-                  <span>Segments</span>
-                  <span>{recognitionStatus.results.segments?.length || 0}</span>
+          <div className="text-sm">
+            {recognitionStatus.started_at && recognitionStatus.completed_at && (
+              <div className="mb-1">
+                Duration: {formatDuration((new Date(recognitionStatus.completed_at).getTime() - new Date(recognitionStatus.started_at).getTime()) / 1000)}
+              </div>
+            )}
+          </div>
+          
+          {recognitionStatus.results && (
+            <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+              <div className="bg-green-800 p-3 rounded">
+                <h4 className="font-medium mb-2">Transcription</h4>
+                <div className="flex justify-between">
+                  <span>Duration</span>
+                  <span>{recognitionStatus.results.duration ? formatDuration(recognitionStatus.results.duration) : 'N/A'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Words</span>
                   <span>{recognitionStatus.results.word_count || 0}</span>
                 </div>
               </div>
-            </div>
-            
-            <div className="bg-gray-800 rounded-lg p-3">
-              <h4 className="font-medium text-gray-300 mb-2">Speaker Recognition</h4>
-              <div className="text-gray-200">
-                <div className="flex justify-between mb-1">
-                  <span>Speakers Detected</span>
-                  <span>{recognitionStatus.results.speakers?.length || 0}</span>
-                </div>
-                <div className="flex justify-between mb-1">
-                  <span>Identified Speakers</span>
+              
+              <div className="bg-green-800 p-3 rounded">
+                <h4 className="font-medium mb-2">Recognition</h4>
+                <div className="flex justify-between">
+                  <span>Speakers</span>
                   <span>{recognitionStatus.results.identified_speakers || 0}</span>
                 </div>
                 <div className="flex justify-between">
@@ -503,9 +575,9 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
                 </div>
               </div>
             </div>
-          </div>
+          )}
           
-          <div className="flex justify-end">
+          <div className="flex justify-end mt-4">
             <button
               onClick={() => window.location.href = `/parliament-tv/${captureId}/transcript`}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors"
