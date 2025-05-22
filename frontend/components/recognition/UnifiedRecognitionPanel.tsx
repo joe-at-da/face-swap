@@ -210,8 +210,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         }
       };
       
-      // Call the combined recognition endpoint
-      const response = await api.post('/recognition/combined', requestData);
+      // Call the recognition endpoint
+      const response = await api.post('/recognition', requestData);
       
       const responseData = response as { success: boolean; message?: string; error?: string };
       
