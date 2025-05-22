@@ -77,7 +77,7 @@ const TranscriptionPage: React.FC = () => {
     queryKey: ['transcriptions', id],
     queryFn: async () => {
       if (!id) return null;
-      return await api.get(`/transcription/parliament-tv/capture/${id}`);
+      return await api.get(`/transcription/capture/${id}`);
     },
     enabled: !!id,
   });
@@ -85,7 +85,7 @@ const TranscriptionPage: React.FC = () => {
   // Start transcription mutation
   const startTranscriptionMutation = useMutation({
     mutationFn: async (data: any) => {
-      return await api.post('/transcription/parliament-tv', data);
+      return await api.post('/transcription', data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transcriptions', id] });
@@ -96,7 +96,7 @@ const TranscriptionPage: React.FC = () => {
   // Delete transcription mutation
   const deleteTranscriptionMutation = useMutation({
     mutationFn: async (transcriptionId: number) => {
-      return await api.delete(`/transcription/parliament-tv/${transcriptionId}`);
+      return await api.delete(`/transcription/${transcriptionId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transcriptions', id] });

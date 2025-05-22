@@ -637,7 +637,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           
           <div className="flex justify-end mt-4">
             <button
-              onClick={() => window.location.href = `/parliament-tv/${captureId}/transcript`}
+              onClick={() => window.location.href = `/capture/${captureId}/transcription`}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors"
             >
               View Full Transcript
