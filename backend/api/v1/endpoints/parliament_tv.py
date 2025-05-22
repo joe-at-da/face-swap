@@ -117,10 +117,12 @@ async def start_parliament_tv_capture(
         user_id=current_user.id,
         scheduled_start=capture_request.scheduled_start,
         scheduled_end=capture_request.scheduled_end,
+        # Store the duration in the dedicated field
+        duration=capture_request.duration,
         # Store Parliament TV specific fields in metadata
         metadata={
             "original_url": capture_request.url,  # The URL entered by the user with time marker
-            "duration": capture_request.duration,
+            "duration": capture_request.duration,  # Also store in metadata for backward compatibility
             "enable_facial_recognition": capture_request.enable_facial_recognition,
             # Store time marker information if available
             "time_marker": {
