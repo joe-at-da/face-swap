@@ -203,15 +203,16 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       
       // Prepare the request data
       const requestData = {
-        capture_id: captureId,
+        video_id: captureId,
+        save_output: true,
         options: {
           enable_speaker_identification: transcriptionOptions.enableSpeakerIdentification,
           enable_facial_recognition: transcriptionOptions.enableFacialRecognition
         }
       };
       
-      // Call the recognition endpoint
-      const response = await api.post('/recognition', requestData);
+      // Call the combined recognition endpoint
+      const response = await api.post('/recognition/combined-recognition', requestData);
       
       const responseData = response as { success: boolean; message?: string; error?: string };
       
