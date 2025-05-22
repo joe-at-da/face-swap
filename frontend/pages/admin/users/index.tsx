@@ -241,7 +241,7 @@ const UserManagement: React.FC = () => {
                         <div className="flex items-center">
                           <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gray-600 flex items-center justify-center">
                             <span className="text-gray-300 font-medium text-lg">
-                              {user.name.charAt(0).toUpperCase()}
+                              {user.name ? user.name.charAt(0).toUpperCase() : '?'}
                             </span>
                           </div>
                           <div className="ml-4">
