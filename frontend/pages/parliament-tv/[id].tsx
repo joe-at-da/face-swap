@@ -5,6 +5,8 @@ import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import MainLayout from '../../components/layout/MainLayout';
 import Link from 'next/link';
+import FacialRecognitionResults from '../../components/recognition/FacialRecognitionResults';
+import { toast } from 'react-toastify';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -20,6 +22,7 @@ interface ParliamentTVVideo {
   duration: number;
   url: string;
   facial_recognition_enabled: boolean;
+  facial_recognition_status?: string;
   created_by: {
     id: number;
     name: string;
@@ -109,6 +112,23 @@ const ParliamentTVVideoDetail: React.FC = () => {
     const secs = Math.floor(seconds % 60);
     
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  const getFacialRecognitionStatusColor = (status: string) => {
+    switch (status) {
+      case 'not_started':
+        return 'bg-gray-100 text-gray-800';
+      case 'scheduled':
+        return 'bg-blue-100 text-blue-800';
+      case 'processing':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'completed':
+        return 'bg-green-100 text-green-800';
+      case 'failed':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
   };
 
   if (loading) {
@@ -217,7 +237,14 @@ const ParliamentTVVideoDetail: React.FC = () => {
               <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
                 <dt className="text-sm font-medium text-gray-500">Facial Recognition</dt>
                 <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-                  {video.facial_recognition_enabled ? 'Enabled' : 'Disabled'}
+                  <div className="flex items-center">
+                    <span className="mr-2">{video.facial_recognition_enabled ? 'Enabled' : 'Disabled'}</span>
+                    {video.facial_recognition_status && (
+                      <span className={`px-2 py-1 text-xs rounded-full ${getFacialRecognitionStatusColor(video.facial_recognition_status)}`}>
+                        {video.facial_recognition_status.replace('_', ' ')}
+                      </span>
+                    )}
+                  </div>
                 </dd>
               </div>
             </dl>
@@ -272,6 +299,19 @@ const ParliamentTVVideoDetail: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Facial Recognition Results Section */}
+        {video.facial_recognition_enabled && (
+          <div className="mt-8">
+            <FacialRecognitionResults 
+              captureId={video.id} 
+              onProcessingComplete={() => {
+                toast.success('Facial recognition processing completed');
+                fetchVideo(); // Refresh video data
+              }}
+            />
+          </div>
+        )}
 
         <div className="mt-8 flex justify-between">
           <Link href="/parliament-tv/videos">
