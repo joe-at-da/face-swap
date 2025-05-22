@@ -5,7 +5,7 @@ import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import MainLayout from '../../components/layout/MainLayout';
 import Link from 'next/link';
-import FacialRecognitionResults from '../../components/recognition/FacialRecognitionResults';
+import UnifiedRecognitionPanel from '../../components/recognition/UnifiedRecognitionPanel';
 import { toast } from 'react-toastify';
 
 // API base URL
@@ -40,6 +40,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
   const [error, setError] = useState('');
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [syncPlayback, setSyncPlayback] = useState(false);
   const videoUrl = video ? `${API_BASE_URL}/parliament-tv/${video.id}/stream` : '';
   const audioUrl = video ? `${API_BASE_URL}/videos/static/audio/capture_${video.id.toString().padStart(4, '0')}.audio.mp3` : '';
 
@@ -270,12 +271,25 @@ const ParliamentTVVideoDetail: React.FC = () => {
             {/* Audio Player Section */}
             <div className="mt-6">
               <h4 className="text-lg font-medium text-gray-900 mb-2">Audio Track</h4>
-              <button
-                onClick={() => setShowAudioPlayer(!showAudioPlayer)}
-                className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-colors mb-2"
-              >
-                {showAudioPlayer ? 'Hide Audio Player' : 'Show Audio Player'}
-              </button>
+              <div className="flex items-center mb-2">
+                <button
+                  onClick={() => setShowAudioPlayer(!showAudioPlayer)}
+                  className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-colors mr-2"
+                >
+                  {showAudioPlayer ? 'Hide Audio Player' : 'Show Audio Player'}
+                </button>
+                
+                <label className="inline-flex items-center cursor-pointer ml-2">
+                  <input 
+                    type="checkbox" 
+                    className="sr-only peer"
+                    checked={syncPlayback}
+                    onChange={() => setSyncPlayback(!syncPlayback)}
+                  />
+                  <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                  <span className="ml-3 text-sm font-medium text-gray-900">Synchronize audio and video playback</span>
+                </label>
+              </div>
               
               {showAudioPlayer && (
                 <div className="mt-2">
@@ -300,18 +314,16 @@ const ParliamentTVVideoDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Facial Recognition Results Section */}
-        {video.facial_recognition_enabled && (
-          <div className="mt-8">
-            <FacialRecognitionResults 
-              captureId={video.id} 
-              onProcessingComplete={() => {
-                toast.success('Facial recognition processing completed');
-                fetchVideo(); // Refresh video data
-              }}
-            />
-          </div>
-        )}
+        {/* Unified Recognition Panel */}
+        <div className="mt-8">
+          <UnifiedRecognitionPanel 
+            captureId={video.id} 
+            onProcessingComplete={() => {
+              toast.success('Recognition processing completed');
+              fetchVideo(); // Refresh video data
+            }}
+          />
+        </div>
 
         <div className="mt-8 flex justify-between">
           <Link href="/parliament-tv/videos">

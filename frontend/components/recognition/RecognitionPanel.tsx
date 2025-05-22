@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../utils/api';
 import RecognitionProgress from './RecognitionProgress';
+import { toast } from 'react-toastify';
 
 interface RecognitionPanelProps {
   captureId: number;
@@ -272,65 +273,146 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
   };
 
   return (
-    <div className="space-y-4">
+    <div className="mt-8">
+      <h3 className="text-xl font-semibold mb-4">Recognition</h3>
+
       {/* Recognition Controls */}
-      <div className="bg-white p-4 rounded border border-gray-200">
-        <div className="flex justify-between items-center">
-          <h3 className="text-lg font-medium">Recognition</h3>
-          {!isProcessing && recognitionStatus !== 'completed' && (
-            <button
-              onClick={handleStartRecognition}
-              disabled={isProcessing}
-              className="px-4 py-2 bg-primary text-white rounded hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Start Recognition
-            </button>
-          )}
-        </div>
-        
-        {/* Status and Progress */}
-        <div className="mt-4">
-          <div className="text-sm text-gray-600 mb-1">Status:</div>
-          <div className="bg-gray-50 p-3 rounded border border-gray-200">
-            {isLoading ? (
-              <div className="animate-pulse h-4 bg-gray-200 rounded w-1/4"></div>
-            ) : isError ? (
-              <div className="text-sm text-red-500">Error loading recognition status</div>
-            ) : (
-              <div>
-                <div className="text-sm mb-2">
-                  {!recognitionStatus ? (
-                    <span className="text-gray-500">No recognition data available for this capture.</span>
-                  ) : recognitionStatus === 'processing' ? (
-                    <span className="text-blue-500">Recognition is currently processing...</span>
-                  ) : recognitionStatus === 'completed' ? (
-                    <span className="text-green-500">Recognition completed successfully.</span>
-                  ) : recognitionStatus === 'error' ? (
-                    <span className="text-red-500">Recognition failed with an error.</span>
-                  ) : (
-                    <span className="text-gray-500">Recognition status: {recognitionStatus}</span>
-                  )}
-                </div>
-                
-                {/* Show progress component */}
-                {(isProcessing || recognitionStatus === 'completed') && (
-                  <div className="mt-3 border-t pt-3 border-gray-100">
-                    <RecognitionProgress 
-                      captureId={captureId} 
-                      isProcessing={isProcessing} 
-                      onComplete={handleProgressComplete} 
-                    />
-                  </div>
-                )}
-              </div>
+      <div className="bg-gray-800 text-white p-6 rounded-lg shadow-lg mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-medium text-lg">Status:</h4>
+          <div className="flex items-center">
+            {recognitionStatus === 'not_started' && (
+              <button
+                onClick={handleStartRecognition}
+                disabled={processMutation.isPending}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 mr-3"
+              >
+                {processMutation.isPending ? 'Starting...' : 'Start Recognition'}
+              </button>
+            )}
+            {recognitionStatus === 'not_started' && (
+              <span className="text-xs bg-gray-700 text-gray-300 px-3 py-1.5 rounded-full font-medium">
+                Not Started
+              </span>
+            )}
+            {recognitionStatus === 'processing' && (
+              <span className="text-xs bg-blue-900 text-blue-300 px-3 py-1.5 rounded-full font-medium flex items-center">
+                <div className="w-2 h-2 bg-blue-400 rounded-full mr-2 animate-pulse"></div>
+                Processing
+              </span>
+            )}
+            {recognitionStatus === 'completed' && (
+              <span className="text-xs bg-green-900 text-green-300 px-3 py-1.5 rounded-full font-medium flex items-center">
+                <svg className="w-3 h-3 mr-1.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Completed
+              </span>
+            )}
+            {recognitionStatus === 'failed' && (
+              <span className="text-xs bg-red-900 text-red-300 px-3 py-1.5 rounded-full font-medium flex items-center">
+                <svg className="w-3 h-3 mr-1.5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+                Failed
+              </span>
             )}
           </div>
         </div>
+
+        {/* Show info about recognition process */}
+        {recognitionStatus === 'not_started' && (
+          <div>
+            <div className="mb-6 bg-gray-700 p-4 rounded-lg">
+              <p className="text-gray-300 mb-4">
+                The recognition process identifies speakers and generates a transcript from the audio.
+              </p>
+
+              <div className="space-y-4 mb-6">
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 text-blue-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-gray-300">Speaker identification</span>
+                </div>
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 text-blue-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-gray-300">Audio transcription</span>
+                </div>
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 text-blue-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-gray-300">Facial recognition (if video available)</span>
+                </div>
+              </div>
+            </div>
+            
+            <button
+              onClick={handleStartRecognition}
+              disabled={processMutation.isPending}
+              className="w-full sm:w-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 transition-colors flex items-center justify-center font-medium"
+            >
+              {processMutation.isPending ? (
+                <>
+                  <div className="spinner-xs mr-2"></div>
+                  Starting...
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Start Recognition Process
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Show message when failed */}
+        {recognitionStatus === 'failed' && (
+          <div>
+            <div className="bg-red-900/30 border border-red-700/50 p-4 rounded-lg mb-4">
+              <div className="flex items-start">
+                <svg className="w-5 h-5 text-red-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <p className="text-red-300 font-medium">Recognition processing failed</p>
+                  <p className="text-red-400 mt-1">Please try again or contact support if the issue persists.</p>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleStartRecognition}
+              disabled={processMutation.isPending}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 disabled:opacity-50 flex items-center"
+            >
+              {processMutation.isPending ? (
+                <>
+                  <div className="spinner-xs mr-2"></div>
+                  Restarting...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Restart Recognition
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
-      
+
       {/* Audio Transcription Status - Only shown when processing */}
       {isProcessing && (
-        <div className="bg-white p-4 rounded border border-gray-200 mb-4">
+        <div className="bg-gray-800 text-white p-6 rounded-lg shadow-lg mb-4">
           <div className="flex items-center justify-between mb-2">
             <h4 className="font-medium">Audio Transcription</h4>
             <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Part of recognition process</span>
@@ -353,71 +435,82 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
           </div>
         </div>
       )}
-      
+
       {/* Speaker Results */}
       {recognitionStatus === 'completed' && speakerResults && speakerResults.segments && speakerResults.segments.length > 0 && (
-        <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-medium">Identified Speakers</h4>
-            <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">Completed</span>
+        <div className="bg-gray-800 text-white p-6 rounded-lg shadow-lg mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="font-medium text-lg">Identified Speakers</h4>
+            <span className="text-xs bg-green-900 text-green-300 px-3 py-1.5 rounded-full font-medium flex items-center">
+              <svg className="w-3 h-3 mr-1.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              Completed
+            </span>
           </div>
-          <div className="space-y-3 max-h-60 overflow-y-auto">
+          <div className="space-y-3 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
             {speakerResults.segments.map((segment, index) => (
-              <div key={index} className="bg-gray-50 p-3 rounded border border-gray-200">
+              <div key={index} className="bg-gray-700 p-4 rounded-lg border border-gray-600">
                 <div className="flex justify-between items-start">
                   <div>
                     <div className="flex items-center">
-                      <span className="font-medium">{segment.speaker || 'Unknown Speaker'}</span>
+                      <span className="font-medium text-white">{segment.speaker || 'Unknown Speaker'}</span>
                       {segment.confidence && (
                         <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-                          segment.confidence > 0.7 ? 'bg-green-100 text-green-800' : 
-                          segment.confidence > 0.5 ? 'bg-yellow-100 text-yellow-800' : 
-                          'bg-red-100 text-red-800'
+                          segment.confidence > 0.7 ? 'bg-green-900 text-green-300' :
+                          segment.confidence > 0.5 ? 'bg-yellow-900 text-yellow-300' :
+                          'bg-red-900 text-red-300'
                         }`}>
                           {Math.round(segment.confidence * 100)}% confidence
                         </span>
                       )}
                     </div>
-                    <div className="text-sm text-gray-500 mt-1">
+                    <div className="text-sm text-gray-400 mt-1">
                       {formatTime(segment.start)} - {formatTime(segment.end)} ({Math.round(segment.end - segment.start)} seconds)
                     </div>
                   </div>
                   <button
                     onClick={() => jumpToTimestamp(segment.start)}
-                    className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                    className="px-3 py-1.5 text-xs bg-blue-900 text-blue-300 rounded-lg hover:bg-blue-800 transition-colors"
                   >
                     Jump to Timestamp
                   </button>
                 </div>
                 {segment.text && (
-                  <p className="mt-2 text-sm text-gray-700 italic">"{segment.text}"</p>
+                  <p className="mt-3 text-sm text-gray-300 italic border-t border-gray-600 pt-3">"{segment.text}"</p>
                 )}
               </div>
             ))}
           </div>
         </div>
       )}
+
       
       {/* Transcription Results - Shows when completed */}
       {recognitionStatus === 'completed' && recognitionResults && (
-        <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-medium">Audio Transcription Results</h4>
-            <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">Completed</span>
+        <div className="bg-gray-800 text-white p-6 rounded-lg shadow-lg mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="font-medium text-lg">Audio Transcription Results</h4>
+            <span className="text-xs bg-green-900 text-green-300 px-3 py-1.5 rounded-full font-medium flex items-center">
+              <svg className="w-3 h-3 mr-1.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              Completed
+            </span>
           </div>
           {recognitionResults.transcription?.transcript || 
            recognitionResults.results_summary?.transcript_text ? (
             <div>
-              <div className="mt-2 p-4 bg-gray-50 rounded border border-gray-200">
-                <p className="text-sm whitespace-pre-wrap">
+              <div className="mt-2 p-5 bg-gray-700 rounded-lg border border-gray-600">
+                <p className="text-gray-300 whitespace-pre-wrap leading-relaxed">
                   {recognitionResults.transcription?.transcript || 
                    recognitionResults.results_summary?.transcript_text}
                 </p>
               </div>
               {(recognitionResults.transcription?.message || 
                 recognitionResults.results_summary?.transcription_message) && (
-                <div className="mt-2">
-                  <p className="text-xs text-gray-500">
+                <div className="mt-3 p-3 bg-gray-700/50 rounded-lg">
+                  <p className="text-sm text-gray-400">
                     {recognitionResults.transcription?.message || 
                      recognitionResults.results_summary?.transcription_message}
                   </p>
@@ -425,17 +518,54 @@ const RecognitionPanel: React.FC<RecognitionPanelProps> = ({ captureId, videoEle
               )}
             </div>
           ) : (
-            <p className="text-sm text-gray-500">No transcription results available</p>
+            <div className="p-4 bg-gray-700 rounded-lg">
+              <p className="text-gray-400">No transcription results available</p>
+            </div>
           )}
         </div>
       )}
       
       {/* Show a message when completed but no speaker results */}
       {recognitionStatus === 'completed' && (!speakerResults || !speakerResults.segments || speakerResults.segments.length === 0) && (
-        <div className="bg-white p-4 rounded border border-gray-200 mb-4">
-          <p className="text-gray-700">{recognitionMessage}</p>
+        <div className="bg-gray-800 text-white p-6 rounded-lg shadow-lg mb-4">
+          <div className="flex items-start">
+            <svg className="w-5 h-5 text-blue-400 mr-3 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            <p className="text-gray-300">{recognitionMessage}</p>
+          </div>
         </div>
       )}
+      
+      <style jsx>{`
+        .spinner-xs {
+          border: 2px solid rgba(255, 255, 255, 0.1);
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          border-left-color: #3b82f6;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(107, 114, 128, 0.5) rgba(31, 41, 55, 0.5);
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(31, 41, 55, 0.5);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: rgba(107, 114, 128, 0.5);
+          border-radius: 4px;
+        }
+      `}</style>
     </div>
   );
 };
