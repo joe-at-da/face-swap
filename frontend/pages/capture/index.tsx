@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import Link from 'next/link';
-import MainLayout from '../../components/layout/MainLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import { withAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
@@ -126,7 +126,7 @@ const CaptureListPage: React.FC = () => {
   };
 
   return (
-    <MainLayout title="Capture Sessions | Parliament Video Clip Manager">
+    <DarkLayout title="Capture Sessions | Parliament Video Clip Manager">
       <div className="page-container">
         <div className="mb-6 flex justify-between items-center">
           <h1 className="text-3xl font-bold text-white">Parliament TV Capture</h1>
@@ -185,9 +185,9 @@ const CaptureListPage: React.FC = () => {
         </Card>
 
         {/* Active Captures Section */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-800">All Capture Sessions</h2>
+        <div className="bg-gray-800 rounded-lg shadow overflow-hidden border border-gray-700">
+          <div className="px-6 py-4 border-b border-gray-700">
+            <h2 className="text-lg font-medium text-white">All Capture Sessions</h2>
           </div>
           
           <div>
@@ -219,7 +219,7 @@ const CaptureListPage: React.FC = () => {
                   {captureSessions?.map((capture: CaptureSession) => (
                     <TableRow key={capture.id}>
                       <TableCell>
-                        <div className="text-sm font-medium text-white">{capture.title}</div>
+                        <div className="text-sm font-medium text-white truncate max-w-xs" title={capture.title}>{capture.title}</div>
                         <div className="text-sm text-gray-400">By {capture.created_by?.name || 'Unknown'}</div>
                       </TableCell>
                       <TableCell>
@@ -268,7 +268,7 @@ const CaptureListPage: React.FC = () => {
           </div>
         </div>
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

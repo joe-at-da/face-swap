@@ -218,8 +218,8 @@ const ParliamentTVVideoList: React.FC = () => {
             <tbody className="bg-gray-800 divide-y divide-gray-700">
               {videos.map((video) => (
                 <tr key={video.id} className="hover:bg-gray-700">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-white">{video.title}</div>
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-medium text-white truncate max-w-xs" title={video.title}>{video.title}</div>
                     <div className="text-sm text-gray-300">ID: {video.id}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
