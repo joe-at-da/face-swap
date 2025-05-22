@@ -358,7 +358,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         <div className="flex justify-between text-xs text-gray-300">
           <span>{progress.toFixed(1)}% Complete</span>
           {progress < 100 && (
-            <span>{100 - progress.toFixed(1)}% Remaining</span>
+            <span>{(100 - progress).toFixed(1)}% Remaining</span>
           )}
         </div>
         
