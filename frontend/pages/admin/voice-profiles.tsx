@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../utils/api';
 import { toast } from 'react-toastify';
-import AdminLayout from '../../components/layouts/AdminLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface VoiceProfile {
@@ -125,7 +125,7 @@ const VoiceProfilesPage = () => {
   };
 
   return (
-    <AdminLayout title="Voice Profiles">
+    <DarkLayout title="Voice Profiles">
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-semibold">Voice Profiles Management</h1>
@@ -327,7 +327,7 @@ const VoiceProfilesPage = () => {
           </div>
         )}
       </div>
-    </AdminLayout>
+    </DarkLayout>
   );
 };
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
-import AdminLayout from '../../components/layouts/AdminLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import { toast } from 'react-toastify';
 
 // API base URL
@@ -185,7 +185,7 @@ const FaceProfiles: React.FC = () => {
   };
 
   return (
-    <AdminLayout>
+    <DarkLayout title="Face Profiles">
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800">Face Profiles</h1>
@@ -433,7 +433,7 @@ const FaceProfiles: React.FC = () => {
           100% { transform: rotate(360deg); }
         }
       `}</style>
-    </AdminLayout>
+    </DarkLayout>
   );
 };
 
