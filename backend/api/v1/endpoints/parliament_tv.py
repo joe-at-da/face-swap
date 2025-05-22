@@ -22,11 +22,15 @@ from backend.core.security import UserRole
 from backend.db import models
 from backend.schemas.parliament_tv import ParliamentTVCaptureRequest, ParliamentTVCaptureResponse
 from backend.services.parliament_tv import ParliamentTVCapture
+from backend.services.recognition.facial_recognition import FacialRecognitionService
+from backend.services.recognition.face_profile_service import FaceProfileService
 
 router = APIRouter()
 
 # Initialize the Parliament TV capture service
 parliament_tv_service = ParliamentTVCapture()
+facial_recognition_service = FacialRecognitionService()
+face_profile_service = FaceProfileService()
 
 @router.get("", response_model=Dict)
 async def get_parliament_tv(status: Optional[str] = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -223,6 +227,35 @@ async def start_parliament_tv_capture(
                     if result.get("success", False):
                         capture_session.status = "completed"
                         
+                        # Check if facial recognition is enabled
+                        metadata = capture_session.metadata or {}
+                        enable_facial_recognition = metadata.get("enable_facial_recognition", False)
+                        
+                        if enable_facial_recognition:
+                            # Schedule facial recognition processing
+                            try:
+                                from backend.services.tasks.recognition_tasks import process_video_with_facial_recognition
+                                print(f"Scheduling facial recognition for capture {capture_session.id}")
+                                # Update metadata to indicate facial recognition is scheduled
+                                metadata["facial_recognition_status"] = "scheduled"
+                                metadata["facial_recognition_scheduled_at"] = datetime.now().isoformat()
+                                capture_session.metadata = metadata
+                                callback_db.commit()
+                                
+                                # Schedule the task
+                                process_video_with_facial_recognition.delay(capture_id=capture_session.id)
+                            except Exception as fr_error:
+                                print(f"Error scheduling facial recognition: {str(fr_error)}")
+                                # Update the video record
+                                if not video.metadata:
+                                    video.metadata = {}
+                                video.metadata["face_recognition"] = face_recognition_results
+                                video.metadata["facial_recognition_status"] = "completed"
+                                video.metadata["facial_recognition_completed_at"] = datetime.now().isoformat()
+                                db.commit()
+                                capture_session.metadata = metadata
+                                callback_db.commit()
+                        
                         # Get the output file path from the result
                         output_file = result.get("output_file")
                         print(f"Output file from result: {output_file}")
@@ -395,6 +428,7 @@ async def start_parliament_tv_capture(
         "url": db_capture.source_url,
         "duration": metadata.get("duration"),
         "facial_recognition_enabled": metadata.get("enable_facial_recognition", False),
+        "facial_recognition_status": metadata.get("facial_recognition_status", "not_started"),
         "created_by": {
             "id": user.id,
             "name": user.full_name,

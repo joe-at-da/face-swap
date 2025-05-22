@@ -6,6 +6,8 @@ from .capture_log import CaptureLog
 from .social import SocialPost, SocialPlatform, PostStatus
 from .transcription import Transcription
 from .video import VideoClip
+from .face_profile import FaceProfile, FaceSample
+from .voice_profile import VoiceProfile, VoiceSample
 
 __all__ = [
     "User",
@@ -16,5 +18,12 @@ __all__ = [
     "SocialPost",
     "SocialPlatform",
     "PostStatus",
-    "Transcription"
+    "Transcription",
+    "FaceProfile",
+    "FaceSample",
+    "VoiceProfile",
+    "VoiceSample",
+    "SpeakerIdentification",
+    "Speaker",
+    "SpeakerAppearance"
 ]
