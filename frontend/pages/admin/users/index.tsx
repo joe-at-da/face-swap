@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import MainLayout from '../../../components/layout/MainLayout';
+import DarkLayout from '../../../components/layout/DarkLayout';
 import { withAuth } from '../../../contexts/AuthContext';
 import { UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
@@ -103,23 +103,21 @@ const UserManagement: React.FC = () => {
   const getRoleBadgeClass = (role: UserRole): string => {
     switch (role) {
       case UserRole.ADMIN:
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-500 text-white';
       case UserRole.MP:
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-500 text-white';
       case UserRole.STAFF:
-        return 'bg-green-100 text-green-800';
-      case UserRole.VIEWER:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-green-500 text-white';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-500 text-white';
     }
   };
   
   return (
-    <MainLayout title="User Management | Parliament Video Clip Manager">
+    <DarkLayout>
       <div className="page-container">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
+          <h1 className="text-3xl font-bold text-white">User Management</h1>
           <Link href="/admin/users/new">
             <span className="btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block">
               Add New User
@@ -128,10 +126,10 @@ const UserManagement: React.FC = () => {
         </div>
         
         {/* Filters */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <div className="bg-gray-800 rounded-lg shadow p-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-end space-y-4 md:space-y-0 md:space-x-4">
             <div>
-              <label htmlFor="role" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="role" className="block text-sm font-medium text-gray-300 mb-1">
                 Role
               </label>
               <select
@@ -150,7 +148,7 @@ const UserManagement: React.FC = () => {
             </div>
             
             <div>
-              <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="status" className="block text-sm font-medium text-gray-300 mb-1">
                 Status
               </label>
               <select
@@ -167,7 +165,7 @@ const UserManagement: React.FC = () => {
             </div>
             
             <div className="flex-grow">
-              <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="search" className="block text-sm font-medium text-gray-300 mb-1">
                 Search
               </label>
               <input
@@ -184,25 +182,39 @@ const UserManagement: React.FC = () => {
         </div>
         
         {/* Users table */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="bg-gray-800 rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-800">Users</h2>
+            <h2 className="text-lg font-medium text-gray-300">Users</h2>
           </div>
           
           <div className="overflow-x-auto">
             {isLoading ? (
-              <div className="p-6 text-center text-gray-500">Loading users...</div>
+              <div className="text-center py-8 text-gray-300">Loading users...</div>
             ) : isError ? (
-              <div className="p-6 text-center text-red-500">Error loading users</div>
+              <div className="bg-gray-900 border-l-4 border-red-600 p-4 mb-6">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <h3 className="text-sm font-medium text-red-400">Error</h3>
+                    <div className="mt-2 text-sm text-red-300">
+                      <p>Failed to load users. Please try again.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             ) : !users || users.length === 0 ? (
               <div className="p-6 text-center text-gray-500">
                 No users found. Add a new user to get started.
               </div>
             ) : (
               <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+                <thead className="bg-gray-900">
                   <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                       User
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -222,19 +234,19 @@ const UserManagement: React.FC = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-gray-800 divide-y divide-gray-700">
                   {users.map((user: User) => (
-                    <tr key={user.id} className="hover:bg-gray-50">
+                    <tr key={user.id} className="hover:bg-gray-700">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
-                            <span className="text-gray-500 font-medium text-lg">
+                          <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gray-600 flex items-center justify-center">
+                            <span className="text-gray-300 font-medium text-lg">
                               {user.name.charAt(0).toUpperCase()}
                             </span>
                           </div>
                           <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                            <div className="text-sm text-gray-500">{user.email}</div>
+                            <div className="text-sm font-medium text-white">{user.name}</div>
+                            <div className="text-sm text-gray-300">{user.email}</div>
                           </div>
                         </div>
                       </td>
@@ -290,7 +302,7 @@ const UserManagement: React.FC = () => {
           </div>
         </div>
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

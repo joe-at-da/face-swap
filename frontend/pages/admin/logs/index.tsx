@@ -1,0 +1,179 @@
+import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { withAuth } from '../../../contexts/AuthContext';
+import { UserRole } from '../../../contexts/AuthContext';
+import DarkLayout from '../../../components/layout/DarkLayout';
+import { Card, Button } from '../../../components/ui';
+import { api } from '../../../utils/api';
+
+interface LogEntry {
+  id: number;
+  timestamp: string;
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  source: string;
+  user_id?: number;
+  user_email?: string;
+}
+
+const SystemLogsPage: React.FC = () => {
+  const [page, setPage] = useState(1);
+  const [logLevel, setLogLevel] = useState<string>('all');
+  const pageSize = 20;
+
+  // Fetch system logs
+  const { data: logs, isLoading, isError, refetch } = useQuery<{ items: LogEntry[], total: number }>({
+    queryKey: ['systemLogs', page, pageSize, logLevel],
+    queryFn: async () => {
+      const params: any = { page, size: pageSize };
+      if (logLevel !== 'all') {
+        params.level = logLevel;
+      }
+      return await api.get('/admin/logs', params);
+    },
+  });
+
+  const totalPages = logs ? Math.ceil(logs.total / pageSize) : 0;
+
+  const handlePrevPage = () => {
+    setPage((prev) => Math.max(prev - 1, 1));
+  };
+
+  const handleNextPage = () => {
+    setPage((prev) => Math.min(prev + 1, totalPages));
+  };
+
+  const getLevelBadgeColor = (level: string) => {
+    switch (level) {
+      case 'info':
+        return 'bg-blue-100 text-blue-800';
+      case 'warning':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'error':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
+
+  return (
+    <DarkLayout>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-6 flex justify-between items-center">
+          <h1 className="text-3xl font-bold text-white">System Logs</h1>
+          <div className="flex space-x-4">
+            <select
+              value={logLevel}
+              onChange={(e) => setLogLevel(e.target.value)}
+              className="bg-gray-700 border border-gray-600 text-white rounded-md px-4 py-2"
+            >
+              <option value="all">All Levels</option>
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="error">Error</option>
+            </select>
+            <Button onClick={() => refetch()} variant="primary">
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        <Card className="overflow-hidden">
+          {isLoading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+              <p className="mt-4 text-gray-300">Loading logs...</p>
+            </div>
+          ) : isError ? (
+            <div className="bg-gray-800 border border-red-600 text-red-400 px-4 py-3 rounded relative mb-4" role="alert">
+              <strong className="font-bold">Error: </strong>
+              <span className="block sm:inline">Failed to load system logs.</span>
+            </div>
+          ) : logs?.items.length === 0 ? (
+            <div className="text-center py-8 text-gray-300">
+              <p>No logs found.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-700">
+                <thead className="bg-gray-800">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Timestamp
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Level
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Source
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      User
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Message
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-gray-700 divide-y divide-gray-600">
+                  {logs?.items.map((log) => (
+                    <tr key={log.id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                        {formatDate(log.timestamp)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getLevelBadgeColor(log.level)}`}>
+                          {log.level}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                        {log.source}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                        {log.user_email || 'System'}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-300">
+                        <div className="max-w-lg break-words">{log.message}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {logs && logs.total > 0 && (
+          <div className="mt-4 flex justify-between items-center">
+            <div className="text-sm text-gray-300">
+              Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, logs.total)} of {logs.total} logs
+            </div>
+            <div className="flex space-x-2">
+              <Button
+                onClick={handlePrevPage}
+                disabled={page === 1}
+                variant="secondary"
+              >
+                Previous
+              </Button>
+              <Button
+                onClick={handleNextPage}
+                disabled={page === totalPages}
+                variant="secondary"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </DarkLayout>
+  );
+};
+
+export default withAuth(SystemLogsPage, [UserRole.ADMIN]);

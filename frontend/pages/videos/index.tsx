@@ -3,7 +3,6 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import Link from 'next/link';
 import DarkLayout from '../../components/layout/DarkLayout';
-import AudioExtractor from '../../components/AudioExtractor';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
@@ -273,7 +272,6 @@ const VideoGalleryPage: React.FC = () => {
   return (
     <DarkLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <AudioExtractor token={token || ''} apiBaseUrl={API_BASE_URL} />
         
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-white">Video Gallery</h1>
