@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import MainLayout from '../../../components/layout/MainLayout';
+import DarkLayout from '../../../components/layout/DarkLayout';
 import { withAuth } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
 
@@ -123,20 +123,20 @@ const VideoClipDetailPage: React.FC = () => {
 
   if (clipLoading) {
     return (
-      <MainLayout title="Loading... | Parliament Video Clip Manager">
-        <div className="page-container flex items-center justify-center min-h-screen">
+      <DarkLayout>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex items-center justify-center min-h-screen">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading video clip...</p>
+            <p className="mt-4 text-gray-300">Loading video clip...</p>
           </div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
 
   if (clipError || !clip) {
     return (
-      <MainLayout title="Error | Parliament Video Clip Manager">
+      <DarkLayout>
         <div className="page-container">
           <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6">
             <div className="flex">
@@ -160,12 +160,12 @@ const VideoClipDetailPage: React.FC = () => {
             </Link>
           </div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
 
   return (
-    <MainLayout title={`${clip.title} | Parliament Video Clip Manager`}>
+    <DarkLayout>
       <div className="page-container">
         {/* Header with title and actions */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
@@ -328,7 +328,7 @@ const VideoClipDetailPage: React.FC = () => {
           </div>
         </div>
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

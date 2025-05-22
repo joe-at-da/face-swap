@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import MainLayout from '../../components/layout/MainLayout';
+import DarkLayout from '../../components/layout/DarkLayout';
 import { withAuth } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
 
@@ -286,7 +286,7 @@ const NewVideoClipPage: React.FC = () => {
   };
 
   return (
-    <MainLayout title="Create New Video Clip | Parliament Video Clip Manager">
+    <DarkLayout>
       <div className="page-container">
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
@@ -600,7 +600,7 @@ const NewVideoClipPage: React.FC = () => {
           </div>
         </form>
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

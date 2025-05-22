@@ -121,16 +121,22 @@ body {
 /* Table styles for dark mode */
 table {
   border-color: var(--border-color);
+  width: 100%;
+  table-layout: fixed;
 }
 
 table th {
   background-color: var(--card-bg);
   color: var(--text-primary);
+  padding: 0.75rem 1rem;
+  text-align: left;
 }
 
 table td {
   border-color: var(--border-color);
   color: var(--text-secondary);
+  padding: 0.75rem 1rem;
+  word-break: break-word;
 }
 
 /* Add specific dark mode styles for Tailwind elements */
@@ -151,4 +157,31 @@ table td {
   transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 300ms;
+}
+
+/* Dark mode scrollbars */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1f2937;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 6px;
+  border: 3px solid #1f2937;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #4b5563 #1f2937;
 }

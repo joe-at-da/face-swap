@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-import MainLayout from '../components/layout/MainLayout';
+import DarkLayout from '../components/layout/DarkLayout';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../utils/api';
 import Link from 'next/link';
@@ -161,7 +161,7 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <MainLayout>
+    <DarkLayout>
       <div className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
@@ -255,7 +255,7 @@ const Dashboard: React.FC = () => {
           </Card>
         )}
       </div>
-    </MainLayout>
+    </DarkLayout>
   );
 };
 

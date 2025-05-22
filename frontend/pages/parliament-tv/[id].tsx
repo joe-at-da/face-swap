@@ -137,9 +137,9 @@ const ParliamentTVVideoDetail: React.FC = () => {
     return (
       <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center py-8">Loading video details...</div>
+          <div className="text-center py-8 text-white">Loading video details...</div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
 
@@ -147,36 +147,37 @@ const ParliamentTVVideoDetail: React.FC = () => {
     return (
       <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+          <div className="bg-gray-800 border border-red-600 text-red-400 px-4 py-3 rounded relative mb-4" role="alert">
             <strong className="font-bold">Error: </strong>
             <span className="block sm:inline">{error}</span>
-            <div className="mt-4">
-              <Link href="/parliament-tv/videos">
-                <a className="text-red-700 underline">Back to videos</a>
-              </Link>
-            </div>
+          </div>
+          <div className="mt-4">
+            <Link href="/parliament-tv/videos">
+              <span className="text-blue-400 hover:text-blue-300">Back to videos</span>
+            </Link>
           </div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
 
   if (!video) {
     return (
-      <MainLayout>
+      <DarkLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center py-8">Video not found</div>
-          <div className="mt-4 text-center">
+          <div className="bg-gray-800 border border-yellow-600 text-yellow-400 px-4 py-3 rounded relative mb-4" role="alert">
+            <strong className="font-bold">Notice: </strong>
+            <span className="block sm:inline">Video not found or has been deleted.</span>
+          </div>
+          <div className="mt-4">
             <Link href="/parliament-tv/videos">
-              <a className="text-indigo-600 underline">Back to videos</a>
+              <span className="text-blue-400 hover:text-blue-300">Back to videos</span>
             </Link>
           </div>
         </div>
-      </MainLayout>
+      </DarkLayout>
     );
   }
-
-  // Video URL is defined at the top of the component
 
   return (
     <DarkLayout>
@@ -184,28 +185,28 @@ const ParliamentTVVideoDetail: React.FC = () => {
         <div className="mb-6 flex justify-between items-center">
           <div>
             <Link href="/parliament-tv/videos">
-              <a className="text-indigo-600 hover:text-indigo-900">← Back to videos</a>
+              <span className="text-blue-400 hover:text-blue-300">← Back to videos</span>
             </Link>
-            <h1 className="text-3xl font-bold text-gray-900 mt-2">{video.title}</h1>
+            <h1 className="text-3xl font-bold text-white mt-2">{video.title}</h1>
           </div>
-          <button
+          <Button
             onClick={deleteVideo}
             disabled={deleteInProgress}
-            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
+            variant="danger"
           >
             {deleteInProgress ? 'Deleting...' : 'Delete Video'}
-          </button>
+          </Button>
         </div>
 
         <Card className="overflow-hidden">
           <div className="px-4 py-5 sm:px-6 bg-gray-800">
             <h3 className="text-lg leading-6 font-medium text-white">Video Details</h3>
           </div>
-          <div className="border-t border-gray-200">
+          <div className="border-t border-gray-700">
             <dl>
-              <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">Status</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+              <div className="bg-gray-800 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">Status</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2">
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                     video.status === 'active' ? 'bg-green-100 text-green-800' :
                     video.status === 'completed' ? 'bg-blue-100 text-blue-800' :
@@ -216,29 +217,29 @@ const ParliamentTVVideoDetail: React.FC = () => {
                   </span>
                 </dd>
               </div>
-              <div className="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">Duration</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{formatDuration(video.duration)}</dd>
+              <div className="bg-gray-700 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">Duration</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2">{formatDuration(video.duration)}</dd>
               </div>
-              <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">File Size</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{formatFileSize(video.file_size)}</dd>
+              <div className="bg-gray-800 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">File Size</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2">{formatFileSize(video.file_size)}</dd>
               </div>
-              <div className="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">Created By</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{video.created_by?.name || 'Unknown'}</dd>
+              <div className="bg-gray-700 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">Created By</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2">{video.created_by?.name || 'Unknown'}</dd>
               </div>
-              <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">Created At</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{new Date(video.created_at).toLocaleString()}</dd>
+              <div className="bg-gray-800 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">Created At</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2">{new Date(video.created_at).toLocaleString()}</dd>
               </div>
-              <div className="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">Source URL</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 break-all">{video.url}</dd>
+              <div className="bg-gray-700 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">Source URL</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2 break-all">{video.url}</dd>
               </div>
-              <div className="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-gray-500">Facial Recognition</dt>
-                <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+              <div className="bg-gray-800 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                <dt className="text-sm font-medium text-gray-400">Facial Recognition</dt>
+                <dd className="mt-1 text-sm text-gray-300 sm:mt-0 sm:col-span-2">
                   <div className="flex items-center">
                     <span className="mr-2">{video.facial_recognition_enabled ? 'Enabled' : 'Disabled'}</span>
                     {video.facial_recognition_status && (
@@ -251,7 +252,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
               </div>
             </dl>
           </div>
-        </div>
+        </Card>
 
         <Card className="overflow-hidden mt-6">
           <div className="px-4 py-5 sm:px-6 bg-gray-800">
@@ -314,7 +315,7 @@ const ParliamentTVVideoDetail: React.FC = () => {
               <p>For best results, play both the video and audio simultaneously.</p>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Unified Recognition Panel */}
         <div className="mt-8">
