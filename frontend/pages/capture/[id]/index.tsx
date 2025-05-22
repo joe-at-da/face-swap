@@ -6,8 +6,8 @@ import MainLayout from '../../../components/layout/MainLayout';
 import { withAuth, UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
 import AudioPlayer from '../../../components/AudioPlayer';
-import RecognitionPanel from '../../../components/recognition/RecognitionPanel';
-import TranscriptionPanel from '../../../components/transcription/TranscriptionPanel';
+import UnifiedRecognitionPanel from '../../../components/recognition/UnifiedRecognitionPanel';
+import { toast } from 'react-toastify';
 
 interface CaptureSession {
   id: number;
@@ -302,11 +302,14 @@ const CaptureDetailPage = () => {
                 )}
               </div>
               
-              {/* Recognition Panel */}
-              <RecognitionPanel captureId={capture.id} videoElement={videoElement} />
-              
-              {/* Transcription Panel */}
-              <TranscriptionPanel captureId={capture.id} audioElement={audioElement} />
+              {/* Unified Recognition Panel */}
+              <UnifiedRecognitionPanel 
+                captureId={capture.id} 
+                onProcessingComplete={() => {
+                  toast.success('Recognition processing completed');
+                  queryClient.invalidateQueries({ queryKey: ['captureSession', id] });
+                }}
+              />
               
               {/* Debug Info */}
               <div className="mt-8">
