@@ -32,6 +32,101 @@ class FacialRecognitionService:
         # Create directories if they don't exist
         self.mp_photos_dir.mkdir(parents=True, exist_ok=True)
         
+    def _generate_face_encoding(self, image_path: Path) -> Dict:
+        """Generate a face encoding from an image file."""
+        try:
+            import face_recognition
+            
+            # Load the image
+            image = face_recognition.load_image_file(str(image_path))
+            
+            # Find all faces in the image
+            face_locations = face_recognition.face_locations(image)
+            
+            if not face_locations:
+                return {
+                    "success": False,
+                    "error": "No faces detected in the image"
+                }
+            
+            # If multiple faces are detected, use the largest one
+            if len(face_locations) > 1:
+                logger.warning(f"Multiple faces detected in {image_path}, using the largest one")
+                
+                # Find the largest face by area
+                largest_area = 0
+                largest_face_idx = 0
+                
+                for i, (top, right, bottom, left) in enumerate(face_locations):
+                    area = (bottom - top) * (right - left)
+                    if area > largest_area:
+                        largest_area = area
+                        largest_face_idx = i
+                
+                # Get encoding for the largest face
+                face_encodings = face_recognition.face_encodings(image, [face_locations[largest_face_idx]])
+            else:
+                # Get encoding for the single face
+                face_encodings = face_recognition.face_encodings(image, face_locations)
+            
+            if not face_encodings:
+                return {
+                    "success": False,
+                    "error": "Failed to generate face encoding"
+                }
+            
+            # Return the first face encoding
+            return {
+                "success": True,
+                "encoding": face_encodings[0].tolist(),
+                "face_location": face_locations[0]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating face encoding: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error generating face encoding: {str(e)}"
+            }
+    
+    def _generate_face_encoding_from_url(self, url: str) -> Dict:
+        """Generate a face encoding from a URL."""
+        try:
+            import requests
+            import tempfile
+            
+            # Download the image
+            response = requests.get(url, stream=True)
+            if response.status_code != 200:
+                return {
+                    "success": False,
+                    "error": f"Failed to download image: HTTP {response.status_code}"
+                }
+            
+            # Save the image to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        temp_file.write(chunk)
+                temp_path = temp_file.name
+            
+            try:
+                # Generate face encoding from the temporary file
+                result = self._generate_face_encoding(Path(temp_path))
+                
+                # Return the result
+                return result
+            finally:
+                # Delete the temporary file
+                os.unlink(temp_path)
+                
+        except Exception as e:
+            logger.error(f"Error generating face encoding from URL: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error generating face encoding from URL: {str(e)}"
+            }
+    
     def detect_faces_in_video(self, video_path: str, output_file: Optional[str] = None) -> Dict:
         """
         Detect faces in a video file using facial recognition.
@@ -45,13 +140,36 @@ class FacialRecognitionService:
         """
         logger.info(f"Detecting faces in video: {video_path}")
         
-        # Prepare the command
-        script_path = self.scripts_dir / "facial_recognition_capture.py"
+        # Check if the video file exists
+        if not os.path.exists(video_path):
+            return {
+                "success": False,
+                "error": f"Video file not found: {video_path}",
+                "output_file": None,
+                "results_file": None
+            }
         
+        # Prepare the command
+        script_path = self.scripts_dir / "detect_faces.py"
+        
+        # Check if the script exists
+        if not script_path.exists():
+            return {
+                "success": False,
+                "error": f"Face detection script not found: {script_path}",
+                "output_file": None,
+                "results_file": None
+            }
+        
+        # Prepare the results file
+        results_file = f"{os.path.splitext(video_path)[0]}_face_detection_results.json"
+        
+        # Prepare the command
         cmd = [
             "python",
             str(script_path),
-            video_path
+            "--input", video_path,
+            "--results", results_file
         ]
         
         if output_file:
@@ -70,34 +188,45 @@ class FacialRecognitionService:
             
             stdout, stderr = process.communicate()
             
-            # Check if the process was successful
             if process.returncode != 0:
                 logger.error(f"Face detection failed: {stderr}")
                 return {
                     "success": False,
-                    "error": stderr,
-                    "output_file": None
+                    "error": f"Face detection failed: {stderr}",
+                    "output_file": None,
+                    "results_file": None
                 }
             
-            # Parse the output to get the output file path
-            output_path = None
-            for line in stdout.splitlines():
-                if line.startswith("Output file:"):
-                    output_path = line.split(":", 1)[1].strip()
-                    break
+            logger.info(f"Face detection completed successfully")
+            
+            # Check if the results file exists
+            if not os.path.exists(results_file):
+                return {
+                    "success": False,
+                    "error": f"Results file not found: {results_file}",
+                    "output_file": output_file if output_file and os.path.exists(output_file) else None,
+                    "results_file": None
+                }
+            
+            # Load the results
+            with open(results_file, "r") as f:
+                results = json.load(f)
             
             return {
                 "success": True,
-                "output_file": output_path,
-                "message": "Face detection completed successfully"
+                "message": "Face detection completed successfully",
+                "output_file": output_file if output_file and os.path.exists(output_file) else None,
+                "results_file": results_file,
+                "results": results
             }
             
         except Exception as e:
-            logger.error(f"Error in face detection: {str(e)}")
+            logger.exception(f"Error detecting faces: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
-                "output_file": None
+                "output_file": None,
+                "results_file": None
             }
     
     def identify_speakers(self, video_path: str, output_file: Optional[str] = None) -> Dict:
@@ -113,39 +242,46 @@ class FacialRecognitionService:
         """
         logger.info(f"Identifying speakers in video: {video_path}")
         
-        # Check if video file exists
+        # Check if the video file exists
         if not os.path.exists(video_path):
-            error_msg = f"Video file not found: {video_path}"
-            logger.error(error_msg)
             return {
                 "success": False,
-                "error": error_msg,
+                "error": f"Video file not found: {video_path}",
                 "output_file": None,
-                "results_file": None,
-                "results": {"speakers": [], "total_speakers": 0}
+                "results_file": None
             }
+        
+        # Check if the MP encodings file exists
+        if not os.path.exists(self.mp_encodings_file):
+            return {
+                "success": False,
+                "error": f"MP encodings file not found: {self.mp_encodings_file}",
+                "output_file": None,
+                "results_file": None
+            }
+        
+        # Prepare the script path
+        script_path = self.scripts_dir / "identify_speakers.py"
+        
+        # Check if the script exists
+        if not script_path.exists():
+            return {
+                "success": False,
+                "error": f"Speaker identification script not found: {script_path}",
+                "output_file": None,
+                "results_file": None
+            }
+        
+        # Prepare the results file
+        results_file = f"{os.path.splitext(video_path)[0]}_speaker_identification_results.json"
         
         # Prepare the command
-        script_path = self.scripts_dir / "speaker_identification.py"
-        
-        # Check if script exists
-        if not os.path.exists(script_path):
-            error_msg = f"Speaker identification script not found: {script_path}"
-            logger.error(error_msg)
-            return {
-                "success": True,  # Mark as success but with empty results
-                "error": error_msg,
-                "output_file": None,
-                "results_file": None,
-                "results": {"speakers": [], "total_speakers": 0},
-                "message": "No speaker identification script found, but processing continues"
-            }
-        
         cmd = [
             "python",
             str(script_path),
-            video_path,
-            "--threshold", "0.3"  # Even lower confidence threshold to detect more faces
+            "--input", video_path,
+            "--encodings", str(self.mp_encodings_file),
+            "--results", results_file
         ]
         
         if output_file:
@@ -164,74 +300,86 @@ class FacialRecognitionService:
             
             stdout, stderr = process.communicate()
             
-            # Check if the process was successful
             if process.returncode != 0:
-                logger.error(f"Speaker identification failed with return code {process.returncode}")
-                logger.error(f"STDERR: {stderr}")
-                logger.error(f"STDOUT: {stdout}")
-                # This is a critical error that needs to be addressed
+                logger.error(f"Speaker identification failed: {stderr}")
                 return {
                     "success": False,
-                    "error": stderr,
+                    "error": f"Speaker identification failed: {stderr}",
                     "output_file": None,
-                    "results_file": None,
-                    "results": {"speakers": [], "total_speakers": 0},
-                    "message": "Speaker identification failed. Please check the logs for details."
+                    "results_file": None
                 }
             
-            # Parse the output to get the output file path and results file path
-            output_path = None
-            results_path = None
+            logger.info(f"Speaker identification completed successfully")
             
-            # Log the full stdout for debugging
-            logger.info(f"Speaker identification stdout:\n{stdout}")
+            # Check if the results file exists
+            if not os.path.exists(results_file):
+                return {
+                    "success": False,
+                    "error": f"Results file not found: {results_file}",
+                    "output_file": output_file if output_file and os.path.exists(output_file) else None,
+                    "results_file": None
+                }
             
-            for line in stdout.splitlines():
-                if "Results saved to:" in line:
-                    results_path = line.split(":", 1)[1].strip()
-                    logger.info(f"Found results path: {results_path}")
-                elif "Processed video saved to:" in line:
-                    output_path = line.split(":", 1)[1].strip()
-                    logger.info(f"Found output path: {output_path}")
-                elif "No faces detected" in line:
-                    logger.warning("No faces were detected in the video")
-                elif "faces detected" in line:
-                    logger.info(f"Face detection info: {line}")
-                elif "confidence" in line.lower() or "threshold" in line.lower():
-                    logger.info(f"Confidence/threshold info: {line}")
-            
-            # Load the results file if it exists
-            results = {"speakers": [], "total_speakers": 0}
-            if results_path and os.path.exists(results_path):
-                try:
-                    with open(results_path, 'r') as f:
-                        results = json.load(f)
-                    logger.info(f"Loaded results file: {results_path}")
-                    logger.info(f"Results content: {results}")
-                    
-                    # Check if we have any speakers
-                    if 'speakers' in results and len(results['speakers']) == 0:
-                        logger.warning("No speakers detected in the video")
-                except Exception as e:
-                    logger.error(f"Error loading results file: {str(e)}")
-            else:
-                logger.warning(f"Results file not found or path is None: {results_path}")
+            # Load the results
+            with open(results_file, "r") as f:
+                results = json.load(f)
             
             return {
                 "success": True,
-                "output_file": output_path,
-                "results_file": results_path,
-                "results": make_json_serializable(results),
-                "message": "Speaker identification completed successfully"
+                "message": "Speaker identification completed successfully",
+                "output_file": output_file if output_file and os.path.exists(output_file) else None,
+                "results_file": results_file,
+                "results": results
             }
             
         except Exception as e:
-            logger.error(f"Error in speaker identification: {str(e)}")
+            logger.exception(f"Error identifying speakers: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
                 "output_file": None,
                 "results_file": None
+            }
+    
+    def load_mp_database(self) -> Dict:
+        """
+        Load the MP database with face encodings.
+        
+        Returns:
+            Dict with load results
+        """
+        try:
+            if not os.path.exists(self.mp_encodings_file):
+                logger.warning(f"MP encodings file not found: {self.mp_encodings_file}")
+                return {
+                    "success": False,
+                    "error": f"MP encodings file not found: {self.mp_encodings_file}"
+                }
+            
+            # Load the MP encodings from the JSON file
+            with open(self.mp_encodings_file, "r") as f:
+                data = json.load(f)
+            
+            # Check if the data has the required fields
+            if not all(key in data for key in ["names", "encodings"]):
+                logger.error(f"Invalid MP encodings file format: {self.mp_encodings_file}")
+                return {
+                    "success": False,
+                    "error": f"Invalid MP encodings file format: {self.mp_encodings_file}"
+                }
+            
+            logger.info(f"MP database loaded successfully with {len(data['names'])} speakers")
+            
+            return {
+                "success": True,
+                "message": f"MP database loaded successfully with {len(data['names'])} speakers",
+                "data": data
+            }
+        except Exception as e:
+            logger.exception(f"Error loading MP database: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error loading MP database: {str(e)}"
             }
     
     def update_mp_database(self) -> Dict:
@@ -243,44 +391,54 @@ class FacialRecognitionService:
         """
         logger.info("Updating MP database")
         
-        # Prepare the command
-        script_path = self.scripts_dir / "speaker_identification.py"
-        
-        cmd = [
-            "python",
-            str(script_path),
-            "--update-db"
-        ]
-        
-        logger.info(f"Running command: {' '.join(cmd)}")
-        
         try:
-            # Execute the command
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            # Get all speakers from the database
+            from sqlalchemy.orm import Session
+            from backend.db.session import SessionLocal
+            from backend.db.models import Speaker
             
-            stdout, stderr = process.communicate()
-            
-            # Check if the process was successful
-            if process.returncode != 0:
-                logger.error(f"MP database update failed: {stderr}")
-                return {
-                    "success": False,
-                    "error": stderr
+            db = SessionLocal()
+            try:
+                speakers = db.query(Speaker).filter(Speaker.face_encoding.isnot(None)).all()
+                
+                if not speakers:
+                    return {
+                        "success": False,
+                        "error": "No speakers with face encodings found in the database"
+                    }
+                
+                # Create the MP encodings data
+                mp_data = {
+                    "names": [],
+                    "encodings": [],
+                    "parliament_ids": [],
+                    "updated_at": datetime.now().isoformat()
                 }
-            
-            return {
-                "success": True,
-                "message": "MP database updated successfully"
-            }
-            
+                
+                for speaker in speakers:
+                    if speaker.face_encoding:
+                        mp_data["names"].append(speaker.name)
+                        mp_data["encodings"].append(speaker.face_encoding)
+                        mp_data["parliament_ids"].append(speaker.parliament_id or "")
+                
+                # Save the MP encodings to a JSON file
+                with open(self.mp_encodings_file, "w") as f:
+                    json.dump(mp_data, f)
+                
+                logger.info(f"MP database updated successfully with {len(speakers)} speakers")
+                
+                # Load the updated database
+                self.load_mp_database()
+                
+                return {
+                    "success": True,
+                    "message": f"MP database updated successfully with {len(speakers)} speakers"
+                }
+            finally:
+                db.close()
         except Exception as e:
-            logger.error(f"Error updating MP database: {str(e)}")
+            logger.exception(f"Error updating MP database: {str(e)}")
             return {
                 "success": False,
-                "error": str(e)
+                "error": f"Error updating MP database: {str(e)}"
             }

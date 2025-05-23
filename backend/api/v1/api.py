@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, recognition, audio_transcription, recognition_results, recognition_status, recognition_list, voice_profiles, face_profiles, multimodal_recognition, facial_recognition
+from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, recognition, audio_transcription, recognition_results, recognition_status, recognition_list, voice_profiles, face_profiles, multimodal_recognition, facial_recognition, mp_profiles
 
 api_router = APIRouter()
 
@@ -23,3 +23,4 @@ api_router.include_router(voice_profiles.router, prefix='/voice-profiles', tags=
 api_router.include_router(face_profiles.router, prefix='/face-profiles', tags=['face-profiles'])
 api_router.include_router(multimodal_recognition.router, prefix='/multimodal-recognition', tags=['multimodal-recognition'])
 api_router.include_router(facial_recognition.router, prefix='/facial-recognition', tags=['facial-recognition'])
+api_router.include_router(mp_profiles.router, prefix='/mp-profiles', tags=['mp-profiles'])
