@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import * as Path from 'path';
 import { api } from '../../utils/api';
+import { useRouter } from 'next/router';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -44,6 +45,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   captureId,
   onProcessingComplete
 }) => {
+  const router = useRouter();
   const { token } = useAuth();
   const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus | null>(null);
   const [transcriptionOptions, setTranscriptionOptions] = useState<TranscriptionOptions>({
@@ -521,9 +523,9 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             )}
           </div>
           
-          {/* Add a button to view results if needed */}
+          {/* Button to view recognition results */}
           <button
-            onClick={() => fetchStatus()}
+            onClick={() => router.push(`/recognition/results/${captureId}`)}
             className="mt-3 bg-green-700 hover:bg-green-800 text-white py-1 px-3 rounded text-sm"
           >
             View Results
