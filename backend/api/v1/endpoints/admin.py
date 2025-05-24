@@ -156,13 +156,30 @@ class StorageStats(BaseModel):
     average_file_size: int
 
 
-@router.get("/storage/stats", response_model=StorageStats)
+class StorageBreakdown(BaseModel):
+    video_clips_bytes: int
+    capture_sessions_bytes: int
+    thumbnails_bytes: int
+    transcriptions_bytes: int
+    other_bytes: int
+
+class OldestFiles(BaseModel):
+    video_clips: List[Dict[str, Any]]
+    capture_sessions: List[Dict[str, Any]]
+    thumbnails: List[Dict[str, Any]]
+    transcriptions: List[Dict[str, Any]]
+
+class DetailedStorageStats(StorageStats):
+    breakdown: StorageBreakdown
+    oldest_files: OldestFiles
+
+@router.get("/storage/stats", response_model=DetailedStorageStats)
 async def get_storage_stats(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
     """
-    Get storage statistics.
+    Get detailed storage statistics.
     Only accessible to admin users.
     """
     if current_user.role != "ADMIN":
@@ -175,7 +192,10 @@ async def get_storage_stats(
         # Import here to avoid circular imports
         from backend.services.system.docker_metrics import DockerMetrics
         from backend.db.models import VideoClip
+        from backend.db.models.enums import ClipStatus
         import shutil
+        import os
+        from datetime import datetime, timedelta
         
         # Get file count from database
         file_count = db.query(func.count(VideoClip.id)).scalar() or 0
@@ -224,12 +244,98 @@ async def get_storage_stats(
             total_volume_bytes = disk_usage.get("total_volume_bytes", 0)
             average_file_size = total_volume_bytes // file_count if file_count > 0 else 0
         
+        # Get storage breakdown by category
+        try:
+            # Get storage breakdown from Docker volumes
+            storage_breakdown = DockerMetrics.get_storage_breakdown()
+        except Exception as breakdown_error:
+            print(f"Storage breakdown failed: {str(breakdown_error)}. Using estimates.")
+            # Estimate storage breakdown based on file count and average size
+            total_used = disk_info.get("used_bytes", 0)
+            
+            # Get clip counts by type
+            video_clips_count = db.query(func.count(VideoClip.id)).filter(VideoClip.status == ClipStatus.READY).scalar() or 0
+            processing_clips_count = db.query(func.count(VideoClip.id)).filter(VideoClip.status == ClipStatus.PROCESSING).scalar() or 0
+            
+            # Estimate sizes based on counts and total used space
+            if file_count > 0:
+                video_ratio = video_clips_count / file_count if file_count > 0 else 0.6
+                capture_ratio = processing_clips_count / file_count if file_count > 0 else 0.1
+                thumbnail_ratio = 0.05  # Thumbnails typically small
+                transcription_ratio = 0.05  # Transcriptions typically small
+                other_ratio = 1 - (video_ratio + capture_ratio + thumbnail_ratio + transcription_ratio)
+                
+                storage_breakdown = {
+                    "video_clips_bytes": int(total_used * video_ratio),
+                    "capture_sessions_bytes": int(total_used * capture_ratio),
+                    "thumbnails_bytes": int(total_used * thumbnail_ratio),
+                    "transcriptions_bytes": int(total_used * transcription_ratio),
+                    "other_bytes": int(total_used * other_ratio)
+                }
+            else:
+                # Default breakdown if no files
+                storage_breakdown = {
+                    "video_clips_bytes": 0,
+                    "capture_sessions_bytes": 0,
+                    "thumbnails_bytes": 0,
+                    "transcriptions_bytes": 0,
+                    "other_bytes": 0
+                }
+        
+        # Get oldest files by category
+        try:
+            # Try to get oldest files from Docker volumes
+            oldest_files = DockerMetrics.get_oldest_files(limit=5)
+            
+            # If we have database records, merge them with filesystem data
+            try:
+                oldest_video_clips = db.query(VideoClip).order_by(VideoClip.created_at).limit(5).all()
+                oldest_video_clips_data = [
+                    {
+                        "id": clip.id,
+                        "name": clip.title or f"Clip {clip.id}",
+                        "created_at": clip.created_at.isoformat() if clip.created_at else None,
+                        "size_bytes": clip.file_size or 0
+                    } for clip in oldest_video_clips
+                ]
+                
+                # If we have database records, use them instead of filesystem data for video clips
+                if oldest_video_clips_data:
+                    oldest_files["video_clips"] = oldest_video_clips_data
+            except Exception as db_error:
+                print(f"Getting oldest files from database failed: {str(db_error)}. Using filesystem data.")
+        except Exception as oldest_error:
+            print(f"Getting oldest files failed: {str(oldest_error)}. Using empty lists.")
+            # Default empty structure
+            oldest_files = {
+                "video_clips": [],
+                "capture_sessions": [],
+                "thumbnails": [],
+                "transcriptions": []
+            }
+            
+            # Try to get at least the database records
+            try:
+                oldest_video_clips = db.query(VideoClip).order_by(VideoClip.created_at).limit(5).all()
+                oldest_files["video_clips"] = [
+                    {
+                        "id": clip.id,
+                        "name": clip.title or f"Clip {clip.id}",
+                        "created_at": clip.created_at.isoformat() if clip.created_at else None,
+                        "size_bytes": clip.file_size or 0
+                    } for clip in oldest_video_clips
+                ]
+            except Exception:
+                pass
+        
         return {
             "total_space": disk_info.get("total_bytes", 0),
             "used_space": disk_info.get("used_bytes", 0),
             "free_space": disk_info.get("free_bytes", 0),
             "file_count": file_count,
-            "average_file_size": average_file_size
+            "average_file_size": average_file_size,
+            "breakdown": storage_breakdown,
+            "oldest_files": oldest_files
         }
     except Exception as e:
         import traceback
@@ -243,7 +349,20 @@ async def get_storage_stats(
             "used_space": 250000000000,   # 250 GB
             "free_space": 750000000000,   # 750 GB
             "file_count": file_count if 'file_count' in locals() else 0,
-            "average_file_size": 250000000  # 250 MB average
+            "average_file_size": 250000000,  # 250 MB average
+            "breakdown": {
+                "video_clips_bytes": 150000000000,  # 150 GB
+                "capture_sessions_bytes": 50000000000,  # 50 GB
+                "thumbnails_bytes": 5000000000,  # 5 GB
+                "transcriptions_bytes": 5000000000,  # 5 GB
+                "other_bytes": 40000000000  # 40 GB
+            },
+            "oldest_files": {
+                "video_clips": [],
+                "capture_sessions": [],
+                "thumbnails": [],
+                "transcriptions": []
+            }
         }
 
 

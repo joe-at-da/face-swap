@@ -4,7 +4,7 @@ import subprocess
 from typing import Dict, List, Any, Optional
 import logging
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,11 @@ class DockerMetrics:
     """
     Utility class to fetch real metrics from Docker containers and the host system.
     """
+    
+    # File extensions for categorization
+    VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+    THUMBNAIL_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp"]
+    TRANSCRIPTION_EXTENSIONS = [".txt", ".srt", ".vtt", ".json"]
     
     @staticmethod
     def get_container_stats() -> List[Dict[str, Any]]:
@@ -185,6 +190,201 @@ class DockerMetrics:
         except subprocess.SubprocessError as e:
             logger.error(f"Failed to get logs for container {container_name}: {str(e)}")
             return []
+    
+    @staticmethod
+    def get_oldest_files(limit: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get oldest files by category.
+        
+        Args:
+            limit: Maximum number of files to return per category
+            
+        Returns:
+            Dictionary with lists of oldest files by category
+        """
+        try:
+            # Get volume information
+            volumes_cmd = ["docker", "volume", "ls", "-q"]
+            volumes_result = subprocess.run(volumes_cmd, capture_output=True, text=True, check=True)
+            volumes = volumes_result.stdout.strip().split('\n')
+            
+            # Initialize file lists with modification time
+            video_clips = []
+            capture_sessions = []
+            thumbnails = []
+            transcriptions = []
+            
+            for volume in volumes:
+                if not volume:
+                    continue
+                    
+                # Get volume info
+                inspect_cmd = ["docker", "volume", "inspect", volume]
+                inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, check=True)
+                volume_info = json.loads(inspect_result.stdout)
+                
+                if not volume_info:
+                    continue
+                    
+                mountpoint = volume_info[0].get("Mountpoint", "")
+                if not mountpoint or not os.path.exists(mountpoint):
+                    continue
+                
+                # Walk through the volume directory and collect file information
+                for root, _, files in os.walk(mountpoint):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if not os.path.exists(file_path):
+                            continue
+                            
+                        try:
+                            # Get file stats
+                            file_stats = os.stat(file_path)
+                            file_size = file_stats.st_size
+                            file_mtime = file_stats.st_mtime
+                            
+                            # Create file info object
+                            file_info = {
+                                "name": file,
+                                "path": file_path,
+                                "size_bytes": file_size,
+                                "modified_at": datetime.fromtimestamp(file_mtime).isoformat(),
+                                "modified_timestamp": file_mtime
+                            }
+                            
+                            # Categorize by extension
+                            ext = os.path.splitext(file)[1].lower()
+                            
+                            # Check if it's in a capture session directory
+                            if "capture" in root.lower() or "session" in root.lower():
+                                capture_sessions.append(file_info)
+                            # Categorize by file extension
+                            elif ext in DockerMetrics.VIDEO_EXTENSIONS:
+                                video_clips.append(file_info)
+                            elif ext in DockerMetrics.THUMBNAIL_EXTENSIONS:
+                                thumbnails.append(file_info)
+                            elif ext in DockerMetrics.TRANSCRIPTION_EXTENSIONS:
+                                transcriptions.append(file_info)
+                        except (OSError, IOError):
+                            continue
+            
+            # Sort files by modification time (oldest first) and limit results
+            video_clips.sort(key=lambda x: x["modified_timestamp"])
+            capture_sessions.sort(key=lambda x: x["modified_timestamp"])
+            thumbnails.sort(key=lambda x: x["modified_timestamp"])
+            transcriptions.sort(key=lambda x: x["modified_timestamp"])
+            
+            # Remove the timestamp field used for sorting and limit results
+            def clean_and_limit(files, limit):
+                result = []
+                for f in files[:limit]:
+                    f_copy = f.copy()
+                    if "modified_timestamp" in f_copy:
+                        del f_copy["modified_timestamp"]
+                    result.append(f_copy)
+                return result
+            
+            return {
+                "video_clips": clean_and_limit(video_clips, limit),
+                "capture_sessions": clean_and_limit(capture_sessions, limit),
+                "thumbnails": clean_and_limit(thumbnails, limit),
+                "transcriptions": clean_and_limit(transcriptions, limit)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get oldest files: {str(e)}")
+            # Return empty lists in case of error
+            return {
+                "video_clips": [],
+                "capture_sessions": [],
+                "thumbnails": [],
+                "transcriptions": []
+            }
+    
+    @staticmethod
+    def get_storage_breakdown() -> Dict[str, int]:
+        """
+        Get storage breakdown by file category.
+        
+        Returns:
+            Dictionary with storage breakdown by category in bytes
+        """
+        try:
+            # Get volume information
+            volumes_cmd = ["docker", "volume", "ls", "-q"]
+            volumes_result = subprocess.run(volumes_cmd, capture_output=True, text=True, check=True)
+            volumes = volumes_result.stdout.strip().split('\n')
+            
+            # Initialize counters
+            video_clips_bytes = 0
+            capture_sessions_bytes = 0
+            thumbnails_bytes = 0
+            transcriptions_bytes = 0
+            other_bytes = 0
+            
+            for volume in volumes:
+                if not volume:
+                    continue
+                    
+                # Get volume info
+                inspect_cmd = ["docker", "volume", "inspect", volume]
+                inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, check=True)
+                volume_info = json.loads(inspect_result.stdout)
+                
+                if not volume_info:
+                    continue
+                    
+                mountpoint = volume_info[0].get("Mountpoint", "")
+                if not mountpoint or not os.path.exists(mountpoint):
+                    continue
+                
+                # Walk through the volume directory and categorize files
+                for root, _, files in os.walk(mountpoint):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if not os.path.exists(file_path):
+                            continue
+                            
+                        # Get file size
+                        try:
+                            file_size = os.path.getsize(file_path)
+                        except (OSError, IOError):
+                            continue
+                            
+                        # Categorize by extension
+                        ext = os.path.splitext(file)[1].lower()
+                        
+                        # Check if it's in a capture session directory
+                        if "capture" in root.lower() or "session" in root.lower():
+                            capture_sessions_bytes += file_size
+                        # Categorize by file extension
+                        elif ext in DockerMetrics.VIDEO_EXTENSIONS:
+                            video_clips_bytes += file_size
+                        elif ext in DockerMetrics.THUMBNAIL_EXTENSIONS:
+                            thumbnails_bytes += file_size
+                        elif ext in DockerMetrics.TRANSCRIPTION_EXTENSIONS:
+                            transcriptions_bytes += file_size
+                        else:
+                            other_bytes += file_size
+            
+            return {
+                "video_clips_bytes": video_clips_bytes,
+                "capture_sessions_bytes": capture_sessions_bytes,
+                "thumbnails_bytes": thumbnails_bytes,
+                "transcriptions_bytes": transcriptions_bytes,
+                "other_bytes": other_bytes
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get storage breakdown: {str(e)}")
+            # Return default values in case of error
+            return {
+                "video_clips_bytes": 0,
+                "capture_sessions_bytes": 0,
+                "thumbnails_bytes": 0,
+                "transcriptions_bytes": 0,
+                "other_bytes": 0
+            }
     
     @staticmethod
     def get_system_info() -> Dict[str, Any]:

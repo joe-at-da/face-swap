@@ -470,9 +470,13 @@ async def get_social_stats(
         # Get counts by platform
         platform_counts = {}
         for p in SocialPlatform:
-            count = base_query.filter(SocialPost.platform == p).count()
-            if count > 0:
-                platform_counts[p.value] = count
+            try:
+                count = base_query.filter(SocialPost.platform == p).count()
+                if count > 0:
+                    platform_counts[p.value] = count
+            except Exception as e:
+                print(f"Error counting platform {p}: {str(e)}")
+                # Skip this platform if there's an error
         
         # Get counts by status
         status_counts = {}

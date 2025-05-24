@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
-from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, recognition, audio_transcription, recognition_results, recognition_status, recognition_list, voice_profiles, face_profiles, multimodal_recognition, facial_recognition, mp_profiles, files, recognition_timeline, media, system
+from backend.api.v1.endpoints import auth, video, capture, transcription, storage, social, dashboard, admin, parliament_tv, speaker_identification, videos, recognition, audio_transcription, recognition_results, recognition_status, recognition_list, voice_profiles, face_profiles, multimodal_recognition, facial_recognition, mp_profiles, files, recognition_timeline, media, system, metrics
 
 api_router = APIRouter()
 
@@ -29,6 +29,7 @@ api_router.include_router(mp_profiles.router, prefix='/mp-profiles', tags=['mp-p
 api_router.include_router(files.router, prefix='/files', tags=['files'])
 api_router.include_router(media.router, prefix='/media', tags=['media'])
 api_router.include_router(system.router, prefix='/system', tags=['system'])
+api_router.include_router(metrics.router, prefix='/metrics', tags=['metrics'])
 
 # Create a profiles router for compatibility with frontend paths
 profiles_router = APIRouter(prefix='/profiles', tags=['profiles'])
