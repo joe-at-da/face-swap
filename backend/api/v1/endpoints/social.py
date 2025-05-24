@@ -3,9 +3,9 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Path, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
+from sqlalchemy.sql import desc
 
 from backend.db.models.user import UserRole
 from backend.api import deps
@@ -471,63 +471,118 @@ async def get_social_stats(
         elif timeframe == "90days":
             days = 90
     
-    # Create mock statistics data
+    # Set date range for queries
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days)
     
-    # Generate daily post counts for the last 7 days
-    daily_posts = []
-    for i in range(7):
-        day = end_date - timedelta(days=i)
-        daily_posts.append({
-            "date": day.strftime("%Y-%m-%d"),
-            "count": 5 - (i % 3)  # Mock data: 5, 4, 3, 5, 4, 3, 5 posts per day
-        })
-    
-    # Mock statistics
-    stats = {
-        "total_posts": 28,
-        "platforms": {
-            "twitter": 12,
-            "facebook": 8,
-            "instagram": 5,
-            "linkedin": 3
-        },
-        "status": {
-            "draft": 5,
-            "scheduled": 7,
-            "posted": 15,
-            "failed": 1
-        },
-        "daily_posts": daily_posts,
-        "engagement": {
-            "total_likes": 1250,
-            "total_shares": 320,
-            "total_comments": 180,
-            "average_engagement_rate": 3.2
-        },
-        "top_users": [
-            {"user_id": 1, "post_count": 15},
-            {"user_id": 2, "post_count": 8},
-            {"user_id": 3, "post_count": 5}
-        ],
-        "date_range": {
-            "start": start_date.isoformat(),
-            "end": end_date.isoformat(),
-            "days": days
+    try:
+        # Base query for social posts within the date range
+        base_query = db.query(SocialPost).filter(SocialPost.created_at >= start_date)
+        
+        # Apply platform filter if provided
+        if platform:
+            base_query = base_query.filter(SocialPost.platform == platform)
+        
+        # Get total posts count
+        total_posts = base_query.count()
+        
+        # Get counts by platform
+        platform_counts = {}
+        for p in SocialPlatform:
+            count = base_query.filter(SocialPost.platform == p).count()
+            if count > 0:
+                platform_counts[p.value] = count
+        
+        # Get counts by status
+        status_counts = {}
+        for s in PostStatus:
+            count = base_query.filter(SocialPost.status == s).count()
+            if count > 0:
+                status_counts[s.value] = count
+        
+        # Generate daily post counts for the last 7 days (or less if days < 7)
+        days_to_show = min(days, 7)
+        daily_posts = []
+        for i in range(days_to_show):
+            day = end_date - timedelta(days=i)
+            day_start = datetime(day.year, day.month, day.day, 0, 0, 0)
+            day_end = datetime(day.year, day.month, day.day, 23, 59, 59)
+            
+            count = db.query(SocialPost).filter(
+                SocialPost.created_at >= day_start,
+                SocialPost.created_at <= day_end
+            ).count()
+            
+            daily_posts.append({
+                "date": day.strftime("%Y-%m-%d"),
+                "count": count
+            })
+        
+        # Get engagement metrics if available (this assumes there's an analytics field or related table)
+        # For now, we'll return zeros since we don't have real engagement data
+        engagement = {
+            "total_likes": 0,
+            "total_shares": 0,
+            "total_comments": 0,
+            "average_engagement_rate": 0
         }
-    }
+        
+        # Get top users by post count
+        top_users_query = db.query(
+            SocialPost.created_by_id,
+            func.count(SocialPost.id).label('post_count')
+        ).filter(
+            SocialPost.created_at >= start_date
+        ).group_by(
+            SocialPost.created_by_id
+        ).order_by(
+            desc('post_count')
+        ).limit(5)
+        
+        top_users = []
+        for user_id, post_count in top_users_query:
+            top_users.append({
+                "user_id": user_id,
+                "post_count": post_count
+            })
+        
+        # Compile all statistics
+        stats = {
+            "total_posts": total_posts,
+            "platforms": platform_counts,
+            "status": status_counts,
+            "daily_posts": daily_posts,
+            "engagement": engagement,
+            "top_users": top_users,
+            "date_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+                "days": days
+            }
+        }
+        
+        return stats
     
-    # Apply platform filter if provided
-    if platform:
-        # Just return the mock data as is for now
-        # In a real implementation, we would filter the data based on the platform
-        pass
-    
-    # Apply platform filter if provided
-    if platform:
-        # Just return the mock data as is for now
-        # In a real implementation, we would filter the data based on the platform
-        pass
-    
-    return stats
+    except Exception as e:
+        # Log the error
+        print(f"Error getting social stats: {str(e)}")
+        
+        # Return empty stats in case of error
+        return {
+            "total_posts": 0,
+            "platforms": {},
+            "status": {},
+            "daily_posts": [],
+            "engagement": {
+                "total_likes": 0,
+                "total_shares": 0,
+                "total_comments": 0,
+                "average_engagement_rate": 0
+            },
+            "top_users": [],
+            "date_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+                "days": days
+            }
+        }
