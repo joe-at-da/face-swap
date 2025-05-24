@@ -207,16 +207,20 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       setIsStartingProcess(true);
       setError('');
       
-      // Prepare options for the API call
-      const options = {
-        enable_speaker_identification: transcriptionOptions.enableSpeakerIdentification,
-        enable_facial_recognition: transcriptionOptions.enableFacialRecognition
+      // Prepare the request data with the correct format
+      const requestData = {
+        video_id: captureId,
+        save_output: true,
+        options: {
+          enable_speaker_identification: transcriptionOptions.enableSpeakerIdentification,
+          enable_facial_recognition: transcriptionOptions.enableFacialRecognition
+        }
       };
       
-      console.log('Starting recognition process with options:', options);
+      console.log('Starting recognition process with options:', requestData);
       
-      // Make the API call to start the recognition process
-      const response = await api.post(`/recognition/start-recognition/${captureId}`, options);
+      // Make the API call to start the recognition process using the combined-recognition endpoint
+      const response = await api.post('/recognition/combined-recognition', requestData);
       
       console.log('Recognition start response:', response);
       
@@ -236,13 +240,36 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           setRefreshInterval(interval);
         }
       } else {
-        const errorMessage = response?.error || 'Failed to start recognition process. Please try again.';
+        const errorMessage = response?.error || response?.message || 'Failed to start recognition process. Please try again.';
         setError(errorMessage);
         toast.error(errorMessage);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error starting recognition process:', err);
-      const errorMessage = 'Failed to start recognition process. Please try again.';
+      
+      // Handle different error scenarios
+      let errorMessage = 'Failed to start recognition process';
+      
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        if (err.response.status === 400) {
+          errorMessage = 'Invalid request: ' + (err.response.data?.message || 'Bad request');
+        } else if (err.response.status === 401) {
+          errorMessage = 'Authentication error: Please log in again';
+        } else if (err.response.status === 403) {
+          errorMessage = 'You do not have permission to perform this action';
+        } else if (err.response.status === 404) {
+          errorMessage = 'Recognition service endpoint not found';
+        } else if (err.response.status === 409) {
+          errorMessage = 'Recognition process is already in progress for this capture';
+        } else if (err.response.status >= 500) {
+          errorMessage = 'Server error: ' + (err.response.data?.message || 'Please try again later');
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        errorMessage = 'No response from server. Please check your network connection.';
+      }
+      
       setError(errorMessage);
       toast.error(errorMessage);
     } finally {
