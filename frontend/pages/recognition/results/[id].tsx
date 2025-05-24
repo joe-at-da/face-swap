@@ -8,6 +8,7 @@ import { api } from '../../../utils/api';
 import CustomRecognitionResults from '../../../components/recognition/CustomRecognitionResults';
 import UnifiedRecognitionTimeline from '../../../components/recognition/UnifiedRecognitionTimeline';
 import UnifiedRecognitionResults from '../../../components/recognition/UnifiedRecognitionResults';
+import EnhancedRecognitionResults from '../../../components/recognition/EnhancedRecognitionResults';
 import { toast } from 'react-toastify';
 
 // Types
@@ -38,7 +39,7 @@ const RecognitionResultsPage = () => {
   const [transcriptionText, setTranscriptionText] = useState<string | undefined>(undefined);
   const [retryCount, setRetryCount] = useState(0);
   const [captureData, setCaptureData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState('unified');
+  const [activeTab, setActiveTab] = useState('enhanced');
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
 
@@ -580,6 +581,18 @@ const RecognitionResultsPage = () => {
                   <li className="mr-2">
                     <button
                       className={`inline-block p-4 ${
+                        activeTab === 'enhanced'
+                          ? 'text-blue-500 border-b-2 border-blue-500'
+                          : 'text-gray-400 hover:text-gray-300'
+                      }`}
+                      onClick={() => setActiveTab('enhanced')}
+                    >
+                      Enhanced View
+                    </button>
+                  </li>
+                  <li className="mr-2">
+                    <button
+                      className={`inline-block p-4 ${
                         activeTab === 'unified'
                           ? 'text-blue-500 border-b-2 border-blue-500'
                           : 'text-gray-400 hover:text-gray-300'
@@ -618,6 +631,10 @@ const RecognitionResultsPage = () => {
               
               {/* Tab content */}
               <div className="p-4">
+                {activeTab === 'enhanced' && (
+                  <EnhancedRecognitionResults videoId={String(id)} />
+                )}
+                
                 {activeTab === 'unified' && (
                   <UnifiedRecognitionResults videoId={String(id)} />
                 )}
