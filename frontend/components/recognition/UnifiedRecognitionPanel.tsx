@@ -476,7 +476,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               <span>Processing your audio...</span>
             </div>
             {recognitionStatus.progress !== undefined && (
-              <span className="text-sm font-medium text-blue-300 font-bold">{Math.round(recognitionStatus.progress)}%</span>
+              <span className="text-sm font-bold text-blue-300">{Math.round(recognitionStatus.progress)}%</span>
             )}
           </div>
           

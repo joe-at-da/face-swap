@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { api } from '../../utils/api';
 import { formatTime } from '../../utils/formatTime';
+import { toast } from 'react-toastify';
 import EnhancedVideoPlayer from '../player/EnhancedVideoPlayer';
 import UnidentifiedSpeakersPanel from './UnidentifiedSpeakersPanel';
 
@@ -39,6 +40,8 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [faces, setFaces] = useState<Face[]>([]);
+  const [selectedFace, setSelectedFace] = useState<Face | null>(null);
+  const [showFaceProfileModal, setShowFaceProfileModal] = useState<boolean>(false);
   const [transcriptSegments, setTranscriptSegments] = useState<any[]>([]);
   
   useEffect(() => {
@@ -137,6 +140,45 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
     
     // Refresh data to get updated recognition results
     fetchData();
+  };
+  
+  const navigateToFaceProfiles = () => {
+    router.push('/admin/face-profiles');
+  };
+  
+  const handleFaceSelect = (face: Face) => {
+    setSelectedFace(face);
+    setShowFaceProfileModal(true);
+  };
+  
+  const handleAssignFaceToProfile = async (faceId: string, profileId: string) => {
+    try {
+      const response = await api.post('/profiles/assign-face', {
+        face_id: faceId,
+        profile_id: profileId,
+        capture_id: videoId
+      });
+      
+      if (response && response.success) {
+        toast.success('Face assigned to profile successfully');
+        
+        // Update local state
+        setFaces(prevFaces => 
+          prevFaces.map(face => 
+            face.id === faceId 
+              ? { ...face, profileId }
+              : face
+          )
+        );
+        
+        setShowFaceProfileModal(false);
+      } else {
+        toast.error('Failed to assign face to profile');
+      }
+    } catch (err) {
+      console.error('Error assigning face to profile:', err);
+      toast.error('Error assigning face to profile');
+    }
   };
   
   if (isLoading) {
@@ -274,6 +316,19 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
             <div>
               <h3 className="text-lg font-medium mb-4">Face Recognition</h3>
               
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium">Face Recognition</h3>
+                <button
+                  onClick={navigateToFaceProfiles}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded flex items-center"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Manage Face Profiles
+                </button>
+              </div>
+              
               {faces.length === 0 ? (
                 <p className="text-gray-400">No faces detected in this video.</p>
               ) : (
@@ -282,11 +337,11 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
                     <div 
                       key={face.id}
                       className="border border-gray-700 rounded-lg p-3 hover:bg-gray-700 cursor-pointer transition-colors"
-                      onClick={() => {
-                        setCurrentTime(face.startTime);
-                      }}
                     >
-                      <div className="aspect-w-1 aspect-h-1 mb-2">
+                      <div 
+                        className="aspect-w-1 aspect-h-1 mb-2"
+                        onClick={() => setCurrentTime(face.startTime)}
+                      >
                         <img 
                           src={face.thumbnailUrl} 
                           alt={face.name}
@@ -309,10 +364,24 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
                           {Math.round(face.confidence * 100)}%
                         </div>
                       </div>
-                      {face.profileId && (
-                        <div className="mt-1 text-xs text-green-400">
+                      
+                      {face.profileId ? (
+                        <div className="mt-2 text-xs text-green-400 flex items-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
                           Identified
                         </div>
+                      ) : (
+                        <button
+                          onClick={() => handleFaceSelect(face)}
+                          className="mt-2 w-full text-xs bg-blue-800 hover:bg-blue-700 text-white px-2 py-1 rounded flex items-center justify-center"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          Identify Face
+                        </button>
                       )}
                     </div>
                   ))}
@@ -377,6 +446,68 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
           )}
         </div>
       </div>
+      
+      {/* Face Profile Modal */}
+      {showFaceProfileModal && selectedFace && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium text-white">Identify Face</h3>
+              <button 
+                onClick={() => setShowFaceProfileModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="flex items-center mb-4">
+              <div className="w-20 h-20 mr-4">
+                <img 
+                  src={selectedFace.thumbnailUrl} 
+                  alt={selectedFace.name}
+                  className="w-full h-full object-cover rounded-md"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = '/placeholder-face.png';
+                  }}
+                />
+              </div>
+              <div>
+                <p className="text-white">{selectedFace.name}</p>
+                <p className="text-gray-400 text-sm">Confidence: {Math.round(selectedFace.confidence * 100)}%</p>
+                <p className="text-gray-400 text-sm">Time: {formatTime(selectedFace.startTime)}</p>
+              </div>
+            </div>
+            
+            <div className="mb-4">
+              <p className="text-gray-300 mb-2">Choose an action:</p>
+              <div className="space-y-2">
+                <button
+                  onClick={() => router.push(`/admin/face-profiles/add?face_id=${selectedFace.id}&capture_id=${videoId}`)}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded flex items-center justify-center"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Create New Profile
+                </button>
+                
+                <button
+                  onClick={navigateToFaceProfiles}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded flex items-center justify-center"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                  Manage Face Profiles
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       <style jsx>{`
         .spinner {

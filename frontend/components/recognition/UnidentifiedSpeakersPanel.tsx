@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import { api } from '../../utils/api';
 import { toast } from 'react-toastify';
 
@@ -31,12 +32,19 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
   onSpeakerSelect,
   onSpeakerIdentified
 }) => {
+  const router = useRouter();
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [voiceProfiles, setVoiceProfiles] = useState<any[]>([]);
   const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | null>(null);
   const [isAssigning, setIsAssigning] = useState<boolean>(false);
+  const [showCreateForm, setShowCreateForm] = useState<boolean>(false);
+  const [newProfileData, setNewProfileData] = useState({
+    name: '',
+    role: '',
+    party: ''
+  });
 
   useEffect(() => {
     if (captureId) {
@@ -136,20 +144,22 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
     }
   };
 
-  const createNewProfile = async (speakerId: string, name: string) => {
+  const createNewProfile = async (speakerId: string, profileData: any) => {
     try {
       setIsAssigning(true);
       
       // First create a new voice profile
       const createResponse = await api.post('/profiles/voice', {
-        name: name,
+        name: profileData.name,
+        role: profileData.role || undefined,
+        party: profileData.party || undefined,
         source_capture_id: captureId,
         source_speaker_id: speakerId
       });
       
       if (createResponse && createResponse.success) {
         const newProfileId = createResponse.data?.id || createResponse.id;
-        const profileName = name;
+        const profileName = profileData.name;
         
         toast.success(`Created new profile: ${profileName}`);
         
@@ -158,6 +168,14 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
         
         // Refresh voice profiles
         fetchVoiceProfiles();
+        
+        // Reset form
+        setShowCreateForm(false);
+        setNewProfileData({
+          name: '',
+          role: '',
+          party: ''
+        });
       } else {
         toast.error('Failed to create new profile');
       }
@@ -167,6 +185,27 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
     } finally {
       setIsAssigning(false);
     }
+  };
+  
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setNewProfileData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+  
+  const handleCreateProfileSubmit = (e: React.FormEvent, speakerId: string) => {
+    e.preventDefault();
+    if (!newProfileData.name) {
+      toast.error('Profile name is required');
+      return;
+    }
+    createNewProfile(speakerId, newProfileData);
+  };
+  
+  const navigateToVoiceProfiles = () => {
+    router.push('/admin/voice-profiles');
   };
 
   const formatDuration = (seconds: number): string => {
@@ -286,21 +325,82 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
                     <p className="text-gray-500 text-sm">No existing profiles</p>
                   )}
                   
-                  {/* Create new profile button */}
+                  {/* Create new profile button/form */}
+                  {!showCreateForm ? (
+                    <button
+                      onClick={() => setShowCreateForm(true)}
+                      disabled={isAssigning}
+                      className="mt-2 px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded text-sm text-white flex items-center justify-center"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      </svg>
+                      Create New Profile
+                    </button>
+                  ) : (
+                    <form onSubmit={(e) => handleCreateProfileSubmit(e, speaker.id)} className="mt-3 border border-gray-600 rounded-md p-3 bg-gray-800">
+                      <div className="mb-2">
+                        <label className="block text-sm text-gray-400 mb-1">Name</label>
+                        <input
+                          type="text"
+                          name="name"
+                          value={newProfileData.name}
+                          onChange={handleInputChange}
+                          className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                          placeholder="Profile name"
+                          required
+                        />
+                      </div>
+                      <div className="mb-2">
+                        <label className="block text-sm text-gray-400 mb-1">Role</label>
+                        <input
+                          type="text"
+                          name="role"
+                          value={newProfileData.role}
+                          onChange={handleInputChange}
+                          className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                          placeholder="MP, Minister, etc."
+                        />
+                      </div>
+                      <div className="mb-3">
+                        <label className="block text-sm text-gray-400 mb-1">Party</label>
+                        <input
+                          type="text"
+                          name="party"
+                          value={newProfileData.party}
+                          onChange={handleInputChange}
+                          className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+                          placeholder="Political party"
+                        />
+                      </div>
+                      <div className="flex space-x-2">
+                        <button
+                          type="submit"
+                          disabled={isAssigning}
+                          className="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm text-white flex-1"
+                        >
+                          {isAssigning ? 'Creating...' : 'Create'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowCreateForm(false)}
+                          className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-sm text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                  
+                  {/* Link to Voice Profiles page */}
                   <button
-                    onClick={() => {
-                      const name = prompt('Enter name for new profile:');
-                      if (name) {
-                        createNewProfile(speaker.id, name);
-                      }
-                    }}
-                    disabled={isAssigning}
-                    className="mt-2 px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded text-sm text-white flex items-center justify-center"
+                    onClick={navigateToVoiceProfiles}
+                    className="mt-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white flex items-center justify-center w-full"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
-                    Create New Profile
+                    Manage Voice Profiles
                   </button>
                 </div>
               </div>
