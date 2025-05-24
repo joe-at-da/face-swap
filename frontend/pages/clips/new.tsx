@@ -131,7 +131,14 @@ const NewVideoClipPage: React.FC = () => {
       // When selecting a capture session, load its video
       const selectedCapture = captureSessions?.find((session: CaptureSession) => session.id === parseInt(value));
       if (selectedCapture) {
-        setVideoUrl(selectedCapture.file_path);
+        // Get the token from localStorage or sessionStorage
+        const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+        
+        // Use the direct API URL with token like the file gallery does
+        const filename = `capture_${String(selectedCapture.id).padStart(4, '0')}.mp4`;
+        const streamUrl = `http://localhost:8000/api/v1/videos/stream-with-token/${filename}?token=${token}`;
+        console.log('Setting video URL from dropdown selection to direct API URL');
+        setVideoUrl(streamUrl);
         
         // Suggest a title based on the capture session
         if (!formData.title) {
@@ -221,16 +228,16 @@ const NewVideoClipPage: React.FC = () => {
         try {
           const captureData = await api.get(`/capture/${capture_id}`);
           if (captureData && captureData.id) {
-            // Get the filename from the capture data or construct it
-            const filename = captureData.file_path ? 
-              captureData.file_path.split('/').pop() : 
-              `capture_${String(captureData.id).padStart(4, '0')}.mp4`;
+            // Get the token from localStorage or sessionStorage
+            const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
             
-            // Use the authenticated streaming endpoint
-            // This endpoint includes the auth token automatically
-            const streamUrl = `/api/videos/stream-with-token/${filename}`;
+            // Construct the filename based on the capture ID
+            const filename = `capture_${String(captureData.id).padStart(4, '0')}.mp4`;
             
-            console.log('Setting video URL to:', streamUrl);
+            // Use the direct API URL with token like the file gallery does
+            const streamUrl = `http://localhost:8000/api/v1/videos/stream-with-token/${filename}?token=${token}`;
+            
+            console.log('Setting video URL to direct API URL with token');
             setVideoUrl(streamUrl);
             
             // Initialize form data with capture information
@@ -372,20 +379,27 @@ const NewVideoClipPage: React.FC = () => {
     
     if (!validateForm()) return;
     
-    // Double-check that start and end times are set
-    if (formData.source_type === 'capture' && (formData.start_time === undefined || formData.end_time === undefined)) {
-      // Set default values if they're not set
-      const updatedFormData = { ...formData };
-      if (formData.start_time === undefined) updatedFormData.start_time = 0;
-      if (formData.end_time === undefined) updatedFormData.end_time = Math.min(30, duration || 30);
-      setFormData(updatedFormData);
-      console.log('Setting default start/end times:', updatedFormData);
+    // Make sure we have start and end times
+    if (formData.source_type === 'capture') {
+      // Ensure source_id is set
+      if (!formData.source_id && capture_id) {
+        setFormData(prev => ({ ...prev, source_id: Number(capture_id) }));
+      }
       
-      // Show a message to the user
-      setErrors({
-        form: 'Setting default start and end times. Please try submitting again.'
-      });
-      return;
+      // Set default values if they're not set
+      if (formData.start_time === undefined || formData.end_time === undefined) {
+        const updatedFormData = { ...formData };
+        if (formData.start_time === undefined) updatedFormData.start_time = 0;
+        if (formData.end_time === undefined) updatedFormData.end_time = Math.min(30, duration || 30);
+        setFormData(updatedFormData);
+        console.log('Setting default start/end times:', updatedFormData);
+        
+        // Show a message to the user
+        setErrors({
+          form: 'Setting default start and end times. Please try submitting again.'
+        });
+        return;
+      }
     }
     
     setIsUploading(true);
@@ -393,28 +407,21 @@ const NewVideoClipPage: React.FC = () => {
     try {
       // For capture source type, use the API directly instead of FormData
       if (formData.source_type === 'capture' && formData.source_id) {
-        // Get current date to use as base for the datetime
-        const now = new Date();
-        const startDate = new Date(now);
-        const endDate = new Date(now);
-        
-        // Set hours, minutes, seconds based on the time values (in seconds)
-        startDate.setHours(0, 0, Math.floor(formData.start_time || 0), 0);
-        endDate.setHours(0, 0, Math.floor(formData.end_time || 30), 0);
-        
         // Create a proper JSON payload
         const payload = {
           title: formData.title,
           description: formData.description || '',
           capture_session_id: formData.source_id,
-          start_time: startDate.toISOString(),
-          end_time: endDate.toISOString()
+          // Use seconds directly as the backend expects
+          start_time: formData.start_time,
+          end_time: formData.end_time
         };
         
         console.log('Submitting clip with payload:', payload);
         
         // Use the API client directly
         const result = await api.post('/clips', payload);
+        console.log('Clip created successfully:', result);
         router.push(`/clips/${result.id}`);
       } else if (formData.source_type === 'upload' && formData.file) {
         // Create FormData object for file upload
@@ -608,7 +615,9 @@ const NewVideoClipPage: React.FC = () => {
                     <h2 className="text-lg font-medium text-gray-800">Video Preview</h2>
                   </div>
                   <div className="aspect-w-16 aspect-h-9 bg-black">
+                    {/* Add key prop to force video element to re-render when URL changes */}
                     <video
+                      key={videoUrl} // Force re-render when URL changes
                       ref={videoRef}
                       src={videoUrl}
                       controls
