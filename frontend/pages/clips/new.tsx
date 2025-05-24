@@ -462,7 +462,8 @@ const NewVideoClipPage: React.FC = () => {
         const payload = {
           title: formData.title,
           description: formData.description || '',
-          capture_session_id: formData.source_id,
+          // The backend expects 'source_id' not 'capture_session_id'
+          source_id: formData.source_id,
           // Convert seconds to ISO string for datetime format
           start_time: startDate.toISOString(),
           end_time: endDate.toISOString()
@@ -470,9 +471,23 @@ const NewVideoClipPage: React.FC = () => {
         
         console.log('Submitting clip with payload:', payload);
         
-        // Use the API client directly since it's already configured with the right URL and auth
+        // Use the Next.js API proxy to avoid CORS issues
         try {
-          const result = await api.post('/clips', payload);
+          // Use fetch with the Next.js API proxy instead of direct API call
+          const response = await fetch('/api/clips', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('token') || sessionStorage.getItem('token') || ''}`
+            },
+            body: JSON.stringify(payload)
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
+          }
+          
+          const result = await response.json();
           console.log('Clip created successfully:', result);
           
           // If we get here, the clip was created successfully
@@ -483,7 +498,10 @@ const NewVideoClipPage: React.FC = () => {
           router.push(`/clips/${result.id}`);
         } catch (error: any) { // Type assertion for error
           console.error('API error creating clip:', error);
-          throw new Error(`Failed to create clip: ${error?.message || 'Unknown error'}`);
+          setIsUploading(false);
+          setErrors({
+            form: `Failed to create clip: ${error?.message || 'Unknown error'}`
+          });
         }
       } else if (formData.source_type === 'upload' && formData.file) {
         // Create FormData object for file upload
