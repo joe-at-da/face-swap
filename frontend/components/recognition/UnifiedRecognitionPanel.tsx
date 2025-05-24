@@ -101,242 +101,197 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       // First try to get detailed status
       try {
         console.log('Fetching detailed status for captureId:', captureId);
-        const detailedResponse = await api.get(`/recognition/status/detailed-status/${captureId}`);
+        const detailedResponse = await api.get(`/recognition/detailed-status/${captureId}`);
         
         console.log('Detailed status response:', detailedResponse);
-        const detailedData = detailedResponse as { success: boolean; status?: string; video_id?: number; progress?: any; completion_percentage?: number; started_at?: string; completed_at?: string };
-        if (detailedData.success) {
-          // The backend returns the status information directly in the response, not nested under a 'status' property
-          const statusData = detailedData;
+        // Check if detailedResponse has a status object or direct properties
+        if (detailedResponse && detailedResponse.success) {
+          let statusData: any;
+          
+          // Handle case where status info is nested under 'status' property
+          if (detailedResponse.status && typeof detailedResponse.status === 'object') {
+            statusData = detailedResponse.status;
+          } else {
+            // Handle case where status info is directly in the response
+            statusData = detailedResponse;
+          }
           
           // Map the backend status format to our component's format
           const mappedStatus: RecognitionStatus = {
-            status: statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed" || 'not_started',
+            status: (statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed") || 'not_started',
             started_at: statusData.started_at,
             completed_at: statusData.completed_at,
-            // Use completion_percentage directly if available, otherwise try to get it from progress
-            progress: statusData.completion_percentage || statusData.progress?.completion_percentage || 0,
-            steps: []
-          };
-          
-          // Map steps if available
-          if (statusData.progress?.steps) {
-            mappedStatus.steps = statusData.progress.steps.map((step: any) => ({
-              name: step.name,
-              status: step.status === 'completed' ? 'completed' : 
-                     step.status === 'failed' ? 'failed' : 'in_progress'
-            }));
-          }
-          
-          // Add error if present
-          if (statusData.progress?.error) {
-            mappedStatus.error = statusData.progress.error;
-          }
-          
-          setRecognitionStatus(mappedStatus);
-        }
-      } catch (detailedErr) {
-        // If detailed status fails, fall back to basic status
-        console.log('Falling back to basic status endpoint for captureId:', captureId);
-        const basicResponse = await api.get(`/recognition/recognition-status/${captureId}`);
-        
-        console.log('Basic status response:', basicResponse);
-        const basicData = basicResponse as { success: boolean; status?: string; video_id?: number; started_at?: string; completed_at?: string };
-        if (basicData.success) {
-          // The backend returns the status information directly in the response, not nested under a 'status' property
-          const statusData = basicData;
-          
-          // Map the basic status
-          const mappedStatus: RecognitionStatus = {
-            status: statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed" || 'not_started',
-            started_at: statusData.started_at,
-            completed_at: statusData.completed_at,
-            progress: 0 // No progress info in basic status
+            progress: statusData.completion_percentage || 0,
           };
           
           setRecognitionStatus(mappedStatus);
+          setLoading(false);
+          setError('');
+          
+          // Also fetch audio info
+          fetchAudioInfo();
+          
+          return;
         }
+      } catch (detailedError) {
+        console.error('Error fetching detailed status:', detailedError);
+        // Fall back to basic status if detailed status fails
       }
       
-      // Fetch audio info if not already loaded
-      if (!audioInfo) {
+      // Fallback to basic status endpoint
+      const response = await api.get(`/recognition/recognition-status/${captureId}`);
+      console.log('Basic status response:', response);
+      
+      if (response) {
+        const data = response;
+        
+        if (data.status) {
+          setRecognitionStatus({
+            status: data.status,
+            progress: data.progress || 0,
+            steps: data.steps || [],
+            error: data.error,
+            started_at: data.started_at,
+            completed_at: data.completed_at,
+            results: data.results
+          });
+        } else {
+          setRecognitionStatus({
+            status: 'not_started',
+            progress: 0
+          });
+        }
+        
+        setLoading(false);
+        setError('');
+        
+        // Also fetch audio info
         fetchAudioInfo();
       }
-      
-      setLoading(false);
-      setIsRefreshing(false);
     } catch (err) {
       console.error('Error fetching recognition status:', err);
-      setError('Failed to fetch recognition status');
+      setError('Failed to load recognition status. Please try again.');
       setLoading(false);
+    } finally {
       setIsRefreshing(false);
     }
   };
-
+  
   const fetchAudioInfo = async () => {
     try {
-      // Use the api utility to get capture details
+      // Use the capture endpoint instead of audio-info which doesn't exist
       const response = await api.get(`/capture/${captureId}`);
       
-      const captureData = response as {
-        file_path?: string;
-        video_path?: string;
-        audio_path?: string;
-        url?: string;
-      };
-      
-      // Extract audio information from capture data
-      if (captureData) {
-        const audioInfo = {
-          file_path: captureData.audio_path || 
-                    (captureData.file_path ? captureData.file_path.replace('.mp4', '.audio.mp3') : null),
-          file_name: captureData.audio_path ? Path.basename(captureData.audio_path) : 
-                    (captureData.file_path ? Path.basename(captureData.file_path).replace('.mp4', '.audio.mp3') : null),
-          source_url: captureData.url || null
-        };
-        
-        console.log('Audio info:', audioInfo);
-        setAudioInfo(audioInfo);
+      if (response) {
+        // Extract audio information from capture data
+        setAudioInfo({
+          file_path: response.audio_path || (response.file_path ? response.file_path.replace('.mp4', '.audio.mp3') : null),
+          file_name: response.audio_path ? Path.basename(response.audio_path) : 
+                    (response.file_path ? Path.basename(response.file_path).replace('.mp4', '.audio.mp3') : null),
+          source_url: response.url || null
+        });
       }
     } catch (err) {
       console.error('Error fetching audio info:', err);
+      // Don't set an error state here, as this is supplementary information
     }
   };
 
   // Helper function to get basename from path
   const basename = (path: string) => {
-    return path.split('/').pop() || path;
+    return path ? Path.basename(path) : '';
   };
-
+  
   const startRecognitionProcess = async () => {
     try {
       setIsStartingProcess(true);
       setError('');
       
-      // Check if we have valid capture data before proceeding
-      if (!captureId) {
-        setError('Invalid capture ID');
-        toast.error('Cannot start recognition: Invalid capture ID');
-        return;
-      }
-      
-      // Prepare the request data
-      const requestData = {
-        video_id: captureId,
-        save_output: true,
-        options: {
-          enable_speaker_identification: transcriptionOptions.enableSpeakerIdentification,
-          enable_facial_recognition: transcriptionOptions.enableFacialRecognition
-        }
+      // Prepare options for the API call
+      const options = {
+        enable_speaker_identification: transcriptionOptions.enableSpeakerIdentification,
+        enable_facial_recognition: transcriptionOptions.enableFacialRecognition
       };
       
-      // Call the combined recognition endpoint
-      const response = await api.post('/recognition/combined-recognition', requestData);
+      console.log('Starting recognition process with options:', options);
       
-      const responseData = response as { success: boolean; message?: string; error?: string };
+      // Make the API call to start the recognition process
+      const response = await api.post(`/recognition/start-recognition/${captureId}`, options);
       
-      if (responseData.success) {
-        toast.success('Recognition process started successfully');
-        // Fetch the updated status
-        fetchStatus();
+      console.log('Recognition start response:', response);
+      
+      if (response && response.success) {
+        toast.success('Recognition process started successfully!');
         
-        // Set up polling to regularly check status
-        if (refreshInterval) {
-          clearInterval(refreshInterval);
+        // Update the status immediately to show it's processing
+        setRecognitionStatus({
+          status: 'processing',
+          progress: 0,
+          started_at: new Date().toISOString()
+        });
+        
+        // If there's no refresh interval, start one
+        if (!refreshInterval) {
+          const interval = setInterval(fetchStatus, 5000);
+          setRefreshInterval(interval);
         }
-        
-        // Poll every 3 seconds
-        const interval = setInterval(() => {
-          fetchStatus();
-        }, 3000);
-        
-        setRefreshInterval(interval);
       } else {
-        const errorMessage = responseData.error || responseData.message || 'Failed to start recognition process';
+        const errorMessage = response?.error || 'Failed to start recognition process. Please try again.';
         setError(errorMessage);
         toast.error(errorMessage);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error starting recognition process:', err);
-      
-      // Handle different error scenarios
-      let errorMessage = 'Failed to start recognition process';
-      
-      if (err.response) {
-        // The request was made and the server responded with a status code
-        // that falls out of the range of 2xx
-        if (err.response.status === 400) {
-          errorMessage = 'Invalid request: ' + (err.response.data?.message || 'Bad request');
-        } else if (err.response.status === 401) {
-          errorMessage = 'Authentication error: Please log in again';
-        } else if (err.response.status === 403) {
-          errorMessage = 'You do not have permission to perform this action';
-        } else if (err.response.status === 404) {
-          errorMessage = 'Capture not found or recognition service unavailable';
-        } else if (err.response.status === 409) {
-          errorMessage = 'Recognition process is already in progress for this capture';
-        } else if (err.response.status >= 500) {
-          errorMessage = 'Server error: ' + (err.response.data?.message || 'Please try again later');
-        }
-      } else if (err.request) {
-        // The request was made but no response was received
-        errorMessage = 'No response from server. Please check your network connection.';
-      }
-      
+      const errorMessage = 'Failed to start recognition process. Please try again.';
       setError(errorMessage);
       toast.error(errorMessage);
     } finally {
       setIsStartingProcess(false);
     }
   };
-
+  
   const handleOptionChange = (option: keyof TranscriptionOptions) => {
     setTranscriptionOptions(prev => ({
       ...prev,
       [option]: !prev[option]
     }));
   };
-
+  
   const getStepName = (index: number): string => {
-    switch (index) {
-      case 0: return 'Initialization';
-      case 1: return 'Audio Processing';
-      case 2: return 'Speaker Recognition';
-      case 3: return 'Facial Recognition';
-      case 4: return 'Transcription';
-      default: return `Step ${index + 1}`;
-    }
+    const stepNames = [
+      'Preparing Audio',
+      'Transcribing Audio',
+      'Analyzing Speakers',
+      'Detecting Faces',
+      'Generating Timeline'
+    ];
+    
+    return index < stepNames.length ? stepNames[index] : `Step ${index + 1}`;
   };
-
+  
   const getStatusColor = (status: string): string => {
     switch (status) {
-      case 'not_started':
-        return 'text-gray-300';
-      case 'scheduled':
-        return 'text-blue-300';
-      case 'processing':
-        return 'text-blue-300';
       case 'completed':
-        return 'text-green-300';
+        return 'text-green-400';
+      case 'in_progress':
+        return 'text-blue-400';
       case 'failed':
-        return 'text-red-300';
+        return 'text-red-400';
+      case 'waiting':
       default:
-        return 'text-gray-300';
+        return 'text-gray-400';
     }
   };
-
+  
   const getStatusBgColor = (status: string): string => {
     switch (status) {
-      case 'not_started':
-        return 'bg-gray-700';
-      case 'scheduled':
-        return 'bg-blue-900';
-      case 'processing':
-        return 'bg-blue-900';
       case 'completed':
         return 'bg-green-900';
+      case 'in_progress':
+        return 'bg-blue-900';
       case 'failed':
         return 'bg-red-900';
+      case 'waiting':
       default:
         return 'bg-gray-700';
     }
@@ -347,21 +302,24 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     if (!startedAt || progress <= 0) return 'Calculating...';
     
     const startTime = new Date(startedAt).getTime();
-    const currentTime = new Date().getTime();
-    const elapsedMs = currentTime - startTime;
+    const now = new Date().getTime();
+    const elapsedMs = now - startTime;
     
-    // Calculate total time based on elapsed time and progress
-    const totalEstimatedMs = (elapsedMs / progress) * 100;
-    const remainingMs = totalEstimatedMs - elapsedMs;
+    // If we've been running for less than 10 seconds, don't try to estimate
+    if (elapsedMs < 10000) return 'Calculating...';
+    
+    // Calculate estimated total time based on progress so far
+    const estimatedTotalMs = (elapsedMs / progress) * 100;
+    const remainingMs = estimatedTotalMs - elapsedMs;
     
     // Convert to minutes and seconds
     const remainingMinutes = Math.floor(remainingMs / 60000);
     const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
     
     if (remainingMinutes > 0) {
-      return `${remainingMinutes} min ${remainingSeconds} sec`;
+      return `~${remainingMinutes}m ${remainingSeconds}s remaining`;
     } else {
-      return `${remainingSeconds} seconds`;
+      return `~${remainingSeconds}s remaining`;
     }
   };
   
@@ -369,42 +327,48 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const renderProgressBar = (progress: number, steps: RecognitionStep[] = []) => {
     // Calculate color based on progress
     const getProgressColor = () => {
-      if (progress < 30) return 'bg-blue-600';
-      if (progress < 60) return 'bg-indigo-500';
-      if (progress < 90) return 'bg-purple-500';
-      return 'bg-green-500';
+      if (progress < 30) return 'bg-blue-500';
+      if (progress < 70) return 'bg-blue-400';
+      return 'bg-blue-300';
     };
     
     return (
-      <div className="space-y-2">
+      <div className="w-full">
         {/* Main progress bar */}
-        <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+        <div className="w-full bg-gray-700 rounded-full h-4 mb-3">
           <div 
-            className={`h-full ${getProgressColor()} transition-all duration-500 ease-out`}
-            style={{ width: `${progress}%` }}
+            className={`h-4 rounded-full ${getProgressColor()}`} 
+            style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
           ></div>
         </div>
         
-        {/* Progress percentage */}
-        <div className="flex justify-between text-xs text-gray-300">
-          <span>{progress.toFixed(1)}% Complete</span>
-          {progress < 100 && (
-            <span>{(100 - progress).toFixed(1)}% Remaining</span>
-          )}
-        </div>
-        
-        {/* Step indicators */}
+        {/* Steps indicators */}
         {steps.length > 0 && (
-          <div className="grid grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-1 gap-2 mt-3">
             {steps.map((step, index) => (
-              <div key={index} className="text-center">
-                <div className={`h-1.5 rounded-full ${
-                  step.status === 'completed' ? 'bg-green-500' : 
-                  step.status === 'in_progress' ? 'bg-blue-500' : 
-                  step.status === 'failed' ? 'bg-red-500' : 'bg-gray-700'
-                }`}></div>
-                <div className="text-xs mt-1 text-gray-300">
-                  {step.name || getStepName(index)}
+              <div key={index} className="flex items-center">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${getStatusBgColor(step.status)}`}>
+                  {step.status === 'completed' ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : step.status === 'in_progress' ? (
+                    <div className="spinner-xs"></div>
+                  ) : step.status === 'failed' ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  ) : (
+                    <span className="text-xs text-white">{index + 1}</span>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <div className="flex justify-between items-center">
+                    <span className={`text-sm ${getStatusColor(step.status)}`}>{step.name || getStepName(index)}</span>
+                    {step.progress !== undefined && step.status === 'in_progress' && (
+                      <span className="text-xs text-gray-400">{Math.round(step.progress)}%</span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -412,7 +376,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         )}
       </div>
     );
-  }
+  };
 
   if (loading && !recognitionStatus) {
     return (
@@ -436,13 +400,26 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         </div>
       )}
 
-      {/* Status Overview */}
+      {/* Status Summary */}
       <div className="mb-6">
         <div className="flex items-center mb-2">
-          <span className="font-semibold mr-2">Status:</span>
-          <span className={`px-2 py-1 rounded-full text-sm ${getStatusBgColor(recognitionStatus?.status || 'not_started')} ${getStatusColor(recognitionStatus?.status || 'not_started')}`}>
-            {typeof recognitionStatus?.status === 'string' ? recognitionStatus.status.replace('_', ' ') : 'Not Started'}
+          <div className={`w-3 h-3 rounded-full mr-2 ${
+            recognitionStatus?.status === 'completed' ? 'bg-green-500' :
+            recognitionStatus?.status === 'processing' ? 'bg-blue-500' :
+            recognitionStatus?.status === 'failed' ? 'bg-red-500' :
+            'bg-gray-500'
+          }`}></div>
+          <span className="font-medium">Status: </span>
+          <span className="ml-1 capitalize">
+            {recognitionStatus?.status === 'not_started' ? 'Not Started' : 
+             recognitionStatus?.status === 'processing' ? 'Processing' : 
+             recognitionStatus?.status === 'completed' ? 'Completed' :
+             recognitionStatus?.status === 'failed' ? 'Failed' :
+             recognitionStatus?.status === 'scheduled' ? 'Scheduled' : 'Unknown'}
           </span>
+          {isRefreshing && !isStartingProcess && (
+            <div className="spinner-xs ml-2"></div>
+          )}
         </div>
 
         {recognitionStatus?.started_at && (
@@ -450,7 +427,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             Started: {new Date(recognitionStatus.started_at).toLocaleString()}
           </div>
         )}
-        
+
         {recognitionStatus?.completed_at && (
           <div className="text-sm text-gray-300 mb-1">
             Completed: {new Date(recognitionStatus.completed_at).toLocaleString()}
@@ -463,13 +440,11 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         <div className="bg-blue-900 border border-blue-700 text-white px-4 py-3 rounded mb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center">
-              <div className="spinner-sm mr-3"></div>
-              <h3 className="font-bold">Processing in progress</h3>
+              <div className="spinner-sm mr-2"></div>
+              <span>Processing your audio...</span>
             </div>
-            {recognitionStatus.started_at && (
-              <div className="text-sm text-blue-300">
-                Started {new Date(recognitionStatus.started_at).toLocaleTimeString()}
-              </div>
+            {recognitionStatus.progress !== undefined && (
+              <span className="text-sm font-medium">{Math.round(recognitionStatus.progress)}%</span>
             )}
           </div>
           
@@ -480,175 +455,89 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           )}
           
           {/* Estimated time remaining */}
-          {recognitionStatus.progress && recognitionStatus.progress > 0 && recognitionStatus.started_at && (
-            <div className="mt-3 text-sm text-blue-300">
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>
-                  {recognitionStatus.progress < 100 ? (
-                    <>Estimated time remaining: {calculateTimeRemaining(recognitionStatus.started_at, recognitionStatus.progress)}</>
-                  ) : (
-                    'Finishing up...'
-                  )}
-                </span>
-              </div>
+          {recognitionStatus.started_at && recognitionStatus.progress !== undefined && recognitionStatus.progress > 0 && (
+            <div className="text-sm text-blue-300 mt-2">
+              {calculateTimeRemaining(recognitionStatus.started_at, recognitionStatus.progress)}
             </div>
           )}
         </div>
       )}
 
-      {/* Completed State */}
-      {recognitionStatus?.status === 'completed' && (
-        <div className="bg-green-900 border border-green-700 text-white px-4 py-3 rounded mb-4">
-          <div className="flex items-center mb-2">
-            <svg className="w-5 h-5 text-green-300 mr-2" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-            <h3 className="font-bold">Processing completed</h3>
+      {/* Recognition Options */}
+      <div className="mb-6">
+        <h3 className="text-lg font-medium mb-3">Recognition Options</h3>
+        <div className="space-y-3">
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="enableSpeakerIdentification"
+              checked={transcriptionOptions.enableSpeakerIdentification}
+              onChange={() => handleOptionChange('enableSpeakerIdentification')}
+              disabled={isStartingProcess || recognitionStatus?.status === 'processing'}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-600 rounded"
+            />
+            <label htmlFor="enableSpeakerIdentification" className="ml-2 block text-sm">
+              Enable Speaker Identification
+            </label>
           </div>
           
-          <div className="text-sm">
-            {recognitionStatus.started_at && recognitionStatus.completed_at && (
-              <div className="mb-1">
-                Duration: {formatDuration((new Date(recognitionStatus.completed_at).getTime() - new Date(recognitionStatus.started_at).getTime()) / 1000)}
-              </div>
-            )}
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="enableFacialRecognition"
+              checked={transcriptionOptions.enableFacialRecognition}
+              onChange={() => handleOptionChange('enableFacialRecognition')}
+              disabled={isStartingProcess || recognitionStatus?.status === 'processing'}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-600 rounded"
+            />
+            <label htmlFor="enableFacialRecognition" className="ml-2 block text-sm">
+              Enable Facial Recognition
+            </label>
           </div>
-          
-          {/* Button to view recognition results */}
+        </div>
+      </div>
+
+      {/* Buttons for Recognition Actions */}
+      <div className="mt-4 space-y-3">
+        {/* View Results Button (only shown when completed) */}
+        {recognitionStatus?.status === 'completed' && (
           <button
             onClick={() => router.push(`/recognition/results/${captureId}`)}
-            className="mt-3 bg-green-700 hover:bg-green-800 text-white py-1 px-3 rounded text-sm"
+            className="w-full py-2 px-4 rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 bg-green-600 hover:bg-green-700 text-white"
           >
             View Results
           </button>
-        </div>
-      )}
+        )}
 
-      {/* Not Started State */}
-      {(!recognitionStatus || !recognitionStatus.status || recognitionStatus.status === 'not_started') && (
-        <div className="bg-gray-900 rounded-lg p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-4">Start Recognition Process</h3>
-          
-          <div className="mb-6">
-            <div className="mb-4">
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                  checked={transcriptionOptions.enableSpeakerIdentification}
-                  onChange={() => handleOptionChange('enableSpeakerIdentification')}
-                />
-                <span>Enable Speaker Identification</span>
-              </label>
-              <p className="text-sm text-gray-400 ml-6 mt-1">
-                Identifies who is speaking in each segment of the audio
-              </p>
+        {/* Start/Restart Button */}
+        <button
+          onClick={startRecognitionProcess}
+          disabled={isStartingProcess || recognitionStatus?.status === 'processing'}
+          className={`w-full py-2 px-4 rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
+            isStartingProcess || recognitionStatus?.status === 'processing'
+              ? 'bg-gray-600 text-gray-300 cursor-not-allowed' 
+              : 'bg-blue-600 hover:bg-blue-700 text-white'
+          }`}
+        >
+          {isStartingProcess ? (
+            <div className="flex justify-center items-center">
+              <div className="spinner-xs mr-2"></div>
+              <span>Starting Process...</span>
             </div>
-            
-            <div>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                  checked={transcriptionOptions.enableFacialRecognition}
-                  onChange={() => handleOptionChange('enableFacialRecognition')}
-                />
-                <span>Enable Facial Recognition</span>
-              </label>
-              <p className="text-sm text-gray-400 ml-6 mt-1">
-                Identifies faces in the video and matches them with speakers
-              </p>
+          ) : recognitionStatus?.status === 'processing' ? (
+            <div className="flex justify-center items-center">
+              <div className="spinner-xs mr-2"></div>
+              <span>Processing...</span>
             </div>
-          </div>
-          
-          <button
-            onClick={startRecognitionProcess}
-            disabled={isStartingProcess}
-            className={`w-full py-2 px-4 rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
-              isStartingProcess 
-                ? 'bg-gray-600 text-gray-300 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-          >
-            {isStartingProcess ? (
-              <div className="flex justify-center items-center">
-                <div className="spinner-xs mr-2"></div>
-                <span>Starting Process...</span>
-              </div>
-            ) : (
-              'Start Recognition Process'
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Completed State */}
-      {recognitionStatus?.status === 'completed' && (
-        <div className="bg-green-900 border border-green-700 text-white px-4 py-3 rounded mb-4">
-          <div className="flex items-center mb-2">
-            <svg className="w-5 h-5 text-green-300 mr-2" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-            <h3 className="font-bold">Processing completed</h3>
-          </div>
-          
-          <div className="text-sm">
-            {recognitionStatus.started_at && recognitionStatus.completed_at && (
-              <div className="mb-1">
-                Duration: {formatDuration((new Date(recognitionStatus.completed_at).getTime() - new Date(recognitionStatus.started_at).getTime()) / 1000)}
-              </div>
-            )}
-          </div>
-          
-          {recognitionStatus.results && (
-            <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-              <div className="bg-green-800 p-3 rounded">
-                <h4 className="font-medium mb-2">Transcription</h4>
-                <div className="flex justify-between">
-                  <span>Duration</span>
-                  <span>{recognitionStatus.results.duration ? formatDuration(recognitionStatus.results.duration) : 'N/A'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Words</span>
-                  <span>{recognitionStatus.results.word_count || 0}</span>
-                </div>
-              </div>
-              
-              <div className="bg-green-800 p-3 rounded">
-                <h4 className="font-medium mb-2">Recognition</h4>
-                <div className="flex justify-between">
-                  <span>Speakers</span>
-                  <span>{recognitionStatus.results.identified_speakers || 0}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Face Samples</span>
-                  <span>{recognitionStatus.results.face_samples || 0}</span>
-                </div>
-              </div>
-            </div>
+          ) : recognitionStatus?.status === 'completed' ? (
+            'Restart Recognition'
+          ) : recognitionStatus?.status === 'failed' ? (
+            'Retry Recognition'
+          ) : (
+            'Start Recognition Process'
           )}
-          
-          <div className="flex justify-end mt-4">
-            <button
-              onClick={() => window.location.href = `/transcriptions`}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors"
-            >
-              View Full Transcript
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Error Message */}
-      {recognitionStatus?.status === 'failed' && recognitionStatus.error && (
-        <div className="bg-red-900 border border-red-700 text-white px-4 py-3 rounded mb-4">
-          <h3 className="font-bold mb-2">Processing Failed</h3>
-          <p>{recognitionStatus.error}</p>
-        </div>
-      )}
+        </button>
+      </div>
 
       {/* Debug Information */}
       <div className="mt-4 border-t border-gray-700 pt-4">
