@@ -65,6 +65,17 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
       console.log('speakerResults:', speakerResults);
     }
   }, [speakerResults]);
+  
+  // Function to generate image URLs for unidentified faces
+  const getUnidentifiedFaceImageUrl = (face: UnidentifiedFace): string => {
+    // If we have a directory and filename, use that
+    if (speakerResults?.unidentified_dir && face.filename) {
+      return `${speakerResults.unidentified_dir}/${encodeURIComponent(face.filename)}`;
+    }
+    
+    // Otherwise try standard API endpoints
+    return `/api/v1/files/unidentified/${encodeURIComponent(face.filename || `unidentified_face_${face.id}.jpg`)}`;
+  };
   // Extract speakers and unidentified faces from speakerResults
   const speakers = speakerResults?.speakers || [];
   const unidentifiedFaces = speakerResults?.unidentified_faces || [];
@@ -222,18 +233,21 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
                     <div className="my-2">
                       {/* No console.log in JSX to avoid lint errors */}
                       <img 
-                        src={`/api/v1/files/unidentified/${encodeURIComponent(face.filename)}`} 
+                        src={getUnidentifiedFaceImageUrl(face)} 
                         alt={`Unidentified face ${face.id}`} 
                         className="w-full h-32 object-cover rounded"
                         onError={(e) => {
                           console.log(`Error loading image: ${face.filename}`);
-                          console.log(`Original URL: /api/v1/files/unidentified/${encodeURIComponent(face.filename)}`);
+                          console.log(`Original URL: ${getUnidentifiedFaceImageUrl(face)}`);
                           
                           // Try different URL formats as fallbacks
                           const fallbackUrls = [
                             `/api/v1/files/unidentified/unidentified_face_${face.id}.jpg`,
-                            `/api/v1/recognition/unidentified/${encodeURIComponent(face.filename)}`,
-                            `/api/v1/recognition/unidentified/unidentified_face_${face.id}.jpg`
+                            `/api/v1/recognition/unidentified/${encodeURIComponent(face.filename || '')}`,
+                            `/api/v1/recognition/unidentified/unidentified_face_${face.id}.jpg`,
+                            `/api/v1/files/unidentified/${face.id}.jpg`,
+                            `/api/v1/recognition/unidentified/${face.id}.jpg`,
+                            `/api/v1/files/faces/${face.id}.jpg`
                           ];
                           
                           let currentFallbackIndex = 0;

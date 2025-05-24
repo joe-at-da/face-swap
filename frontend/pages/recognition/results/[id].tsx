@@ -97,17 +97,29 @@ const RecognitionResultsPage = () => {
         
         // The response might be directly the data object
         if (statusResponse && typeof statusResponse === 'object') {
-          // If statusResponse is already the data object
-          if (statusResponse.results || statusResponse.speakers || statusResponse.unidentified_faces) {
+          // Log all keys in the response to debug
+          console.log('Status response keys:', Object.keys(statusResponse));
+          
+          // If statusResponse is already the data object with success field (common format)
+          if (statusResponse.success) {
+            resultsObj = statusResponse;
+          }
+          // If statusResponse has results, speakers or unidentified_faces
+          else if (statusResponse.results || statusResponse.speakers || statusResponse.unidentified_faces) {
             resultsObj = statusResponse;
           } 
           // If statusResponse has a data property
           else if (statusResponse.data) {
             resultsObj = statusResponse.data;
           }
-          // If we couldn't find data
+          // If we couldn't find data but have a results property
+          else if (statusResponse.results) {
+            resultsObj = { results: statusResponse.results };
+          }
+          // Accept any object as a last resort
           else {
-            throw new Error('No recognition status data found in response');
+            console.log('Using statusResponse as is, no specific fields found');
+            resultsObj = statusResponse;
           }
         } else {
           throw new Error('Invalid recognition status response format');
@@ -173,17 +185,36 @@ const RecognitionResultsPage = () => {
       
       // Step 5: Parse the recognition results
       let recognitionResults;
+      
+      // Log the recognition_results field to debug
+      console.log('Recognition results field type:', typeof captureDataObj.recognition_results);
+      if (captureDataObj.recognition_results) {
+        console.log('Recognition results field exists');
+      } else {
+        console.log('Recognition results field is missing or null');
+        // Try to use the resultsObj directly if recognition_results is missing
+        recognitionResults = resultsObj;
+        console.log('Using resultsObj as recognitionResults');
+      }
+      
+      // Try to parse if it's a string
       if (typeof captureDataObj.recognition_results === 'string') {
         try {
           recognitionResults = JSON.parse(captureDataObj.recognition_results);
           console.log('Successfully parsed recognition results from string');
         } catch (e) {
           console.error('Error parsing recognition results:', e);
-          setError('Error parsing recognition results.');
-          setIsLoading(false);
-          return;
+          // Don't fail immediately, try to use resultsObj
+          if (resultsObj) {
+            console.log('Using resultsObj as fallback after parsing error');
+            recognitionResults = resultsObj;
+          } else {
+            setError('Error parsing recognition results.');
+            setIsLoading(false);
+            return;
+          }
         }
-      } else {
+      } else if (captureDataObj.recognition_results) {
         recognitionResults = captureDataObj.recognition_results;
         console.log('Recognition results already in object format');
       }
@@ -196,12 +227,15 @@ const RecognitionResultsPage = () => {
       let transcript = '';
       
       // Log recognition results structure for debugging
-      console.log('Recognition results structure:', JSON.stringify(recognitionResults).substring(0, 200) + '...');
+      console.log('Recognition results structure:', JSON.stringify(recognitionResults || {}).substring(0, 200) + '...');
       
       console.log('Checking for unidentified faces in resultsObj:', resultsObj);
+      console.log('ResultsObj keys:', Object.keys(resultsObj || {}));
       
-      if (resultsObj.unidentified_faces) {
+      // Check multiple possible locations for unidentified faces
+      if (resultsObj?.unidentified_faces) {
         // Format 1: Unidentified faces directly in the results
+        console.log('Found unidentified_faces directly in resultsObj');
         unidentifiedFaces = resultsObj.unidentified_faces;
         unidentifiedDir = resultsObj.unidentified_dir || '';
         console.log(`Found ${unidentifiedFaces.length} unidentified faces directly in results`);
@@ -225,7 +259,7 @@ const RecognitionResultsPage = () => {
           Array.isArray(recognitionResults.speaker_identification.results.unidentified_faces)) {
         
         const rawUnidentifiedFaces = recognitionResults.speaker_identification.results.unidentified_faces;
-        console.log(`Found ${rawUnidentifiedFaces.length} unidentified faces in raw data`);
+        console.log(`Found ${rawUnidentifiedFaces.length} unidentified faces in speaker_identification.results`);
         
         // Process each unidentified face
         unidentifiedFaces = rawUnidentifiedFaces.map((face: any) => {
@@ -247,6 +281,58 @@ const RecognitionResultsPage = () => {
         if (recognitionResults.speaker_identification.unidentified_dir) {
           unidentifiedDir = recognitionResults.speaker_identification.unidentified_dir;
           console.log(`Setting unidentified directory to ${unidentifiedDir}`);
+        }
+      } else if (resultsObj?.results?.unidentified_faces && 
+          Array.isArray(resultsObj.results.unidentified_faces)) {
+        
+        const rawUnidentifiedFaces = resultsObj.results.unidentified_faces;
+        console.log(`Found ${rawUnidentifiedFaces.length} unidentified faces in resultsObj.results`);
+        
+        // Process each unidentified face
+        unidentifiedFaces = rawUnidentifiedFaces.map((face: any) => {
+          // Extract just the basename from the full path
+          const filename = face.filename ? face.filename.split('/').pop() : '';
+          console.log(`Processing face ${face.id} with filename ${filename}`);
+          
+          return {
+            id: face.id,
+            filename: filename,
+            start_time: face.appearances?.[0]?.timestamp || 0,
+            end_time: face.appearances?.[0]?.timestamp || 0,
+            duration: 30, // Default duration
+            timestamp: face.appearances?.[0]?.timestamp || 0
+          };
+        });
+        
+        // Set the unidentified directory if available
+        if (resultsObj.results.unidentified_dir) {
+          unidentifiedDir = resultsObj.results.unidentified_dir;
+          console.log(`Setting unidentified directory to ${unidentifiedDir}`);
+        }
+      } else if (resultsObj?.unidentified) {
+        // Another possible format where unidentified is directly in resultsObj
+        console.log('Found unidentified field in resultsObj');
+        
+        // If it's an array, use it directly
+        if (Array.isArray(resultsObj.unidentified)) {
+          const rawUnidentifiedFaces = resultsObj.unidentified;
+          console.log(`Found ${rawUnidentifiedFaces.length} unidentified faces in resultsObj.unidentified`);
+          
+          // Process each unidentified face
+          unidentifiedFaces = rawUnidentifiedFaces.map((face: any) => {
+            // Extract just the basename from the full path
+            const filename = face.filename ? face.filename.split('/').pop() : '';
+            console.log(`Processing face ${face.id || 'unknown'} with filename ${filename}`);
+            
+            return {
+              id: face.id || `unidentified_${Math.random().toString(36).substr(2, 9)}`,
+              filename: filename,
+              start_time: face.appearances?.[0]?.timestamp || face.timestamp || 0,
+              end_time: face.appearances?.[0]?.timestamp || face.timestamp || 0,
+              duration: 30, // Default duration
+              timestamp: face.appearances?.[0]?.timestamp || face.timestamp || 0
+            };
+          });
         }
 
         // Set facesDetected to at least the number of unidentified faces
@@ -335,21 +421,50 @@ const RecognitionResultsPage = () => {
       if (unidentifiedFaces.length > 0) {
         console.log(`Found ${unidentifiedFaces.length} unidentified faces`);
         console.log(`First unidentified face: ${JSON.stringify(unidentifiedFaces[0])}`);
+        
+        // Ensure all unidentified faces have valid filenames
+        unidentifiedFaces = unidentifiedFaces.map((face: any, index: number) => {
+          if (!face.filename || face.filename === '') {
+            console.log(`Face ${face.id} has no filename, generating one`);
+            return {
+              ...face,
+              filename: `unidentified_face_${face.id || index}.jpg`
+            };
+          }
+          return face;
+        });
       } else {
         console.log('No unidentified faces found in the results');
+        
+        // Check if we can extract unidentified faces from other parts of the response
+        if (resultsObj?.data?.unidentified_faces || recognitionResults?.data?.unidentified_faces) {
+          const dataFaces = (resultsObj?.data?.unidentified_faces || recognitionResults?.data?.unidentified_faces);
+          if (Array.isArray(dataFaces) && dataFaces.length > 0) {
+            console.log(`Found ${dataFaces.length} unidentified faces in data field`);
+            unidentifiedFaces = dataFaces.map((face: any, index: number) => ({
+              id: face.id || `unidentified_${index}`,
+              filename: face.filename || `unidentified_face_${index}.jpg`,
+              start_time: face.start_time || 0,
+              end_time: face.end_time || 0,
+              duration: face.duration || 30,
+              timestamp: face.timestamp || 0
+            }));
+          }
+        }
       }
       
       const finalSpeakerResults = {
         speakers,
         unidentified_faces: unidentifiedFaces,
-        unidentified_dir: unidentifiedDir,
+        unidentified_dir: unidentifiedDir || '/api/v1/files/unidentified', // Default path if not specified
         transcript: transcript,
         processing_info: {
-          faces_detected: facesDetected
+          faces_detected: facesDetected || unidentifiedFaces.length || 0
         }
       };
       
       console.log('Final speaker results:', finalSpeakerResults);
+      console.log('Unidentified faces count:', unidentifiedFaces.length);
       
       setSpeakerResults(finalSpeakerResults);
       setTranscriptionText(transcript);
