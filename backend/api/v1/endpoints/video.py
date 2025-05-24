@@ -66,6 +66,11 @@ async def list_clips(
             if hasattr(clip, 'transcription') and clip.transcription is not None:
                 has_transcription = True
             
+            # Generate a thumbnail URL based on the clip ID
+            # In a real system, this would point to an actual thumbnail image
+            # For now, we'll use a placeholder image from a public CDN
+            thumbnail_url = f"https://picsum.photos/seed/{clip.id}/640/360"
+            
             # Create a dictionary with all the fields from the database model
             clip_dict = {
                 "id": clip.id,
@@ -82,7 +87,7 @@ async def list_clips(
                 "end_time": clip.end_time.isoformat() if clip.end_time else None,
                 "storage_path": clip.source_url,  # Map source_url to storage_path for frontend compatibility
                 "file_path": clip.source_url,  # For frontend compatibility
-                "thumbnail_url": getattr(clip, 'thumbnail_url', None),
+                "thumbnail_url": thumbnail_url,  # Use our generated thumbnail URL
                 "created_by_id": clip.owner_id,
                 "has_transcription": has_transcription
             }
@@ -164,6 +169,13 @@ async def get_clip(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Video clip not found"
         )
+    
+    # Generate a thumbnail URL for the clip
+    thumbnail_url = f"https://picsum.photos/seed/{clip.id}/640/360"
+    
+    # Set the thumbnail_url attribute on the clip object
+    setattr(clip, 'thumbnail_url', thumbnail_url)
+    
     return clip
 
 @router.put("/{clip_id}", response_model=schemas.VideoClipResponse)
@@ -181,7 +193,7 @@ async def update_clip(
             detail="Video clip not found"
         )
     
-    if clip.user_id != current_user.id and current_user.role != UserRole.ADMIN:
+    if clip.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to modify this clip"
@@ -192,6 +204,13 @@ async def update_clip(
     
     db.commit()
     db.refresh(clip)
+    
+    # Generate a thumbnail URL for the clip
+    thumbnail_url = f"https://picsum.photos/seed/{clip.id}/640/360"
+    
+    # Set the thumbnail_url attribute on the clip object
+    setattr(clip, 'thumbnail_url', thumbnail_url)
+    
     return clip
 
 @router.delete("/{clip_id}", status_code=status.HTTP_200_OK)
@@ -208,7 +227,7 @@ async def delete_clip(
             detail="Video clip not found"
         )
     
-    if clip.user_id != current_user.id and current_user.role != UserRole.ADMIN:
+    if clip.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this clip"
