@@ -1,11 +1,11 @@
 import enum
 
 class ClipStatus(str, enum.Enum):
-    DRAFT = "draft"
-    PROCESSING = "processing"
-    READY = "ready"
-    PUBLISHED = "published"
-    FAILED = "failed"
+    DRAFT = "DRAFT"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    PUBLISHED = "PUBLISHED"
+    FAILED = "FAILED"
 
 class SocialPlatform(str, enum.Enum):
     TWITTER = "twitter"

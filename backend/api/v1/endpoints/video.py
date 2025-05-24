@@ -1,6 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from backend.api.deps import get_db, get_current_user, get_current_user_optional
 from backend.db import models
@@ -97,7 +98,18 @@ async def create_clip(
     """Create a new video clip."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
     
-    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status=ClipStatus.PROCESSING)
+    # Calculate duration in seconds
+    duration = int((clip.end_time - clip.start_time).total_seconds()) if hasattr(clip, 'end_time') and hasattr(clip, 'start_time') else 0
+    
+    # Create clip with required fields
+    clip_data = clip.dict()
+    db_clip = models.VideoClip(
+        **clip_data,
+        user_id=current_user.id,
+        status="PROCESSING",  # Use string directly since status is a String column, not an Enum
+        storage_path=f"/tmp/video_{current_user.id}_{int(datetime.utcnow().timestamp())}.mp4",
+        duration=duration
+    )
     db.add(db_clip)
     db.commit()
     db.refresh(db_clip)

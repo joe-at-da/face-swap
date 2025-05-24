@@ -58,7 +58,9 @@ async def create_clip(
         capture_session_id=capture.id,
         start_time=clip_data.start_time,
         end_time=clip_data.end_time,
-        status=ClipStatus.PROCESSING
+        status=ClipStatus.PROCESSING,
+        source_url=f"{settings.TEMP_STORAGE_PATH}/capture_{capture.id}.mp4",
+        duration=int((clip_data.end_time - clip_data.start_time).total_seconds())
     )
     
     db.add(clip)
