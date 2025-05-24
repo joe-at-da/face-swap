@@ -182,7 +182,14 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 
 ### Recent Achievements (May 2025)
 
-1. Transcription Feature (May 1, 2025)
+1. Facial Recognition Improvements (May 24, 2025)
+   - Fixed unidentified face image loading issues by implementing direct backend URL access
+   - Added robust fallback mechanisms for different URL formats and capture ID patterns
+   - Implemented intelligent face grouping to reduce duplicate faces in the UI
+   - Enhanced UI for face display with improved dark mode support and full-image viewing
+   - Optimized image loading with better error handling and placeholder fallbacks
+
+2. Transcription Feature (May 1, 2025)
    - Implemented automatic transcription for Parliament TV videos using Whisper
    - Created backend API endpoints for managing transcriptions
    - Developed frontend interface for viewing and managing transcriptions
@@ -240,6 +247,7 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 
 #### 4. Remaining Features
    - ✅ System settings interface for application-wide configuration
+   - ✅ Unidentified face display and management in recognition results
    - ⚠️ System logs viewer for administrators (frontend implemented with mock data)
      - Implement real backend API endpoint for system logs
      - Connect frontend to real API data
@@ -325,10 +333,24 @@ The diarization process uses multiple techniques:
 
 ### Future Improvements
 
+#### Audio-Visual Integration (Current Priority)
+- [ ] Connect facial recognition timestamps with voice recognition segments
+- [ ] Implement unified timeline view showing both face detections and speaker segments
+- [ ] Create correlation algorithm to match faces with voice segments based on timing
+- [ ] Add confidence scoring for multi-modal matches (face+voice)
+- [ ] Develop UI to display synchronized face and voice recognition results
+
+#### Voice Recognition Enhancements
 - [ ] Implement hierarchical clustering for improved speaker grouping
 - [ ] Add adaptive threshold adjustment based on audio quality
 - [ ] Implement speaker adaptation for improved recognition of specific speakers
 - [ ] Add batch processing for voice profile training
+
+#### Facial Recognition Enhancements
+- [ ] Improve face clustering algorithm to better group similar faces
+- [ ] Add face quality assessment to select the best representative image
+- [ ] Implement face verification to confirm matches across different timestamps
+- [ ] Add batch processing for face profile training
 
      - Transcription editing interface
      - Additional export formats (SRT, JSON, DOCX)
