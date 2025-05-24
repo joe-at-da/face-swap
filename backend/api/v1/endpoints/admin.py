@@ -47,6 +47,23 @@ async def get_system_stats(
         completed_clips = db.query(func.count(VideoClip.id)).filter(VideoClip.status == ClipStatus.READY).scalar() or 0
         failed_clips = db.query(func.count(VideoClip.id)).filter(VideoClip.status == ClipStatus.ERROR).scalar() or 0
         
+        # Get capture session stats
+        # Try to get real capture session data from the database
+        # Import here to avoid circular imports
+        from backend.db.models.capture import CaptureSession
+        from backend.db.models.enums import SessionStatus
+        
+        total_captures = db.query(func.count(CaptureSession.id)).scalar() or 0
+        active_captures = db.query(func.count(CaptureSession.id)).filter(
+            CaptureSession.status == SessionStatus.ACTIVE
+        ).scalar() or 0
+        completed_captures = db.query(func.count(CaptureSession.id)).filter(
+            CaptureSession.status == SessionStatus.COMPLETED
+        ).scalar() or 0
+        failed_captures = db.query(func.count(CaptureSession.id)).filter(
+            CaptureSession.status == SessionStatus.ERROR
+        ).scalar() or 0
+        
         # Get social stats
         total_posts = db.query(func.count(SocialPost.id)).scalar() or 0
         scheduled_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.SCHEDULED).scalar() or 0
@@ -88,10 +105,10 @@ async def get_system_stats(
                 "failed": failed_clips
             },
             "captures": {
-                "total": total_clips,  # Use clips as proxy for captures
-                "active": processing_clips,
-                "completed": completed_clips,
-                "failed": failed_clips
+                "total": total_captures,
+                "active": active_captures,
+                "completed": completed_captures,
+                "failed": failed_captures
             },
             "users": {
                 "total": total_users,
