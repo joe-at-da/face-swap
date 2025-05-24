@@ -54,25 +54,33 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
   }, [captureId]);
 
   const fetchSpeakers = async () => {
+    // Check if captureId is defined before making API calls
+    if (!captureId) {
+      console.error('Cannot fetch speakers: captureId is undefined');
+      setSpeakers([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
-      let speakersData = null;
+      let speakersData: any[] = [];
       
       // First try the speakers endpoint
       try {
         const response = await api.get(`/recognition/speakers/${captureId}`);
-        if (response && response.success) {
-          const data = response.data || response;
-          if (data.speakers && data.speakers.length > 0) {
-            speakersData = data.speakers;
-          }
+        const responseData = response.data || response;
+        if (responseData && responseData.unidentified_speakers) {
+          speakersData = responseData.unidentified_speakers || [];
+          console.log('Successfully fetched speakers from speakers endpoint');
         }
-      } catch (speakersErr) {
-        console.log('Speakers endpoint not available, trying detailed status');
+      } catch (err) {
+        console.log('Speakers endpoint failed, trying alternative endpoints:', err);
+        // Continue to next fallback
       }
       
-      // If speakers endpoint failed, try detailed status
-      if (!speakersData) {
+      // If no speakers found yet, try detailed status endpoint
+      if (speakersData.length === 0) {
         try {
           const statusResponse = await api.get(`/recognition/detailed-status/${captureId}`);
           const statusData = statusResponse.data || statusResponse;
@@ -86,6 +94,7 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
                 resultsData = JSON.parse(statusData.status.recognition_results);
               } catch (parseErr) {
                 console.error('Error parsing recognition results:', parseErr);
+                resultsData = null;
               }
             } else {
               resultsData = statusData.status.recognition_results;
@@ -94,15 +103,16 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
             // Extract speakers from results
             if (resultsData && resultsData.speakers) {
               speakersData = resultsData.speakers;
+              console.log('Successfully fetched speakers from detailed status endpoint');
             }
           }
         } catch (statusErr) {
-          console.error('Error fetching detailed status:', statusErr);
+          console.log('Detailed status endpoint failed, trying capture endpoint:', statusErr);
         }
       }
       
-      // If still no speakers data, try capture endpoint
-      if (!speakersData) {
+      // If still no speakers, try capture endpoint as last resort
+      if (speakersData.length === 0) {
         try {
           const captureResponse = await api.get(`/capture/${captureId}`);
           const captureData = captureResponse.data || captureResponse;
@@ -113,18 +123,21 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
             if (typeof captureData.recognition_results === 'string') {
               try {
                 resultsData = JSON.parse(captureData.recognition_results);
-                if (resultsData && resultsData.speakers) {
-                  speakersData = resultsData.speakers;
-                }
               } catch (parseErr) {
                 console.error('Error parsing recognition results from capture:', parseErr);
+                resultsData = null;
               }
-            } else if (captureData.recognition_results.speakers) {
-              speakersData = captureData.recognition_results.speakers;
+            } else {
+              resultsData = captureData.recognition_results;
+            }
+            
+            if (resultsData && resultsData.speakers) {
+              speakersData = resultsData.speakers;
+              console.log('Successfully fetched speakers from capture endpoint');
             }
           }
         } catch (captureErr) {
-          console.error('Error fetching capture data:', captureErr);
+          console.error('All fallback attempts failed. Error fetching capture data:', captureErr);
         }
       }
       
@@ -164,35 +177,49 @@ const UnidentifiedSpeakersPanel: React.FC<UnidentifiedSpeakersPanelProps> = ({
   };
 
   const fetchVoiceProfiles = async () => {
+    // Check if captureId is defined before making API calls that require it
+    if (!captureId) {
+      console.error('CaptureId is undefined for fetchVoiceProfiles');
+      // Still try the main profiles endpoint which doesn't require captureId
+    }
+
     try {
-      // Try to fetch from the API first
+      // Try to fetch from the API first - this endpoint doesn't require captureId
       try {
         const response = await api.get('/profiles/voice');
         
-        if (response && response.success) {
+        // Check if we have a valid response with profiles
+        if (response) {
           const data = response.data || response;
-          setVoiceProfiles(data.profiles || []);
-          return; // Exit if successful
+          if (data.profiles && Array.isArray(data.profiles)) {
+            setVoiceProfiles(data.profiles);
+            console.log('Successfully fetched voice profiles from profiles endpoint');
+            return; // Exit if successful
+          }
         }
       } catch (apiErr) {
-        console.log('Voice profiles endpoint not available');
+        console.log('Voice profiles endpoint not available:', apiErr);
       }
       
-      // If API fails, try to get profiles from the capture data
-      try {
-        const captureResponse = await api.get(`/capture/${captureId}`);
-        const captureData = captureResponse.data || captureResponse;
-        
-        if (captureData && captureData.voice_profiles) {
-          setVoiceProfiles(captureData.voice_profiles);
-          return;
+      // If API fails and we have a valid captureId, try to get profiles from the capture data
+      if (captureId) {
+        try {
+          const captureResponse = await api.get(`/capture/${captureId}`);
+          const captureData = captureResponse.data || captureResponse;
+          
+          if (captureData && captureData.voice_profiles && Array.isArray(captureData.voice_profiles)) {
+            setVoiceProfiles(captureData.voice_profiles);
+            console.log('Successfully fetched voice profiles from capture data');
+            return;
+          }
+        } catch (captureErr) {
+          console.log('Could not get profiles from capture data:', captureErr);
         }
-      } catch (captureErr) {
-        console.log('Could not get profiles from capture data');
       }
       
       // If all else fails, set empty array
       // Don't set error state as this is supplementary
+      console.log('No voice profiles found, using empty array');
       setVoiceProfiles([]);
     } catch (err) {
       console.error('Error fetching voice profiles:', err);

@@ -107,7 +107,49 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     };
   }, [segments, onTimeUpdate]);
 
+  // Helper function to process recognition results data
+  const processRecognitionResults = (resultsData: any) => {
+    if (!resultsData) {
+      console.error('No valid recognition results data to process');
+      return;
+    }
+
+    try {
+      // Process speakers
+      const speakersData = resultsData.speakers || [];
+      const mappedSpeakers = speakersData.map((speaker: any, index: number) => ({
+        id: speaker.id || `speaker-${index}`,
+        name: speaker.name || `Speaker ${index + 1}`,
+        color: speakerColors[index % speakerColors.length]
+      }));
+      
+      // Process segments
+      const segmentsData = resultsData.segments || [];
+      const mappedSegments = segmentsData.map((segment: any, index: number) => ({
+        id: segment.id || `segment-${index}`,
+        speakerId: segment.speaker_id || segment.speakerId || 'unknown',
+        startTime: parseFloat(segment.start_time || segment.startTime || 0),
+        endTime: parseFloat(segment.end_time || segment.endTime || 0),
+        text: segment.text || '',
+        confidence: segment.confidence || 1.0
+      }));
+      
+      setSpeakers(mappedSpeakers);
+      setSegments(mappedSegments);
+    } catch (err) {
+      console.error('Error processing recognition results:', err);
+    }
+  };
+
   const fetchRecognitionData = async () => {
+    // Check if captureId is defined before making API calls
+    if (!captureId) {
+      console.error('Cannot fetch recognition data: captureId is undefined');
+      setError('Missing capture ID');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
       
@@ -132,10 +174,20 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
           }
         }
       } catch (statusErr) {
-        console.error('Error fetching detailed status:', statusErr);
+        console.log('Detailed status endpoint failed, trying alternative endpoints:', statusErr);
       }
       
-      // If no results from detailed status, try to get capture data
+      // If no results from detailed status, try the recognition results endpoint
+      if (!resultsData) {
+        try {
+          const resultsResponse = await api.get(`/recognition/results/${captureId}`);
+          resultsData = resultsResponse.data || resultsResponse;
+        } catch (resultsErr) {
+          console.log('Recognition results endpoint failed, trying capture endpoint:', resultsErr);
+        }
+      }
+      
+      // If still no results, try to get capture data
       if (!resultsData) {
         try {
           const captureResponse = await api.get(`/capture/${captureId}`);
@@ -155,7 +207,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             }
           }
         } catch (captureErr) {
-          console.error('Error fetching capture data:', captureErr);
+          console.error('All fallback attempts failed. Error fetching capture data:', captureErr);
         }
       }
       
