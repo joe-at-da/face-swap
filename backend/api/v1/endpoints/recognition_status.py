@@ -77,6 +77,7 @@ async def get_recognition_status(
     }
 
 @router.get("/detailed-status/{video_id}", response_model=Dict[str, Any])
+@router.get("/recognition-status/detailed-status/{video_id}", response_model=Dict[str, Any])
 async def get_detailed_recognition_status(
     video_id: int,
     db: Session = Depends(get_db),

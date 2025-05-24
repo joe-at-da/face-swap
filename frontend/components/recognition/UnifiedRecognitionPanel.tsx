@@ -101,7 +101,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       // First try to get detailed status
       try {
         console.log('Fetching detailed status for captureId:', captureId);
-        const detailedResponse = await api.get(`/recognition/detailed-status/${captureId}`);
+        const detailedResponse = await api.get(`/recognition/status/detailed-status/${captureId}`);
         
         console.log('Detailed status response:', detailedResponse);
         const detailedData = detailedResponse as { success: boolean; status?: string; video_id?: number; progress?: any; completion_percentage?: number; started_at?: string; completed_at?: string };
@@ -441,7 +441,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         <div className="flex items-center mb-2">
           <span className="font-semibold mr-2">Status:</span>
           <span className={`px-2 py-1 rounded-full text-sm ${getStatusBgColor(recognitionStatus?.status || 'not_started')} ${getStatusColor(recognitionStatus?.status || 'not_started')}`}>
-            {recognitionStatus?.status?.replace('_', ' ') || 'Not Started'}
+            {typeof recognitionStatus?.status === 'string' ? recognitionStatus.status.replace('_', ' ') : 'Not Started'}
           </span>
         </div>
 

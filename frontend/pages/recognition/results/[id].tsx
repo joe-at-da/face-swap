@@ -6,6 +6,8 @@ import { withAuth, useAuth } from '../../../contexts/AuthContext';
 import { UserRole } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
 import CustomRecognitionResults from '../../../components/recognition/CustomRecognitionResults';
+import UnifiedRecognitionTimeline from '../../../components/recognition/UnifiedRecognitionTimeline';
+import UnifiedRecognitionResults from '../../../components/recognition/UnifiedRecognitionResults';
 import { toast } from 'react-toastify';
 
 // Types
@@ -36,6 +38,9 @@ const RecognitionResultsPage = () => {
   const [transcriptionText, setTranscriptionText] = useState<string | undefined>(undefined);
   const [retryCount, setRetryCount] = useState(0);
   const [captureData, setCaptureData] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState('unified');
+  const [currentTime, setCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
 
   // Function to fetch recognition results
   const fetchRecognitionResults = async (): Promise<void> => {
@@ -480,6 +485,26 @@ const RecognitionResultsPage = () => {
   useEffect(() => {
     if (id) {
       fetchRecognitionResults();
+      
+      // Try to get video duration from the capture data
+      if (captureData?.duration) {
+        setVideoDuration(captureData.duration);
+      } else {
+        // Fetch video metadata to get duration
+        const fetchVideoDuration = async () => {
+          try {
+            const response = await api.get(`/capture/${id}/metadata`);
+            const data = response.data || response;
+            if (data.duration) {
+              setVideoDuration(data.duration);
+            }
+          } catch (err) {
+            console.error('Error fetching video metadata:', err);
+          }
+        };
+        
+        fetchVideoDuration();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, retryCount]);
@@ -548,13 +573,79 @@ const RecognitionResultsPage = () => {
               )}
             </div>
           ) : (
-            <CustomRecognitionResults
-              videoId={Number(id)}
-              speakerResults={speakerResults}
-              transcriptionText={transcriptionText}
-              isLoading={isLoading}
-              error={undefined}
-            />
+            <div>
+              {/* Tabs */}
+              <div className="mb-4 border-b border-gray-700">
+                <ul className="flex flex-wrap -mb-px">
+                  <li className="mr-2">
+                    <button
+                      className={`inline-block p-4 ${
+                        activeTab === 'unified'
+                          ? 'text-blue-500 border-b-2 border-blue-500'
+                          : 'text-gray-400 hover:text-gray-300'
+                      }`}
+                      onClick={() => setActiveTab('unified')}
+                    >
+                      Unified View
+                    </button>
+                  </li>
+                  <li className="mr-2">
+                    <button
+                      className={`inline-block p-4 ${
+                        activeTab === 'faces'
+                          ? 'text-blue-500 border-b-2 border-blue-500'
+                          : 'text-gray-400 hover:text-gray-300'
+                      }`}
+                      onClick={() => setActiveTab('faces')}
+                    >
+                      Faces
+                    </button>
+                  </li>
+                  <li className="mr-2">
+                    <button
+                      className={`inline-block p-4 ${
+                        activeTab === 'timeline'
+                          ? 'text-blue-500 border-b-2 border-blue-500'
+                          : 'text-gray-400 hover:text-gray-300'
+                      }`}
+                      onClick={() => setActiveTab('timeline')}
+                    >
+                      Timeline
+                    </button>
+                  </li>
+                </ul>
+              </div>
+              
+              {/* Tab content */}
+              <div className="p-4">
+                {activeTab === 'unified' && (
+                  <UnifiedRecognitionResults videoId={String(id)} />
+                )}
+                
+                {activeTab === 'faces' && (
+                  <CustomRecognitionResults
+                    videoId={Number(id)}
+                    speakerResults={speakerResults}
+                    transcriptionText={transcriptionText}
+                    isLoading={isLoading}
+                    error={undefined}
+                  />
+                )}
+                
+                {activeTab === 'timeline' && (
+                  <UnifiedRecognitionTimeline
+                    videoId={String(id)}
+                    currentTime={currentTime}
+                    onSeek={(time) => {
+                      setCurrentTime(time);
+                      // Navigate to the video player at the specified time
+                      router.push(`/parliament-tv/captures/${id}?t=${Math.floor(time)}`);
+                    }}
+                    videoDuration={videoDuration || 600} // Default to 10 minutes if duration unknown
+                  />
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
