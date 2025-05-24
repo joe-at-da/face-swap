@@ -22,7 +22,7 @@ class User(Base):
 
     # Relationships
     capture_sessions = relationship("CaptureSession", back_populates="user")
-    video_clips = relationship("VideoClip", back_populates="created_by_user")
+    clips = relationship("VideoClip", back_populates="owner")  # Changed from video_clips to clips to match VideoClip model
     social_posts = relationship("SocialPost", back_populates="created_by")
     speaker_identifications = relationship("SpeakerIdentification", back_populates="created_by")
     parliament_transcriptions = relationship("ParliamentTranscription", back_populates="created_by")

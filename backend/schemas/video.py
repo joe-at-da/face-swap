@@ -22,7 +22,7 @@ class VideoClipResponse(BaseModel):
     status: str
     storage_path: Optional[str] = None
     duration: Optional[float] = None
-    user_id: int
+    owner_id: int  # Changed from user_id to owner_id to match database model
     capture_session_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
