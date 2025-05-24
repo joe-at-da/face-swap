@@ -5,6 +5,7 @@ API endpoints for recognition timeline data combining face and voice recognition
 import os
 import logging
 import json
+import uuid
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -68,36 +69,46 @@ async def get_recognition_timeline(
         # Extract face detections
         faces = face_results.get("faces", [])
         
-        # If no faces found but we know this is a valid capture, create some sample data for testing
-        if not faces and capture.status == "completed" and capture.id:
-            # Create some sample timeline data for testing purposes
-            # This is a temporary solution to ensure the timeline view works
-            # It will be replaced with real data once the recognition process is complete
-            duration = capture.duration or 300  # Default to 5 minutes if not set
-            
-            # Add a sample face detection
-            timeline_data.append({
-                "type": "face",
-                "id": "sample_face_1",
-                "person_id": "sample_person_1",
-                "name": "Sample Person",
-                "start": 10.0,
-                "end": 30.0,
-                "confidence": 0.85,
-                "image_path": "/app/data/temp/sample_face.jpg"
-            })
-            
-            # Add a sample speaker segment
-            timeline_data.append({
-                "type": "speaker",
-                "id": "sample_speaker_1",
-                "person_id": "sample_person_1",
-                "name": "Sample Person",
-                "start": 15.0,
-                "end": 25.0,
-                "confidence": 0.75,
-                "text": "This is a sample transcription text."
-            })
+        # If no faces found but we have recognition results, try to extract from other formats
+        if not faces and capture.status == "completed" and capture.recognition_results:
+            try:
+                # Try to parse recognition results to extract face data
+                if isinstance(capture.recognition_results, str):
+                    recognition_data = json.loads(capture.recognition_results)
+                else:
+                    recognition_data = capture.recognition_results
+                
+                # Check for speakers in recognition results
+                speakers = recognition_data.get("speakers", [])
+                for speaker in speakers:
+                    if speaker.get("face_detections") or speaker.get("faceDetections"):
+                        face_detections = speaker.get("face_detections") or speaker.get("faceDetections", [])
+                        for detection in face_detections:
+                            faces.append({
+                                "id": detection.get("id", str(uuid.uuid4())),
+                                "timestamp": detection.get("timestamp", 0),
+                                "start_time": detection.get("start_time", detection.get("startTime", 0)),
+                                "end_time": detection.get("end_time", detection.get("endTime", 0)),
+                                "person_id": speaker.get("profile_id", speaker.get("profileId", None)),
+                                "name": speaker.get("name", "Unknown Speaker"),
+                                "filename": detection.get("filename", None)
+                            })
+                
+                # Check for unidentified faces
+                unidentified = recognition_data.get("unidentified_faces", recognition_data.get("unidentifiedFaces", []))
+                for face in unidentified:
+                    faces.append({
+                        "id": face.get("id", str(uuid.uuid4())),
+                        "timestamp": face.get("timestamp", 0),
+                        "start_time": face.get("start_time", face.get("startTime", 0)),
+                        "end_time": face.get("end_time", face.get("endTime", 0)),
+                        "person_id": None,
+                        "name": "Unknown Person",
+                        "filename": face.get("filename", None)
+                    })
+            except Exception as e:
+                logger.error(f"Error extracting face data from recognition results: {str(e)}")
+                # Continue with empty faces list
         
         # Process actual face detections if available
         for face in faces:

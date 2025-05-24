@@ -223,8 +223,8 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
             className="form-select text-sm"
           >
             <option value="twitter">Twitter</option>
-            <option value="linkedin">LinkedIn</option>
             <option value="facebook">Facebook</option>
+            <option value="linkedin">LinkedIn</option>
           </select>
         </div>
       </div>
