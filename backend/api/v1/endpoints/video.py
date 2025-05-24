@@ -23,71 +23,95 @@ async def list_clips(
     current_user: Optional[UserModel] = Depends(get_current_user_optional)
 ):
     """List video clips with pagination and optional filtering."""
-    # Completely bypass the database query and return a hardcoded response
-    # This will help us determine if the issue is with the database schema or with something else
-    print("Returning hardcoded clips response with frontend-compatible format")
-    
-    # Create a few sample clips
-    clips = [
-        {
-            "id": 1,
-            "title": "Sample Clip 1",
-            "description": "This is a sample clip for testing",
-            "duration": 120,
-            "status": "ready",
-            "user_id": 1,
-            "created_at": "2025-04-26T14:00:00",
-            "error_message": None,
-            "capture_session_id": None,
-            "updated_at": None,
-            "start_time": None,
-            "end_time": None,
-            "storage_path": None,
-            # Add fields expected by the frontend
-            "file_path": "/path/to/sample1.mp4",
-            "thumbnail_url": None,
-            "created_by_id": 1,
-            "has_transcription": False
-        },
-        {
-            "id": 2,
-            "title": "Sample Clip 2",
-            "description": "Another sample clip for testing",
-            "duration": 180,
-            "status": "processing",
-            "user_id": 1,
-            "created_at": "2025-04-26T15:00:00",
-            "error_message": None,
-            "capture_session_id": None,
-            "updated_at": None,
-            "start_time": None,
-            "end_time": None,
-            "storage_path": None,
-            # Add fields expected by the frontend
-            "file_path": "/path/to/sample2.mp4",
-            "thumbnail_url": None,
-            "created_by_id": 1,
-            "has_transcription": False
+    try:
+        # Start with a base query
+        query = db.query(models.VideoClip)
+        
+        # Apply status filter if provided
+        if status:
+            query = query.filter(models.VideoClip.status == status)
+        
+        # Apply sorting if provided
+        if sort:
+            if sort == "newest":
+                query = query.order_by(models.VideoClip.created_at.desc())
+            elif sort == "oldest":
+                query = query.order_by(models.VideoClip.created_at.asc())
+            elif sort == "title_asc":
+                query = query.order_by(models.VideoClip.title.asc())
+            elif sort == "title_desc":
+                query = query.order_by(models.VideoClip.title.desc())
+            elif sort == "duration_asc":
+                query = query.order_by(models.VideoClip.duration.asc())
+            elif sort == "duration_desc":
+                query = query.order_by(models.VideoClip.duration.desc())
+        else:
+            # Default sorting is by newest first
+            query = query.order_by(models.VideoClip.created_at.desc())
+        
+        # Get total count for pagination
+        total = query.count()
+        
+        # Apply pagination
+        query = query.offset(skip).limit(limit)
+        
+        # Execute query and get results
+        db_clips = query.all()
+        
+        # Convert to response format
+        clips = []
+        for clip in db_clips:
+            # Check if the clip has a transcription
+            has_transcription = False
+            if hasattr(clip, 'transcription') and clip.transcription is not None:
+                has_transcription = True
+            
+            # Create a dictionary with all the fields from the database model
+            clip_dict = {
+                "id": clip.id,
+                "title": clip.title,
+                "description": clip.description,
+                "duration": clip.duration,
+                "status": clip.status.value if hasattr(clip.status, 'value') else str(clip.status),
+                "user_id": clip.owner_id,  # Map owner_id to user_id for frontend compatibility
+                "created_at": clip.created_at.isoformat() if clip.created_at else None,
+                "updated_at": clip.updated_at.isoformat() if clip.updated_at else None,
+                "error_message": clip.error_message,
+                "capture_session_id": clip.capture_session_id,
+                "start_time": clip.start_time.isoformat() if clip.start_time else None,
+                "end_time": clip.end_time.isoformat() if clip.end_time else None,
+                "storage_path": clip.source_url,  # Map source_url to storage_path for frontend compatibility
+                "file_path": clip.source_url,  # For frontend compatibility
+                "thumbnail_url": getattr(clip, 'thumbnail_url', None),
+                "created_by_id": clip.owner_id,
+                "has_transcription": has_transcription
+            }
+            
+            clips.append(clip_dict)
+        
+        # Return in the format expected by the frontend
+        response = {
+            "items": clips,
+            "total": total,
+            "page": (skip // limit) + 1 if limit > 0 else 1,
+            "size": limit,
+            "pages": (total + limit - 1) // limit if limit > 0 else 1
         }
-    ]
+        
+        return response
     
-    # Apply basic filtering if needed
-    if status:
-        clips = [clip for clip in clips if clip["status"] == status]
-    
-    # Apply basic pagination
-    paginated_clips = clips[skip:skip+limit]
-    
-    # Return in the format expected by the frontend
-    response = {
-        "items": paginated_clips,
-        "total": len(clips),
-        "page": (skip // limit) + 1,
-        "size": limit,
-        "pages": (len(clips) + limit - 1) // limit
-    }
-    
-    return response
+    except Exception as e:
+        # Log the error
+        print(f"Error listing video clips: {str(e)}")
+        
+        # Return an empty response in case of error
+        return {
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "size": limit,
+            "pages": 0
+        }
 
 @router.post("/", response_model=schemas.VideoClipResponse, status_code=status.HTTP_201_CREATED)
 async def create_clip(
