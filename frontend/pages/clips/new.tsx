@@ -220,8 +220,37 @@ const NewVideoClipPage: React.FC = () => {
       const loadCaptureVideo = async () => {
         try {
           const captureData = await api.get(`/capture/${capture_id}`);
-          if (captureData && captureData.file_path) {
-            setVideoUrl(captureData.file_path);
+          if (captureData && captureData.id) {
+            // Get the filename from the capture data or construct it
+            const filename = captureData.file_path ? 
+              captureData.file_path.split('/').pop() : 
+              `capture_${String(captureData.id).padStart(4, '0')}.mp4`;
+            
+            // Use the authenticated streaming endpoint
+            // This endpoint includes the auth token automatically
+            const streamUrl = `/api/videos/stream-with-token/${filename}`;
+            
+            console.log('Setting video URL to:', streamUrl);
+            setVideoUrl(streamUrl);
+            
+            // Initialize form data with capture information
+            setFormData(prev => ({
+              ...prev,
+              source_id: captureData.id,
+              // Set default title if not already set
+              title: prev.title || `Clip from ${captureData.title || 'Capture Session'}`
+            }));
+            
+            // Set default start/end times if they're not already set
+            if (formData.start_time === undefined) {
+              setFormData(prev => ({ ...prev, start_time: 0 }));
+            }
+            
+            if (formData.end_time === undefined) {
+              // Set a default end time (30 seconds or video duration)
+              const defaultEndTime = 30; // Will be updated when video loads
+              setFormData(prev => ({ ...prev, end_time: defaultEndTime }));
+            }
           }
         } catch (error) {
           console.error('Failed to load capture video:', error);
@@ -252,7 +281,24 @@ const NewVideoClipPage: React.FC = () => {
   };
 
   const handleVideoLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    setDuration(e.currentTarget.duration);
+    const videoDuration = e.currentTarget.duration;
+    setDuration(videoDuration);
+    
+    // Set default start/end times if they're not already set
+    if (formData.start_time === undefined) {
+      setFormData(prev => ({ ...prev, start_time: 0 }));
+    }
+    
+    if (formData.end_time === undefined) {
+      // Set a default end time (30 seconds or video duration)
+      const defaultEndTime = Math.min(30, videoDuration);
+      setFormData(prev => ({ ...prev, end_time: defaultEndTime }));
+    }
+    
+    console.log('Video loaded with duration:', videoDuration, 'Setting times:', {
+      start: formData.start_time || 0,
+      end: formData.end_time || Math.min(30, videoDuration)
+    });
   };
 
   // Set start/end time for trimming
@@ -326,30 +372,68 @@ const NewVideoClipPage: React.FC = () => {
     
     if (!validateForm()) return;
     
+    // Double-check that start and end times are set
+    if (formData.source_type === 'capture' && (formData.start_time === undefined || formData.end_time === undefined)) {
+      // Set default values if they're not set
+      const updatedFormData = { ...formData };
+      if (formData.start_time === undefined) updatedFormData.start_time = 0;
+      if (formData.end_time === undefined) updatedFormData.end_time = Math.min(30, duration || 30);
+      setFormData(updatedFormData);
+      console.log('Setting default start/end times:', updatedFormData);
+      
+      // Show a message to the user
+      setErrors({
+        form: 'Setting default start and end times. Please try submitting again.'
+      });
+      return;
+    }
+    
     setIsUploading(true);
     
-    // Create FormData object for file upload
-    const formDataObj = new FormData();
-    formDataObj.append('title', formData.title);
-    formDataObj.append('description', formData.description || '');
-    formDataObj.append('source_type', formData.source_type);
-    formDataObj.append('generate_thumbnail', String(formData.generate_thumbnail));
-    
-    if (formData.source_type === 'upload' && formData.file) {
-      formDataObj.append('file', formData.file);
-    } else if (formData.source_type === 'capture' && formData.source_id) {
-      formDataObj.append('source_id', String(formData.source_id));
+    try {
+      // For capture source type, use the API directly instead of FormData
+      if (formData.source_type === 'capture' && formData.source_id) {
+        // Get current date to use as base for the datetime
+        const now = new Date();
+        const startDate = new Date(now);
+        const endDate = new Date(now);
+        
+        // Set hours, minutes, seconds based on the time values (in seconds)
+        startDate.setHours(0, 0, Math.floor(formData.start_time || 0), 0);
+        endDate.setHours(0, 0, Math.floor(formData.end_time || 30), 0);
+        
+        // Create a proper JSON payload
+        const payload = {
+          title: formData.title,
+          description: formData.description || '',
+          capture_session_id: formData.source_id,
+          start_time: startDate.toISOString(),
+          end_time: endDate.toISOString()
+        };
+        
+        console.log('Submitting clip with payload:', payload);
+        
+        // Use the API client directly
+        const result = await api.post('/clips', payload);
+        router.push(`/clips/${result.id}`);
+      } else if (formData.source_type === 'upload' && formData.file) {
+        // Create FormData object for file upload
+        const formDataObj = new FormData();
+        formDataObj.append('title', formData.title);
+        formDataObj.append('description', formData.description || '');
+        formDataObj.append('file', formData.file);
+        formDataObj.append('generate_thumbnail', String(formData.generate_thumbnail));
+        
+        // For upload, still use the mutation
+        createClipMutation.mutate(formDataObj);
+      }
+    } catch (error) {
+      console.error('Error creating clip:', error);
+      setErrors({
+        form: 'Failed to create video clip. Please check all required fields.'
+      });
+      setIsUploading(false);
     }
-    
-    if (formData.start_time !== undefined) {
-      formDataObj.append('start_time', String(formData.start_time));
-    }
-    
-    if (formData.end_time !== undefined) {
-      formDataObj.append('end_time', String(formData.end_time));
-    }
-    
-    createClipMutation.mutate(formDataObj);
   };
 
   return (

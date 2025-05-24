@@ -36,12 +36,15 @@ async def stream_media(
         capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
         
         if not capture:
+            logger.error(f"Capture session not found with ID: {video_id}")
             raise HTTPException(status_code=404, detail=f"Capture session not found with ID: {video_id}")
         
         # Get the file path from the capture session
         file_path = capture.file_path
+        logger.info(f"Original file path from database: {file_path}")
         
         if not file_path or not os.path.exists(file_path):
+            logger.warning(f"File path not found in database or does not exist: {file_path}")
             # Try to find the file using a pattern
             possible_paths = [
                 f"/app/data/temp/capture_{str(video_id).zfill(4)}.mp4",
@@ -50,12 +53,18 @@ async def stream_media(
                 f"/app/data/captures/capture_{video_id}.mp4"
             ]
             
+            logger.info(f"Trying possible paths: {possible_paths}")
+            found = False
             for path in possible_paths:
+                logger.info(f"Checking path: {path}")
                 if os.path.exists(path):
                     file_path = path
+                    found = True
+                    logger.info(f"Found file at: {file_path}")
                     break
             
-            if not file_path or not os.path.exists(file_path):
+            if not found or not os.path.exists(file_path):
+                logger.error(f"Media file not found for capture ID: {video_id} after trying all possible paths")
                 raise HTTPException(status_code=404, detail=f"Media file not found for capture ID: {video_id}")
         
         # Determine content type based on file extension
@@ -65,12 +74,21 @@ async def stream_media(
         elif file_path.lower().endswith(".mov"):
             content_type = "video/quicktime"
         
-        # Return the file as a streaming response
-        return FileResponse(
+        logger.info(f"Serving file: {file_path} with content type: {content_type}")
+        
+        # Return the file as a streaming response with appropriate headers
+        response = FileResponse(
             path=file_path,
             media_type=content_type,
             filename=os.path.basename(file_path)
         )
+        
+        # Add headers to prevent caching
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        return response
     
     except HTTPException:
         raise
