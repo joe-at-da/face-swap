@@ -142,9 +142,8 @@ const RecognitionResultsPage: RecognitionResultsPage = () => {
                 speaker.time_segments.forEach((segment: any) => {
                   const segmentDuration = segment.end - segment.start;
                   totalDuration += segmentDuration;
-                  
-                  if (segment.start < earliestStart) earliestStart = segment.start;
-                  if (segment.end > latestEnd) latestEnd = segment.end;
+                  earliestStart = Math.min(earliestStart, segment.start);
+                  latestEnd = Math.max(latestEnd, segment.end);
                 });
               }
               
@@ -169,21 +168,52 @@ const RecognitionResultsPage: RecognitionResultsPage = () => {
                   face.time_segments.forEach((segment: any) => {
                     const segmentDuration = segment.end - segment.start;
                     totalDuration += segmentDuration;
-                    
-                    if (segment.start < earliestStart) earliestStart = segment.start;
-                    if (segment.end > latestEnd) latestEnd = segment.end;
+                    earliestStart = Math.min(earliestStart, segment.start);
+                    latestEnd = Math.max(latestEnd, segment.end);
                   });
                 }
                 
                 return {
-                  id: face.id || `unknown-${Math.random().toString(36).substr(2, 9)}`,
-                  filename: face.filename || '',
+                  id: face.id,
+                  filename: face.filename,
                   start_time: earliestStart !== Infinity ? earliestStart : 0,
                   end_time: latestEnd,
                   duration: totalDuration,
                   timestamp: face.timestamp
                 };
               });
+            }
+            
+            // Check for nested unidentified faces in speaker_identification.results
+            if (results.speaker_identification?.results?.unidentified_faces && 
+                Array.isArray(results.speaker_identification.results.unidentified_faces)) {
+              const nestedUnidentifiedFaces = results.speaker_identification.results.unidentified_faces.map((face: any) => {
+                // Calculate total duration across all time segments
+                let totalDuration = 0;
+                let earliestStart = Infinity;
+                let latestEnd = 0;
+                
+                if (face.time_segments && Array.isArray(face.time_segments)) {
+                  face.time_segments.forEach((segment: any) => {
+                    const segmentDuration = segment.end - segment.start;
+                    totalDuration += segmentDuration;
+                    earliestStart = Math.min(earliestStart, segment.start);
+                    latestEnd = Math.max(latestEnd, segment.end);
+                  });
+                }
+                
+                return {
+                  id: face.id,
+                  filename: face.filename,
+                  start_time: earliestStart !== Infinity ? earliestStart : 0,
+                  end_time: latestEnd,
+                  duration: totalDuration || 30, // Default duration if not available
+                  timestamp: face.appearances?.[0]?.timestamp || 0
+                };
+              });
+              
+              // Add these to the unidentified faces array
+              unidentifiedFaces = [...unidentifiedFaces, ...nestedUnidentifiedFaces];
             }
             
             // Store unidentified directory if available
@@ -214,9 +244,39 @@ const RecognitionResultsPage: RecognitionResultsPage = () => {
             });
           }
           
-          // Check if there are faces detected but not identified
-          const processingInfo = results.speaker_identification?.results?.processing_info || {};
-          const facesDetected = processingInfo.faces_detected || 0;
+          // IMPORTANT: Extract the faces_detected count directly from the recognition_results string
+          // This is a direct approach to fix the issue with nested structures
+          const recognitionResultsStr = captureData.recognition_results;
+          let facesDetected = 0;
+          
+          try {
+            // Look for "faces_detected": number pattern in the string
+            const facesDetectedMatch = recognitionResultsStr.match(/"faces_detected":\s*(\d+)/);
+            if (facesDetectedMatch && facesDetectedMatch[1]) {
+              facesDetected = parseInt(facesDetectedMatch[1], 10);
+              console.log(`Found ${facesDetected} faces detected in the recognition results string`);
+            }
+          } catch (e) {
+            console.error('Error extracting faces_detected from string:', e);
+          }
+          
+          // Fallback to the structured approach if the string approach fails
+          if (facesDetected === 0) {
+            // Check in the main processing_info
+            if (results.processing_info && results.processing_info.faces_detected) {
+              facesDetected = results.processing_info.faces_detected;
+            }
+            // Check in the speaker_identification.results.processing_info
+            else if (results.speaker_identification?.results?.processing_info?.faces_detected) {
+              facesDetected = results.speaker_identification.results.processing_info.faces_detected;
+            }
+            // Check in any other nested structure
+            else if (results.results?.processing_info?.faces_detected) {
+              facesDetected = results.results.processing_info.faces_detected;
+            }
+          }
+          
+          console.log(`Found ${facesDetected} detected faces, ${speakers.length} identified speakers, and ${unidentifiedFaces.length} unidentified faces`);
           
           // If there are faces detected but no speakers identified and no unidentified faces,
           // create placeholder unidentified faces
