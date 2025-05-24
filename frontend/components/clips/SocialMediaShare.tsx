@@ -10,6 +10,8 @@ interface SocialMediaShareProps {
   thumbnailUrl?: string;
   duration: number;
   hasTranscription: boolean;
+  startTime?: string;
+  endTime?: string;
 }
 
 interface SpeakerProfile {
@@ -20,12 +22,35 @@ interface SpeakerProfile {
   image_url?: string;
 }
 
+interface FaceRecognitionData {
+  id: number;
+  person_name: string;
+  confidence: number;
+  timestamp: string;
+  face_box?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  image_url?: string;
+}
+
+interface SpeakerRecognitionData {
+  id: number;
+  speaker_name: string;
+  confidence: number;
+  timestamp: string;
+  duration: number;
+}
+
 interface TranscriptionSegment {
   id: number;
   start_time: number;
   end_time: number;
   text: string;
   speaker_id?: string;
+  speaker?: string;
 }
 
 const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
@@ -34,16 +59,23 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
   clipUrl,
   thumbnailUrl,
   duration,
-  hasTranscription
+  hasTranscription,
+  startTime,
+  endTime
 }) => {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [transcription, setTranscription] = useState<any>(null);
   const [speakerProfiles, setSpeakerProfiles] = useState<SpeakerProfile[]>([]);
+  const [faceRecognitionData, setFaceRecognitionData] = useState<FaceRecognitionData[]>([]);
+  const [speakerRecognitionData, setSpeakerRecognitionData] = useState<SpeakerRecognitionData[]>([]);
   const [shareText, setShareText] = useState('');
   const [platform, setPlatform] = useState<'twitter' | 'linkedin' | 'facebook'>('twitter');
   const [includeTranscript, setIncludeTranscript] = useState(true);
   const [includeSpeakers, setIncludeSpeakers] = useState(true);
+  const [includeFaceRecognition, setIncludeFaceRecognition] = useState(true);
+  const [clipStartTime, setClipStartTime] = useState<Date | null>(startTime ? new Date(startTime) : null);
+  const [clipEndTime, setClipEndTime] = useState<Date | null>(endTime ? new Date(endTime) : null);
   
   // Character limits for different platforms
   const characterLimits = {
@@ -58,9 +90,12 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
       fetchTranscription();
     }
     
+    // Fetch face and speaker recognition data
+    fetchRecognitionData();
+    
     // Generate initial share text
     generateShareText();
-  }, [clipId, hasTranscription]);
+  }, [clipId, hasTranscription, clipStartTime, clipEndTime]);
   
   // Fetch transcription data
   const fetchTranscription = async () => {
@@ -113,38 +148,172 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
     }
   };
   
+  // Fetch face and speaker recognition data
+  const fetchRecognitionData = async () => {
+    if (!clipId) return;
+    
+    try {
+      setIsLoading(true);
+      
+      // Fetch face recognition data
+      try {
+        const faceData = await api.get(`/recognition/faces/clip/${clipId}`);
+        if (Array.isArray(faceData)) {
+          // Filter by time range if start and end times are available
+          const filteredFaceData = clipStartTime && clipEndTime 
+            ? faceData.filter(item => {
+                const timestamp = new Date(item.timestamp);
+                return timestamp >= clipStartTime && timestamp <= clipEndTime;
+              })
+            : faceData;
+            
+          setFaceRecognitionData(filteredFaceData);
+        } else if (faceData) {
+          setFaceRecognitionData([faceData]);
+        }
+      } catch (error) {
+        console.log('No face recognition data available or error fetching it:', error);
+      }
+      
+      // Fetch speaker recognition data
+      try {
+        const speakerData = await api.get(`/recognition/speakers/clip/${clipId}`);
+        if (Array.isArray(speakerData)) {
+          // Filter by time range if start and end times are available
+          const filteredSpeakerData = clipStartTime && clipEndTime 
+            ? speakerData.filter(item => {
+                const timestamp = new Date(item.timestamp);
+                return timestamp >= clipStartTime && timestamp <= clipEndTime;
+              })
+            : speakerData;
+            
+          setSpeakerRecognitionData(filteredSpeakerData);
+        } else if (speakerData) {
+          setSpeakerRecognitionData([speakerData]);
+        }
+      } catch (error) {
+        console.log('No speaker recognition data available or error fetching it:', error);
+      }
+    } catch (error) {
+      console.error('Error fetching recognition data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
   // Generate share text based on selected options
   const generateShareText = () => {
     let text = `${clipTitle}`;
     
-    // Add speaker information if available and selected
-    if (includeSpeakers && speakerProfiles.length > 0) {
-      const speakerNames = speakerProfiles
-        .map(profile => profile.name)
-        .join(', ');
+    // Add clip duration and timestamp info
+    const formattedDuration = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
+    text += `\n\nDuration: ${formattedDuration}`;
+    
+    if (clipStartTime && clipEndTime) {
+      const formatDate = (date: Date) => {
+        return date.toLocaleString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      };
       
-      text += `\n\nFeaturing: ${speakerNames}`;
+      text += `\nRecorded: ${formatDate(clipStartTime)} to ${formatDate(clipEndTime)}`;
+    }
+    
+    // Add comprehensive speaker information if available and selected
+    if (includeSpeakers) {
+      // Add speaker profiles
+      if (speakerProfiles.length > 0) {
+        const speakerInfo = speakerProfiles.map(profile => {
+          let info = profile.name;
+          if (profile.role) info += `, ${profile.role}`;
+          if (profile.party) info += ` (${profile.party})`;
+          return info;
+        }).join('\n• ');
+        
+        text += `\n\nFeaturing:\n• ${speakerInfo}`;
+      }
+      
+      // Add speaker recognition data
+      if (speakerRecognitionData.length > 0) {
+        // Group by speaker name and calculate average confidence
+        const speakerStats = speakerRecognitionData.reduce((acc: {[key: string]: {count: number, totalConfidence: number}}, item) => {
+          if (!acc[item.speaker_name]) {
+            acc[item.speaker_name] = { count: 0, totalConfidence: 0 };
+          }
+          acc[item.speaker_name].count += 1;
+          acc[item.speaker_name].totalConfidence += item.confidence;
+          return acc;
+        }, {});
+        
+        const speakerSummary = Object.entries(speakerStats).map(([name, stats]) => {
+          const avgConfidence = Math.round((stats.totalConfidence / stats.count) * 100);
+          return `${name} (${avgConfidence}% confidence, ${stats.count} segments)`;
+        }).join('\n• ');
+        
+        if (speakerSummary && !text.includes('Featuring:')) {
+          text += `\n\nSpeakers Identified:\n• ${speakerSummary}`;
+        }
+      }
+    }
+    
+    // Add face recognition data if available and selected
+    if (includeFaceRecognition && faceRecognitionData.length > 0) {
+      // Group by person name and calculate average confidence
+      const faceStats = faceRecognitionData.reduce((acc: {[key: string]: {count: number, totalConfidence: number}}, item) => {
+        if (!acc[item.person_name]) {
+          acc[item.person_name] = { count: 0, totalConfidence: 0 };
+        }
+        acc[item.person_name].count += 1;
+        acc[item.person_name].totalConfidence += item.confidence;
+        return acc;
+      }, {});
+      
+      const faceSummary = Object.entries(faceStats).map(([name, stats]) => {
+        const avgConfidence = Math.round((stats.totalConfidence / stats.count) * 100);
+        return `${name} (${avgConfidence}% confidence, visible in ${stats.count} frames)`;
+      }).join('\n• ');
+      
+      text += `\n\nFaces Identified:\n• ${faceSummary}`;
     }
     
     // Add transcript excerpt if available and selected
     if (includeTranscript && transcription && transcription.segments && transcription.segments.length > 0) {
-      // Get first 1-2 segments depending on length
-      const segments = transcription.segments.slice(0, 2);
+      // Filter segments by time range if start and end times are available
+      let relevantSegments = transcription.segments;
+      if (clipStartTime && clipEndTime) {
+        const startTimeSeconds = clipStartTime.getTime() / 1000;
+        const endTimeSeconds = clipEndTime.getTime() / 1000;
+        
+        relevantSegments = transcription.segments.filter((seg: TranscriptionSegment) => {
+          return seg.start_time >= startTimeSeconds && seg.end_time <= endTimeSeconds;
+        });
+      }
+      
+      // Get first 2-3 segments depending on length
+      const segments = relevantSegments.slice(0, 3);
       const excerptText = segments
-        .map((seg: TranscriptionSegment) => seg.text)
-        .join(' ');
+        .map((seg: TranscriptionSegment) => {
+          let text = seg.text;
+          if (seg.speaker) text = `${seg.speaker}: ${text}`;
+          return text;
+        })
+        .join('\n');
       
       // Truncate if needed
-      const maxExcerptLength = 100;
+      const maxExcerptLength = 200;
       const truncatedExcerpt = excerptText.length > maxExcerptLength
         ? excerptText.substring(0, maxExcerptLength) + '...'
         : excerptText;
       
-      text += `\n\n"${truncatedExcerpt}"`;
+      text += `\n\nTranscript Excerpt:\n"${truncatedExcerpt}"`;
     }
     
-    // Add URL
-    text += `\n\nWatch the full clip: ${typeof window !== 'undefined' ? window.location.origin : ''}/clips/${clipId}`;
+    // Add clip URL
+    text += `\n\nWatch the full clip: ${window.location.origin}/clips/${clipId}`;
     
     setShareText(text);
   };
@@ -167,12 +336,14 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
       setIncludeTranscript(checked);
     } else if (name === 'includeSpeakers') {
       setIncludeSpeakers(checked);
+    } else if (name === 'includeFaceRecognition') {
+      setIncludeFaceRecognition(checked);
     }
     
-    // Regenerate share text after a short delay
+    // Re-generate share text after changing options
     setTimeout(() => {
       generateShareText();
-    }, 100);
+    }, 0);
   };
   
   // Share to social media
@@ -271,18 +442,53 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
             </div>
           </div>
           
+          {/* Recognition Summary */}
+          {(faceRecognitionData.length > 0 || speakerRecognitionData.length > 0) && (
+            <div className="mb-4 p-4 bg-gray-800 text-white rounded-md">
+              <h3 className="text-lg font-medium mb-2">Recognition Data Summary</h3>
+              
+              {speakerRecognitionData.length > 0 && (
+                <div className="mb-3">
+                  <h4 className="text-md font-medium text-blue-400">Speaker Recognition</h4>
+                  <ul className="list-disc pl-5 text-sm text-gray-300">
+                    {Object.entries(speakerRecognitionData.reduce((acc: {[key: string]: number}, item) => {
+                      acc[item.speaker_name] = (acc[item.speaker_name] || 0) + 1;
+                      return acc;
+                    }, {})).map(([name, count], idx) => (
+                      <li key={idx}>{name} ({count} segments)</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              {faceRecognitionData.length > 0 && (
+                <div>
+                  <h4 className="text-md font-medium text-green-400">Face Recognition</h4>
+                  <ul className="list-disc pl-5 text-sm text-gray-300">
+                    {Object.entries(faceRecognitionData.reduce((acc: {[key: string]: number}, item) => {
+                      acc[item.person_name] = (acc[item.person_name] || 0) + 1;
+                      return acc;
+                    }, {})).map(([name, count], idx) => (
+                      <li key={idx}>{name} ({count} frames)</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          
           {/* Options */}
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-wrap gap-4 mb-4">
             <label className="flex items-center">
               <input
                 type="checkbox"
                 name="includeTranscript"
                 checked={includeTranscript}
                 onChange={handleCheckboxChange}
-                className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 disabled={!hasTranscription}
               />
-              <span className="ml-2 text-sm text-gray-700">Include transcript excerpt</span>
+              <span className="ml-2 text-sm text-gray-300">Include transcript excerpt</span>
             </label>
             
             <label className="flex items-center">
@@ -291,10 +497,22 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
                 name="includeSpeakers"
                 checked={includeSpeakers}
                 onChange={handleCheckboxChange}
-                className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-                disabled={speakerProfiles.length === 0}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                disabled={speakerProfiles.length === 0 && speakerRecognitionData.length === 0}
               />
-              <span className="ml-2 text-sm text-gray-700">Include speaker info</span>
+              <span className="ml-2 text-sm text-gray-300">Include speaker info</span>
+            </label>
+            
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                name="includeFaceRecognition"
+                checked={includeFaceRecognition}
+                onChange={handleCheckboxChange}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                disabled={faceRecognitionData.length === 0}
+              />
+              <span className="ml-2 text-sm text-gray-300">Include face recognition data</span>
             </label>
           </div>
           

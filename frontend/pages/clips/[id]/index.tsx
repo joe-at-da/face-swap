@@ -13,10 +13,11 @@ interface VideoClip {
   description: string;
   duration: number;
   file_path: string;
+  storage_path: string;
   thumbnail_url: string;
   created_at: string;
   updated_at: string;
-  created_by_id: number;
+  owner_id: number;
   created_by: {
     id: number;
     name: string;
@@ -24,6 +25,9 @@ interface VideoClip {
   };
   has_transcription: boolean;
   status: string;
+  source_url: string;
+  start_time: string;
+  end_time: string;
 }
 
 interface Transcription {
@@ -59,6 +63,7 @@ const VideoClipDetailPage: React.FC = () => {
       return await api.get(`/clips/${id}`);
     },
     enabled: !!id,
+    refetchOnWindowFocus: false,
   });
 
   // Fetch transcription if available
@@ -69,6 +74,39 @@ const VideoClipDetailPage: React.FC = () => {
       return await api.get(`/transcriptions/clip/${id}`);
     },
     enabled: !!id && !!clip?.has_transcription,
+    refetchOnWindowFocus: false,
+  });
+  
+  // Fetch speaker recognition data if available
+  const { data: speakerData } = useQuery({
+    queryKey: ['speakerRecognition', id],
+    queryFn: async () => {
+      if (!id) throw new Error('No clip ID provided');
+      try {
+        return await api.get(`/recognition/speakers/clip/${id}`);
+      } catch (error) {
+        console.log('No speaker recognition data available');
+        return null;
+      }
+    },
+    enabled: !!id,
+    refetchOnWindowFocus: false,
+  });
+  
+  // Fetch face recognition data if available
+  const { data: faceData } = useQuery({
+    queryKey: ['faceRecognition', id],
+    queryFn: async () => {
+      if (!id) throw new Error('No clip ID provided');
+      try {
+        return await api.get(`/recognition/faces/clip/${id}`);
+      } catch (error) {
+        console.log('No face recognition data available');
+        return null;
+      }
+    },
+    enabled: !!id,
+    refetchOnWindowFocus: false,
   });
 
   // Format duration in seconds to MM:SS
@@ -171,19 +209,19 @@ const VideoClipDetailPage: React.FC = () => {
         {/* Header with title and actions */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">{clip.title}</h1>
-            <p className="text-gray-500 mt-1">
+            <h1 className="text-3xl font-bold text-white">{clip.title}</h1>
+            <p className="text-gray-400 mt-1">
               {formatDuration(clip.duration)} • Created {formatDate(clip.created_at)}
             </p>
           </div>
           <div className="mt-4 md:mt-0 flex space-x-3">
             <Link href={`/clips/${clip.id}/edit`}>
-              <span className="btn-primary rounded-md px-4 py-2 text-center cursor-pointer inline-block">
+              <span className="bg-blue-600 text-white hover:bg-blue-700 rounded-md px-4 py-2 text-center cursor-pointer inline-block transition duration-150">
                 Edit Clip
               </span>
             </Link>
             <Link href={`/social/new?clipId=${clip.id}`}>
-              <span className="bg-secondary text-white hover:bg-secondary-dark rounded-md px-4 py-2 text-center cursor-pointer inline-block">
+              <span className="bg-indigo-600 text-white hover:bg-indigo-700 rounded-md px-4 py-2 text-center cursor-pointer inline-block transition duration-150">
                 Share on Social Media
               </span>
             </Link>
@@ -191,36 +229,52 @@ const VideoClipDetailPage: React.FC = () => {
         </div>
 
         {/* Video player */}
-        <div className="bg-white rounded-lg shadow overflow-hidden mb-6">
+        <div className="bg-gray-800 rounded-lg shadow overflow-hidden mb-6">
           <div className="aspect-w-16 aspect-h-9 bg-black">
-            {clip.file_path && (
+            {clip.storage_path ? (
               <video
-                src={clip.file_path}
-                poster={clip.thumbnail_url}
+                src={`/api/v1/stream/clip/${clip.id}`}
+                poster={clip.thumbnail_url || `/api/v1/thumbnail/clip/${clip.id}`}
                 controls
                 onTimeUpdate={handleTimeUpdate}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 className="w-full h-full object-contain"
+                preload="metadata"
               />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center text-gray-300">
+                  <svg className="w-16 h-16 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  <p className="text-lg font-medium">Processing Video</p>
+                  <p className="mt-2">The video is still being processed. Please check back later.</p>
+                </div>
+              </div>
             )}
           </div>
+          {clip.status === 'processing' && (
+            <div className="bg-yellow-100 text-yellow-800 p-3 text-center">
+              <p className="text-sm font-medium">This clip is still processing. The video may not be available yet.</p>
+            </div>
+          )}
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg shadow mb-6">
-          <div className="border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8">
+        <div className="bg-gray-800 rounded-lg shadow mb-6">
+          <div className="border-b border-gray-700">
+            <nav className="-mb-px flex space-x-8 px-4">
               <button
                 onClick={() => setActiveTab('details')}
-                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'details' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'details' ? 'border-blue-500 text-blue-500' : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'}`}
               >
                 Details
               </button>
               
               <button
                 onClick={() => setActiveTab('transcription')}
-                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'transcription' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'transcription' ? 'border-blue-500 text-blue-500' : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'}`}
                 disabled={!clip?.has_transcription}
               >
                 Transcription
@@ -228,7 +282,7 @@ const VideoClipDetailPage: React.FC = () => {
               
               <button
                 onClick={() => setActiveTab('share')}
-                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'share' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'share' ? 'border-blue-500 text-blue-500' : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-600'}`}
               >
                 Share
               </button>
@@ -238,40 +292,57 @@ const VideoClipDetailPage: React.FC = () => {
           <div className="p-6">
             {activeTab === 'details' ? (
               <div>
-                <h2 className="text-lg font-medium text-gray-900 mb-4">Clip Details</h2>
+                <h2 className="text-lg font-medium text-white mb-4">Clip Details</h2>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-1">Description</h3>
-                    <p className="text-gray-900">{clip.description || 'No description provided'}</p>
+                    <h3 className="text-sm font-medium text-gray-400 mb-1">Description</h3>
+                    <p className="text-gray-300">{clip.description || 'No description provided'}</p>
                   </div>
                   
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-1">Created By</h3>
-                    <p className="text-gray-900">{clip.created_by?.name || 'Unknown'}</p>
+                    <h3 className="text-sm font-medium text-gray-400 mb-1">Created By</h3>
+                    <p className="text-gray-300">{clip.created_by?.name || 'Unknown'}</p>
                   </div>
                   
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-1">Status</h3>
+                    <h3 className="text-sm font-medium text-gray-400 mb-1">Status</h3>
                     <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
                       clip.status === 'ready'
-                        ? 'bg-green-100 text-green-800'
+                        ? 'bg-green-800 text-green-200'
                         : clip.status === 'processing'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-red-100 text-red-800'
+                        ? 'bg-yellow-800 text-yellow-200'
+                        : 'bg-red-800 text-red-200'
                     }`}>
                       {clip.status.charAt(0).toUpperCase() + clip.status.slice(1)}
                     </span>
                     {clip.has_transcription && (
-                      <span className="ml-2 px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                      <span className="ml-2 px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-800 text-blue-200">
                         Transcribed
                       </span>
                     )}
                   </div>
                   
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-1">File Path</h3>
-                    <p className="text-gray-900 break-all">{clip.file_path}</p>
+                    <h3 className="text-sm font-medium text-gray-400 mb-1">Source URL</h3>
+                    <p className="text-gray-300 break-all">{clip.source_url || 'Not available'}</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-400 mb-1">Storage Path</h3>
+                    <p className="text-gray-300 break-all">{clip.storage_path || 'Processing...'}</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-400 mb-1">Video URL</h3>
+                    <a 
+                      href={`/api/v1/stream/clip/${clip.id}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 break-all"
+                    >
+                      {`/api/v1/stream/clip/${clip.id}`}
+                    </a>
                   </div>
                 </div>
               </div>
@@ -290,16 +361,55 @@ const VideoClipDetailPage: React.FC = () => {
                   </div>
                 ) : (
                   <div>
+                    {/* Speaker and Face Recognition Summary */}
+                    {(speakerData || faceData) && (
+                      <div className="mb-6 p-4 bg-gray-800 text-white rounded-md">
+                        <h3 className="text-lg font-medium mb-2">Recognition Data</h3>
+                        
+                        {speakerData && (
+                          <div className="mb-3">
+                            <h4 className="text-md font-medium text-blue-400">Speaker Recognition</h4>
+                            <p className="text-sm text-gray-300">
+                              {speakerData.speaker_name || 'Unknown speaker'}
+                              {speakerData.confidence && ` (${Math.round(speakerData.confidence * 100)}% confidence)`}
+                            </p>
+                          </div>
+                        )}
+                        
+                        {faceData && (
+                          <div>
+                            <h4 className="text-md font-medium text-green-400">Face Recognition</h4>
+                            <p className="text-sm text-gray-300">
+                              {faceData.person_name || 'Unknown person'}
+                              {faceData.confidence && ` (${Math.round(faceData.confidence * 100)}% confidence)`}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
                     {/* Current segment highlight */}
                     {currentSegment && (
-                      <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-md">
-                        <p className="text-lg font-medium text-gray-900">
+                      <div className="mb-6 p-4 bg-blue-900 text-white border-l-4 border-blue-500 rounded-md">
+                        <p className="text-lg font-medium">
                           {currentSegment.text}
                         </p>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {formatDuration(currentSegment.start_time)} - {formatDuration(currentSegment.end_time)}
-                          {currentSegment.speaker && ` • ${currentSegment.speaker}`}
-                        </p>
+                        <div className="flex items-center mt-2">
+                          <span className="text-sm text-gray-300">
+                            {formatDuration(currentSegment.start_time)} - {formatDuration(currentSegment.end_time)}
+                          </span>
+                          {currentSegment.speaker && (
+                            <span className="ml-2 px-2 py-1 text-xs font-semibold rounded-full bg-blue-700 text-white">
+                              {currentSegment.speaker}
+                            </span>
+                          )}
+                          <button 
+                            onClick={() => jumpToTime(currentSegment.start_time)}
+                            className="ml-auto text-xs bg-blue-600 hover:bg-blue-700 text-white py-1 px-2 rounded"
+                          >
+                            Play
+                          </button>
+                        </div>
                       </div>
                     )}
                     
@@ -308,16 +418,22 @@ const VideoClipDetailPage: React.FC = () => {
                       {transcription.segments.map((segment, index) => (
                         <div 
                           key={index} 
-                          className={`p-3 rounded-md cursor-pointer hover:bg-gray-50 ${
-                            currentSegment?.id === segment.id ? 'bg-blue-50' : ''
+                          className={`p-3 rounded-md cursor-pointer hover:bg-gray-700 ${
+                            currentSegment?.id === segment.id ? 'bg-gray-700' : 'bg-gray-800'
                           }`}
                           onClick={() => jumpToTime(segment.start_time)}
                         >
-                          <p className="text-gray-900">{segment.text}</p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
-                            {segment.speaker && ` • ${segment.speaker}`}
-                          </p>
+                          <p className="text-white">{segment.text}</p>
+                          <div className="flex items-center mt-1">
+                            <span className="text-xs text-gray-400">
+                              {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
+                            </span>
+                            {segment.speaker && (
+                              <span className="ml-2 px-2 py-0.5 text-xs font-semibold rounded-full bg-blue-600 text-white">
+                                {segment.speaker}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -331,10 +447,12 @@ const VideoClipDetailPage: React.FC = () => {
                   <SocialMediaShare
                     clipId={clip.id}
                     clipTitle={clip.title}
-                    clipUrl={clip.file_path}
-                    thumbnailUrl={clip.thumbnail_url}
+                    clipUrl={`/api/v1/stream/clip/${clip.id}`}
+                    thumbnailUrl={clip.thumbnail_url || `/api/v1/thumbnail/clip/${clip.id}`}
                     duration={clip.duration}
                     hasTranscription={clip.has_transcription}
+                    startTime={clip.start_time}
+                    endTime={clip.end_time}
                   />
                 )}
               </div>
