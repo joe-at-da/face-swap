@@ -3,12 +3,13 @@ API endpoints for facial and voice recognition.
 """
 
 import os
-import logging
 import json
-import subprocess
-from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
-from fastapi.responses import JSONResponse
+import time
+import logging
+import datetime
+from typing import Dict, List, Optional, Any, Union
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, BackgroundTasks, Body, Request
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 import sqlalchemy as sa
@@ -27,6 +28,53 @@ logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
+
+
+@router.get("/unidentified/{capture_id}/{filename}")
+async def get_unidentified_face_image(
+    capture_id: str,
+    filename: str
+):
+    """
+    Get an unidentified face image by capture ID and filename.
+    This endpoint directly serves images from the capture's unidentified faces directory.
+    This endpoint is public and does not require authentication.
+    """
+    try:
+        
+        # Sanitize the filename to prevent directory traversal
+        safe_filename = os.path.basename(filename)
+        logger.info(f"Looking for unidentified face image for capture {capture_id}: {safe_filename}")
+        
+        # Try with zero-padded capture ID (e.g., 0382)
+        padded_capture_id = capture_id.zfill(4)
+        
+        # Define possible paths for the unidentified face image
+        possible_paths = [
+            # Primary location - capture specific directory with padded ID
+            os.path.join("/app/data/temp", f"capture_{padded_capture_id}_unidentified_faces", safe_filename),
+            # Try with non-padded ID
+            os.path.join("/app/data/temp", f"capture_{capture_id}_unidentified_faces", safe_filename),
+            # Try in general unidentified faces directory
+            os.path.join("/app/data/unidentified_faces", f"capture_{padded_capture_id}", safe_filename),
+            os.path.join("/app/data/unidentified_faces", f"capture_{capture_id}", safe_filename),
+        ]
+        
+        # Try each possible path
+        for path in possible_paths:
+            if os.path.exists(path) and os.path.isfile(path):
+                logger.info(f"Found unidentified face image at {path}")
+                return FileResponse(path)
+        
+        # If we get here, the file wasn't found
+        logger.warning(f"Unidentified face image not found for capture {capture_id}: {safe_filename}")
+        
+        # Return a 404 error
+        raise HTTPException(status_code=404, detail=f"Unidentified face image not found: {safe_filename}")
+    except Exception as e:
+        logger.exception(f"Error getting unidentified face image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting unidentified face image: {str(e)}")
+
 
 # Initialize services
 facial_recognition_service = FacialRecognitionService()

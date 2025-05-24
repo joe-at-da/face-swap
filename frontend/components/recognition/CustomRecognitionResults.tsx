@@ -68,9 +68,33 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
   
   // Function to generate image URLs for unidentified faces
   const getUnidentifiedFaceImageUrl = (face: UnidentifiedFace): string => {
-    // If we have a directory and filename, use that
-    if (speakerResults?.unidentified_dir && face.filename) {
-      return `${speakerResults.unidentified_dir}/${encodeURIComponent(face.filename)}`;
+    // Extract the capture ID from the URL
+    const captureIdMatch = window.location.pathname.match(/\/recognition\/results\/(\d+)/);
+    const captureId = captureIdMatch ? captureIdMatch[1] : '';
+    console.log(`Extracted capture ID from URL: ${captureId}`);
+    
+    // If we have a capture ID, use the new direct endpoint
+    if (captureId) {
+      const url = `/api/v1/recognition/unidentified/${captureId}/${encodeURIComponent(face.filename || `unidentified_face_${face.id}.jpg`)}`;
+      console.log(`Generated image URL: ${url}`);
+      return url;
+    }
+    
+    // Check if the unidentified_dir is a full path or just a relative path
+    if (speakerResults?.unidentified_dir) {
+      // If it's a server-side path, convert it to an API endpoint
+      if (speakerResults.unidentified_dir.startsWith('/app/') || 
+          speakerResults.unidentified_dir.startsWith('/data/')) {
+        // Extract the capture ID from the path if possible
+        const match = speakerResults.unidentified_dir.match(/capture_(\d+)/);
+        const dirCaptureId = match ? match[1] : '';
+        
+        // Use the API endpoint instead of the server path
+        return `/api/v1/recognition/unidentified/${dirCaptureId}/${encodeURIComponent(face.filename || `unidentified_face_${face.id}.jpg`)}`;
+      }
+      
+      // Otherwise use the provided directory
+      return `${speakerResults.unidentified_dir}/${encodeURIComponent(face.filename || `unidentified_face_${face.id}.jpg`)}`;
     }
     
     // Otherwise try standard API endpoints
@@ -240,14 +264,24 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
                           console.log(`Error loading image: ${face.filename}`);
                           console.log(`Original URL: ${getUnidentifiedFaceImageUrl(face)}`);
                           
-                          // Try different URL formats as fallbacks
+                          // Extract capture ID if available
+                          const captureIdMatch = window.location.pathname.match(/\/recognition\/results\/(\d+)/);
+                          const captureId = captureIdMatch ? captureIdMatch[1] : '';
+                          const paddedCaptureId = captureId.padStart(4, '0'); // e.g., 382 -> 0382
+                          
+                          // Try different URL formats as fallbacks - focusing on the most likely paths
                           const fallbackUrls = [
-                            `/api/v1/files/unidentified/unidentified_face_${face.id}.jpg`,
-                            `/api/v1/recognition/unidentified/${encodeURIComponent(face.filename || '')}`,
-                            `/api/v1/recognition/unidentified/unidentified_face_${face.id}.jpg`,
-                            `/api/v1/files/unidentified/${face.id}.jpg`,
-                            `/api/v1/recognition/unidentified/${face.id}.jpg`,
-                            `/api/v1/files/faces/${face.id}.jpg`
+                            // Primary endpoint with both padded and unpadded capture IDs
+                            `/api/v1/recognition/unidentified/${paddedCaptureId}/${face.filename}`,
+                            `/api/v1/recognition/unidentified/${captureId}/${face.filename}`,
+                            
+                            // Try with the ID-based filename format
+                            `/api/v1/recognition/unidentified/${paddedCaptureId}/unidentified_face_${face.id}.jpg`,
+                            `/api/v1/recognition/unidentified/${captureId}/unidentified_face_${face.id}.jpg`,
+                            
+                            // Try the files endpoint as a last resort
+                            `/api/v1/files/unidentified/${face.filename}`,
+                            `/api/v1/files/unidentified/unidentified_face_${face.id}.jpg`
                           ];
                           
                           let currentFallbackIndex = 0;
@@ -265,8 +299,9 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
                               console.log(`All fallbacks failed, using placeholder`);
                               // @ts-ignore - target is valid
                               e.target.onerror = null;
+                              // Use a data URI for a simple gray placeholder to avoid additional requests
                               // @ts-ignore - target is valid
-                              e.target.src = '/placeholder-face.png';
+                              e.target.src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22128%22%20height%3D%22128%22%20viewBox%3D%220%200%20128%20128%22%3E%3Crect%20width%3D%22128%22%20height%3D%22128%22%20fill%3D%22%23CCCCCC%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2214%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%20font-family%3D%22Arial%2C%20sans-serif%22%20fill%3D%22%23333333%22%3ENo%20Image%3C%2Ftext%3E%3C%2Fsvg%3E';
                             }
                           };
                           

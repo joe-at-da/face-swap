@@ -4,6 +4,7 @@ API endpoints for serving files like unidentified face images.
 
 import os
 import logging
+import re
 from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import FileResponse
@@ -133,3 +134,87 @@ async def get_unidentified_face_image(
     # If we get here, something went wrong
     logger.error(f"Unexpected code path in get_unidentified_face_image for {safe_filename}")
     raise HTTPException(status_code=500, detail="Unexpected error in get_unidentified_face_image")
+
+
+@router.get("/unidentified/{capture_id}/{filename}")
+async def get_unidentified_face_image_by_capture(
+    capture_id: str,
+    filename: str = Path(..., description="Filename of the unidentified face image"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Get an unidentified face image by capture ID and filename.
+    This is a more specific endpoint that looks in the capture-specific directory.
+    """
+    try:
+        has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+        
+        # Sanitize the filename to prevent directory traversal
+        safe_filename = os.path.basename(filename)
+        logger.info(f"Looking for unidentified face image for capture {capture_id}: {safe_filename}")
+        
+        # Define possible locations for unidentified face images for this capture
+        data_dir = settings.DATA_DIR
+        
+        # Create a list of possible directories to search in
+        possible_dirs = [
+            # Try with zero-padded capture ID (e.g., 0382)
+            os.path.join(data_dir, "temp", f"capture_{capture_id.zfill(4)}_unidentified_faces"),
+            # Try with non-padded capture ID (e.g., 382)
+            os.path.join(data_dir, "temp", f"capture_{capture_id}_unidentified_faces"),
+            # Try general unidentified faces directories
+            os.path.join(data_dir, "unidentified_faces", f"capture_{capture_id}"),
+            os.path.join(data_dir, "unidentified_faces"),
+            os.path.join(data_dir, "temp")
+        ]
+        
+        logger.info(f"Searching in possible directories: {possible_dirs}")
+        
+        # First, try to find the exact file in the expected directories
+        for search_dir in possible_dirs:
+            if os.path.exists(search_dir) and os.path.isdir(search_dir):
+                file_path = os.path.join(search_dir, safe_filename)
+                if os.path.exists(file_path) and os.path.isfile(file_path):
+                    logger.info(f"Found unidentified face image: {file_path}")
+                    return FileResponse(file_path)
+        
+        # If not found, try a more flexible search
+        # Look for files that contain the face ID (if it's in the filename)
+        face_id_match = re.search(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', safe_filename)
+        if face_id_match:
+            face_id = face_id_match.group(1)
+            logger.info(f"Extracted face ID from filename: {face_id}")
+            
+            # Search for any file containing this face ID
+            for search_dir in possible_dirs:
+                if os.path.exists(search_dir) and os.path.isdir(search_dir):
+                    for file in os.listdir(search_dir):
+                        if face_id in file and os.path.isfile(os.path.join(search_dir, file)):
+                            file_path = os.path.join(search_dir, file)
+                            logger.info(f"Found file matching face ID {face_id}: {file_path}")
+                            return FileResponse(file_path)
+        
+        # If still not found, try a recursive search in the temp directory
+        try:
+            for root, dirs, files in os.walk(os.path.join(data_dir, "temp")):
+                if f"capture_{capture_id}" in root or f"capture_{capture_id.zfill(4)}" in root:
+                    for file in files:
+                        if file == safe_filename or (face_id_match and face_id_match.group(1) in file):
+                            full_path = os.path.join(root, file)
+                            logger.info(f"Found file with recursive search: {full_path}")
+                            return FileResponse(full_path)
+        except Exception as e:
+            logger.error(f"Error in recursive file search: {str(e)}")
+        
+        # If we get here, the file wasn't found
+        logger.warning(f"Unidentified face image not found for capture {capture_id}: {safe_filename}")
+        
+        # Return a 404 error
+        raise HTTPException(status_code=404, detail=f"Unidentified face image not found: {safe_filename}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting unidentified face image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting unidentified face image: {str(e)}")
+
