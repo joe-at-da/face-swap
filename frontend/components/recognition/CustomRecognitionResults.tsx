@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 
@@ -50,10 +50,32 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
   isLoading = false,
   error
 }) => {
+  // Log unidentified faces for debugging and ensure they're properly displayed
+  useEffect(() => {
+    if (speakerResults?.unidentified_faces) {
+      console.log(`CustomRecognitionResults: Found ${speakerResults.unidentified_faces.length} unidentified faces`);
+      speakerResults.unidentified_faces.forEach(face => {
+        console.log(`Unidentified face: ${face.id}, filename: ${face.filename}`);
+      });
+      if (speakerResults.unidentified_dir) {
+        console.log(`Unidentified directory: ${speakerResults.unidentified_dir}`);
+      }
+    } else {
+      console.log('CustomRecognitionResults: No unidentified faces found in speakerResults');
+      console.log('speakerResults:', speakerResults);
+    }
+  }, [speakerResults]);
   // Extract speakers and unidentified faces from speakerResults
   const speakers = speakerResults?.speakers || [];
   const unidentifiedFaces = speakerResults?.unidentified_faces || [];
-  const facesDetected = speakerResults?.processing_info?.faces_detected || 0;
+  // Log more detailed information about unidentified faces for debugging
+  if (unidentifiedFaces.length > 0) {
+    console.log(`Processing ${unidentifiedFaces.length} unidentified faces for display`);
+    unidentifiedFaces.forEach((face, index) => {
+      console.log(`Face ${index+1}:`, face);
+    });
+  }
+  const facesDetected = speakerResults?.processing_info?.faces_detected || unidentifiedFaces.length || 0;
   const router = useRouter();
 
   if (isLoading) {
@@ -198,16 +220,24 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
                   </div>
                   {face.filename ? (
                     <div className="my-2">
+                      {/* No console.log in JSX to avoid lint errors */}
                       <img 
-                        src={`/api/v1/files/unidentified/${face.filename}`} 
-                        alt="Unidentified face" 
+                        src={`/api/v1/files/unidentified/${encodeURIComponent(face.filename)}`} 
+                        alt={`Unidentified face ${face.id}`} 
                         className="w-full h-32 object-cover rounded"
                         onError={(e) => {
-                          console.log(`Error loading image: ${face.filename}`);
+                          console.log(`Error loading image: ${face.filename}, URL: /api/v1/files/unidentified/${face.filename}`);
+                          // Try to load a direct URL as fallback
+                          const directUrl = `/api/v1/files/unidentified/unidentified_face_${face.id}.jpg`;
+                          console.log(`Trying fallback URL: ${directUrl}`);
                           // @ts-ignore - target is valid
-                          e.target.onerror = null;
+                          e.target.onerror = () => {
+                            console.log(`Fallback also failed, using placeholder`);
+                            // @ts-ignore - target is valid
+                            e.target.src = '/placeholder-face.png';
+                          };
                           // @ts-ignore - target is valid
-                          e.target.src = '/placeholder-face.png'; // Use the existing placeholder image
+                          e.target.src = directUrl;
                         }}
                       />
                     </div>

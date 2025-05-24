@@ -428,12 +428,6 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     <div className="bg-gray-800 text-white rounded-lg p-6 mb-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold">Recognition & Transcription</h2>
-        {recognitionStatus?.status === 'processing' && (
-          <div className="flex items-center">
-            <div className="spinner-sm mr-2"></div>
-            <span>Refreshing status...</span>
-          </div>
-        )}
       </div>
 
       {error && (

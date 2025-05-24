@@ -27,11 +27,7 @@ interface UnidentifiedFace {
   timestamp?: number;
 }
 
-interface RecognitionResultsPage extends React.FC {
-  // Add any additional props or methods here
-}
-
-const RecognitionResultsPage: RecognitionResultsPage = () => {
+const RecognitionResultsPage = () => {
   const router = useRouter();
   const { id } = router.query;
   const { token } = useAuth();
@@ -46,294 +42,181 @@ const RecognitionResultsPage: RecognitionResultsPage = () => {
     queryKey: ['capture', id],
     queryFn: async () => {
       if (!id) return null;
-      return await api.get(`/capture/${id}`);
+      const response = await api.get(`/capture/${id}`);
+      return response?.data;
     },
     enabled: !!id,
   });
 
   // Function to fetch recognition results
   const fetchRecognitionResults = async () => {
-      if (!id) return;
-      
+    if (!id) return;
+    
+    try {
       setIsLoading(true);
       setError(undefined);
       
-      try {
-        // First try to get recognition status
-        const statusResponse = await api.get(`/recognition/detailed-status/${id}`);
-        console.log('Recognition status:', statusResponse);
-        
-        if (statusResponse.status !== 'completed') {
-          setError('Recognition processing has not been completed yet.');
+      // Fetch the detailed recognition status for this video
+      const response = await api.get(`/recognition/detailed-status/${id}`);
+      const results = response.data;
+      
+      // Fetch the capture data to get additional metadata
+      const captureResponse = await api.get(`/capture/${id}`);
+      const captureData = captureResponse?.data;
+      console.log('Capture data:', captureData);
+      if (captureData) {
+        console.log('Capture data keys:', Object.keys(captureData));
+        console.log('Recognition status:', captureData.recognition_status);
+        console.log('Has recognition_results:', !!captureData.recognition_results);
+      } else {
+        console.error('No capture data returned from API');
+        setError('Failed to fetch capture data. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // If the recognition is not completed, show an appropriate message
+      if (captureData.recognition_status !== 'completed') {
+        setError(`Recognition is ${captureData.recognition_status}. Please wait for it to complete.`);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Check if we have recognition results
+      if (!captureData.recognition_results) {
+        setError('No recognition results available for this capture.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Parse the recognition results
+      let recognitionResults;
+      if (typeof captureData.recognition_results === 'string') {
+        try {
+          recognitionResults = JSON.parse(captureData.recognition_results);
+        } catch (e) {
+          console.error('Error parsing recognition results:', e);
+          setError('Error parsing recognition results.');
           setIsLoading(false);
           return;
         }
-        
-        // Get the capture data to access recognition results
-        const captureData = await api.get(`/capture/${id}`);
-        console.log('Capture data:', captureData);
-        
-        // Detailed logging of the capture data structure
-        console.log('Capture data keys:', Object.keys(captureData));
-        console.log('Recognition status:', captureData.recognition_status);
-        console.log('Has recognition_results:', Boolean(captureData.recognition_results));
-        
-        // Check if recognition results are in the status response
-        if (!captureData.recognition_results && statusResponse && statusResponse.progress) {
-          try {
-            // Extract recognition results from the status response if available
-            if (statusResponse.progress && statusResponse.progress.recognition_data) {
-              captureData.recognition_results = statusResponse.progress.recognition_data;
-              console.log('Using recognition data from status response');
-            }
-          } catch (e) {
-            console.error('Error extracting recognition results from status:', e);
-          }
-        }
-        
-        // If we still don't have recognition results, try to fetch them directly
-        if (!captureData.recognition_results && captureData.recognition_status === 'completed') {
-          console.log('Recognition is completed but no results found in API response, trying direct fetch');
-          
-          try {
-            // Try to fetch the recognition results directly from the detailed status endpoint
-            const detailedStatus = await api.get(`/recognition/detailed-status/${id}`);
-            console.log('Detailed status response:', detailedStatus);
-            
-            if (detailedStatus && detailedStatus.status && detailedStatus.status.progress) {
-              const progressData = detailedStatus.status.progress;
-              console.log('Progress data:', progressData);
-              
-              // Check if we have recognition_data in the progress
-              if (progressData.recognition_data) {
-                console.log('Found recognition_data in progress');
-                captureData.recognition_results = progressData.recognition_data;
-              }
-            }
-          } catch (e) {
-            console.error('Error fetching detailed status:', e);
-          }
-          
-          // If we still don't have results, show an error
-          if (!captureData.recognition_results) {
-            console.log('Still no recognition results after direct fetch attempt');
-            setError('Recognition process completed, but results are not available. Please check that the recognition process ran correctly.');
-          }
-        }
-        
-        if (captureData.recognition_results) {
-          console.log('Recognition results found:', captureData.recognition_results);
-          
-          const results = captureData.recognition_results;
-          let speakers: Speaker[] = [];
-          let unidentifiedFaces: UnidentifiedFace[] = [];
-          let unidentifiedDir: string | undefined;
-          
-          // Handle different formats of recognition results
-          if (results.speakers && Array.isArray(results.speakers)) {
-            // Format 1: Array of speakers with time segments
-            speakers = results.speakers.map((speaker: any) => {
-              // Calculate total duration across all time segments
-              let totalDuration = 0;
-              let earliestStart = Infinity;
-              let latestEnd = 0;
-              
-              if (speaker.time_segments && Array.isArray(speaker.time_segments)) {
-                speaker.time_segments.forEach((segment: any) => {
-                  const segmentDuration = segment.end - segment.start;
-                  totalDuration += segmentDuration;
-                  earliestStart = Math.min(earliestStart, segment.start);
-                  latestEnd = Math.max(latestEnd, segment.end);
-                });
-              }
-              
-              return {
-                name: speaker.name,
-                confidence: speaker.confidence || 0.5,
-                start_time: earliestStart !== Infinity ? earliestStart : 0,
-                end_time: latestEnd,
-                duration: totalDuration
-              };
-            });
-            
-            // Handle unidentified faces if available
-            if (results.unidentified_faces && Array.isArray(results.unidentified_faces)) {
-              unidentifiedFaces = results.unidentified_faces.map((face: any) => {
-                // Calculate total duration across all time segments
-                let totalDuration = 0;
-                let earliestStart = Infinity;
-                let latestEnd = 0;
-                
-                if (face.time_segments && Array.isArray(face.time_segments)) {
-                  face.time_segments.forEach((segment: any) => {
-                    const segmentDuration = segment.end - segment.start;
-                    totalDuration += segmentDuration;
-                    earliestStart = Math.min(earliestStart, segment.start);
-                    latestEnd = Math.max(latestEnd, segment.end);
-                  });
-                }
-                
-                return {
-                  id: face.id,
-                  filename: face.filename,
-                  start_time: earliestStart !== Infinity ? earliestStart : 0,
-                  end_time: latestEnd,
-                  duration: totalDuration,
-                  timestamp: face.timestamp
-                };
-              });
-            }
-            
-            // Check for nested unidentified faces in speaker_identification.results
-            if (results.speaker_identification?.results?.unidentified_faces && 
-                Array.isArray(results.speaker_identification.results.unidentified_faces)) {
-              const nestedUnidentifiedFaces = results.speaker_identification.results.unidentified_faces.map((face: any) => {
-                // Calculate total duration across all time segments
-                let totalDuration = 0;
-                let earliestStart = Infinity;
-                let latestEnd = 0;
-                
-                if (face.time_segments && Array.isArray(face.time_segments)) {
-                  face.time_segments.forEach((segment: any) => {
-                    const segmentDuration = segment.end - segment.start;
-                    totalDuration += segmentDuration;
-                    earliestStart = Math.min(earliestStart, segment.start);
-                    latestEnd = Math.max(latestEnd, segment.end);
-                  });
-                }
-                
-                return {
-                  id: face.id,
-                  filename: face.filename,
-                  start_time: earliestStart !== Infinity ? earliestStart : 0,
-                  end_time: latestEnd,
-                  duration: totalDuration || 30, // Default duration if not available
-                  timestamp: face.appearances?.[0]?.timestamp || 0
-                };
-              });
-              
-              // Add these to the unidentified faces array
-              unidentifiedFaces = [...unidentifiedFaces, ...nestedUnidentifiedFaces];
-            }
-            
-            // Store unidentified directory if available
-            if (results.unidentified_dir) {
-              unidentifiedDir = results.unidentified_dir;
-            }
-          } else if (results.results && results.results.speakers) {
-            // Format 2: Nested results object with speakers
-            speakers = Object.entries(results.results.speakers).map(([name, data]: [string, any]) => {
-              return {
-                name,
-                confidence: data.confidence || 0.5,
-                start_time: data.start_time || 0,
-                end_time: data.end_time || 0,
-                duration: data.duration || 0
-              };
-            });
-          } else if (results.results_summary && results.results_summary.speakers) {
-            // Format 3: Results summary with speakers
-            speakers = results.results_summary.speakers.map((speaker: any) => {
-              return {
-                name: speaker.name,
-                confidence: speaker.confidence || 0.5,
-                start_time: speaker.start_time || 0,
-                end_time: speaker.end_time || 0,
-                duration: speaker.duration || 0
-              };
-            });
-          }
-          
-          // IMPORTANT: Extract the faces_detected count directly from the recognition_results string
-          // This is a direct approach to fix the issue with nested structures
-          const recognitionResultsStr = captureData.recognition_results;
-          let facesDetected = 0;
-          
-          try {
-            // Look for "faces_detected": number pattern in the string
-            const facesDetectedMatch = recognitionResultsStr.match(/"faces_detected":\s*(\d+)/);
-            if (facesDetectedMatch && facesDetectedMatch[1]) {
-              facesDetected = parseInt(facesDetectedMatch[1], 10);
-              console.log(`Found ${facesDetected} faces detected in the recognition results string`);
-            }
-          } catch (e) {
-            console.error('Error extracting faces_detected from string:', e);
-          }
-          
-          // Fallback to the structured approach if the string approach fails
-          if (facesDetected === 0) {
-            // Check in the main processing_info
-            if (results.processing_info && results.processing_info.faces_detected) {
-              facesDetected = results.processing_info.faces_detected;
-            }
-            // Check in the speaker_identification.results.processing_info
-            else if (results.speaker_identification?.results?.processing_info?.faces_detected) {
-              facesDetected = results.speaker_identification.results.processing_info.faces_detected;
-            }
-            // Check in any other nested structure
-            else if (results.results?.processing_info?.faces_detected) {
-              facesDetected = results.results.processing_info.faces_detected;
-            }
-          }
-          
-          console.log(`Found ${facesDetected} detected faces, ${speakers.length} identified speakers, and ${unidentifiedFaces.length} unidentified faces`);
-          
-          // If there are faces detected but no speakers identified and no unidentified faces,
-          // create placeholder unidentified faces
-          if (facesDetected > 0 && speakers.length === 0 && unidentifiedFaces.length === 0) {
-            console.log(`Creating ${facesDetected} placeholder unidentified faces`);
-            
-            // Create placeholder unidentified faces
-            for (let i = 0; i < facesDetected; i++) {
-              unidentifiedFaces.push({
-                id: `unknown-${i+1}`,
-                filename: 'placeholder_face.jpg', // Use a placeholder filename instead of empty string
-                start_time: 0,
-                end_time: 30, // Placeholder duration
-                duration: 30,
-                timestamp: 0
-              });
-            }
-          }
-          
-          // Only show error if no speakers AND no unidentified faces AND no faces detected
-          if (speakers.length === 0 && unidentifiedFaces.length === 0 && facesDetected === 0) {
-            setError('No speakers were detected in this video.');
-          } else {
-            // Sort speakers by start time
-            speakers.sort((a, b) => a.start_time - b.start_time);
-            
-            // Sort unidentified faces by start time
-            if (unidentifiedFaces.length > 0) {
-              unidentifiedFaces.sort((a, b) => a.start_time - b.start_time);
-            }
-          }
-          
-          // Extract transcription text if available
-          let transcript: string | undefined = undefined;
-          if (results.transcription && results.transcription.transcript) {
-            transcript = results.transcription.transcript;
-          } else if (results.results_summary && results.results_summary.transcript_text) {
-            transcript = results.results_summary.transcript_text;
-          }
-          
-          setSpeakerResults({ 
-            speakers, 
-            unidentified_faces: unidentifiedFaces,
-            unidentified_dir: unidentifiedDir
-          });
-          setTranscriptionText(transcript);
-        } else {
-          setError('No recognition results available for this capture.');
-        }
-      } catch (err) {
-        console.error('Error fetching recognition results:', err);
-        setError('Failed to fetch recognition results. Please try again.');
-      } finally {
-        setIsLoading(false);
+      } else {
+        recognitionResults = captureData.recognition_results;
       }
-    };
-    
+      
+      console.log('Recognition results found:', JSON.stringify(recognitionResults));
+      
+      // Extract speakers and unidentified faces from the results
+      let speakers: Speaker[] = [];
+      let unidentifiedFaces: UnidentifiedFace[] = [];
+      let unidentifiedDir: string | undefined = undefined;
+      let facesDetected = 0;
+      let transcript = '';
+      
+      // CRITICAL: Direct access to unidentified faces from the raw data
+      // This is a more reliable way to access the unidentified faces
+      if (recognitionResults?.speaker_identification?.results?.unidentified_faces && 
+          Array.isArray(recognitionResults.speaker_identification.results.unidentified_faces)) {
+        const rawUnidentifiedFaces = recognitionResults.speaker_identification.results.unidentified_faces;
+        console.log(`Direct access: Found ${rawUnidentifiedFaces.length} unidentified faces in raw data`);
+        
+        // Process each unidentified face
+        unidentifiedFaces = rawUnidentifiedFaces.map((face: any) => {
+          // Extract just the basename from the full path
+          const filename = face.filename ? face.filename.split('/').pop() : '';
+          console.log(`Direct access: Processing face ${face.id} with filename ${filename}`);
+          
+          return {
+            id: face.id,
+            filename: filename,
+            start_time: face.appearances?.[0]?.timestamp || 0,
+            end_time: face.appearances?.[0]?.timestamp || 0,
+            duration: 30, // Default duration
+            timestamp: face.appearances?.[0]?.timestamp || 0
+          };
+        });
+        
+        // Set the unidentified directory if available
+        if (recognitionResults.speaker_identification.unidentified_dir) {
+          unidentifiedDir = recognitionResults.speaker_identification.unidentified_dir;
+          console.log(`Direct access: Setting unidentified directory to ${unidentifiedDir}`);
+        }
+        
+        // Set facesDetected to at least the number of unidentified faces
+        facesDetected = Math.max(facesDetected, unidentifiedFaces.length);
+        console.log(`Direct access: Set facesDetected to ${facesDetected}`);
+      }
+      
+      if (results) {
+        // Handle different formats of recognition results
+        if (results.speakers && Array.isArray(results.speakers)) {
+          // Format 1: Array of speakers with time segments
+          speakers = results.speakers.map((speaker: any) => {
+            return {
+              name: speaker.name,
+              confidence: speaker.confidence || 0.5,
+              start_time: speaker.start_time || 0,
+              end_time: speaker.end_time || 0,
+              duration: speaker.duration || 0
+            };
+          });
+        } else if (results.results && results.results.speakers) {
+          // Format 2: Nested results object with speakers
+          speakers = Object.entries(results.results.speakers).map(([name, data]: [string, any]) => {
+            return {
+              name,
+              confidence: data.confidence || 0.5,
+              start_time: data.start_time || 0,
+              end_time: data.end_time || 0,
+              duration: data.duration || 0
+            };
+          });
+        } else if (results.results_summary && results.results_summary.speakers) {
+          // Format 3: Results summary with speakers
+          speakers = results.results_summary.speakers.map((speaker: any) => {
+            return {
+              name: speaker.name,
+              confidence: speaker.confidence || 0.5,
+              start_time: speaker.start_time || 0,
+              end_time: speaker.end_time || 0,
+              duration: speaker.duration || 0
+            };
+          });
+        }
+        
+        // Extract transcription text if available
+        if (results.transcription && results.transcription.transcript) {
+          transcript = results.transcription.transcript;
+        } else if (results.results_summary && results.results_summary.transcript_text) {
+          transcript = results.results_summary.transcript_text;
+        }
+        
+        // Log the unidentified faces before creating the final object
+        console.log(`Creating final speakerResults with ${unidentifiedFaces.length} unidentified faces`);
+        if (unidentifiedFaces.length > 0) {
+          console.log(`First unidentified face: ${JSON.stringify(unidentifiedFaces[0])}`);
+        }
+        
+        const finalSpeakerResults = {
+          speakers,
+          unidentified_faces: unidentifiedFaces,
+          unidentified_dir: unidentifiedDir,
+          transcript: transcript
+        };
+        
+        setSpeakerResults(finalSpeakerResults);
+        setTranscriptionText(transcript);
+      } else {
+        setError('No recognition results available for this capture.');
+      }
+    } catch (err) {
+      console.error('Error fetching recognition results:', err);
+      setError('Failed to fetch recognition results. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
   // Trigger the fetch when id changes or when retry is clicked
   useEffect(() => {
     if (id) {
