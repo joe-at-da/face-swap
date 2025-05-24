@@ -628,7 +628,7 @@ def get_recognition_status(video_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error getting recognition status: {str(e)}")
 
 
-@router.get("/recognition/detailed-status/{video_id}", response_model=schemas.DetailedRecognitionStatusResponse)
+@router.get("/detailed-status/{video_id}", response_model=schemas.DetailedRecognitionStatusResponse)
 def get_detailed_recognition_status(video_id: int, db: Session = Depends(get_db)):
     """
     Get detailed status of the recognition process for a video.

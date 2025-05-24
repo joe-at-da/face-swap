@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
 from jose import jwt, JWTError
@@ -17,6 +17,7 @@ from backend.core.security import UserRole
 from backend.services.video.capture import StreamCapture
 from backend.core.config import settings
 import threading
+import subprocess
 
 router = APIRouter()
 
@@ -610,3 +611,84 @@ async def get_capture_logs(
         "per_page": per_page,
         "total_pages": total_pages
     }
+
+@router.get("/{capture_id}/metadata", response_model=Dict[str, Any])
+async def get_capture_metadata(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Get metadata for a specific capture session."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the capture session
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Initialize metadata
+    metadata = {
+        "id": capture.id,
+        "title": getattr(capture, 'title', None) or f"Capture Session {capture.id}",
+        "status": capture.status,
+        "duration": getattr(capture, 'duration', None),
+        "file_path": getattr(capture, 'file_path', None),
+        "file_size": getattr(capture, 'file_size', None),
+        "created_at": capture.created_at.isoformat() if capture.created_at else None,
+        "updated_at": capture.updated_at.isoformat() if capture.updated_at else None
+    }
+    
+    # If the file exists, try to get more detailed metadata using ffprobe
+    if metadata["file_path"] and os.path.exists(metadata["file_path"]):
+        try:
+            # Use ffprobe to get video metadata
+            probe_cmd = [
+                "ffprobe", "-v", "error", "-show_format", "-show_streams",
+                "-of", "json", metadata["file_path"]
+            ]
+            probe_result = subprocess.run(
+                probe_cmd, 
+                capture_output=True, 
+                text=True
+            )
+            
+            if probe_result.returncode == 0:
+                # Parse the probe result
+                probe_data = json.loads(probe_result.stdout)
+                
+                # Extract format information
+                if "format" in probe_data:
+                    format_data = probe_data["format"]
+                    metadata["format"] = format_data.get("format_name")
+                    metadata["duration"] = float(format_data.get("duration", 0)) if "duration" in format_data else None
+                    metadata["bit_rate"] = int(format_data.get("bit_rate", 0)) if "bit_rate" in format_data else None
+                    metadata["size"] = int(format_data.get("size", 0)) if "size" in format_data else None
+                
+                # Extract stream information
+                if "streams" in probe_data:
+                    streams = probe_data["streams"]
+                    video_streams = [s for s in streams if s.get("codec_type") == "video"]
+                    audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+                    
+                    if video_streams:
+                        video_stream = video_streams[0]  # Use the first video stream
+                        metadata["width"] = video_stream.get("width")
+                        metadata["height"] = video_stream.get("height")
+                        metadata["fps"] = eval(video_stream.get("r_frame_rate", "0/1")) if "r_frame_rate" in video_stream else None
+                        metadata["video_codec"] = video_stream.get("codec_name")
+                    
+                    if audio_streams:
+                        audio_stream = audio_streams[0]  # Use the first audio stream
+                        metadata["audio_codec"] = audio_stream.get("codec_name")
+                        metadata["sample_rate"] = audio_stream.get("sample_rate")
+                        metadata["channels"] = audio_stream.get("channels")
+                    
+                    metadata["has_video"] = len(video_streams) > 0
+                    metadata["has_audio"] = len(audio_streams) > 0
+        except Exception as e:
+            metadata["probe_error"] = str(e)
+    
+    return metadata
