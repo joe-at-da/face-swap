@@ -221,6 +221,60 @@ const NewVideoClipPage: React.FC = () => {
     };
   }, [videoUrl]);
 
+  // Handle URL parameters for source_type and source_id
+  useEffect(() => {
+    // Only run this effect when router.query is available and has changed
+    if (!router.isReady) return;
+    
+    const { source_type, source_id } = router.query;
+    
+    // If we have both source_type and source_id in the URL
+    if (source_type === 'capture' && source_id) {
+      console.log('URL parameters detected:', { source_type, source_id });
+      // Set the form data with the URL parameters
+      setFormData(prev => ({
+        ...prev,
+        source_type: 'capture',
+        source_id: parseInt(source_id as string)
+      }));
+      
+      // Load the capture video
+      const loadCaptureVideo = async () => {
+        try {
+          const captureData = await api.get(`/capture/${source_id}`);
+          if (captureData && captureData.id) {
+            // Get the token from localStorage or sessionStorage
+            const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+            
+            // Construct the filename based on the capture ID
+            const filename = `capture_${String(captureData.id).padStart(4, '0')}.mp4`;
+            
+            // Use the direct API URL with token like the file gallery does
+            const streamUrl = `http://localhost:8000/api/v1/videos/stream-with-token/${filename}?token=${token}`;
+            
+            console.log('Setting video URL to direct API URL with token');
+            setVideoUrl(streamUrl);
+            
+            // Initialize form data with capture information
+            setFormData(prev => ({
+              ...prev,
+              source_id: captureData.id,
+              // Set default title if not already set
+              title: prev.title || `Clip from ${captureData.title || 'Capture Session'}`,
+              // Set start time to 0 - end time will be set when video loads
+              start_time: 0
+              // Note: end_time will be set to full duration when video loads in handleVideoLoaded
+            }));
+          }
+        } catch (error) {
+          console.error('Failed to load capture video:', error);
+        }
+      };
+      
+      loadCaptureVideo();
+    }
+  }, [router.isReady, router.query]);
+  
   // Load capture video when component mounts or capture_id changes
   useEffect(() => {
     if (capture_id && formData.source_type === 'capture') {
@@ -245,19 +299,11 @@ const NewVideoClipPage: React.FC = () => {
               ...prev,
               source_id: captureData.id,
               // Set default title if not already set
-              title: prev.title || `Clip from ${captureData.title || 'Capture Session'}`
+              title: prev.title || `Clip from ${captureData.title || 'Capture Session'}`,
+              // Set start time to 0 - end time will be set when video loads
+              start_time: 0
+              // Note: end_time will be set to full duration when video loads in handleVideoLoaded
             }));
-            
-            // Set default start/end times if they're not already set
-            if (formData.start_time === undefined) {
-              setFormData(prev => ({ ...prev, start_time: 0 }));
-            }
-            
-            if (formData.end_time === undefined) {
-              // Set a default end time (30 seconds or video duration)
-              const defaultEndTime = 30; // Will be updated when video loads
-              setFormData(prev => ({ ...prev, end_time: defaultEndTime }));
-            }
           }
         } catch (error) {
           console.error('Failed to load capture video:', error);
@@ -291,20 +337,16 @@ const NewVideoClipPage: React.FC = () => {
     const videoDuration = e.currentTarget.duration;
     setDuration(videoDuration);
     
-    // Set default start/end times if they're not already set
-    if (formData.start_time === undefined) {
-      setFormData(prev => ({ ...prev, start_time: 0 }));
-    }
-    
-    if (formData.end_time === undefined) {
-      // Set a default end time (30 seconds or video duration)
-      const defaultEndTime = Math.min(30, videoDuration);
-      setFormData(prev => ({ ...prev, end_time: defaultEndTime }));
-    }
+    // Always set start time to 0 and end time to full duration
+    setFormData(prev => ({
+      ...prev,
+      start_time: 0,
+      end_time: videoDuration
+    }));
     
     console.log('Video loaded with duration:', videoDuration, 'Setting times:', {
-      start: formData.start_time || 0,
-      end: formData.end_time || Math.min(30, videoDuration)
+      start: 0,
+      end: videoDuration
     });
   };
 
@@ -407,22 +449,42 @@ const NewVideoClipPage: React.FC = () => {
     try {
       // For capture source type, use the API directly instead of FormData
       if (formData.source_type === 'capture' && formData.source_id) {
-        // Create a proper JSON payload
+        // Create a proper JSON payload with ISO string dates
+        // The backend expects datetime objects, not seconds
+        const now = new Date();
+        const startDate = new Date(now);
+        const endDate = new Date(now);
+        
+        // Set hours, minutes, seconds based on the time values (in seconds)
+        startDate.setHours(0, 0, Math.floor(formData.start_time || 0), 0);
+        endDate.setHours(0, 0, Math.floor(formData.end_time || 30), 0);
+        
         const payload = {
           title: formData.title,
           description: formData.description || '',
           capture_session_id: formData.source_id,
-          // Use seconds directly as the backend expects
-          start_time: formData.start_time,
-          end_time: formData.end_time
+          // Convert seconds to ISO string for datetime format
+          start_time: startDate.toISOString(),
+          end_time: endDate.toISOString()
         };
         
         console.log('Submitting clip with payload:', payload);
         
-        // Use the API client directly
-        const result = await api.post('/clips', payload);
-        console.log('Clip created successfully:', result);
-        router.push(`/clips/${result.id}`);
+        // Use the API client directly since it's already configured with the right URL and auth
+        try {
+          const result = await api.post('/clips', payload);
+          console.log('Clip created successfully:', result);
+          
+          // If we get here, the clip was created successfully
+          setErrors({});
+          setIsUploading(false);
+          
+          // Navigate to the new clip
+          router.push(`/clips/${result.id}`);
+        } catch (error: any) { // Type assertion for error
+          console.error('API error creating clip:', error);
+          throw new Error(`Failed to create clip: ${error?.message || 'Unknown error'}`);
+        }
       } else if (formData.source_type === 'upload' && formData.file) {
         // Create FormData object for file upload
         const formDataObj = new FormData();
