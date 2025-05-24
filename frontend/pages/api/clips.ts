@@ -6,7 +6,9 @@ import { NextApiRequest, NextApiResponse } from 'next';
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const token = req.headers.authorization || '';
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+  // In Docker, we need to use the service name 'app' instead of 'localhost'
+  // This is because the Next.js API routes run on the server, which is in a separate container
+  const apiUrl = 'http://app:8000/api/v1';
   
   console.log('API Proxy: Forwarding request to clips endpoint');
   console.log('Request method:', req.method);

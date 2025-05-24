@@ -450,20 +450,31 @@ const NewVideoClipPage: React.FC = () => {
       // For capture source type, use the API directly instead of FormData
       if (formData.source_type === 'capture' && formData.source_id) {
         // Create a proper JSON payload with ISO string dates
-        // The backend expects datetime objects, not seconds
-        const now = new Date();
-        const startDate = new Date(now);
-        const endDate = new Date(now);
+        // The backend expects datetime objects representing the position in the video
+        // For video timestamps, we need to convert seconds to a proper ISO duration format
         
-        // Set hours, minutes, seconds based on the time values (in seconds)
-        startDate.setHours(0, 0, Math.floor(formData.start_time || 0), 0);
-        endDate.setHours(0, 0, Math.floor(formData.end_time || 30), 0);
+        // Get the capture session start time as the base reference
+        const captureSession = captureSessions?.find((session: CaptureSession) => session.id === formData.source_id);
+        if (!captureSession) {
+          setErrors({
+            form: 'Selected capture session not found. Please select a valid capture session.'
+          });
+          setIsUploading(false);
+          return;
+        }
+        
+        // Parse the capture session start time
+        const captureStartTime = new Date(captureSession.start_time);
+        
+        // Calculate start and end times by adding the video position (in seconds) to the capture start time
+        const startDate = new Date(captureStartTime.getTime() + (formData.start_time || 0) * 1000);
+        const endDate = new Date(captureStartTime.getTime() + (formData.end_time || 30) * 1000);
         
         const payload = {
           title: formData.title,
           description: formData.description || '',
-          // The backend expects 'source_id' not 'capture_session_id'
-          source_id: formData.source_id,
+          // The backend expects 'capture_session_id' according to the schema
+          capture_session_id: formData.source_id,
           // Convert seconds to ISO string for datetime format
           start_time: startDate.toISOString(),
           end_time: endDate.toISOString()
@@ -473,6 +484,8 @@ const NewVideoClipPage: React.FC = () => {
         
         // Use the Next.js API proxy to avoid CORS issues
         try {
+          console.log('Sending clip creation request with payload:', payload);
+          
           // Use fetch with the Next.js API proxy instead of direct API call
           const response = await fetch('/api/clips', {
             method: 'POST',
@@ -483,8 +496,30 @@ const NewVideoClipPage: React.FC = () => {
             body: JSON.stringify(payload)
           });
           
+          // Log the response status
+          console.log('Clip creation response status:', response.status);
+          
+          // Handle non-OK responses with more detailed error information
           if (!response.ok) {
-            throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
+            const errorText = await response.text();
+            let errorDetail = '';
+            
+            try {
+              // Try to parse the error as JSON
+              const errorJson = JSON.parse(errorText);
+              errorDetail = errorJson.detail || errorJson.message || errorText;
+            } catch {
+              // If not JSON, use the raw text
+              errorDetail = errorText;
+            }
+            
+            console.error('Server error response:', {
+              status: response.status,
+              statusText: response.statusText,
+              detail: errorDetail
+            });
+            
+            throw new Error(`Server error (${response.status}): ${errorDetail}`);
           }
           
           const result = await response.json();

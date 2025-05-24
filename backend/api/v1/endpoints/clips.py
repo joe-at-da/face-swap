@@ -56,7 +56,7 @@ async def create_clip(
         capture_session_id=capture.id,
         start_time=clip_data.start_time,
         end_time=clip_data.end_time,
-        status="processing"
+        status=models.ClipStatus.PROCESSING
     )
     
     db.add(clip)

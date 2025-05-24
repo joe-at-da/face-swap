@@ -95,7 +95,7 @@ async def create_clip(
     """Create a new video clip."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
     
-    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status="processing")
+    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status=models.ClipStatus.PROCESSING)
     db.add(db_clip)
     db.commit()
     db.refresh(db_clip)
