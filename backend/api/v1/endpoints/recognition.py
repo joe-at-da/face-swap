@@ -666,3 +666,105 @@ def get_detailed_recognition_status(video_id: int, db: Session = Depends(get_db)
     except Exception as e:
         logger.exception(f"Error getting detailed recognition status: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting detailed recognition status: {str(e)}")
+
+
+@router.get("/results/{video_id}", response_model=Dict[str, Any])
+def get_recognition_results(video_id: int, db: Session = Depends(get_db)):
+    """
+    Get recognition results for a video.
+    This endpoint returns the full recognition results for a video, including speakers and segments.
+    """
+    try:
+        logger.info(f"Getting recognition results for video ID: {video_id}")
+        
+        # Get the video from the database
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        
+        if not video:
+            raise HTTPException(status_code=404, detail=f"Video with ID {video_id} not found")
+        
+        # Check if recognition results exist
+        if not video.recognition_results:
+            raise HTTPException(status_code=404, detail=f"No recognition results found for video ID {video_id}")
+        
+        # Parse and return the recognition results
+        try:
+            # If the results are stored as a JSON string, parse them
+            if isinstance(video.recognition_results, str):
+                results = json.loads(video.recognition_results)
+            else:
+                results = video.recognition_results
+                
+            # Return the results directly as the frontend expects
+            # The frontend is looking for speakers and segments
+            if isinstance(results, dict) and ('speakers' in results or 'segments' in results):
+                return results
+            elif isinstance(results, dict) and 'results' in results:
+                return results['results']
+            else:
+                # Fallback to the original format
+                return {
+                    "success": True,
+                    "video_id": video_id,
+                    "speakers": results.get('speakers', []),
+                    "segments": results.get('segments', [])
+                }
+        except Exception as e:
+            logger.error(f"Error parsing recognition results for video ID {video_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error parsing recognition results: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting recognition results: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting recognition results: {str(e)}")
+
+
+@router.get("/speakers/{video_id}", response_model=Dict[str, Any])
+def get_unidentified_speakers(video_id: int, db: Session = Depends(get_db)):
+    """
+    Get unidentified speakers from recognition results for a video.
+    This endpoint extracts speaker data from recognition results and returns unidentified speakers.
+    """
+    try:
+        logger.info(f"Getting unidentified speakers for video ID: {video_id}")
+        
+        # Get the video from the database
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        
+        if not video:
+            raise HTTPException(status_code=404, detail=f"Video with ID {video_id} not found")
+        
+        # Check if recognition results exist
+        if not video.recognition_results:
+            logger.warning(f"No recognition results found for video ID: {video_id}")
+            return {"unidentified_speakers": []}
+        
+        # Parse recognition results
+        try:
+            results_data = json.loads(video.recognition_results)
+        except json.JSONDecodeError:
+            logger.error(f"Error parsing recognition results for video ID: {video_id}")
+            return {"unidentified_speakers": []}
+        
+        # Extract speakers from results
+        speakers = results_data.get("speakers", [])
+        
+        # Filter for unidentified speakers (those without a profile_id)
+        unidentified_speakers = []
+        for speaker in speakers:
+            if not speaker.get("profile_id") and not speaker.get("profileId"):
+                # Add face matches if available
+                if "face_matches" not in speaker and "faceMatches" not in speaker:
+                    # Try to find face matches in the results
+                    speaker["face_matches"] = []
+                    
+                unidentified_speakers.append(speaker)
+        
+        logger.info(f"Found {len(unidentified_speakers)} unidentified speakers for video ID: {video_id}")
+        
+        return {"unidentified_speakers": unidentified_speakers}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting unidentified speakers: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting unidentified speakers: {str(e)}")

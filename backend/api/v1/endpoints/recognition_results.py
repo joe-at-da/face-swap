@@ -36,24 +36,38 @@ async def get_recognition_results(
     if not video:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            content={"success": False, "error": f"Video not found for video ID {video_id}"}
+            detail=f"Video not found for video ID {video_id}"
         )
     
     # Check if recognition results exist
     if not video.recognition_results:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            content={"success": False, "error": f"No recognition results found for video ID {video_id}"}
+            detail=f"No recognition results found for video ID {video_id}"
         )
     
     # Parse and return the recognition results
     try:
-        results = json.loads(video.recognition_results)
-        return {
-            "success": True,
-            "video_id": video_id,
-            "results": results
-        }
+        # If the results are stored as a JSON string, parse them
+        if isinstance(video.recognition_results, str):
+            results = json.loads(video.recognition_results)
+        else:
+            results = video.recognition_results
+            
+        # Return the results directly as the frontend expects
+        # The frontend is looking for speakers and segments
+        if isinstance(results, dict) and ('speakers' in results or 'segments' in results):
+            return results
+        elif isinstance(results, dict) and 'results' in results:
+            return results['results']
+        else:
+            # Fallback to the original format
+            return {
+                "success": True,
+                "video_id": video_id,
+                "speakers": results.get('speakers', []),
+                "segments": results.get('segments', [])
+            }
     except Exception as e:
         logger.error(f"Error parsing recognition results for video ID {video_id}: {str(e)}")
         raise HTTPException(

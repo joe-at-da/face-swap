@@ -173,7 +173,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             resultsData = statusData.status.recognition_results;
           }
         }
-      } catch (statusErr) {
+      } catch (statusErr: any) {
         console.log('Detailed status endpoint failed, trying alternative endpoints:', statusErr);
       }
       
@@ -239,7 +239,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       }
     } catch (err) {
       console.error('Error fetching recognition data:', err);
-      setError('Error loading recognition data');
+      setError('Error loading recognition data. This could be because recognition has not been run yet or the recognition process is still in progress. You can start recognition from the Recognition tab.');
     } finally {
       setIsLoading(false);
     }
