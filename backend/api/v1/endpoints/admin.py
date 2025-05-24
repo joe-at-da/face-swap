@@ -1,13 +1,13 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
+from sqlalchemy import func
+from pydantic import BaseModel, Field
 
 from backend.api import deps
 from backend.db.models.user import User, UserRole
 from backend.schemas.auth import UserCreate, UserUpdate, User as UserResponse
 from backend.schemas.admin import SystemStats
-from pydantic import BaseModel
 from backend.core.security import get_password_hash
 
 router = APIRouter()
@@ -165,13 +165,12 @@ class StorageSettings(BaseModel):
     storage_path: str
 
 
-class StorageStats(BaseModel):
-    total_space: int
-    used_space: int
-    free_space: int
-    file_count: int
-    average_file_size: int
-
+class StorageCategory(BaseModel):
+    clips: int
+    captures: int
+    thumbnails: int
+    transcriptions: int
+    other: int
 
 class StorageBreakdown(BaseModel):
     video_clips_bytes: int
@@ -186,7 +185,21 @@ class OldestFiles(BaseModel):
     thumbnails: List[Dict[str, Any]]
     transcriptions: List[Dict[str, Any]]
 
-class DetailedStorageStats(StorageStats):
+class StorageStats(BaseModel):
+    total_space: int = Field(alias="total")
+    used_space: int = Field(alias="used")
+    free_space: int = Field(alias="available")
+    file_count: int
+    average_file_size: int
+
+class DetailedStorageStats(BaseModel):
+    total: int
+    used: int
+    available: int
+    usage_percent: float
+    file_count: int
+    average_file_size: int
+    categories: StorageCategory
     breakdown: StorageBreakdown
     oldest_files: OldestFiles
 
@@ -345,13 +358,29 @@ async def get_storage_stats(
             except Exception:
                 pass
         
+        # Calculate usage percentage
+        total_bytes = disk_info.get("total_bytes", 1)  # Avoid division by zero
+        used_bytes = disk_info.get("used_bytes", 0)
+        usage_percent = round((used_bytes / total_bytes) * 100, 2) if total_bytes > 0 else 0
+        
+        # Map storage breakdown to the format expected by the frontend
+        categories = {
+            "clips": storage_breakdown.get("video_clips_bytes", 0),
+            "captures": storage_breakdown.get("capture_sessions_bytes", 0),
+            "thumbnails": storage_breakdown.get("thumbnails_bytes", 0),
+            "transcriptions": storage_breakdown.get("transcriptions_bytes", 0),
+            "other": storage_breakdown.get("other_bytes", 0)
+        }
+        
         return {
-            "total_space": disk_info.get("total_bytes", 0),
-            "used_space": disk_info.get("used_bytes", 0),
-            "free_space": disk_info.get("free_bytes", 0),
+            "total": disk_info.get("total_bytes", 0),
+            "used": disk_info.get("used_bytes", 0),
+            "available": disk_info.get("free_bytes", 0),
+            "usage_percent": usage_percent,
             "file_count": file_count,
             "average_file_size": average_file_size,
-            "breakdown": storage_breakdown,
+            "categories": categories,
+            "breakdown": storage_breakdown,  # Keep original for backward compatibility
             "oldest_files": oldest_files
         }
     except Exception as e:
@@ -360,13 +389,26 @@ async def get_storage_stats(
         print(f"Error getting storage stats: {str(e)}")
         print(traceback.format_exc())
         
-        # Return default values in case of error
+        # Calculate default usage percentage
+        total_bytes = 1000000000000  # 1 TB
+        used_bytes = 250000000000    # 250 GB
+        usage_percent = 25.0  # 25%
+        
+        # Return default values in case of error in the format expected by the frontend
         return {
-            "total_space": 1000000000000,  # 1 TB
-            "used_space": 250000000000,   # 250 GB
-            "free_space": 750000000000,   # 750 GB
+            "total": total_bytes,
+            "used": used_bytes,
+            "available": total_bytes - used_bytes,
+            "usage_percent": usage_percent,
             "file_count": file_count if 'file_count' in locals() else 0,
             "average_file_size": 250000000,  # 250 MB average
+            "categories": {
+                "clips": 150000000000,  # 150 GB
+                "captures": 50000000000,  # 50 GB
+                "thumbnails": 5000000000,  # 5 GB
+                "transcriptions": 5000000000,  # 5 GB
+                "other": 40000000000  # 40 GB
+            },
             "breakdown": {
                 "video_clips_bytes": 150000000000,  # 150 GB
                 "capture_sessions_bytes": 50000000000,  # 50 GB

@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 import psutil
 import json
@@ -11,7 +12,7 @@ from backend.services.system.docker_metrics import DockerMetrics
 
 router = APIRouter()
 
-@router.get("/")
+@router.get("/", response_class=PlainTextResponse)
 async def get_metrics():
     """
     Get system metrics for Prometheus.
