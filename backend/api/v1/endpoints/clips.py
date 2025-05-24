@@ -54,7 +54,7 @@ async def create_clip(
     clip = models.VideoClip(
         title=clip_data.title,
         description=clip_data.description,
-        user_id=current_user.id,
+        owner_id=current_user.id,  # Changed from user_id to owner_id to match DB schema
         capture_session_id=capture.id,
         start_time=clip_data.start_time,
         end_time=clip_data.end_time,
@@ -92,7 +92,7 @@ async def get_clip(
         )
     
     # Check permissions
-    if clip.user_id != current_user.id and current_user.role not in [UserRole.ADMIN, UserRole.MP]:
+    if clip.owner_id != current_user.id and current_user.role not in [UserRole.ADMIN, UserRole.MP]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions"
@@ -117,7 +117,7 @@ async def list_clips(
     
     # Filter by user unless admin
     if current_user.role not in [UserRole.ADMIN, UserRole.MP]:
-        query = query.filter(models.VideoClip.user_id == current_user.id)
+        query = query.filter(models.VideoClip.owner_id == current_user.id)
     
     clips = query.offset(skip).limit(limit).all()
     return clips
@@ -137,7 +137,7 @@ async def delete_clip(
         )
     
     # Check permissions
-    if clip.user_id != current_user.id and current_user.role != UserRole.ADMIN:
+    if clip.owner_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions"

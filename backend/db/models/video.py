@@ -24,7 +24,7 @@ class VideoClip(Base):
     error_message = Column(String, nullable=True)
     
     # Foreign keys
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # Changed from user_id to owner_id to match DB schema
     capture_session_id = Column(Integer, ForeignKey("capture_sessions.id"), nullable=True)
     
     # Metadata
@@ -32,7 +32,7 @@ class VideoClip(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    created_by_user = relationship("User", back_populates="video_clips")
+    owner = relationship("User", back_populates="clips")  # Changed from created_by_user to owner to match DB schema
     capture_session = relationship("CaptureSession", back_populates="video_clips")
     social_posts = relationship("SocialPost", back_populates="video_clip", cascade="all, delete-orphan")
     transcription = relationship("Transcription", back_populates="video_clip", uselist=False)

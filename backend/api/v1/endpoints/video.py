@@ -111,7 +111,7 @@ async def create_clip(
     db_clip = models.VideoClip(
         title=clip_data.get('title', ''),
         description=clip_data.get('description', ''),
-        user_id=current_user.id,  # Use user_id to match the model
+        owner_id=current_user.id,  # Use owner_id to match the database schema
         status=ClipStatus.PROCESSING,  # Use the enum directly
         source_url=file_path,  # Use source_url instead of storage_path
         duration=duration,
