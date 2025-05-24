@@ -405,15 +405,36 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
   };
   
   // Create social media post in the system
-  const createSocialPost = () => {
-    router.push({
-      pathname: '/social/new',
-      query: {
-        clip_id: clipId,
-        content: shareText,
-        platform
-      }
-    });
+  const createSocialPost = async () => {
+    try {
+      // First try to create the post in the database
+      const response = await api.post('/social/posts/', {
+        // Use the correct field name for content
+        content: shareText, // This matches the schema requirement
+        platform: platform,
+        video_clip_id: clipId,
+        status: 'draft'
+      });
+      
+      console.log('Social media post created:', response);
+      toast.success(`Post created for ${platform}`);
+      
+      // Redirect to the social dashboard
+      router.push('/social');
+    } catch (error: any) {
+      console.error('Failed to create social media post:', error);
+      toast.error(`Failed to create post: ${error?.message || 'Unknown error'}`);
+      
+      // Fallback to the redirect approach if the API call fails
+      router.push({
+        pathname: '/social/new',
+        query: {
+          clip_id: clipId,
+          content: shareText,
+          platform
+        }
+      });
+    }
   };
   
   // Calculate remaining characters
