@@ -3,7 +3,7 @@ from backend.db.base_class import Base
 
 # Import models directly to avoid circular imports
 from backend.db.models.user import User
-from backend.db.models.video import VideoClip
+from backend.db.models import VideoClip
 from backend.db.models.social import SocialPost
 from backend.db.models.capture import CaptureSession
 from backend.db.models.capture_log import CaptureLog

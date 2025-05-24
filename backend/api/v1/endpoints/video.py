@@ -101,15 +101,27 @@ async def create_clip(
     # Calculate duration in seconds
     duration = int((clip.end_time - clip.start_time).total_seconds()) if hasattr(clip, 'end_time') and hasattr(clip, 'start_time') else 0
     
+    # Generate a unique file path for the video
+    file_path = f"/tmp/video_{current_user.id}_{int(datetime.utcnow().timestamp())}.mp4"
+    
     # Create clip with required fields
     clip_data = clip.dict()
+    
+    # Create a new VideoClip instance manually without using **clip_data to have more control
     db_clip = models.VideoClip(
-        **clip_data,
-        user_id=current_user.id,
-        status="PROCESSING",  # Use string directly since status is a String column, not an Enum
-        storage_path=f"/tmp/video_{current_user.id}_{int(datetime.utcnow().timestamp())}.mp4",
-        duration=duration
+        title=clip_data.get('title', ''),
+        description=clip_data.get('description', ''),
+        user_id=current_user.id,  # Use user_id to match the model
+        status=ClipStatus.PROCESSING,  # Use the enum directly
+        source_url=file_path,  # Use source_url instead of storage_path
+        duration=duration,
+        start_time=clip_data.get('start_time'),
+        end_time=clip_data.get('end_time')
     )
+    
+    # Set capture_session_id if it exists
+    if 'capture_session_id' in clip_data:
+        db_clip.capture_session_id = clip_data['capture_session_id']
     db.add(db_clip)
     db.commit()
     db.refresh(db_clip)

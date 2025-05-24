@@ -1,63 +1,14 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, JSON, Enum, Integer
-from sqlalchemy.orm import relationship
-from datetime import datetime
-from backend.db.models.user import UserRole
-from backend.db.base_model import Base
-from backend.db.models.transcription import ParliamentTranscription
-from backend.db.models.enums import ClipStatus, SocialPlatform, PostStatus
+# This file is a compatibility layer that imports from backend.db.models/__init__.py
+# It's maintained for backward compatibility with existing code
 
-# Enums are now imported from backend.db.models.enums
+# Import models from the models package
+from backend.db.models import (
+    User, UserRole, VideoClip, SocialPost, SocialPlatform, PostStatus,
+    ClipStatus, CaptureSession, CaptureLog, Transcription, ParliamentTranscription
+)
 
-class User(Base):
-    __tablename__ = "users"
+# This comment is to indicate that this file is now just a compatibility layer
+# New code should import directly from backend.db.models
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    full_name = Column(String, nullable=False)
-    role = Column(Enum(UserRole, name="user_role_enum"), nullable=False, default=UserRole.STAFF)
-    is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_login = Column(DateTime)
-    
-    # Relationships
-    clips = relationship("VideoClip", back_populates="owner", cascade="all, delete-orphan")
-
-class VideoClip(Base):
-    __tablename__ = "video_clips"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, nullable=False)
-    description = Column(String)
-    source_url = Column(String, nullable=False)
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime, nullable=False)
-    duration = Column(Integer, nullable=False)  # in seconds
-    status = Column(Enum(ClipStatus, name="clip_status_enum"), nullable=False, default=ClipStatus.DRAFT)
-    s3_key = Column(String)
-    transcription = Column(String)
-    faces_detected = Column(JSON)  # List of detected faces with confidence scores
-    clip_metadata = Column(JSON, default={})
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    owner = relationship("User", back_populates="clips")
-    social_posts = relationship("SocialPost", back_populates="clip", cascade="all, delete-orphan")
-
-class SocialPost(Base):
-    __tablename__ = "social_posts"
-
-    id = Column(Integer, primary_key=True, index=True)
-    clip_id = Column(Integer, ForeignKey("video_clips.id"), nullable=False)
-    platform = Column(Enum(SocialPlatform, name="social_platform_enum"), nullable=False)
-    status = Column(Enum(PostStatus, name="post_status_enum"), nullable=False, default=PostStatus.PENDING)
-    post_id = Column(String)  # ID from the social media platform
-    posted_at = Column(DateTime)
-    post_url = Column(String)  # URL of the post
-    engagement_metrics = Column(JSON, default={})  # likes, shares, comments, etc.
-    post_metadata = Column(JSON, default={})
-    
-    # Relationships
-    clip = relationship("VideoClip", back_populates="social_posts")
+# All model definitions have been moved to backend.db.models/__init__.py
+# This file now only serves as a compatibility layer for existing imports

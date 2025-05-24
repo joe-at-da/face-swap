@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.core.security import get_current_active_user
 from backend.db.session import get_db
 from backend.db.models.user import User as UserModel
-from backend.db.models.video import VideoClip
+from backend.db.models import VideoClip
 from backend.db.models.social import SocialPost
 
 router = APIRouter()

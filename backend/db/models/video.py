@@ -1,32 +1,6 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+# This file is deprecated and will be removed in a future version
+# The VideoClip model has been moved to backend.db.models.py
+# Please update your imports to use:
+# from backend.db.models import VideoClip
 
-from backend.db.base_class import Base
-
-class VideoClip(Base):
-    __tablename__ = "video_clips"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(String, nullable=True)
-    storage_path = Column(String, nullable=True)
-    duration = Column(Float)  # in seconds
-    status = Column(String, index=True)  # processing, ready, failed
-    error_message = Column(String, nullable=True)
-    
-    # Foreign keys
-    user_id = Column(Integer, ForeignKey("users.id"))
-    capture_session_id = Column(Integer, ForeignKey("capture_sessions.id"))
-    
-    # Metadata
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    start_time = Column(DateTime(timezone=True))  # When the clip starts in the original stream
-    end_time = Column(DateTime(timezone=True))    # When the clip ends in the original stream
-    
-    # Relationships
-    created_by_user = relationship("User", back_populates="video_clips")
-    capture_session = relationship("CaptureSession", back_populates="video_clips")
-    social_posts = relationship("SocialPost", back_populates="video_clip")
-    transcription = relationship("Transcription", back_populates="video_clip", uselist=False)
+# NOTE: Do not import anything here to avoid circular imports
