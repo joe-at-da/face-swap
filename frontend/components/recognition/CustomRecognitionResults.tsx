@@ -134,7 +134,7 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
     for (let i = 0; i < facesDetected; i++) {
       displayUnidentifiedFaces.push({
         id: `unknown-${i+1}`,
-        filename: '',
+        filename: 'placeholder_face.jpg', // Use a placeholder filename instead of empty string
         start_time: 0,
         end_time: 30, // Placeholder duration
         duration: 30
@@ -202,6 +202,13 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
                         src={`/api/v1/files/unidentified/${face.filename}`} 
                         alt="Unidentified face" 
                         className="w-full h-32 object-cover rounded"
+                        onError={(e) => {
+                          console.log(`Error loading image: ${face.filename}`);
+                          // @ts-ignore - target is valid
+                          e.target.onerror = null;
+                          // @ts-ignore - target is valid
+                          e.target.src = '/placeholder-face.png'; // Use the existing placeholder image
+                        }}
                       />
                     </div>
                   ) : (

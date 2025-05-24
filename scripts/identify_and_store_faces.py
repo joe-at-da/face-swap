@@ -65,13 +65,15 @@ def save_unidentified_face(face_image, face_location, output_dir):
         face_encoding = face_recognition.face_encodings(face_image, [face_location])[0]
         
         # Save the face metadata
+        # Use just the filename without the path for easier access from the frontend
+        face_basename = os.path.basename(face_filename)
         metadata = {
             "id": face_id,
             "timestamp": datetime.now().isoformat(),
             "face_location": face_location,
             "encoding": face_encoding.tolist(),
             "identified": False,
-            "filename": face_filename
+            "filename": face_basename
         }
         
         metadata_filename = os.path.join(output_dir, f"unidentified_face_{face_id}.json")
@@ -299,9 +301,12 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             time_segments.append(current_segment)
         
         # Add to results
+        # Use basename of the filename to ensure consistency with the metadata
+        filename = os.path.basename(face_data["filename"]) if face_data["filename"] else ""
+        
         results["unidentified_faces"].append({
             "id": face_data["id"],
-            "filename": face_data["filename"],
+            "filename": filename,
             "time_segments": time_segments,
             "appearances": face_data["appearances"]
         })

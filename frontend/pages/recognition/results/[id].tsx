@@ -287,7 +287,7 @@ const RecognitionResultsPage: RecognitionResultsPage = () => {
             for (let i = 0; i < facesDetected; i++) {
               unidentifiedFaces.push({
                 id: `unknown-${i+1}`,
-                filename: '',
+                filename: 'placeholder_face.jpg', // Use a placeholder filename instead of empty string
                 start_time: 0,
                 end_time: 30, // Placeholder duration
                 duration: 30,
