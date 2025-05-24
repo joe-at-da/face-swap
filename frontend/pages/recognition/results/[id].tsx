@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import MainLayout from '../../../components/layout/MainLayout';
 import { withAuth, useAuth } from '../../../contexts/AuthContext';
@@ -36,64 +35,82 @@ const RecognitionResultsPage = () => {
   const [speakerResults, setSpeakerResults] = useState<any>(null);
   const [transcriptionText, setTranscriptionText] = useState<string | undefined>(undefined);
   const [retryCount, setRetryCount] = useState(0);
-
-  // Fetch capture details
-  const { data: capture, isLoading: isLoadingCapture } = useQuery({
-    queryKey: ['capture', id],
-    queryFn: async () => {
-      if (!id) return null;
-      const response = await api.get(`/capture/${id}`);
-      return response?.data;
-    },
-    enabled: !!id,
-  });
+  const [captureData, setCaptureData] = useState<any>(null);
 
   // Function to fetch recognition results
-  const fetchRecognitionResults = async () => {
+  const fetchRecognitionResults = async (): Promise<void> => {
     if (!id) return;
     
     try {
       setIsLoading(true);
       setError(undefined);
       
-      // Fetch the detailed recognition status for this video
-      const response = await api.get(`/recognition/detailed-status/${id}`);
-      const results = response.data;
-      
-      // Fetch the capture data to get additional metadata
-      const captureResponse = await api.get(`/capture/${id}`);
-      const captureData = captureResponse?.data;
-      console.log('Capture data:', captureData);
-      if (captureData) {
-        console.log('Capture data keys:', Object.keys(captureData));
-        console.log('Recognition status:', captureData.recognition_status);
-        console.log('Has recognition_results:', !!captureData.recognition_results);
-      } else {
-        console.error('No capture data returned from API');
+      // Step 1: Fetch the capture data
+      let captureResponse;
+      try {
+        captureResponse = await api.get(`/capture/${id}`);
+        // Log the raw response to debug
+        console.log('Raw capture response:', captureResponse);
+        
+        // Check if we have a response with data
+        if (!captureResponse) {
+          throw new Error('No capture response returned');
+        }
+        
+        // Set the capture data state
+        setCaptureData(captureResponse.data);
+        console.log('Capture data successfully fetched:', captureResponse.data);
+      } catch (captureErr) {
+        console.error('Error fetching capture data:', captureErr);
         setError('Failed to fetch capture data. Please try again.');
         setIsLoading(false);
         return;
       }
       
-      // If the recognition is not completed, show an appropriate message
+      // Step 2: Fetch recognition status
+      let statusResponse;
+      try {
+        statusResponse = await api.get(`/recognition/detailed-status/${id}`);
+        // Log the raw response to debug
+        console.log('Raw status response:', statusResponse);
+        
+        // Check if we have a response
+        if (!statusResponse) {
+          throw new Error('No recognition status response returned');
+        }
+        
+        console.log('Recognition status successfully fetched:', statusResponse.data);
+      } catch (statusErr) {
+        console.error('Error fetching recognition status:', statusErr);
+        setError('Failed to fetch recognition status. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Type assertion to handle the 'unknown' type
+      const captureData = captureResponse.data as any;
+      const results = statusResponse.data as any;
+      
+      // Step 3: Check recognition status
       if (captureData.recognition_status !== 'completed') {
         setError(`Recognition is ${captureData.recognition_status}. Please wait for it to complete.`);
         setIsLoading(false);
         return;
       }
       
-      // Check if we have recognition results
+      // Step 4: Check if we have recognition results
       if (!captureData.recognition_results) {
         setError('No recognition results available for this capture.');
         setIsLoading(false);
         return;
       }
       
-      // Parse the recognition results
+      // Step 5: Parse the recognition results
       let recognitionResults;
       if (typeof captureData.recognition_results === 'string') {
         try {
           recognitionResults = JSON.parse(captureData.recognition_results);
+          console.log('Successfully parsed recognition results from string');
         } catch (e) {
           console.error('Error parsing recognition results:', e);
           setError('Error parsing recognition results.');
@@ -102,29 +119,30 @@ const RecognitionResultsPage = () => {
         }
       } else {
         recognitionResults = captureData.recognition_results;
+        console.log('Recognition results already in object format');
       }
       
-      console.log('Recognition results found:', JSON.stringify(recognitionResults));
-      
-      // Extract speakers and unidentified faces from the results
-      let speakers: Speaker[] = [];
-      let unidentifiedFaces: UnidentifiedFace[] = [];
-      let unidentifiedDir: string | undefined = undefined;
+      // Step 6: Extract data from recognition results
+      let speakers = [];
+      let unidentifiedFaces = [];
+      let unidentifiedDir;
       let facesDetected = 0;
       let transcript = '';
       
-      // CRITICAL: Direct access to unidentified faces from the raw data
-      // This is a more reliable way to access the unidentified faces
+      // Step 7: Extract unidentified faces (critical part)
+      console.log('Recognition results structure:', JSON.stringify(recognitionResults).substring(0, 200) + '...');
+      
       if (recognitionResults?.speaker_identification?.results?.unidentified_faces && 
           Array.isArray(recognitionResults.speaker_identification.results.unidentified_faces)) {
+        
         const rawUnidentifiedFaces = recognitionResults.speaker_identification.results.unidentified_faces;
-        console.log(`Direct access: Found ${rawUnidentifiedFaces.length} unidentified faces in raw data`);
+        console.log(`Found ${rawUnidentifiedFaces.length} unidentified faces in raw data`);
         
         // Process each unidentified face
         unidentifiedFaces = rawUnidentifiedFaces.map((face: any) => {
           // Extract just the basename from the full path
           const filename = face.filename ? face.filename.split('/').pop() : '';
-          console.log(`Direct access: Processing face ${face.id} with filename ${filename}`);
+          console.log(`Processing face ${face.id} with filename ${filename}`);
           
           return {
             id: face.id,
@@ -139,14 +157,24 @@ const RecognitionResultsPage = () => {
         // Set the unidentified directory if available
         if (recognitionResults.speaker_identification.unidentified_dir) {
           unidentifiedDir = recognitionResults.speaker_identification.unidentified_dir;
-          console.log(`Direct access: Setting unidentified directory to ${unidentifiedDir}`);
+          console.log(`Setting unidentified directory to ${unidentifiedDir}`);
         }
         
         // Set facesDetected to at least the number of unidentified faces
         facesDetected = Math.max(facesDetected, unidentifiedFaces.length);
-        console.log(`Direct access: Set facesDetected to ${facesDetected}`);
+        console.log(`Set facesDetected to ${facesDetected}`);
+      } else {
+        console.log('No unidentified faces found in recognition results structure');
+        console.log('Recognition results keys:', Object.keys(recognitionResults || {}));
+        if (recognitionResults?.speaker_identification) {
+          console.log('Speaker identification keys:', Object.keys(recognitionResults.speaker_identification));
+          if (recognitionResults.speaker_identification.results) {
+            console.log('Results keys:', Object.keys(recognitionResults.speaker_identification.results));
+          }
+        }
       }
       
+      // Step 8: Extract speakers from results
       if (results) {
         // Handle different formats of recognition results
         if (results.speakers && Array.isArray(results.speakers)) {
@@ -184,31 +212,32 @@ const RecognitionResultsPage = () => {
           });
         }
         
-        // Extract transcription text if available
+        // Step 9: Extract transcription text if available
         if (results.transcription && results.transcription.transcript) {
           transcript = results.transcription.transcript;
         } else if (results.results_summary && results.results_summary.transcript_text) {
           transcript = results.results_summary.transcript_text;
         }
-        
-        // Log the unidentified faces before creating the final object
-        console.log(`Creating final speakerResults with ${unidentifiedFaces.length} unidentified faces`);
-        if (unidentifiedFaces.length > 0) {
-          console.log(`First unidentified face: ${JSON.stringify(unidentifiedFaces[0])}`);
-        }
-        
-        const finalSpeakerResults = {
-          speakers,
-          unidentified_faces: unidentifiedFaces,
-          unidentified_dir: unidentifiedDir,
-          transcript: transcript
-        };
-        
-        setSpeakerResults(finalSpeakerResults);
-        setTranscriptionText(transcript);
-      } else {
-        setError('No recognition results available for this capture.');
       }
+      
+      // Step 10: Create the final speaker results object
+      console.log(`Creating final speakerResults with ${unidentifiedFaces.length} unidentified faces`);
+      if (unidentifiedFaces.length > 0) {
+        console.log(`First unidentified face: ${JSON.stringify(unidentifiedFaces[0])}`);
+      }
+      
+      const finalSpeakerResults = {
+        speakers,
+        unidentified_faces: unidentifiedFaces,
+        unidentified_dir: unidentifiedDir,
+        transcript: transcript,
+        processing_info: {
+          faces_detected: facesDetected
+        }
+      };
+      
+      setSpeakerResults(finalSpeakerResults);
+      setTranscriptionText(transcript);
     } catch (err) {
       console.error('Error fetching recognition results:', err);
       setError('Failed to fetch recognition results. Please try again.');
@@ -222,16 +251,17 @@ const RecognitionResultsPage = () => {
     if (id) {
       fetchRecognitionResults();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, retryCount]);
   
   // Function to handle retry
-  const handleRetry = () => {
+  const handleRetry = (): void => {
     setRetryCount(prev => prev + 1);
     toast.info("Retrying to fetch recognition results...");
   };
   
   // Function to navigate to face profiles page
-  const navigateToFaceProfiles = () => {
+  const navigateToFaceProfiles = (): void => {
     router.push('/admin/face-profiles');
   };
 
@@ -244,7 +274,7 @@ const RecognitionResultsPage = () => {
           </Link>
           <h1 className="text-2xl font-bold mt-2 text-white">Recognition Results</h1>
           <p className="text-gray-400">
-            {capture?.title || `Capture ID: ${id}`}
+            {captureData?.title || `Capture ID: ${id}`}
           </p>
         </div>
         
