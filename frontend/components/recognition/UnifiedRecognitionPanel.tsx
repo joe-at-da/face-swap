@@ -121,9 +121,11 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             status: (statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed") || 'not_started',
             started_at: statusData.started_at,
             completed_at: statusData.completed_at,
-            progress: statusData.completion_percentage || 0,
+            progress: statusData.completion_percentage || statusData.progress || 0,
+            steps: statusData.steps || []
           };
           
+          console.log('Mapped status with progress:', mappedStatus);
           setRecognitionStatus(mappedStatus);
           setLoading(false);
           setError('');
@@ -146,15 +148,18 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         const data = response;
         
         if (data.status) {
-          setRecognitionStatus({
+          const statusObj = {
             status: data.status,
-            progress: data.progress || 0,
+            progress: data.progress || data.completion_percentage || 0,
             steps: data.steps || [],
             error: data.error,
             started_at: data.started_at,
             completed_at: data.completed_at,
             results: data.results
-          });
+          };
+          
+          console.log('Setting recognition status with progress:', statusObj);
+          setRecognitionStatus(statusObj);
         } else {
           setRecognitionStatus({
             status: 'not_started',
@@ -471,13 +476,22 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               <span>Processing your audio...</span>
             </div>
             {recognitionStatus.progress !== undefined && (
-              <span className="text-sm font-medium">{Math.round(recognitionStatus.progress)}%</span>
+              <span className="text-sm font-medium text-blue-300 font-bold">{Math.round(recognitionStatus.progress)}%</span>
             )}
           </div>
           
-          {recognitionStatus.progress !== undefined && (
-            <div className="mt-4">
-              {renderProgressBar(recognitionStatus.progress, recognitionStatus.steps || [])}
+          {/* Always show progress bar even if progress is 0 */}
+          <div className="mt-4">
+            {renderProgressBar(
+              recognitionStatus.progress !== undefined ? recognitionStatus.progress : 0, 
+              recognitionStatus.steps || []
+            )}
+          </div>
+          
+          {/* Display step information if available */}
+          {recognitionStatus.steps && recognitionStatus.steps.length > 0 && (
+            <div className="mt-2 text-sm text-blue-200">
+              <p>Current step: {recognitionStatus.steps.find(s => s.status === 'in_progress')?.name || 'Initializing...'}</p>
             </div>
           )}
           
