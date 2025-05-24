@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from backend.api.deps import get_db, get_current_user
 from backend.core.security import has_permission
 from backend.db import models
+from backend.db.models import ClipStatus
+from backend.db.models.user import UserRole
 from backend.schemas.video import VideoClipCreate, VideoClipUpdate, VideoClipResponse
 from backend.services.tasks import video_tasks
 from backend.core.config import settings
@@ -21,7 +23,7 @@ async def create_clip(
     clip_data: VideoClipCreate
 ):
     """Create a new video clip from an active or completed capture."""
-    has_permission(current_user, ["ADMIN", "MP", "STAFF"])
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
     
     # Validate time range
     if clip_data.end_time <= clip_data.start_time:
@@ -56,7 +58,7 @@ async def create_clip(
         capture_session_id=capture.id,
         start_time=clip_data.start_time,
         end_time=clip_data.end_time,
-        status=models.ClipStatus.PROCESSING
+        status=ClipStatus.PROCESSING
     )
     
     db.add(clip)
@@ -88,7 +90,7 @@ async def get_clip(
         )
     
     # Check permissions
-    if clip.user_id != current_user.id and current_user.role not in ["ADMIN", "MP"]:
+    if clip.user_id != current_user.id and current_user.role not in [UserRole.ADMIN, UserRole.MP]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions"
@@ -112,7 +114,7 @@ async def list_clips(
         query = query.filter(models.VideoClip.status == status)
     
     # Filter by user unless admin
-    if current_user.role not in ["ADMIN", "MP"]:
+    if current_user.role not in [UserRole.ADMIN, UserRole.MP]:
         query = query.filter(models.VideoClip.user_id == current_user.id)
     
     clips = query.offset(skip).limit(limit).all()
@@ -133,7 +135,7 @@ async def delete_clip(
         )
     
     # Check permissions
-    if clip.user_id != current_user.id and current_user.role != "ADMIN":
+    if clip.user_id != current_user.id and current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions"

@@ -97,18 +97,22 @@ def has_permission(user, allowed_roles: list) -> bool:
             detail="Authentication required"
         )
     
-    # Convert string roles to UserRole enum if needed
+    # Ensure user_role is a UserRole enum
     user_role = user.role
-    if isinstance(user_role, str):
-        try:
-            user_role = UserRole(user_role)
-        except ValueError:
-            pass
     
+    # Check if the user's role is in the allowed roles
     if user_role not in allowed_roles:
+        # Format the role values for the error message
+        role_values = []
+        for role in allowed_roles:
+            if hasattr(role, 'value'):
+                role_values.append(role.value)
+            else:
+                role_values.append(str(role))
+                
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Not enough permissions. Required roles: {[role.value for role in allowed_roles]}"
+            detail=f"Not enough permissions. Required roles: {role_values}"
         )
     
     return True

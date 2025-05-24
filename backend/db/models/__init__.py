@@ -8,6 +8,7 @@ from .transcription import Transcription
 from .video import VideoClip
 from .face_profile import FaceProfile, FaceSample
 from .voice_profile import VoiceProfile, VoiceSample
+from .enums import ClipStatus, SocialPlatform, PostStatus
 
 __all__ = [
     "User",
@@ -25,5 +26,6 @@ __all__ = [
     "VoiceSample",
     "SpeakerIdentification",
     "Speaker",
-    "SpeakerAppearance"
+    "SpeakerAppearance",
+    "ClipStatus"
 ]

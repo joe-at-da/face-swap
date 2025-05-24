@@ -7,6 +7,8 @@ from backend.db import models
 from backend.db.models.user import UserRole, User as UserModel
 from backend.schemas import video as schemas
 from backend.core.security import has_permission
+# Import ClipStatus from the enums.py file
+from backend.db.models.enums import ClipStatus
 
 router = APIRouter()
 
@@ -95,7 +97,7 @@ async def create_clip(
     """Create a new video clip."""
     has_permission(current_user, [UserRole.ADMIN, UserRole.MP])
     
-    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status=models.ClipStatus.PROCESSING)
+    db_clip = models.VideoClip(**clip.dict(), user_id=current_user.id, status=ClipStatus.PROCESSING)
     db.add(db_clip)
     db.commit()
     db.refresh(db_clip)

@@ -1,28 +1,12 @@
 from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, JSON, Enum, Integer
 from sqlalchemy.orm import relationship
 from datetime import datetime
-import enum
 from backend.db.models.user import UserRole
 from backend.db.base_model import Base
 from backend.db.models.transcription import ParliamentTranscription
+from backend.db.models.enums import ClipStatus, SocialPlatform, PostStatus
 
-class ClipStatus(str, enum.Enum):
-    DRAFT = "draft"
-    PROCESSING = "processing"
-    READY = "ready"
-    PUBLISHED = "published"
-    FAILED = "failed"
-
-class SocialPlatform(str, enum.Enum):
-    TWITTER = "twitter"
-    FACEBOOK = "facebook"
-    INSTAGRAM = "instagram"
-    YOUTUBE = "youtube"
-
-class PostStatus(str, enum.Enum):
-    PENDING = "pending"
-    PUBLISHED = "published"
-    FAILED = "failed"
+# Enums are now imported from backend.db.models.enums
 
 class User(Base):
     __tablename__ = "users"
