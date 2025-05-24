@@ -32,11 +32,17 @@ const NewVideoClipPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   
+  // URL parameters from recognition results
+  const { capture_id, start_time, end_time, title, speaker_ids, segment_ids } = router.query;
+  
   // Form state
   const [formData, setFormData] = useState<CreateClipFormData>({
-    title: '',
+    title: (title as string) || '',
     description: '',
-    source_type: 'upload',
+    source_type: capture_id ? 'capture' : 'upload',
+    source_id: capture_id ? parseInt(capture_id as string) : undefined,
+    start_time: start_time ? parseFloat(start_time as string) : undefined,
+    end_time: end_time ? parseFloat(end_time as string) : undefined,
     generate_thumbnail: true,
   });
   
@@ -50,8 +56,7 @@ const NewVideoClipPage: React.FC = () => {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isUploading, setIsUploading] = useState(false);
   
-  // Router
-  const router2 = useRouter();
+  // The URL parameters are now extracted above
 
   // Fetch active capture sessions
   const { data: captureSessions, isLoading: capturesLoading } = useQuery({
@@ -59,6 +64,27 @@ const NewVideoClipPage: React.FC = () => {
     queryFn: async () => {
       return await api.get('/capture', { status: 'completed' });
     },
+  });
+  
+  // Fetch speaker profiles if speaker_ids are provided
+  const { data: speakerProfiles } = useQuery({
+    queryKey: ['speakerProfiles', speaker_ids],
+    queryFn: async () => {
+      if (!speaker_ids) return [];
+      const ids = (speaker_ids as string).split(',');
+      const profiles = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return await api.get(`/profiles/voice/${id}`);
+          } catch (error) {
+            console.error(`Failed to fetch profile for speaker ${id}:`, error);
+            return null;
+          }
+        })
+      );
+      return profiles.filter(Boolean);
+    },
+    enabled: !!speaker_ids,
   });
 
   // Create clip mutation
@@ -178,6 +204,47 @@ const NewVideoClipPage: React.FC = () => {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   };
+
+  useEffect(() => {
+    // Clean up video URL object when component unmounts
+    return () => {
+      if (videoUrl && videoUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(videoUrl);
+      }
+    };
+  }, [videoUrl]);
+
+  // Load capture video when component mounts or capture_id changes
+  useEffect(() => {
+    if (capture_id && formData.source_type === 'capture') {
+      const loadCaptureVideo = async () => {
+        try {
+          const captureData = await api.get(`/capture/${capture_id}`);
+          if (captureData && captureData.file_path) {
+            setVideoUrl(captureData.file_path);
+          }
+        } catch (error) {
+          console.error('Failed to load capture video:', error);
+        }
+      };
+      
+      loadCaptureVideo();
+    }
+  }, [capture_id, formData.source_type]);
+
+  // Update description with speaker information when speaker profiles are loaded
+  useEffect(() => {
+    if (speakerProfiles && speakerProfiles.length > 0) {
+      const speakerNames = speakerProfiles
+        .map((profile: any) => profile.name)
+        .join(', ');
+      
+      setFormData(prev => ({
+        ...prev,
+        description: prev.description || `Clip featuring ${speakerNames}. Created from recognition results.`
+      }));
+    }
+  }, [speakerProfiles]);
 
   // Handle video player events
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -594,6 +661,41 @@ const NewVideoClipPage: React.FC = () => {
                       {isUploading || createClipMutation.isPending ? 'Creating Clip...' : 'Create Video Clip'}
                     </button>
                   </div>
+                  
+                  {/* Speaker information if available */}
+                  {speakerProfiles && speakerProfiles.length > 0 && (
+                    <div className="mt-6 border-t border-gray-200 pt-4">
+                      <h3 className="text-sm font-medium text-gray-700 mb-2">Featured Speakers</h3>
+                      <div className="space-y-2">
+                        {speakerProfiles.map((profile: any) => (
+                          <div key={profile.id} className="flex items-center p-2 bg-gray-50 rounded">
+                            {profile.image_url ? (
+                              <img 
+                                src={profile.image_url} 
+                                alt={profile.name} 
+                                className="w-8 h-8 rounded-full mr-2 object-cover"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center mr-2">
+                                <span className="text-xs text-gray-600">
+                                  {profile.name.charAt(0)}
+                                </span>
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-sm font-medium">{profile.name}</p>
+                              {profile.role && (
+                                <p className="text-xs text-gray-500">{profile.role}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Speaker information will be included with the clip for social media sharing.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import DarkLayout from '../../../components/layout/DarkLayout';
 import { withAuth } from '../../../contexts/AuthContext';
 import { api } from '../../../utils/api';
+import SocialMediaShare from '../../../components/clips/SocialMediaShare';
 
 interface VideoClip {
   id: number;
@@ -46,7 +47,7 @@ interface TranscriptionSegment {
 const VideoClipDetailPage: React.FC = () => {
   const router = useRouter();
   const { id } = router.query;
-  const [activeTab, setActiveTab] = useState<'details' | 'transcription'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'transcription' | 'share'>('details');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
@@ -209,29 +210,28 @@ const VideoClipDetailPage: React.FC = () => {
         {/* Tabs */}
         <div className="bg-white rounded-lg shadow mb-6">
           <div className="border-b border-gray-200">
-            <nav className="-mb-px flex">
+            <nav className="-mb-px flex space-x-8">
               <button
                 onClick={() => setActiveTab('details')}
-                className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
-                  activeTab === 'details'
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'details' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
               >
                 Details
               </button>
-              {clip.has_transcription && (
-                <button
-                  onClick={() => setActiveTab('transcription')}
-                  className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
-                    activeTab === 'transcription'
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  Transcription
-                </button>
-              )}
+              
+              <button
+                onClick={() => setActiveTab('transcription')}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'transcription' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                disabled={!clip?.has_transcription}
+              >
+                Transcription
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('share')}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'share' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              >
+                Share
+              </button>
             </nav>
           </div>
 
@@ -275,7 +275,7 @@ const VideoClipDetailPage: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ) : (
+            ) : activeTab === 'transcription' ? (
               <div>
                 <h2 className="text-lg font-medium text-gray-900 mb-4">Transcription</h2>
                 
@@ -322,6 +322,20 @@ const VideoClipDetailPage: React.FC = () => {
                       ))}
                     </div>
                   </div>
+                )}
+              </div>
+            ) : (
+              /* Share Tab */
+              <div>
+                {clip && (
+                  <SocialMediaShare
+                    clipId={clip.id}
+                    clipTitle={clip.title}
+                    clipUrl={clip.file_path}
+                    thumbnailUrl={clip.thumbnail_url}
+                    duration={clip.duration}
+                    hasTranscription={clip.has_transcription}
+                  />
                 )}
               </div>
             )}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { api } from '../../utils/api';
 import { formatTime } from '../../utils/formatTime';
 import { toast } from 'react-toastify';
@@ -43,6 +44,8 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
   const [selectedFace, setSelectedFace] = useState<Face | null>(null);
   const [showFaceProfileModal, setShowFaceProfileModal] = useState<boolean>(false);
   const [transcriptSegments, setTranscriptSegments] = useState<any[]>([]);
+  const [selectedSegments, setSelectedSegments] = useState<string[]>([]);
+  const [showClipOptions, setShowClipOptions] = useState(false);
   
   useEffect(() => {
     if (videoId) {
@@ -67,13 +70,60 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
         setVideoUrl(`/api/v1/media/stream/${videoId}`);
       }
       
+      // Variable to store the recognition results
+      let resultsData: any = null;
+      
       // Fetch recognition results
-      const resultsResponse = await api.get(`/recognition/results/${videoId}`);
-      const resultsData = resultsResponse.data || resultsResponse;
-      setRecognitionData(resultsData);
+      // First try to get detailed status which contains the results
+      try {
+        const statusResponse = await api.get(`/recognition/detailed-status/${videoId}`);
+        const statusData = statusResponse.data || statusResponse;
+        
+        // Check if the detailed status contains recognition results
+        if (statusData && statusData.status && statusData.status.recognition_results) {
+          let resultsData;
+          
+          // Handle different formats of recognition results
+          if (typeof statusData.status.recognition_results === 'string') {
+            try {
+              resultsData = JSON.parse(statusData.status.recognition_results);
+            } catch (parseErr) {
+              console.error('Error parsing recognition results:', parseErr);
+              resultsData = { error: 'Failed to parse recognition results' };
+            }
+          } else {
+            resultsData = statusData.status.recognition_results;
+          }
+          
+          setRecognitionData(resultsData);
+        } else {
+          // If no results in status, try the capture's recognition_results field
+          if (captureDataObj.recognition_results) {
+            let resultsData;
+            
+            if (typeof captureDataObj.recognition_results === 'string') {
+              try {
+                resultsData = JSON.parse(captureDataObj.recognition_results);
+              } catch (parseErr) {
+                console.error('Error parsing recognition results from capture:', parseErr);
+                resultsData = { error: 'Failed to parse recognition results' };
+              }
+            } else {
+              resultsData = captureDataObj.recognition_results;
+            }
+            
+            setRecognitionData(resultsData);
+          } else {
+            throw new Error('No recognition results found');
+          }
+        }
+      } catch (resultsErr) {
+        console.error('Error fetching recognition results:', resultsErr);
+        throw resultsErr; // Propagate error to be caught by the outer try/catch
+      }
       
       // Process speakers
-      if (resultsData.speakers) {
+      if (resultsData && resultsData.speakers) {
         const speakersData = resultsData.speakers.map((speaker: any) => ({
           id: speaker.id,
           name: speaker.name || 'Unknown Speaker',
@@ -86,7 +136,7 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
       }
       
       // Process faces
-      if (resultsData.faces) {
+      if (resultsData && resultsData.faces) {
         const facesData = resultsData.faces.map((face: any) => ({
           id: face.id,
           name: face.name || 'Unknown Face',
@@ -100,7 +150,7 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
       }
       
       // Process transcript segments
-      if (resultsData.transcript && resultsData.transcript.segments) {
+      if (resultsData && resultsData.transcript && resultsData.transcript.segments) {
         setTranscriptSegments(resultsData.transcript.segments);
       }
       
@@ -114,6 +164,63 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
   
   const handleTimeUpdate = (time: number) => {
     setCurrentTime(time);
+  };
+  
+  const handleSegmentSelect = (segmentId: string) => {
+    setSelectedSegments(prev => {
+      if (prev.includes(segmentId)) {
+        return prev.filter(id => id !== segmentId);
+      } else {
+        return [...prev, segmentId];
+      }
+    });
+  };
+  
+  const createClipFromSegments = () => {
+    if (selectedSegments.length === 0) {
+      toast.error('Please select at least one segment');
+      return;
+    }
+    
+    // Find selected segments
+    const selectedSegmentObjects = transcriptSegments.filter(seg => 
+      selectedSegments.includes(seg.id || `segment-${seg.start_time || seg.startTime}`)
+    );
+    
+    if (selectedSegmentObjects.length === 0) {
+      toast.error('No valid segments selected');
+      return;
+    }
+    
+    // Get start and end times
+    const startTimes = selectedSegmentObjects.map(seg => seg.start_time || seg.startTime || 0);
+    const endTimes = selectedSegmentObjects.map(seg => seg.end_time || seg.endTime || 0);
+    
+    const startTime = Math.min(...startTimes);
+    const endTime = Math.max(...endTimes);
+    
+    // Create clip title from speaker names
+    const speakerIdsArray = selectedSegmentObjects.map(seg => seg.speaker_id || seg.speakerId);
+    // Use a regular array with filter to get unique values instead of Set
+    const speakerIds = speakerIdsArray.filter((id, index) => speakerIdsArray.indexOf(id) === index);
+    const speakerNames = speakerIds
+      .map(id => speakers.find(s => s.id === id)?.name || 'Unknown')
+      .join(', ');
+    
+    const clipTitle = `Clip of ${speakerNames}`;
+    
+    // Navigate to new clip page with parameters
+    router.push({
+      pathname: '/clips/new',
+      query: {
+        capture_id: videoId,
+        start_time: startTime,
+        end_time: endTime,
+        title: clipTitle,
+        speaker_ids: speakerIds.join(','),
+        segment_ids: selectedSegments.join(',')
+      }
+    });
   };
   
   const handleSpeakerSelect = (speakerId: string) => {
@@ -393,32 +500,110 @@ const EnhancedRecognitionResults: React.FC<EnhancedRecognitionResultsProps> = ({
           {/* Transcript Tab */}
           {activeTab === 'transcript' && (
             <div>
-              <h3 className="text-lg font-medium mb-4">Full Transcript</h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium">Full Transcript</h3>
+                
+                {transcriptSegments.length > 0 && (
+                  <div className="flex items-center space-x-2">
+                    {selectedSegments.length > 0 ? (
+                      <button
+                        onClick={createClipFromSegments}
+                        className="bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-1 rounded flex items-center"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        Create Clip ({selectedSegments.length})
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setShowClipOptions(!showClipOptions)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded flex items-center"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        Create Clip
+                      </button>
+                    )}
+                    
+                    {showClipOptions && (
+                      <Link href={`/clips/new?capture_id=${videoId}`}>
+                        <span className="bg-gray-600 hover:bg-gray-700 text-white text-sm px-3 py-1 rounded flex items-center cursor-pointer">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                          </svg>
+                          Advanced
+                        </span>
+                      </Link>
+                    )}
+                    
+                    {selectedSegments.length > 0 && (
+                      <button
+                        onClick={() => setSelectedSegments([])}
+                        className="text-gray-400 hover:text-white"
+                        title="Clear selection"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {showClipOptions && (
+                <div className="bg-gray-700 p-3 rounded-lg mb-4">
+                  <p className="text-sm text-gray-300 mb-2">
+                    Select segments below to create a clip. You can select multiple segments from different speakers.
+                  </p>
+                </div>
+              )}
               
               {transcriptSegments.length === 0 ? (
                 <p className="text-gray-400">No transcript available for this video.</p>
               ) : (
                 <div className="space-y-4">
                   {transcriptSegments.map((segment: any, index: number) => {
+                    const segmentId = segment.id || `segment-${segment.start_time || segment.startTime}`;
                     const speakerId = segment.speaker_id || segment.speakerId;
                     const speaker = speakers.find(s => s.id === speakerId);
                     const speakerName = speaker?.name || 'Unknown Speaker';
+                    const isSelected = selectedSegments.includes(segmentId);
                     
                     return (
                       <div 
                         key={index}
                         className={`p-3 rounded-lg ${
-                          currentTime >= (segment.start_time || segment.startTime || 0) && 
-                          currentTime <= (segment.end_time || segment.endTime || 0)
-                            ? 'bg-gray-700'
-                            : 'bg-gray-900'
-                        }`}
+                          isSelected 
+                            ? 'bg-blue-900 border border-blue-700' 
+                            : currentTime >= (segment.start_time || segment.startTime || 0) && 
+                              currentTime <= (segment.end_time || segment.endTime || 0)
+                              ? 'bg-gray-700'
+                              : 'bg-gray-900'
+                        } ${showClipOptions ? 'cursor-pointer' : ''}`}
                         onClick={() => {
-                          setCurrentTime(segment.start_time || segment.startTime || 0);
+                          if (showClipOptions) {
+                            handleSegmentSelect(segmentId);
+                          } else {
+                            setCurrentTime(segment.start_time || segment.startTime || 0);
+                          }
                         }}
                       >
                         <div className="flex justify-between items-center mb-2">
                           <div className="flex items-center">
+                            {showClipOptions && (
+                              <div className="mr-2">
+                                <input 
+                                  type="checkbox" 
+                                  checked={isSelected}
+                                  onChange={() => handleSegmentSelect(segmentId)}
+                                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-600 rounded"
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </div>
+                            )}
                             <span className="font-medium text-blue-400 mr-2">{speakerName}</span>
                             <span className="text-gray-400 text-sm">
                               {formatTime(segment.start_time || segment.startTime || 0)}

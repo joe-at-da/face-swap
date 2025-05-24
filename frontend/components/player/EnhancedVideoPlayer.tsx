@@ -111,14 +111,58 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     try {
       setIsLoading(true);
       
-      // Fetch recognition results
-      const response = await api.get(`/recognition/results/${captureId}`);
-      
-      if (response && response.success) {
-        const data = response.data || response;
+      // First, try to get the detailed status which contains recognition results
+      let resultsData = null;
+      try {
+        const statusResponse = await api.get(`/recognition/detailed-status/${captureId}`);
+        const statusData = statusResponse.data || statusResponse;
         
+        // Check if the detailed status contains recognition results
+        if (statusData && statusData.status && statusData.status.recognition_results) {
+          // Handle different formats of recognition results
+          if (typeof statusData.status.recognition_results === 'string') {
+            try {
+              resultsData = JSON.parse(statusData.status.recognition_results);
+            } catch (parseErr) {
+              console.error('Error parsing recognition results:', parseErr);
+              resultsData = { error: 'Failed to parse recognition results' };
+            }
+          } else {
+            resultsData = statusData.status.recognition_results;
+          }
+        }
+      } catch (statusErr) {
+        console.error('Error fetching detailed status:', statusErr);
+      }
+      
+      // If no results from detailed status, try to get capture data
+      if (!resultsData) {
+        try {
+          const captureResponse = await api.get(`/capture/${captureId}`);
+          const captureData = captureResponse.data || captureResponse;
+          
+          if (captureData && captureData.recognition_results) {
+            // Handle different formats of recognition results
+            if (typeof captureData.recognition_results === 'string') {
+              try {
+                resultsData = JSON.parse(captureData.recognition_results);
+              } catch (parseErr) {
+                console.error('Error parsing recognition results from capture:', parseErr);
+                resultsData = { error: 'Failed to parse recognition results' };
+              }
+            } else {
+              resultsData = captureData.recognition_results;
+            }
+          }
+        } catch (captureErr) {
+          console.error('Error fetching capture data:', captureErr);
+        }
+      }
+      
+      // Process the results if we have them
+      if (resultsData) {
         // Process speakers
-        const speakersData = data.speakers || [];
+        const speakersData = resultsData.speakers || [];
         const mappedSpeakers = speakersData.map((speaker: any, index: number) => ({
           id: speaker.id || `speaker-${index}`,
           name: speaker.name || `Speaker ${index + 1}`,
@@ -126,7 +170,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
         }));
         
         // Process segments
-        const segmentsData = data.segments || [];
+        const segmentsData = resultsData.segments || [];
         const mappedSegments = segmentsData.map((segment: any, index: number) => ({
           id: segment.id || `segment-${index}`,
           speakerId: segment.speaker_id || segment.speakerId || 'unknown',
@@ -139,7 +183,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
         setSpeakers(mappedSpeakers);
         setSegments(mappedSegments);
       } else {
-        setError('Failed to load recognition data');
+        setError('No recognition data available');
       }
     } catch (err) {
       console.error('Error fetching recognition data:', err);
