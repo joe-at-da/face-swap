@@ -47,19 +47,36 @@ const RecognitionResultsPage = () => {
       
       // Step 1: Fetch the capture data
       let captureResponse;
+      let captureDataObj: any;
       try {
         captureResponse = await api.get(`/capture/${id}`);
         // Log the raw response to debug
         console.log('Raw capture response:', captureResponse);
         
         // Check if we have a response with data
-        if (!captureResponse) {
-          throw new Error('No capture response returned');
+        console.log('Checking captureResponse:', captureResponse);
+        
+        // The response might be directly the data object
+        if (captureResponse && typeof captureResponse === 'object') {
+          // If captureResponse is already the data object
+          if (captureResponse.id && captureResponse.status) {
+            captureDataObj = captureResponse;
+          } 
+          // If captureResponse has a data property
+          else if (captureResponse.data) {
+            captureDataObj = captureResponse.data;
+          }
+          // If we couldn't find data
+          else {
+            throw new Error('No capture data found in response');
+          }
+        } else {
+          throw new Error('Invalid capture response format');
         }
         
         // Set the capture data state
-        setCaptureData(captureResponse.data);
-        console.log('Capture data successfully fetched:', captureResponse.data);
+        setCaptureData(captureDataObj);
+        console.log('Capture data successfully fetched:', captureDataObj);
       } catch (captureErr) {
         console.error('Error fetching capture data:', captureErr);
         setError('Failed to fetch capture data. Please try again.');
@@ -69,17 +86,34 @@ const RecognitionResultsPage = () => {
       
       // Step 2: Fetch recognition status
       let statusResponse;
+      let resultsObj: any;
       try {
         statusResponse = await api.get(`/recognition/detailed-status/${id}`);
         // Log the raw response to debug
         console.log('Raw status response:', statusResponse);
         
-        // Check if we have a response
-        if (!statusResponse) {
-          throw new Error('No recognition status response returned');
+        // Check if we have a response with data
+        console.log('Checking statusResponse:', statusResponse);
+        
+        // The response might be directly the data object
+        if (statusResponse && typeof statusResponse === 'object') {
+          // If statusResponse is already the data object
+          if (statusResponse.results || statusResponse.speakers || statusResponse.unidentified_faces) {
+            resultsObj = statusResponse;
+          } 
+          // If statusResponse has a data property
+          else if (statusResponse.data) {
+            resultsObj = statusResponse.data;
+          }
+          // If we couldn't find data
+          else {
+            throw new Error('No recognition status data found in response');
+          }
+        } else {
+          throw new Error('Invalid recognition status response format');
         }
         
-        console.log('Recognition status successfully fetched:', statusResponse.data);
+        console.log('Recognition status successfully fetched:', resultsObj);
       } catch (statusErr) {
         console.error('Error fetching recognition status:', statusErr);
         setError('Failed to fetch recognition status. Please try again.');
@@ -87,29 +121,61 @@ const RecognitionResultsPage = () => {
         return;
       }
       
-      // Type assertion to handle the 'unknown' type
-      const captureData = captureResponse.data as any;
-      const results = statusResponse.data as any;
+      // Log the extracted data for debugging
+      console.log('Using captureDataObj:', captureDataObj);
+      console.log('Using resultsObj:', resultsObj);
       
-      // Step 3: Check recognition status
-      if (captureData.recognition_status !== 'completed') {
-        setError(`Recognition is ${captureData.recognition_status}. Please wait for it to complete.`);
+      // Step 3: Check if captureDataObj has recognition_status
+      if (!captureDataObj) {
+        console.error('Capture data is undefined after fetching');
+        setError('Failed to fetch capture data. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+      
+      if (captureDataObj.recognition_status === undefined) {
+        console.error('Capture data is missing recognition_status field');
+        console.log('Available fields in captureDataObj:', Object.keys(captureDataObj));
+        setError('Failed to fetch complete capture data. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+      
+      console.log('Checking recognition status:', captureDataObj.recognition_status);
+      
+      // Check recognition status
+      if (captureDataObj.recognition_status !== 'completed') {
+        setError(`Recognition is ${captureDataObj.recognition_status}. Please wait for it to complete.`);
         setIsLoading(false);
         return;
       }
       
       // Step 4: Check if we have recognition results
-      if (!captureData.recognition_results) {
+      if (!captureDataObj.recognition_results) {
         setError('No recognition results available for this capture.');
         setIsLoading(false);
         return;
       }
       
+      // Additional validation for resultsObj
+      if (!resultsObj) {
+        console.error('Recognition results are undefined after fetching');
+        setError('Failed to fetch recognition results. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Log the structure of both objects to help debug
+      console.log('captureDataObj structure:', Object.keys(captureDataObj));
+      console.log('resultsObj structure:', Object.keys(resultsObj));
+      
+      console.log('Processing recognition results:', resultsObj);
+      
       // Step 5: Parse the recognition results
       let recognitionResults;
-      if (typeof captureData.recognition_results === 'string') {
+      if (typeof captureDataObj.recognition_results === 'string') {
         try {
-          recognitionResults = JSON.parse(captureData.recognition_results);
+          recognitionResults = JSON.parse(captureDataObj.recognition_results);
           console.log('Successfully parsed recognition results from string');
         } catch (e) {
           console.error('Error parsing recognition results:', e);
@@ -118,21 +184,44 @@ const RecognitionResultsPage = () => {
           return;
         }
       } else {
-        recognitionResults = captureData.recognition_results;
+        recognitionResults = captureDataObj.recognition_results;
         console.log('Recognition results already in object format');
       }
       
       // Step 6: Extract data from recognition results
       let speakers = [];
       let unidentifiedFaces = [];
-      let unidentifiedDir;
+      let unidentifiedDir = '';
       let facesDetected = 0;
       let transcript = '';
       
-      // Step 7: Extract unidentified faces (critical part)
+      // Log recognition results structure for debugging
       console.log('Recognition results structure:', JSON.stringify(recognitionResults).substring(0, 200) + '...');
       
-      if (recognitionResults?.speaker_identification?.results?.unidentified_faces && 
+      console.log('Checking for unidentified faces in resultsObj:', resultsObj);
+      
+      if (resultsObj.unidentified_faces) {
+        // Format 1: Unidentified faces directly in the results
+        unidentifiedFaces = resultsObj.unidentified_faces;
+        unidentifiedDir = resultsObj.unidentified_dir || '';
+        console.log(`Found ${unidentifiedFaces.length} unidentified faces directly in results`);
+        
+        // Process each unidentified face
+        unidentifiedFaces = unidentifiedFaces.map((face: any) => {
+          // Extract just the basename from the full path
+          const filename = face.filename ? face.filename.split('/').pop() : '';
+          console.log(`Processing face ${face.id} with filename ${filename}`);
+          
+          return {
+            id: face.id,
+            filename: filename,
+            start_time: face.appearances?.[0]?.timestamp || 0,
+            end_time: face.appearances?.[0]?.timestamp || 0,
+            duration: 30, // Default duration
+            timestamp: face.appearances?.[0]?.timestamp || 0
+          };
+        });
+      } else if (recognitionResults?.speaker_identification?.results?.unidentified_faces && 
           Array.isArray(recognitionResults.speaker_identification.results.unidentified_faces)) {
         
         const rawUnidentifiedFaces = recognitionResults.speaker_identification.results.unidentified_faces;
@@ -159,7 +248,7 @@ const RecognitionResultsPage = () => {
           unidentifiedDir = recognitionResults.speaker_identification.unidentified_dir;
           console.log(`Setting unidentified directory to ${unidentifiedDir}`);
         }
-        
+
         // Set facesDetected to at least the number of unidentified faces
         facesDetected = Math.max(facesDetected, unidentifiedFaces.length);
         console.log(`Set facesDetected to ${facesDetected}`);
@@ -173,13 +262,22 @@ const RecognitionResultsPage = () => {
           }
         }
       }
-      
+
+      // Step 8: Check for faces detected count
+      if (resultsObj.processing_info?.faces_detected !== undefined) {
+        facesDetected = resultsObj.processing_info.faces_detected;
+      } else if (resultsObj.results?.processing_info?.faces_detected !== undefined) {
+        facesDetected = resultsObj.results.processing_info.faces_detected;
+      } else if (recognitionResults?.processing_info?.faces_detected !== undefined) {
+        facesDetected = recognitionResults.processing_info.faces_detected;
+      }
+
       // Step 8: Extract speakers from results
-      if (results) {
+      if (resultsObj) {
         // Handle different formats of recognition results
-        if (results.speakers && Array.isArray(results.speakers)) {
+        if (resultsObj.speakers && Array.isArray(resultsObj.speakers)) {
           // Format 1: Array of speakers with time segments
-          speakers = results.speakers.map((speaker: any) => {
+          speakers = resultsObj.speakers.map((speaker: any) => {
             return {
               name: speaker.name,
               confidence: speaker.confidence || 0.5,
@@ -188,9 +286,9 @@ const RecognitionResultsPage = () => {
               duration: speaker.duration || 0
             };
           });
-        } else if (results.results && results.results.speakers) {
+        } else if (resultsObj.results && resultsObj.results.speakers) {
           // Format 2: Nested results object with speakers
-          speakers = Object.entries(results.results.speakers).map(([name, data]: [string, any]) => {
+          speakers = Object.entries(resultsObj.results.speakers).map(([name, data]: [string, any]) => {
             return {
               name,
               confidence: data.confidence || 0.5,
@@ -199,9 +297,9 @@ const RecognitionResultsPage = () => {
               duration: data.duration || 0
             };
           });
-        } else if (results.results_summary && results.results_summary.speakers) {
+        } else if (resultsObj.results_summary && resultsObj.results_summary.speakers) {
           // Format 3: Results summary with speakers
-          speakers = results.results_summary.speakers.map((speaker: any) => {
+          speakers = resultsObj.results_summary.speakers.map((speaker: any) => {
             return {
               name: speaker.name,
               confidence: speaker.confidence || 0.5,
@@ -211,19 +309,34 @@ const RecognitionResultsPage = () => {
             };
           });
         }
-        
-        // Step 9: Extract transcription text if available
-        if (results.transcription && results.transcription.transcript) {
-          transcript = results.transcription.transcript;
-        } else if (results.results_summary && results.results_summary.transcript_text) {
-          transcript = results.results_summary.transcript_text;
-        }
       }
-      
+
+      // Step 9: Extract transcription text if available
+      if (resultsObj.transcript) {
+        // Format 1: Transcript directly in the resultsObj
+        transcript = resultsObj.transcript;
+        console.log('Found transcript directly in resultsObj');
+      } else if (resultsObj.transcription?.transcript) {
+        // Format 2: Transcript in a nested transcription object
+        transcript = resultsObj.transcription.transcript;
+        console.log('Found transcript in nested transcription object');
+      } else if (resultsObj.results?.transcription?.transcript) {
+        // Format 3: Transcript in a deeply nested object
+        transcript = resultsObj.results.transcription.transcript;
+        console.log('Found transcript in deeply nested object');
+      } else if (recognitionResults?.transcription?.transcript) {
+        // Format 4: Transcript in the recognition results
+        transcript = recognitionResults.transcription.transcript;
+        console.log('Found transcript in recognition results');
+      }
+
       // Step 10: Create the final speaker results object
       console.log(`Creating final speakerResults with ${unidentifiedFaces.length} unidentified faces`);
       if (unidentifiedFaces.length > 0) {
+        console.log(`Found ${unidentifiedFaces.length} unidentified faces`);
         console.log(`First unidentified face: ${JSON.stringify(unidentifiedFaces[0])}`);
+      } else {
+        console.log('No unidentified faces found in the results');
       }
       
       const finalSpeakerResults = {
@@ -235,6 +348,8 @@ const RecognitionResultsPage = () => {
           faces_detected: facesDetected
         }
       };
+      
+      console.log('Final speaker results:', finalSpeakerResults);
       
       setSpeakerResults(finalSpeakerResults);
       setTranscriptionText(transcript);

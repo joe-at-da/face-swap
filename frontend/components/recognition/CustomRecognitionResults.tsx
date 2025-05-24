@@ -226,18 +226,37 @@ const CustomRecognitionResults: React.FC<RecognitionResultsProps> = ({
                         alt={`Unidentified face ${face.id}`} 
                         className="w-full h-32 object-cover rounded"
                         onError={(e) => {
-                          console.log(`Error loading image: ${face.filename}, URL: /api/v1/files/unidentified/${face.filename}`);
-                          // Try to load a direct URL as fallback
-                          const directUrl = `/api/v1/files/unidentified/unidentified_face_${face.id}.jpg`;
-                          console.log(`Trying fallback URL: ${directUrl}`);
-                          // @ts-ignore - target is valid
-                          e.target.onerror = () => {
-                            console.log(`Fallback also failed, using placeholder`);
-                            // @ts-ignore - target is valid
-                            e.target.src = '/placeholder-face.png';
+                          console.log(`Error loading image: ${face.filename}`);
+                          console.log(`Original URL: /api/v1/files/unidentified/${encodeURIComponent(face.filename)}`);
+                          
+                          // Try different URL formats as fallbacks
+                          const fallbackUrls = [
+                            `/api/v1/files/unidentified/unidentified_face_${face.id}.jpg`,
+                            `/api/v1/recognition/unidentified/${encodeURIComponent(face.filename)}`,
+                            `/api/v1/recognition/unidentified/unidentified_face_${face.id}.jpg`
+                          ];
+                          
+                          let currentFallbackIndex = 0;
+                          
+                          const tryNextFallback = () => {
+                            if (currentFallbackIndex < fallbackUrls.length) {
+                              const nextUrl = fallbackUrls[currentFallbackIndex];
+                              console.log(`Trying fallback URL (${currentFallbackIndex + 1}/${fallbackUrls.length}): ${nextUrl}`);
+                              currentFallbackIndex++;
+                              // @ts-ignore - target is valid
+                              e.target.onerror = tryNextFallback;
+                              // @ts-ignore - target is valid
+                              e.target.src = nextUrl;
+                            } else {
+                              console.log(`All fallbacks failed, using placeholder`);
+                              // @ts-ignore - target is valid
+                              e.target.onerror = null;
+                              // @ts-ignore - target is valid
+                              e.target.src = '/placeholder-face.png';
+                            }
                           };
-                          // @ts-ignore - target is valid
-                          e.target.src = directUrl;
+                          
+                          tryNextFallback();
                         }}
                       />
                     </div>
