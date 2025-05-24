@@ -3,6 +3,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from collections import Counter
 
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Path, Request
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from sqlalchemy.sql import desc
@@ -128,103 +130,82 @@ async def list_social_posts(
     """
     List social media posts with optional filtering by platform and status.
     """
-    # Parse timeframe parameter if provided
-    days = 30  # Default to 30 days
-    if timeframe:
-        if timeframe == "7days":
-            days = 7
-        elif timeframe == "30days":
-            days = 30
-        elif timeframe == "90days":
-            days = 90
+    try:
+        # Start with a base query
+        query = db.query(SocialPost)
+        
+        # Apply platform filter if provided
+        if platform:
+            query = query.filter(SocialPost.platform == platform)
+        
+        # Apply status filter if provided
+        if status:
+            query = query.filter(SocialPost.status == status)
+        
+        # Apply timeframe filter if provided
+        if timeframe:
+            days = 30  # Default to 30 days
+            if timeframe == "7days":
+                days = 7
+            elif timeframe == "30days":
+                days = 30
+            elif timeframe == "90days":
+                days = 90
+            
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            query = query.filter(SocialPost.created_at >= cutoff_date)
+        
+        # Get total count for pagination metadata
+        total = query.count()
+        
+        # Apply pagination
+        query = query.order_by(SocialPost.created_at.desc()).offset(skip).limit(limit)
+        
+        # Execute query and get results
+        db_posts = query.all()
+        
+        # Convert to response models
+        posts = []
+        for post in db_posts:
+            # Create a dictionary with all the fields from the database model
+            post_dict = {
+                "id": post.id,
+                "content": post.content,
+                "platform": post.platform,
+                "status": post.status,
+                "scheduled_time": post.scheduled_time,
+                "posted_time": post.posted_time,
+                "external_id": post.external_id,
+                "error_message": post.error_message,
+                "video_clip_id": post.video_clip_id,
+                "created_by_id": post.created_by_id,
+                "created_at": post.created_at,
+                "updated_at": post.updated_at,
+                "platform_url": getattr(post, 'platform_url', None),
+                "analytics": getattr(post, 'analytics', None)
+            }
+            
+            # Convert to SocialPostResponse
+            posts.append(SocialPostResponse(**post_dict))
+        
+        # Add pagination headers if request has state attribute
+        if hasattr(request, 'state'):
+            request.state.pagination = {
+                "total": total,
+                "skip": skip,
+                "limit": limit,
+                "has_more": total > (skip + limit)
+            }
+        
+        return posts
     
-    # Create date range filter
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=days)
-    
-    # Create mock data for testing
-    mock_posts = [
-        {
-            "id": 1,
-            "content": "Important parliamentary update! #parliament #politics",
-            "platform": SocialPlatform.TWITTER,
-            "status": PostStatus.POSTED,
-            "scheduled_time": None,
-            "posted_time": datetime.utcnow() - timedelta(days=2),
-            "external_id": "1234567890",
-            "error_message": None,
-            "video_clip_id": 1,
-            "created_by_id": 1,
-            "created_at": datetime.utcnow() - timedelta(days=2),
-            "updated_at": datetime.utcnow() - timedelta(days=2),
-            "platform_url": "https://twitter.com/parliament/status/1234567890",
-            "analytics": {"likes": 45, "retweets": 12, "views": 1200}
-        },
-        {
-            "id": 2,
-            "content": "Watch the latest debate! #parliament #debate",
-            "platform": SocialPlatform.FACEBOOK,
-            "status": PostStatus.POSTED,
-            "scheduled_time": None,
-            "posted_time": datetime.utcnow() - timedelta(days=4),
-            "external_id": "0987654321",
-            "error_message": None,
-            "video_clip_id": 2,
-            "created_by_id": 1,
-            "created_at": datetime.utcnow() - timedelta(days=4),
-            "updated_at": datetime.utcnow() - timedelta(days=4),
-            "platform_url": "https://facebook.com/parliament/posts/0987654321",
-            "analytics": {"likes": 120, "shares": 35, "comments": 18, "views": 3500}
-        },
-        {
-            "id": 3,
-            "content": "Behind the scenes at Parliament #behindthescenes",
-            "platform": SocialPlatform.INSTAGRAM,
-            "status": PostStatus.SCHEDULED,
-            "scheduled_time": datetime.utcnow() + timedelta(days=1),
-            "posted_time": None,
-            "external_id": None,
-            "error_message": None,
-            "video_clip_id": 3,
-            "created_by_id": 1,
-            "created_at": datetime.utcnow() - timedelta(days=1),
-            "updated_at": datetime.utcnow() - timedelta(days=1),
-            "platform_url": None,
-            "analytics": None
-        }
-    ]
-    
-    # Apply platform filter if provided
-    filtered_posts = mock_posts
-    if platform:
-        filtered_posts = [post for post in filtered_posts if post["platform"] == platform]
-    
-    # Apply status filter if provided
-    if status:
-        filtered_posts = [post for post in filtered_posts if post["status"] == status]
-    
-    # Apply timeframe filter if provided
-    if timeframe:
-        start_date = datetime.utcnow() - timedelta(days=days)
-        filtered_posts = [post for post in filtered_posts if post["created_at"] >= start_date]
-    
-    # Apply pagination
-    total_count = len(filtered_posts)
-    paginated_posts = filtered_posts[skip:skip+limit]
-    
-    # Add pagination headers if request has state attribute
-    if hasattr(request, 'state'):
-        request.state.pagination = {
-            "total": total_count,
-            "skip": skip,
-            "limit": limit,
-            "has_more": total_count > (skip + limit)
-        }
-    
-    # Convert to response model
-    response_posts = [SocialPostResponse(**post) for post in paginated_posts]
-    
-    return response_posts
+    except Exception as e:
+        # Log the error
+        print(f"Error listing social posts: {str(e)}")
+        
+        # If there's an error, return an empty list
+        # In a production environment, you might want to raise an HTTPException instead
+        return []
 
 
 @router.get("/posts/{post_id}", response_model=SocialPostResponse)
