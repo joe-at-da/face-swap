@@ -293,7 +293,7 @@ async def start_capture(
     }
     
     # Add additional fields if they exist
-    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration']:
+    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration', 'recognition_results', 'recognition_status', 'recognition_started_at', 'recognition_completed_at', 'recognition_progress']:
         if hasattr(capture_session, field):
             response[field] = getattr(capture_session, field)
         else:
@@ -363,7 +363,7 @@ async def stop_capture(
     }
     
     # Add additional fields if they exist
-    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration']:
+    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration', 'recognition_results', 'recognition_status', 'recognition_started_at', 'recognition_completed_at', 'recognition_progress']:
         if hasattr(capture, field):
             response[field] = getattr(capture, field)
         else:
@@ -429,7 +429,7 @@ async def get_capture_by_id(
     }
     
     # Add additional fields if they exist
-    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration']:
+    for field in ['title', 'end_time', 'file_path', 'file_size', 'duration', 'recognition_results', 'recognition_status', 'recognition_started_at', 'recognition_completed_at', 'recognition_progress']:
         if hasattr(capture, field):
             response[field] = getattr(capture, field)
         else:

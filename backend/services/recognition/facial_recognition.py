@@ -229,16 +229,18 @@ class FacialRecognitionService:
                 "results_file": None
             }
     
-    def identify_speakers(self, video_path: str, output_file: Optional[str] = None) -> Dict:
+    def identify_speakers(self, video_path: str, output_file: Optional[str] = None, store_unidentified: bool = True) -> Dict:
         """
         Identify speakers in a video file using facial recognition.
+        Also stores unidentified faces for later identification if store_unidentified is True.
         
         Args:
             video_path: Path to the video file
             output_file: Optional path to save the output video with speaker identification
+            store_unidentified: Whether to store unidentified faces for later identification
             
         Returns:
-            Dict with identification results
+            Dict with identification results including both identified and unidentified faces
         """
         logger.info(f"Identifying speakers in video: {video_path}")
         
@@ -260,20 +262,33 @@ class FacialRecognitionService:
                 "results_file": None
             }
         
-        # Prepare the script path
-        script_path = self.scripts_dir / "identify_speakers.py"
+        # Prepare the script path - use the new script that can store unidentified faces
+        script_path = self.scripts_dir / "identify_and_store_faces.py"
         
-        # Check if the script exists
+        # If the new script doesn't exist, fall back to the old one
         if not script_path.exists():
-            return {
-                "success": False,
-                "error": f"Speaker identification script not found: {script_path}",
-                "output_file": None,
-                "results_file": None
-            }
+            script_path = self.scripts_dir / "identify_speakers.py"
+            logger.warning(f"New script not found, falling back to: {script_path}")
+            store_unidentified = False  # Can't store unidentified faces with the old script
+            
+            if not script_path.exists():
+                return {
+                    "success": False,
+                    "error": f"Speaker identification script not found: {script_path}",
+                    "output_file": None,
+                    "results_file": None
+                }
         
         # Prepare the results file
         results_file = f"{os.path.splitext(video_path)[0]}_speaker_identification_results.json"
+        
+        # Prepare the directory for unidentified faces
+        unidentified_dir = None
+        if store_unidentified:
+            video_dir = os.path.dirname(video_path)
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            unidentified_dir = os.path.join(video_dir, f"{video_name}_unidentified_faces")
+            os.makedirs(unidentified_dir, exist_ok=True)
         
         # Prepare the command
         cmd = [
@@ -286,6 +301,9 @@ class FacialRecognitionService:
         
         if output_file:
             cmd.extend(["--output", output_file])
+        
+        if store_unidentified and unidentified_dir and "identify_and_store_faces.py" in str(script_path):
+            cmd.extend(["--unidentified-dir", unidentified_dir])
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
@@ -324,11 +342,16 @@ class FacialRecognitionService:
             with open(results_file, "r") as f:
                 results = json.load(f)
             
+            # Add information about unidentified faces if available
+            if store_unidentified and unidentified_dir:
+                results["unidentified_dir"] = unidentified_dir
+            
             return {
                 "success": True,
                 "message": "Speaker identification completed successfully",
                 "output_file": output_file if output_file and os.path.exists(output_file) else None,
                 "results_file": results_file,
+                "unidentified_dir": unidentified_dir if store_unidentified else None,
                 "results": results
             }
             
