@@ -347,24 +347,60 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
   };
   
   // Share to social media
-  const shareToSocialMedia = () => {
+  const shareToSocialMedia = async () => {
     let url = '';
     const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
     
-    switch (platform) {
-      case 'twitter':
-        url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
-        break;
-      case 'linkedin':
-        url = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(currentUrl)}&summary=${encodeURIComponent(shareText)}`;
-        break;
-      case 'facebook':
-        url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(currentUrl)}&quote=${encodeURIComponent(shareText)}`;
-        break;
-    }
-    
-    if (url && typeof window !== 'undefined') {
-      window.open(url, '_blank');
+    // First create a record in the system
+    try {
+      // Create post record in the database
+      const response = await api.post('/social/posts/', {
+        content: shareText,
+        platform: platform,
+        video_clip_id: clipId,
+        status: 'posted',
+        posted_at: new Date().toISOString()
+      });
+      
+      console.log('Social media post created:', response);
+      toast.success(`Post created for ${platform}`);
+      
+      // Then open the external platform
+      switch (platform) {
+        case 'twitter':
+          url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
+          break;
+        case 'linkedin':
+          url = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(currentUrl)}&summary=${encodeURIComponent(shareText)}`;
+          break;
+        case 'facebook':
+          url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(currentUrl)}&quote=${encodeURIComponent(shareText)}`;
+          break;
+      }
+      
+      if (url && typeof window !== 'undefined') {
+        window.open(url, '_blank');
+      }
+    } catch (error: any) {
+      console.error('Failed to create social media post:', error);
+      toast.error(`Failed to create post: ${error?.message || 'Unknown error'}`);
+      
+      // Still open the external platform even if our internal record fails
+      switch (platform) {
+        case 'twitter':
+          url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
+          break;
+        case 'linkedin':
+          url = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(currentUrl)}&summary=${encodeURIComponent(shareText)}`;
+          break;
+        case 'facebook':
+          url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(currentUrl)}&quote=${encodeURIComponent(shareText)}`;
+          break;
+      }
+      
+      if (url && typeof window !== 'undefined') {
+        window.open(url, '_blank');
+      }
     }
   };
   

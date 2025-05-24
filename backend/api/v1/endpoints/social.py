@@ -128,84 +128,57 @@ async def list_social_posts(
     """
     List social media posts with optional filtering by platform and status.
     """
-    # Create mock data for testing
-    mock_posts = [
-        {
-            "id": 1,
-            "platform": SocialPlatform.TWITTER,
-            "content": "Important parliamentary update on climate policy #Parliament #ClimateAction",
-            "status": PostStatus.POSTED,
-            "scheduled_time": None,
-            "posted_time": datetime.utcnow() - timedelta(days=2),
-            "external_id": "1234567890",
-            "error_message": None,
-            "video_clip_id": 1,
-            "created_by_id": 1,
-            "created_at": datetime.utcnow() - timedelta(days=2),
-            "updated_at": datetime.utcnow() - timedelta(days=2),
-            "platform_url": "https://twitter.com/parliament/status/1234567890",
-            "analytics": {"likes": 45, "retweets": 12, "views": 1200}
-        },
-        {
-            "id": 2,
-            "platform": SocialPlatform.FACEBOOK,
-            "content": "Watch the latest debate on education funding #Parliament #Education",
-            "status": PostStatus.POSTED,
-            "scheduled_time": None,
-            "posted_time": datetime.utcnow() - timedelta(days=4),
-            "external_id": "0987654321",
-            "error_message": None,
-            "video_clip_id": 2,
-            "created_by_id": 1,
-            "created_at": datetime.utcnow() - timedelta(days=4),
-            "updated_at": datetime.utcnow() - timedelta(days=4),
-            "platform_url": "https://facebook.com/parliament/posts/0987654321",
-            "analytics": {"likes": 120, "shares": 35, "comments": 18, "views": 3500}
-        },
-        {
-            "id": 3,
-            "platform": SocialPlatform.INSTAGRAM,
-            "content": "Behind the scenes at Parliament today #Parliament #BehindTheScenes",
-            "status": PostStatus.SCHEDULED,
-            "scheduled_time": datetime.utcnow() + timedelta(days=1),
-            "posted_time": None,
-            "external_id": None,
-            "error_message": None,
-            "video_clip_id": 3,
-            "created_by_id": 1,
-            "created_at": datetime.utcnow() - timedelta(days=1),
-            "updated_at": datetime.utcnow() - timedelta(days=1),
-            "platform_url": None,
-            "analytics": None
-        }
-    ]
-    
-    # Apply platform filter if provided
-    if platform:
-        mock_posts = [post for post in mock_posts if post["platform"] == platform]
-    
-    # Apply status filter if provided
-    if status:
-        mock_posts = [post for post in mock_posts if post["status"] == status]
-    
-    # Apply timeframe filter if provided
+    # Parse timeframe parameter if provided
+    days = 30  # Default to 30 days
     if timeframe:
-        days = 30  # Default
         if timeframe == "7days":
             days = 7
         elif timeframe == "30days":
             days = 30
         elif timeframe == "90days":
             days = 90
-        
-        start_date = datetime.utcnow() - timedelta(days=days)
-        mock_posts = [post for post in mock_posts if post["created_at"] >= start_date]
+    
+    # Create date range filter
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=days)
+    
+    # Query database for posts
+    query = db.query(SocialPost).filter(
+        SocialPost.created_at >= start_date,
+        SocialPost.created_at <= end_date
+    )
+    
+    # Apply platform filter if provided
+    if platform:
+        query = query.filter(SocialPost.platform == platform)
+    
+    # Apply status filter if provided
+    if status:
+        query = query.filter(SocialPost.status == status)
+    
+    # Get total count for pagination info
+    total_count = query.count()
     
     # Apply pagination
-    paginated_posts = mock_posts[skip:skip+limit]
+    query = query.order_by(SocialPost.created_at.desc()).offset(skip).limit(limit)
     
-    # Convert to SocialPostResponse objects
-    return [SocialPostResponse(**post) for post in paginated_posts]
+    # Execute query
+    posts = query.all()
+    
+    # If no posts found and we're in development mode, create some sample data
+    if not posts and len(posts) == 0 and skip == 0:
+        logger.warning("No social posts found in database. You may need to create some posts.")
+    
+    # Add pagination headers if request has state attribute
+    if hasattr(request, 'state'):
+        request.state.pagination = {
+            "total": total_count,
+            "skip": skip,
+            "limit": limit,
+            "has_more": total_count > (skip + limit)
+        }
+    
+    return posts
 
 
 @router.get("/posts/{post_id}", response_model=SocialPostResponse)
@@ -452,46 +425,81 @@ async def get_social_stats(
         elif timeframe == "90days":
             days = 90
     
-    # Create mock statistics data
+    # Get real statistics data from the database
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days)
     
-    # Generate daily post counts for the last 7 days
+    # Query for posts within the date range
+    posts_query = db.query(SocialPost).filter(
+        SocialPost.created_at >= start_date,
+        SocialPost.created_at <= end_date
+    )
+    
+    # Apply platform filter if provided
+    if platform:
+        posts_query = posts_query.filter(SocialPost.platform == platform)
+    
+    # Get all posts within the date range
+    posts = posts_query.all()
+    total_posts = len(posts)
+    
+    # Count posts by platform
+    platform_counts = Counter([post.platform for post in posts])
+    platforms_dict = {platform.value: count for platform, count in platform_counts.items()}
+    
+    # Count posts by status
+    status_counts = Counter([post.status for post in posts])
+    status_dict = {status.value: count for status, count in status_counts.items()}
+    
+    # Generate daily post counts
     daily_posts = []
     for i in range(7):
         day = end_date - timedelta(days=i)
+        day_start = datetime(day.year, day.month, day.day, 0, 0, 0)
+        day_end = datetime(day.year, day.month, day.day, 23, 59, 59)
+        
+        # Count posts for this day
+        day_count = db.query(SocialPost).filter(
+            SocialPost.created_at >= day_start,
+            SocialPost.created_at <= day_end
+        ).count()
+        
         daily_posts.append({
             "date": day.strftime("%Y-%m-%d"),
-            "count": 5 - (i % 3)  # Mock data: 5, 4, 3, 5, 4, 3, 5 posts per day
+            "count": day_count
         })
     
-    # Mock statistics
+    # Get engagement metrics (from real data if available, otherwise use zeros)
+    total_likes = sum([post.metrics.get('likes', 0) if post.metrics else 0 for post in posts])
+    total_shares = sum([post.metrics.get('shares', 0) if post.metrics else 0 for post in posts])
+    total_comments = sum([post.metrics.get('comments', 0) if post.metrics else 0 for post in posts])
+    
+    # Calculate average engagement rate
+    avg_engagement = 0
+    if total_posts > 0:
+        total_engagement = total_likes + total_shares + total_comments
+        avg_engagement = round(total_engagement / total_posts, 2)
+    
+    # Get top users by post count
+    user_post_counts = Counter([post.created_by_id for post in posts])
+    top_users = [
+        {"user_id": user_id, "post_count": count}
+        for user_id, count in user_post_counts.most_common(3)
+    ]
+    
+    # Compile statistics
     stats = {
-        "total_posts": 28,
-        "platforms": {
-            "twitter": 12,
-            "facebook": 8,
-            "instagram": 5,
-            "linkedin": 3
-        },
-        "status": {
-            "draft": 5,
-            "scheduled": 7,
-            "posted": 15,
-            "failed": 1
-        },
+        "total_posts": total_posts,
+        "platforms": platforms_dict,
+        "status": status_dict,
         "daily_posts": daily_posts,
         "engagement": {
-            "total_likes": 1250,
-            "total_shares": 320,
-            "total_comments": 180,
-            "average_engagement_rate": 3.2
+            "total_likes": total_likes,
+            "total_shares": total_shares,
+            "total_comments": total_comments,
+            "average_engagement_rate": avg_engagement
         },
-        "top_users": [
-            {"user_id": 1, "post_count": 15},
-            {"user_id": 2, "post_count": 8},
-            {"user_id": 3, "post_count": 5}
-        ],
+        "top_users": top_users,
         "date_range": {
             "start": start_date.isoformat(),
             "end": end_date.isoformat(),

@@ -38,18 +38,25 @@ app = FastAPI(
 # Configure CORS for frontend access
 # In development, explicitly allow the frontend origin
 
-# Define allowed origins
-allowed_origins = [
-    "http://localhost:3000",  # NextJS dev server
-    "http://127.0.0.1:3000",
-    "http://frontend:3000",   # Docker service name
-    "http://localhost:8080",  # Alternative port
-]
+# Define allowed origins - use settings value if available
+allowed_origins_str = settings.CORS_ORIGINS if hasattr(settings, 'CORS_ORIGINS') else "http://localhost:3000,http://127.0.0.1:3000"
+allowed_origins = allowed_origins_str.split(',')
+
+# Check if wildcard is in the list
+if "*" in allowed_origins:
+    # If wildcard is present, allow all origins
+    allow_origins_setting = ["*"]
+    allow_origin_regex_setting = None
+else:
+    # Otherwise use the specific origins
+    allow_origins_setting = allowed_origins
+    allow_origin_regex_setting = None
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=allow_origins_setting,
+    allow_origin_regex=allow_origin_regex_setting,
     allow_credentials=True,   # Allow credentials when using specific origins
     allow_methods=["*"],
     allow_headers=["*"],
