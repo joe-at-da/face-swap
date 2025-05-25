@@ -53,7 +53,31 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
       
       try {
         setIsLoading(true);
-        const response = await api.get(`/recognition/timeline/${videoId}`);
+        
+        // Extract the actual ID from the generated ID format if needed
+        let captureId = videoId;
+        if (typeof videoId === 'string') {
+          // If it's a generated ID like 'file-123456' or 'video-file-123456'
+          if (videoId.startsWith('video-file-')) {
+            captureId = videoId.substring(11); // Remove 'video-file-' prefix
+          } else if (videoId.startsWith('file-')) {
+            captureId = videoId.substring(5); // Remove 'file-' prefix
+          }
+          
+          console.log('Using capture ID for recognition:', captureId);
+        }
+        
+        // Try to fetch the recognition data
+        const response = await api.get(`/recognition/timeline/${captureId}`).catch(async (err) => {
+          console.log('Error with first recognition attempt:', err);
+          
+          // If the first attempt fails, try with the original ID
+          if (captureId !== videoId) {
+            console.log('Trying with original video ID:', videoId);
+            return await api.get(`/recognition/timeline/${videoId}`);
+          }
+          throw err;
+        });
         
         // Handle different response formats
         const data = response.data || response;
@@ -82,7 +106,7 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
         console.log('Timeline data loaded:', data);
       } catch (err) {
         console.error('Error loading timeline data:', err);
-        setError('Error loading recognition data. Please try again.');
+        setError('Invalid capture ID. Please check the URL and try again.');
       } finally {
         setIsLoading(false);
       }

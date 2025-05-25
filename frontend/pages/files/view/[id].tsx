@@ -251,15 +251,18 @@ const MediaViewPage: React.FC = () => {
         return '';
       }
       
-      console.log('Using filename for streaming:', filename);
-      return `${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`;
+      // For direct streaming, we can use the relative_path or filename
+      const streamUrl = `${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`;
+      console.log('Using video URL for streaming:', streamUrl);
+      return streamUrl;
     } else if (type === 'clip' && clip) {
       if (!clip.file_path && !clip.id) {
         console.error('No valid file_path or id found in clip:', clip);
         return '';
       }
-      const filename = clip.file_path ? clip.file_path.split('/').pop() || '' : '';
-      return `${API_BASE_URL}/clips/stream/${clip.id}?token=${token}`;
+      const clipUrl = `${API_BASE_URL}/clips/stream/${clip.id}?token=${token}`;
+      console.log('Using clip URL for streaming:', clipUrl);
+      return clipUrl;
     }
     return '';
   };
