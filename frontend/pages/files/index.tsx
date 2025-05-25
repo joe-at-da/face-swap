@@ -25,6 +25,28 @@ const FILE_TYPES = {
   CLIP: 'clip' as FileTypeValue
 };
 
+// ParliamentTV Video interface
+interface ParliamentTVVideo {
+  id: number;
+  title: string;
+  status: string;
+  file_path?: string;
+  path?: string;
+  filename?: string;
+  file_size?: number;
+  created_at: string;
+  updated_at: string;
+  duration?: number;
+  url?: string;
+  facial_recognition_enabled?: boolean;
+  facial_recognition_status?: string;
+  created_by?: {
+    id: number;
+    name: string;
+    email: string;
+  };
+}
+
 // File interface
 interface FileItem {
   id: string;
@@ -37,6 +59,7 @@ interface FileItem {
   status: string;
   created_at: string;
   description?: string;
+  thumbnail_url?: string; // Added for clip thumbnails
   details?: any; // Additional details specific to file type
 }
 
@@ -70,14 +93,28 @@ const FileGalleryPage = () => {
     queryKey: ['videos'],
     queryFn: async () => {
       if (!token) return [];
-      const response = await axios.get(`${API_BASE_URL}/videos`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      return response.data;
+      try {
+        // First try the consolidated videos endpoint
+        const response = await api.get('/videos');
+        console.log('Videos response:', response);
+        return Array.isArray(response) ? response : [];
+      } catch (error) {
+        console.error('Error fetching videos from main endpoint:', error);
+        // Fallback to the parliament-tv endpoint if the main one fails
+        try {
+          const fallbackResponse = await api.get('/parliament-tv');
+          console.log('Fallback videos response:', fallbackResponse);
+          return Array.isArray(fallbackResponse) ? fallbackResponse : [];
+        } catch (fallbackError) {
+          console.error('Error fetching videos from fallback endpoint:', fallbackError);
+          return [];
+        }
+      }
     },
-    enabled: !!token
+    enabled: !!token,
+    refetchOnWindowFocus: false,
   });
-  
+
   // Fetch clips
   const { data: clips, isLoading: isLoadingClips } = useQuery({
     queryKey: ['clips'],
@@ -108,6 +145,17 @@ const FileGalleryPage = () => {
     enabled: !!token
   });
   
+  // Simple hash function for generating IDs from strings
+  const hashCode = (str: string): number => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash;
+  };
+
   // Combine all files into a single array
   useEffect(() => {
     if (!videos && !transcriptions && !recognitions && !clips) return;
@@ -116,15 +164,39 @@ const FileGalleryPage = () => {
     
     // Add videos
     if (videos && Array.isArray(videos)) {
+      console.log('Processing videos:', videos);
       videos.forEach((video: any) => {
+        console.log('Processing video:', video);
+        
+        // Generate a fallback ID if none exists
+        let videoId = video.id || video.capture_id || '';
+        if (!videoId && (video.filename || video.path)) {
+          videoId = `file-${Math.abs(hashCode(video.filename || video.path || ''))}`;  
+        }
+        
+        // Extract filename from path or file_path
+        let filename = '';
+        let path = '';
+        
+        if (video.filename) {
+          filename = video.filename;
+        } else if (video.file_path) {
+          filename = video.file_path.split('/').pop() || '';
+          path = video.file_path;
+        } else if (video.path) {
+          filename = video.path.split('/').pop() || '';
+          path = video.path;
+        }
+        
+        // Always add the video to the list
         allFiles.push({
-          id: `video-${video.id || video.capture_id}`,
+          id: `video-${videoId}`,
           type: FILE_TYPES.VIDEO,
-          path: video.path,
-          filename: video.filename,
-          size: video.size,
-          capture_id: video.capture_id || video.id,
-          title: video.title || video.filename,
+          path: path || '',
+          filename: filename || '',
+          size: video.file_size || video.size || 0,
+          capture_id: videoId,
+          title: video.title || filename || 'Untitled Video',
           status: video.status || 'READY',
           created_at: video.created_at || new Date().toISOString(),
           description: video.description || '',
@@ -139,21 +211,22 @@ const FileGalleryPage = () => {
         });
         
         // Check if there's an associated audio file
-        if (video.filename.endsWith('.mp4')) {
-          const audioFilename = video.filename.replace('.mp4', '.audio.mp3');
+        if (filename && filename.endsWith('.mp4')) {
+          const audioFilename = filename.replace('.mp4', '.audio.mp3');
+          const audioPath = path.replace('.mp4', '.audio.mp3');
           allFiles.push({
-            id: `audio-${video.path.replace('.mp4', '.audio.mp3')}`,
+            id: `audio-${audioPath}`,
             type: FILE_TYPES.AUDIO,
-            path: video.path.replace('.mp4', '.audio.mp3'),
+            path: audioPath,
             filename: audioFilename,
             size: 0, // Size unknown
-            capture_id: video.capture_id,
-            title: `Audio: ${video.title || video.filename}`,
+            capture_id: videoId,
+            title: `Audio: ${video.title || filename}`,
             status: video.status || 'READY',
             created_at: video.created_at || new Date().toISOString(),
-            description: `Audio track for ${video.title || video.filename}`,
+            description: `Audio track for ${video.title || filename}`,
             details: {
-              related_video: video.path,
+              related_video: path,
               duration: video.duration
             }
           });
@@ -164,63 +237,70 @@ const FileGalleryPage = () => {
     // Add clips
     if (clips && clips.items) {
       clips.items.forEach((clip: any) => {
+        // Be more lenient with clip IDs
+        const clipId = clip.id || '';
         allFiles.push({
-          id: `clip-${clip.id}`,
+          id: `clip-${clipId}`,
           type: FILE_TYPES.CLIP,
           path: clip.file_path || '',
-          filename: clip.file_path ? clip.file_path.split('/').pop() : `clip_${clip.id}.mp4`,
+          filename: clip.file_path ? clip.file_path.split('/').pop() : `clip_${clipId}.mp4`,
           size: clip.size || 0,
           created_at: clip.created_at || new Date().toISOString(),
           status: clip.status || 'READY',
           title: clip.title || `Clip ${clip.id}`,
           description: clip.description || '',
           capture_id: clip.capture_id || '',
+          thumbnail_url: clip.thumbnail_url || '',
           details: clip
         });
       });
     }
     
     // Add transcriptions
-    if (transcriptions) {
+    if (transcriptions && Array.isArray(transcriptions)) {
       transcriptions.forEach((transcription: any) => {
+        // Be more lenient with transcription IDs
+        const captureId = transcription.capture_id || transcription.id || '';
         allFiles.push({
-          id: `transcription-${transcription.id}`,
+          id: `transcription-${captureId}`,
           type: FILE_TYPES.TRANSCRIPTION,
-          path: `/transcription/${transcription.id}`,
-          filename: `transcription_${transcription.capture_id}.json`,
+          path: `/transcription/${transcription.id || captureId}`,
+          filename: `transcription_${captureId}.json`,
           size: 0, // Size unknown
           created_at: transcription.created_at || new Date().toISOString(),
-          status: transcription.status,
-          title: `Transcription: Capture ${transcription.capture_id}`,
+          status: transcription.status || 'UNKNOWN',
+          title: `Transcription: Capture ${captureId}`,
           description: '',
-          capture_id: transcription.capture_id,
+          capture_id: captureId,
           details: {
-            language: transcription.language,
-            text_preview: transcription.text?.substring(0, 100) + '...',
-            error_message: transcription.error_message
+            language: transcription.language || 'en',
+            text_preview: transcription.text ? (transcription.text.substring(0, 100) + '...') : 'No text available',
+            error_message: transcription.error_message || ''
           }
         });
       });
     }
     
     // Add recognitions
-    if (recognitions) {
+    if (recognitions && Array.isArray(recognitions)) {
       recognitions.forEach((recognition: any) => {
+        // Be more lenient with recognition IDs
+        const captureId = recognition.capture_id || recognition.id || '';
         allFiles.push({
-          id: `recognition-${recognition.id}`,
+          id: `recognition-${captureId}`,
           type: FILE_TYPES.RECOGNITION,
-          path: `/recognition/${recognition.id}`,
-          filename: `recognition_${recognition.capture_id}.json`,
+          path: `/recognition/${recognition.id || captureId}`,
+          filename: `recognition_${captureId}.json`,
           size: 0, // Size unknown
           created_at: recognition.created_at || new Date().toISOString(),
-          status: recognition.status,
-          title: `Recognition: ${recognition.type} (Capture ${recognition.capture_id})`,
+          status: recognition.status || 'UNKNOWN',
+          title: `Recognition: ${recognition.type || 'Unknown'} (Capture ${captureId})`,
           description: '',
-          capture_id: recognition.capture_id,
+          capture_id: captureId,
           details: {
-            type: recognition.type,
-            confidence: recognition.confidence,
-            error_message: recognition.error_message
+            type: recognition.type || 'unknown',
+            confidence: recognition.confidence || 0,
+            error_message: recognition.error_message || ''
           }
         });
       });
@@ -340,21 +420,32 @@ const FileGalleryPage = () => {
     if (file.type === FILE_TYPES.VIDEO) {
       // Use capture_id if available, otherwise extract the video ID from the file ID
       // or from the details object
-      const videoId = file.capture_id || 
-                     (file.details?.id) || 
-                     (file.id && file.id.split('-')[1]);
+      let videoId = file.capture_id || 
+                   (file.details?.id) || 
+                   (file.id && file.id.split('-')[1]);
       
+      console.log('Video ID before validation:', videoId, 'from file:', file);
+      
+      // Be more lenient with video IDs
       if (videoId) {
+        console.log('Valid video ID found:', videoId);
         router.push(`/files/view/${videoId}?type=video`);
       } else {
-        toast.error('Unable to view this video. Could not determine video ID.');
+        console.error('Invalid video ID:', videoId);
+        toast.error('Unable to view this video. Could not determine valid video ID.');
       }
     } else if (file.type === FILE_TYPES.CLIP) {
-      // Extract the clip ID from the file ID (format: 'clip-123')
-      const clipId = file.id.split('-')[1];
+      // Extract the clip ID from the file ID (format: 'clip-123') or use capture_id
+      let clipId = file.capture_id || file.id.split('-')[1];
+      
+      console.log('Clip ID before validation:', clipId, 'from file:', file);
+      
+      // Be more lenient with clip IDs
       if (clipId) {
+        console.log('Valid clip ID found:', clipId);
         router.push(`/files/view/${clipId}?type=clip`);
       } else {
+        console.error('Invalid clip ID:', clipId);
         toast.error('Unable to view this clip. Invalid clip ID.');
       }
     } else if (file.type === FILE_TYPES.AUDIO) {
@@ -362,19 +453,31 @@ const FileGalleryPage = () => {
       setSelectedFile(file);
     } else if (file.type === FILE_TYPES.TRANSCRIPTION) {
       // Use capture_id if available, otherwise extract the ID from the file ID
-      const transcriptionId = file.capture_id || file.id.split('-')[1];
+      let transcriptionId = file.capture_id || file.id.split('-')[1];
+      
+      console.log('Transcription ID before validation:', transcriptionId, 'from file:', file);
+      
+      // Be more lenient with transcription IDs
       if (transcriptionId) {
+        console.log('Valid transcription ID found:', transcriptionId);
         router.push(`/files/view/${transcriptionId}?type=video&tab=transcription`);
       } else {
-        toast.error('Unable to view this transcription. Could not determine ID.');
+        console.error('Invalid transcription ID:', transcriptionId);
+        toast.error('Unable to view this transcription. Could not determine valid ID.');
       }
     } else if (file.type === FILE_TYPES.RECOGNITION) {
       // Use capture_id if available, otherwise extract the ID from the file ID
-      const recognitionId = file.capture_id || file.id.split('-')[1];
+      let recognitionId = file.capture_id || file.id.split('-')[1];
+      
+      console.log('Recognition ID before validation:', recognitionId, 'from file:', file);
+      
+      // Be more lenient with recognition IDs
       if (recognitionId) {
+        console.log('Valid recognition ID found:', recognitionId);
         router.push(`/files/view/${recognitionId}?type=video&tab=recognition`);
       } else {
-        toast.error('Unable to view this recognition data. Could not determine ID.');
+        console.error('Invalid recognition ID:', recognitionId);
+        toast.error('Unable to view this recognition data. Could not determine valid ID.');
       }
     }
   };

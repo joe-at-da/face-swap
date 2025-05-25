@@ -85,6 +85,14 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch recognition status
   const fetchStatus = async () => {
+    // Check if captureId is valid
+    if (!captureId || isNaN(Number(captureId))) {
+      console.error('Invalid capture ID:', captureId);
+      setError('Invalid capture ID. Please check the URL and try again.');
+      setLoading(false);
+      return;
+    }
+    
     try {
       const response = await api.get(`/recognition/recognition-status/${captureId}`);
       const status = response.data || response;

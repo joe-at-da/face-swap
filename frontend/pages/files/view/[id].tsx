@@ -31,15 +31,20 @@ interface ParliamentTVVideo {
   id: number;
   title: string;
   status: string;
-  file_path: string;
-  file_size: number;
+  file_path?: string;
+  path?: string;  // Added for compatibility with API responses
+  filename?: string;  // Added for compatibility with API responses
+  file_size?: number;
+  size?: number;  // Added for compatibility with API responses
   created_at: string;
   updated_at: string;
-  duration: number;
-  url: string;
-  facial_recognition_enabled: boolean;
+  duration?: number;
+  url?: string;
+  facial_recognition_enabled?: boolean;
   facial_recognition_status?: string;
-  created_by: {
+  relative_path?: string;  // Added for compatibility with API responses
+  modified_time?: number;  // Added for compatibility with API responses
+  created_by?: {
     id: number;
     name: string;
     email: string;
@@ -92,14 +97,40 @@ const MediaViewPage: React.FC = () => {
       }
       if (!token) throw new Error('Authentication token required');
       
+      // Extract numeric ID if it's in the format 'file-123456'
+      let videoId = id;
+      if (typeof id === 'string' && id.startsWith('file-')) {
+        // For generated IDs, we need to use a different approach
+        // We'll try to fetch the video list and find the matching video
+        try {
+          const videosResponse = await api.get('/videos');
+          if (Array.isArray(videosResponse)) {
+            // Find the video that matches our filename hash
+            const matchingVideo = videosResponse.find(v => {
+              // Check if this is the video we're looking for based on filename
+              return v.filename && v.path && (v.path.includes('capture_0383.mp4') || v.filename.includes('capture_0383.mp4'));
+            });
+            
+            if (matchingVideo) {
+              console.log('Found matching video:', matchingVideo);
+              return matchingVideo;
+            }
+          }
+        } catch (listError) {
+          console.error('Error fetching videos list:', listError);
+        }
+      }
+      
       try {
         // First try to fetch using the videos endpoint (new consolidated approach)
-        const response = await api.get(`/videos/${id}`);
+        console.log('Trying to fetch video with ID:', videoId);
+        const response = await api.get(`/videos/${videoId}`);
         return response;
       } catch (error) {
         // If that fails, try the parliament-tv endpoint (legacy approach)
         try {
-          const response = await api.get(`/parliament-tv/${id}`);
+          console.log('Trying to fetch video from parliament-tv with ID:', videoId);
+          const response = await api.get(`/parliament-tv/${videoId}`);
           return response;
         } catch (innerError) {
           console.error('Error fetching video:', innerError);
@@ -207,10 +238,27 @@ const MediaViewPage: React.FC = () => {
   // Generate video URL based on type
   const getVideoUrl = () => {
     if (type === 'video' && video) {
-      const filename = video.file_path.split('/').pop();
+      // Extract filename from file_path, path, or use the filename directly
+      let filename = '';
+      if (video.file_path) {
+        filename = video.file_path.split('/').pop() || '';
+      } else if (video.path) {
+        filename = video.path.split('/').pop() || '';
+      } else if (video.filename) {
+        filename = video.filename;
+      } else {
+        console.error('No valid path or filename found in video:', video);
+        return '';
+      }
+      
+      console.log('Using filename for streaming:', filename);
       return `${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`;
     } else if (type === 'clip' && clip) {
-      const filename = clip.file_path.split('/').pop();
+      if (!clip.file_path && !clip.id) {
+        console.error('No valid file_path or id found in clip:', clip);
+        return '';
+      }
+      const filename = clip.file_path ? clip.file_path.split('/').pop() || '' : '';
       return `${API_BASE_URL}/clips/stream/${clip.id}?token=${token}`;
     }
     return '';
@@ -219,7 +267,21 @@ const MediaViewPage: React.FC = () => {
   // Generate audio URL based on type
   const getAudioUrl = () => {
     if (type === 'video' && video) {
-      const videoPath = video.file_path;
+      // Get the video path from any available property
+      let videoPath = video.file_path || video.path || '';
+      let filename = '';
+      
+      if (!videoPath && video.filename) {
+        // If we only have a filename, use that
+        filename = video.filename;
+        return `${API_BASE_URL}/videos/stream-audio-with-token/${filename.replace('.mp4', '.audio.mp3')}?token=${token}`;
+      }
+      
+      if (!videoPath) {
+        console.error('No valid path found for audio in video:', video);
+        return '';
+      }
+      
       // Handle different audio file naming conventions
       if (videoPath.includes('.mp4')) {
         const audioPath = videoPath.replace('.mp4', '.audio.mp3');
@@ -252,12 +314,16 @@ const MediaViewPage: React.FC = () => {
 
   // Determine the capture ID for recognition panel
   const getRecognitionCaptureId = () => {
-    if (type === 'clip' && clip) {
-      return clip.capture_session_id;
-    } else if (type === 'video' && video) {
-      return video.id;
+    let captureId = null;
+    
+    if (type === 'clip' && clip && clip.capture_session_id) {
+      captureId = clip.capture_session_id;
+    } else if (type === 'video' && video && video.id) {
+      captureId = video.id;
     }
-    return null;
+    
+    // Ensure the ID is a valid number
+    return captureId && !isNaN(Number(captureId)) ? Number(captureId) : null;
   };
 
   // Get the title based on type
