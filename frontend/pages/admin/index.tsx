@@ -228,11 +228,7 @@ const AdminDashboard: React.FC = () => {
                 {/* Storage usage */}
                 <div className="bg-gray-900 rounded-lg p-6">
                   <h3 className="text-lg font-medium text-white mb-4">Storage Usage</h3>
-                  {/* Debug info */}
-                  <div className="bg-gray-800 p-2 mb-4 rounded text-xs text-gray-400 overflow-auto">
-                    <pre>Storage data: {JSON.stringify(systemStats.storage, null, 2)}</pre>
-                  </div>
-                  {systemStats.storage && systemStats.storage.total === 0 ? (
+                  {!systemStats.storage || systemStats.storage.total === 0 ? (
                     <div className="text-center py-4">
                       <svg className="mx-auto h-10 w-10 text-yellow-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
