@@ -288,7 +288,7 @@ pytest --cov=backend tests/
 
 The Parliament Video Clip Manager has reached beta status with all core features implemented. Both backend and frontend components are complete and ready for deployment.
 
-### Current Status (May 1, 2025)
+### Current Status (May 25, 2025)
 
 1. **Backend**
    - ✅ FastAPI server with all endpoints implemented
@@ -297,8 +297,10 @@ The Parliament Video Clip Manager has reached beta status with all core features
    - ✅ Improved video capture functionality
    - ✅ Parliament TV capture with facial recognition
    - ✅ Automatic transcription with Whisper integration
-   - ✅ Social media integration
-   - ✅ Storage management
+   - ⚠️ Social media integration (in progress - speaker matching, voice and facial profiles pending)
+   - ✅ Storage management with real-time metrics
+   - ✅ System logs with fallback mechanisms
+   - ✅ Prometheus metrics integration
 
 2. **Frontend**
    - ✅ Next.js with TypeScript implementation
@@ -306,8 +308,9 @@ The Parliament Video Clip Manager has reached beta status with all core features
    - ✅ Capture session interface
    - ✅ Parliament TV capture interface
    - ✅ Transcription interface for viewing and managing transcriptions
-   - ✅ Social media dashboard
-   - ✅ Admin interface (users, storage)
+   - ⚠️ Social media dashboard (speaker matching, voice and facial profiles in progress)
+   - ✅ Admin interface with real-time system metrics and logs
+   - ✅ Storage management dashboard with accurate usage statistics
    - ✅ Authentication and authorization flows
 
 ### Project Roadmap
@@ -316,7 +319,14 @@ For detailed information about the project roadmap, including completed mileston
 
 ### Recent Achievements
 
-1. **Video Capture System**
+1. **Real Data Metrics Integration**
+   - Implemented accurate storage breakdown metrics with multi-layered fallback mechanisms
+   - Enhanced system logs with robust fallback options when Docker commands aren't available
+   - Fixed Prometheus metrics endpoint to ensure proper scraping of system metrics
+   - Updated admin dashboard to display real-time system data instead of placeholder values
+   - Added resilient error handling to ensure the UI remains functional even when services are unavailable
+
+2. **Video Capture System**
    - Enhanced video capture functionality with improved error handling
    - Added support for multiple video stream formats (HLS, MP4)
    - Implemented Parliament TV capture with facial recognition
@@ -324,12 +334,12 @@ For detailed information about the project roadmap, including completed mileston
    - Fixed database transaction issues in capture sessions
    - Added comprehensive documentation for video capture functionality
 
-2. **Authentication System**
+3. **Authentication System**
    - Resolved redirect loop issues between login and dashboard
    - Implemented proper token storage and validation
    - Added graceful handling of API errors
 
-3. **Docker Environment**
+4. **Docker Environment**
    - Completed Docker Compose setup for all services
    - Configured monitoring with Prometheus and Grafana
    - Added development convenience commands

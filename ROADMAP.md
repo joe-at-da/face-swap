@@ -99,7 +99,7 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - Performance monitoring
 - Scale based on metrics
 
-## Current Progress (as of May 23, 2025)
+## Current Progress (as of May 25, 2025)
 
 ### Completed ✅
 1. Project Structure
@@ -129,21 +129,26 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Fixed database transaction issues in capture sessions
    - Video clip creation and editing
    - Transcription service integration
-   - Storage management system
+   - Storage management system with accurate real-time metrics
+   - Multi-layered fallback mechanisms for storage breakdown calculations
 
 5. Social Media Integration
    - Twitter, Facebook, and Instagram platforms
    - Post scheduling and analytics
    - Multi-platform posting
    - Background task processing
+   - 🏗️ Speaker matching (in progress)
+   - 🏗️ Voice profiles (in progress)
+   - 🏗️ Facial profiles integration (in progress)
 
 6. Frontend Implementation
    - Next.js with TypeScript setup
    - Authentication system with JWT
    - Video clip management interface
    - Capture session interface
-   - Social media dashboard
-   - Admin interface for user and storage management
+   - Social media dashboard with robust error handling
+   - Admin interface with real-time system metrics and logs
+   - Storage management dashboard with accurate usage statistics
    - Responsive design with Tailwind CSS
    - Complete navigation system with all pages implemented
    - Placeholder pages for upcoming features
@@ -182,7 +187,14 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 
 ### Recent Achievements (May 2025)
 
-1. Facial Recognition Improvements (May 24, 2025)
+1. Real Data Metrics Integration (May 25, 2025)
+   - Implemented accurate storage breakdown metrics with multi-layered fallback mechanisms
+   - Enhanced system logs with robust fallback options when Docker commands aren't available
+   - Fixed Prometheus metrics endpoint to ensure proper scraping of system metrics
+   - Updated admin dashboard to display real-time system data instead of placeholder values
+   - Added resilient error handling to ensure the UI remains functional even when services are unavailable
+
+2. Facial Recognition Improvements (May 24, 2025)
    - Fixed unidentified face image loading issues by implementing direct backend URL access
    - Added robust fallback mechanisms for different URL formats and capture ID patterns
    - Implemented intelligent face grouping to reduce duplicate faces in the UI

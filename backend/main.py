@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from backend.core.config import settings
 from backend.api.v1.api import api_router
 
@@ -76,6 +76,14 @@ async def health_check():
 
 # Include routers
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Add a direct route for metrics at root level for Prometheus
+@app.get("/metrics", response_class=PlainTextResponse)
+async def root_metrics():
+    # Import the metrics endpoint function
+    from backend.api.v1.endpoints.metrics import get_metrics
+    # Call and return the metrics
+    return await get_metrics()
 
 # Make sure the app is properly configured for testing
 if __name__ == "__main__":

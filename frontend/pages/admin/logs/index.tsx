@@ -21,66 +21,79 @@ const SystemLogsPage: React.FC = () => {
   const [logLevel, setLogLevel] = useState<string>('all');
   const pageSize = 20;
 
-  // Mock log data since the API endpoint might not be available
-  const mockLogs: LogEntry[] = [
-    {
-      id: 1,
-      timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
-      level: 'info',
-      message: 'System started successfully',
-      source: 'system',
-    },
-    {
-      id: 2,
-      timestamp: new Date(Date.now() - 10 * 60000).toISOString(),
-      level: 'info',
-      message: 'User logged in',
-      source: 'auth',
-      user_id: 1,
-      user_email: 'admin@example.com',
-    },
-    {
-      id: 3,
-      timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
-      level: 'warning',
-      message: 'High CPU usage detected (85%)',
-      source: 'monitoring',
-    },
-    {
-      id: 4,
-      timestamp: new Date(Date.now() - 20 * 60000).toISOString(),
-      level: 'error',
-      message: 'Failed to connect to database - retrying',
-      source: 'database',
-    },
-    {
-      id: 5,
-      timestamp: new Date(Date.now() - 25 * 60000).toISOString(),
-      level: 'info',
-      message: 'Scheduled backup completed',
-      source: 'backup',
-    },
-  ];
+  // Define the type for the logs response
+  interface LogsResponse {
+    items: LogEntry[];
+    total: number;
+  }
 
-  // Filter logs based on level
-  const filteredLogs = logLevel === 'all' 
-    ? mockLogs 
-    : mockLogs.filter(log => log.level === logLevel);
-
-  // Paginate logs
+  // Fetch real logs from the API
+  const {
+    data: logsData,
+    isLoading,
+    isError,
+    refetch
+  } = useQuery<LogEntry[]>({
+    queryKey: ['systemLogs', page, logLevel],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        lines: String(pageSize * 5), // Fetch more logs to allow for filtering
+      });
+      
+      if (logLevel !== 'all') {
+        params.append('level', logLevel);
+      }
+      
+      try {
+        // Add debug logging
+        console.log('Fetching logs with params:', params.toString());
+        
+        const response = await api.get(`/system/logs?${params.toString()}`);
+        console.log('Raw logs response:', response);
+        
+        // Handle different response formats
+        let logsArray: any[] = [];
+        
+        if (Array.isArray(response)) {
+          logsArray = response;
+        } else if (response && typeof response === 'object') {
+          // Check if response has an items property that is an array
+          if (Array.isArray(response.items)) {
+            logsArray = response.items;
+          } else {
+            // Try to convert object to array if possible
+            const possibleArray = Object.values(response);
+            if (Array.isArray(possibleArray) && possibleArray.length > 0) {
+              logsArray = possibleArray;
+            }
+          }
+        }
+        
+        console.log('Processed logs array:', logsArray);
+        
+        // Add unique IDs to logs if they don't have them
+        return logsArray.map((log: any, index: number) => ({
+          ...log,
+          id: log.id || index + 1,
+          level: log.level || 'info', // Ensure level is defined
+          timestamp: log.timestamp || new Date().toISOString() // Ensure timestamp is defined
+        }));
+      } catch (error) {
+        console.error('Error fetching logs:', error);
+        throw error;
+      }
+    },
+    staleTime: 30000, // Consider data fresh for 30 seconds
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+  
+  // Process logs for pagination
+  const filteredLogs = logsData || [];
+  const totalLogs = filteredLogs.length;
   const paginatedLogs = filteredLogs.slice((page - 1) * pageSize, page * pageSize);
-  
-  // Mock API response
-  const logs = {
-    items: paginatedLogs,
-    total: filteredLogs.length
-  };
-  
-  const isLoading = false;
-  const isError = false;
-  const refetch = () => {}; // No-op function
+  const logs = { items: paginatedLogs, total: totalLogs };
 
-  const totalPages = logs ? Math.ceil(logs.total / pageSize) : 0;
+  const totalPages = Math.ceil(logs.total / pageSize) || 1;
 
   const handlePrevPage = () => {
     setPage((prev) => Math.max(prev - 1, 1));
