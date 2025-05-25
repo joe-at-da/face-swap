@@ -263,47 +263,25 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       ) : recognitionStatus?.status === 'completed' ? (
         <div>
           {/* Tab Navigation */}
-          <div className="flex border-b border-gray-700 mb-6">
-            <button
-              onClick={() => setActiveTab('enhanced')}
-              className={`py-2 px-4 border-b-2 font-medium ${
-                activeTab === 'enhanced'
-                  ? 'border-blue-500 text-blue-500'
-                  : 'border-transparent text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              Enhanced View
-            </button>
-            <button
-              onClick={() => setActiveTab('unified')}
-              className={`py-2 px-4 border-b-2 font-medium ${
-                activeTab === 'unified'
-                  ? 'border-blue-500 text-blue-500'
-                  : 'border-transparent text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              Unified View
-            </button>
-            <button
-              onClick={() => setActiveTab('faces')}
-              className={`py-2 px-4 border-b-2 font-medium ${
-                activeTab === 'faces'
-                  ? 'border-blue-500 text-blue-500'
-                  : 'border-transparent text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              Faces
-            </button>
-            <button
-              onClick={() => setActiveTab('timeline')}
-              className={`py-2 px-4 border-b-2 font-medium ${
-                activeTab === 'timeline'
-                  ? 'border-blue-500 text-blue-500'
-                  : 'border-transparent text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              Timeline
-            </button>
+          <div className="flex border-b border-gray-700 mb-6 overflow-x-auto">
+            {[
+              { id: 'enhanced', label: 'Enhanced View' },
+              { id: 'unified', label: 'Unified View' },
+              { id: 'faces', label: 'Faces' },
+              { id: 'timeline', label: 'Timeline' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-3 px-6 border-b-2 font-medium transition-colors duration-200 whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-blue-500 bg-blue-900/10'
+                    : 'border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-800/30'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
           
           {/* Tab Content */}

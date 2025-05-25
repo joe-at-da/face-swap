@@ -330,13 +330,13 @@ const VideoClipsPage: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            clip.status === 'ready'
+                            clip.status === 'READY' || clip.status === 'ready'
                               ? 'bg-green-100 text-green-800'
-                              : clip.status === 'processing'
+                              : clip.status === 'PROCESSING' || clip.status === 'processing'
                               ? 'bg-yellow-100 text-yellow-800'
                               : 'bg-red-100 text-red-800'
                           }`}>
-                            {clip.status.charAt(0).toUpperCase() + clip.status.slice(1)}
+                            {clip.status}
                           </span>
                           {clip.has_transcription && (
                             <span className="ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">

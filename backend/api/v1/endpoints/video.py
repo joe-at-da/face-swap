@@ -67,9 +67,12 @@ async def list_clips(
                 has_transcription = True
             
             # Generate a thumbnail URL based on the clip ID
-            # In a real system, this would point to an actual thumbnail image
-            # For now, we'll use a placeholder image from a public CDN
-            thumbnail_url = f"https://picsum.photos/seed/{clip.id}/640/360"
+            if clip.storage_path:
+                # Use actual video thumbnail
+                thumbnail_url = f"/api/v1/thumbnail/clip/{clip.id}"
+            else:
+                # Fallback for clips that don't have a video file yet
+                thumbnail_url = f"/api/v1/thumbnail/capture/{clip.capture_session_id}" if clip.capture_session_id else f"/static/images/placeholder-thumbnail.jpg"
             
             # Create a dictionary with all the fields from the database model
             clip_dict = {
@@ -171,7 +174,12 @@ async def get_clip(
         )
     
     # Generate a thumbnail URL for the clip
-    thumbnail_url = f"https://picsum.photos/seed/{clip.id}/640/360"
+    if clip.storage_path:
+        # Use actual video thumbnail
+        thumbnail_url = f"/api/v1/thumbnail/clip/{clip.id}"
+    else:
+        # Fallback for clips that don't have a video file yet
+        thumbnail_url = f"/api/v1/thumbnail/capture/{clip.capture_session_id}"
     
     # Set the thumbnail_url attribute on the clip object
     setattr(clip, 'thumbnail_url', thumbnail_url)
@@ -206,7 +214,12 @@ async def update_clip(
     db.refresh(clip)
     
     # Generate a thumbnail URL for the clip
-    thumbnail_url = f"https://picsum.photos/seed/{clip.id}/640/360"
+    if clip.storage_path:
+        # Use actual video thumbnail
+        thumbnail_url = f"/api/v1/thumbnail/clip/{clip.id}"
+    else:
+        # Fallback for clips that don't have a video file yet
+        thumbnail_url = f"/api/v1/thumbnail/capture/{clip.capture_session_id}" if clip.capture_session_id else f"/static/images/placeholder-thumbnail.jpg"
     
     # Set the thumbnail_url attribute on the clip object
     setattr(clip, 'thumbnail_url', thumbnail_url)

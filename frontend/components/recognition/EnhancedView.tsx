@@ -3,7 +3,7 @@ import { formatTime } from '../../utils/formatTime';
 import { useAuth } from '../../contexts/AuthContext';
 
 // API base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 interface EnhancedViewProps {
   captureId: number;
@@ -31,8 +31,8 @@ const EnhancedView: React.FC<EnhancedViewProps> = ({
       // Create authenticated video URL with exact format
       setVideoUrl(`${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`);
       
-      // Set poster URL
-      setPosterUrl(`${API_BASE_URL}/media/thumbnail/${captureId}`);
+      // Set poster URL to use the new thumbnail endpoint
+      setPosterUrl(`${API_BASE_URL}/thumbnail/capture/${captureId}?token=${token}`);
     }
   }, [audioInfo, captureId, token]);
   // Format duration in seconds to HH:MM:SS
@@ -48,7 +48,7 @@ const EnhancedView: React.FC<EnhancedViewProps> = ({
 
   if (!transcriptionData || !transcriptionData.segments || transcriptionData.segments.length === 0) {
     return (
-      <div>
+      <div className="p-4 border border-gray-700 rounded-lg bg-gray-800/50 text-center">
         {/* Video Player */}
         <div className="mb-6 bg-black rounded-lg overflow-hidden">
           {audioInfo?.file_path && (

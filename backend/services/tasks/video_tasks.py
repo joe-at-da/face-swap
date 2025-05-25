@@ -43,7 +43,7 @@ def create_video_clip(source_file: str, clip_id: int, start_time: str, end_time:
             raise ValueError(f"Clip with id {clip_id} not found")
         
         # Update clip status
-        clip.status = "processing"
+        clip.status = "PROCESSING"  # Use uppercase to match the enum
         db.commit()
         
         # Create clip
@@ -59,7 +59,7 @@ def create_video_clip(source_file: str, clip_id: int, start_time: str, end_time:
         
         # Update clip in database
         clip.storage_path = final_path
-        clip.status = "ready"
+        clip.status = "READY"  # Use uppercase to match the enum
         db.commit()
         
         return {

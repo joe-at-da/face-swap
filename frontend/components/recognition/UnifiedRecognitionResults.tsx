@@ -118,10 +118,11 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
   
   if (isLoading) {
     return (
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold mb-4 dark:text-white">Unified Recognition Results</h2>
+      <div>
+        <h2 className="text-lg font-medium mb-4 text-white">Unified Recognition Results</h2>
         <div className="flex justify-center items-center h-32">
-          <p className="text-gray-500 dark:text-gray-400">Loading recognition data...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+          <span className="ml-3 text-gray-300">Loading recognition data...</span>
         </div>
       </div>
     );
@@ -129,8 +130,8 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
   
   if (error) {
     return (
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold mb-4 dark:text-white">Unified Recognition Results</h2>
+      <div>
+        <h2 className="text-lg font-medium mb-4 text-white">Unified Recognition Results</h2>
         <div className="flex justify-center items-center h-32">
           <p className="text-red-500">{error}</p>
         </div>
@@ -145,54 +146,62 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
   if (!timelineData || (!hasTimelineData && !hasCorrelationData)) {
     return (
       <div className="bg-white dark:bg-gray-900 rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold mb-4 dark:text-white">Unified Recognition Results</h2>
-        <div className="flex justify-center items-center h-32">
-          <p className="text-gray-500 dark:text-gray-400">No recognition data available for this video.</p>
-        </div>
+        {/* No data */}
+        {(!timelineData || !timelineData.correlations || timelineData.correlations.length === 0) && (
+          <div className="p-6 border border-gray-700 rounded-md bg-gray-800/50 text-center">
+            <p className="text-gray-400">No recognition data available for this video.</p>
+          </div>
+        )}
       </div>
     );
   }
   
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-lg shadow-md p-6 mb-6">
-      <h2 className="text-xl font-semibold mb-4 dark:text-white">Unified Recognition Results</h2>
+    <div>
+      <h2 className="text-lg font-medium mb-4 text-white">Unified Recognition Results</h2>
       
-      {/* Display correlations if available */}
-      {hasCorrelationData && (
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold mb-3 dark:text-white">Face-Voice Correlations</h3>
-          <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-            <p className="text-blue-800 dark:text-blue-300 text-sm">
+      {/* Correlations */}
+      {timelineData && timelineData.correlations && timelineData.correlations.length > 0 && (
+        <div className="mb-8">
+          <h3 className="text-lg font-medium mb-4 text-white">Face-Voice Correlations</h3>
+          
+          <div className="bg-blue-900/30 border border-blue-700 rounded-md p-4 mb-6">
+            <p className="text-blue-300">
               Found {timelineData.correlations.length} correlations between faces and voices in this video.
             </p>
           </div>
           
-          <div className="space-y-3">
+          <div className="space-y-4">
             {timelineData.correlations.map((correlation, index) => (
-              <div key={`correlation-${index}`} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
-                <div className="flex justify-between mb-2">
-                  <div>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Face: {correlation.face_name || 'Unknown'}
-                    </span>
-                    <span className="mx-2 text-gray-400">→</span>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Voice: {correlation.speaker_name || 'Unknown'}
+              <div key={`correlation-${index}`} className="border border-gray-700 rounded-lg p-4 bg-gray-800/50">
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                  <div className="mb-2 md:mb-0">
+                    <div className="flex items-center">
+                      <span className="bg-purple-900/50 text-purple-300 text-xs font-medium px-2 py-1 rounded mr-2">Face</span>
+                      <span className="text-white font-medium">{correlation.face_name || 'Unknown'}</span>
+                    </div>
+                    <div className="flex items-center mt-2">
+                      <span className="bg-blue-900/50 text-blue-300 text-xs font-medium px-2 py-1 rounded mr-2">Voice</span>
+                      <span className="text-white font-medium">{correlation.speaker_name || 'Unknown'}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <span className="text-xs font-medium text-gray-400 mr-2">Time: {formatTime(correlation.start)} - {formatTime(correlation.end)}</span>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${correlation.confidence >= 0.7 ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'}`}>
+                      {Math.round(correlation.confidence * 100)}% confidence
                     </span>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded-full bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300">
-                    {Math.round(correlation.confidence * 100)}% confidence
-                  </span>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  Time: {formatTime(correlation.start)} - {formatTime(correlation.end)}
+                
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => router.push(`/parliament-tv/captures/${videoId}?t=${Math.floor(correlation.start)}`)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded text-sm transition-colors"
+                  >
+                    Jump to {formatTime(correlation.start)}
+                  </button>
                 </div>
-                <button
-                  onClick={() => router.push(`/parliament-tv/captures/${videoId}?t=${Math.floor(correlation.start)}`)}
-                  className="mt-2 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white text-xs py-1 px-2 rounded transition-colors"
-                >
-                  Jump to {formatTime(correlation.start)}
-                </button>
               </div>
             ))}
           </div>

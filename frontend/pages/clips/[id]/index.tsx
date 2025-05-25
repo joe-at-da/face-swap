@@ -78,7 +78,7 @@ const VideoClipDetailPage: React.FC = () => {
         return null;
       }
     },
-    enabled: !!id && !!clip?.has_transcription && clip?.status === 'COMPLETED',
+    enabled: !!id && !!clip?.has_transcription && (clip?.status === 'READY' || clip?.status === 'COMPLETED'),
     refetchOnWindowFocus: false,
   });
   
@@ -341,12 +341,12 @@ const VideoClipDetailPage: React.FC = () => {
                   <div>
                     <h3 className="text-sm font-medium text-gray-400 mb-1">Video URL</h3>
                     <a 
-                      href={`/api/v1/stream/clip/${clip.id}`} 
+                      href={`${process.env.NEXT_PUBLIC_API_URL}/stream/clip/${clip.id}`} 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="text-blue-400 hover:text-blue-300 break-all"
                     >
-                      {`/api/v1/stream/clip/${clip.id}`}
+                      {`${process.env.NEXT_PUBLIC_API_URL}/stream/clip/${clip.id}`}
                     </a>
                   </div>
                 </div>
@@ -371,7 +371,7 @@ const VideoClipDetailPage: React.FC = () => {
                       Back to clips
                     </Link>
                   </div>
-                ) : clip?.status === 'PROCESSING' ? (
+                ) : clip?.status === 'PROCESSING' || clip?.status === 'processing' ? (
                   <div className="text-center p-8">
                     <h2 className="text-xl text-blue-500 mb-4">Clip is being processed</h2>
                     <p className="text-gray-400 mb-4">This clip is currently being processed. Please check back in a few minutes.</p>
@@ -440,7 +440,7 @@ const VideoClipDetailPage: React.FC = () => {
                     
                     {/* Full transcription */}
                     <div className="space-y-4 max-h-96 overflow-y-auto">
-                      {transcription.segments.map((segment, index) => (
+                      {transcription && transcription.segments ? transcription.segments.map((segment, index) => (
                         <div 
                           key={index} 
                           className={`p-3 rounded-md cursor-pointer hover:bg-gray-700 ${
@@ -460,7 +460,11 @@ const VideoClipDetailPage: React.FC = () => {
                             )}
                           </div>
                         </div>
-                      ))}
+                      )) : (
+                    <div className="text-center p-4 bg-gray-800 rounded-md">
+                      <p className="text-gray-400">No transcription segments available yet.</p>
+                    </div>
+                  )}
                     </div>
                   </div>
                 )}
