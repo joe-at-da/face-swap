@@ -318,67 +318,141 @@ class MultimodalRecognitionService:
                         "success": True,
                         "source": "voice",
                         "confidence": voice_results.get("confidence_score", 0.0),
-                        "profile": voice_results.get("profile", {})
+                        "profile": voice_results.get("profile", {}),
+                        "message": "Face recognition failed, using voice recognition only"
                     }
                 elif face_results.get("success", False):
                     return {
                         "success": True,
                         "source": "face",
                         "confidence": face_results.get("confidence_score", 0.0),
-                        "profile": face_results.get("profile", {})
+                        "profile": face_results.get("face_profile", {}),
+                        "message": "Voice recognition failed, using face recognition only"
                     }
                 else:
                     return {"success": False, "error": "Both recognition methods failed"}
             
-            # Check if both identified the same person
-            voice_profile_id = voice_results.get("profile", {}).get("id")
-            face_profile_id = face_results.get("face_profile", {}).get("id")
+            # Extract profile information
+            voice_profile = voice_results.get("profile", {})
+            face_profile = face_results.get("face_profile", {})
+            voice_profile_id = voice_profile.get("id")
+            face_profile_id = face_profile.get("id")
             
-            voice_linked_face_id = voice_results.get("profile", {}).get("face_profile_id")
+            # Extract linked profile IDs
+            voice_linked_face_id = voice_profile.get("face_profile_id")
             face_linked_voice_id = face_results.get("voice_profile", {}).get("id") if face_results.get("voice_profile") else None
             
-            # If the voice profile is linked to the identified face profile
-            if voice_linked_face_id == face_profile_id or face_linked_voice_id == voice_profile_id:
-                logger.info("Voice and face recognition agree on the speaker")
+            # Extract names for comparison
+            voice_name = voice_profile.get("name", "").lower()
+            face_name = face_profile.get("name", "").lower()
+            
+            # Extract confidence scores
+            voice_confidence = voice_results.get("confidence_score", 0.0)
+            face_confidence = face_results.get("confidence_score", 0.0)
+            
+            # Calculate name similarity score (0-1)
+            name_similarity = 0.0
+            if voice_name and face_name:
+                # Simple string similarity
+                if voice_name == face_name:
+                    name_similarity = 1.0
+                elif voice_name in face_name or face_name in voice_name:
+                    name_similarity = 0.8
+                else:
+                    # Calculate Levenshtein distance-based similarity
+                    try:
+                        import Levenshtein
+                        distance = Levenshtein.distance(voice_name, face_name)
+                        max_len = max(len(voice_name), len(face_name))
+                        name_similarity = 1.0 - (distance / max_len) if max_len > 0 else 0.0
+                    except ImportError:
+                        # Fallback if Levenshtein is not available
+                        common_chars = sum(1 for c in voice_name if c in face_name)
+                        name_similarity = common_chars / max(len(voice_name), len(face_name)) if max(len(voice_name), len(face_name)) > 0 else 0.0
+            
+            # Check if profiles are explicitly linked
+            explicit_link = (voice_linked_face_id == face_profile_id) or (face_linked_voice_id == voice_profile_id)
+            
+            # Determine if they are the same person based on multiple factors
+            same_person = False
+            combined_confidence = 0.0
+            reason = ""
+            
+            if explicit_link:
+                # Explicit link between profiles
+                same_person = True
+                combined_confidence = 0.7 * max(voice_confidence, face_confidence) + 0.3 * min(voice_confidence, face_confidence)
+                reason = "Explicit link between voice and face profiles"
+            elif name_similarity > 0.8:
+                # High name similarity
+                same_person = True
+                combined_confidence = 0.6 * max(voice_confidence, face_confidence) + 0.4 * min(voice_confidence, face_confidence)
+                reason = f"High name similarity ({name_similarity:.2f})"
+            elif name_similarity > 0.5 and (voice_confidence > 0.7 and face_confidence > 0.7):
+                # Moderate name similarity but high confidence in both
+                same_person = True
+                combined_confidence = 0.5 * voice_confidence + 0.5 * face_confidence
+                reason = f"Moderate name similarity ({name_similarity:.2f}) with high confidence in both"
+            else:
+                # Different people or uncertain
+                same_person = False
+                combined_confidence = max(voice_confidence, face_confidence)
+                reason = "Different people identified by voice and face recognition"
+            
+            if same_person:
+                logger.info(f"Voice and face recognition agree on the speaker: {reason}")
                 
-                # Combine confidence scores
-                voice_confidence = voice_results.get("confidence_score", 0.0)
-                face_confidence = face_results.get("confidence_score", 0.0)
+                # Merge profile information
+                merged_profile = {}
                 
-                # Weight the confidence scores (can be adjusted)
-                combined_confidence = 0.6 * voice_confidence + 0.4 * face_confidence
-                
-                # Use the profile with the highest confidence
-                profile = voice_results.get("profile", {}) if voice_confidence > face_confidence else face_results.get("face_profile", {})
+                # Start with the profile that has higher confidence
+                if voice_confidence >= face_confidence:
+                    merged_profile.update(voice_profile)
+                    # Add face information if available
+                    if face_profile:
+                        merged_profile["face_profile_id"] = face_profile_id
+                        merged_profile["face_image_url"] = face_profile.get("image_url")
+                        merged_profile["face_confidence"] = face_confidence
+                else:
+                    merged_profile.update(face_profile)
+                    # Add voice information if available
+                    if voice_profile:
+                        merged_profile["voice_profile_id"] = voice_profile_id
+                        merged_profile["voice_confidence"] = voice_confidence
                 
                 return {
                     "success": True,
                     "source": "multimodal",
                     "confidence": combined_confidence,
-                    "profile": profile,
+                    "profile": merged_profile,
                     "voice_confidence": voice_confidence,
-                    "face_confidence": face_confidence
+                    "face_confidence": face_confidence,
+                    "name_similarity": name_similarity,
+                    "reason": reason
                 }
             
             # If they identified different people, use the one with higher confidence
-            voice_confidence = voice_results.get("confidence_score", 0.0)
-            face_confidence = face_results.get("confidence_score", 0.0)
-            
             if voice_confidence > face_confidence:
-                logger.info("Using voice recognition result (higher confidence)")
+                logger.info(f"Using voice recognition result (higher confidence): {voice_confidence:.2f} vs {face_confidence:.2f}")
                 return {
                     "success": True,
                     "source": "voice",
                     "confidence": voice_confidence,
-                    "profile": voice_results.get("profile", {})
+                    "profile": voice_profile,
+                    "alternative_profile": face_profile,
+                    "name_similarity": name_similarity,
+                    "reason": "Voice recognition has higher confidence"
                 }
             else:
-                logger.info("Using face recognition result (higher confidence)")
+                logger.info(f"Using face recognition result (higher confidence): {face_confidence:.2f} vs {voice_confidence:.2f}")
                 return {
                     "success": True,
                     "source": "face",
                     "confidence": face_confidence,
-                    "profile": face_results.get("face_profile", {})
+                    "profile": face_profile,
+                    "alternative_profile": voice_profile,
+                    "name_similarity": name_similarity,
+                    "reason": "Face recognition has higher confidence"
                 }
             
         except Exception as e:

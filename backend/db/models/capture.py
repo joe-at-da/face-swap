@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, BigInteger, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, BigInteger, Text, JSON, Float
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -50,9 +50,14 @@ class CaptureSession(Base):
     # This maps to the 'metadata' column in the database
     capture_metadata = Column('metadata', JSON, nullable=True, default=dict)
     
+    # New recognition fields
+    face_detection_results = Column(Text, nullable=True)  # JSON string with face detection results
+    timeline_data = Column(Text, nullable=True)  # JSON string with timeline data
+    
     # Relationships
     user = relationship("User", back_populates="capture_sessions")
     video_clips = relationship("VideoClip", back_populates="capture_session")
     speaker_identifications = relationship("SpeakerIdentification", back_populates="capture_session")
     transcriptions = relationship("ParliamentTranscription", back_populates="capture_session")
     logs = relationship("CaptureLog", back_populates="capture_session")
+    recognition_events = relationship("RecognitionEvent", back_populates="capture_session", cascade="all, delete-orphan")

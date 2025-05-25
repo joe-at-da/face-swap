@@ -130,6 +130,10 @@ rebuild_database() {
   print_info "Running database migrations to create schema..."
   docker exec the-mp-app-1 alembic upgrade head
   
+  # Run recognition migrations
+  print_info "Running recognition migrations..."
+  docker exec the-mp-app-1 python -m db.migrations.recognition_updates.run_migrations
+  
   # Add sample data if requested
   if [ "$INCLUDE_SAMPLE_DATA" = true ]; then
     print_info "Adding sample data to the database..."
