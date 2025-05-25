@@ -325,7 +325,11 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           )}
           
           {activeTab === 'timeline' && (
-            <TimelineView transcriptionData={transcriptionData} />
+            <TimelineView 
+              videoId={captureId.toString()} 
+              transcriptionData={transcriptionData} 
+              integratedTimeline={integratedTimeline} 
+            />
           )}
         </div>
       ) : (
