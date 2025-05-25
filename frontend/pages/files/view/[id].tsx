@@ -51,6 +51,9 @@ const MediaViewPage: React.FC = () => {
   const { token } = useAuth();
   const { id, type, tab = 'player' } = router.query;
   
+  // Check if we have a valid ID
+  const isInvalidId = !id || id === 'null' || id === 'undefined' || id === '[id]';
+  
   const [activeTab, setActiveTab] = useState<string>(tab as string || 'player');
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [syncPlayback, setSyncPlayback] = useState(false);
@@ -65,10 +68,13 @@ const MediaViewPage: React.FC = () => {
   } = useQuery<VideoClip>({
     queryKey: ['videoClip', id],
     queryFn: async () => {
-      if (!id) throw new Error('No clip ID provided');
+      // Check if we have a valid ID
+      if (!id || id === 'null' || id === 'undefined' || id === '[id]') {
+        throw new Error('Invalid clip ID');
+      }
       return await api.get(`/clips/${id}`);
     },
-    enabled: !!id && type === 'clip',
+    enabled: !!id && id !== 'null' && id !== 'undefined' && id !== '[id]' && type === 'clip',
     refetchOnWindowFocus: false,
   });
 
@@ -80,11 +86,28 @@ const MediaViewPage: React.FC = () => {
   } = useQuery<ParliamentTVVideo>({
     queryKey: ['parliamentVideo', id],
     queryFn: async () => {
-      if (!id || !token) throw new Error('No video ID provided');
-      const response = await api.get(`/parliament-tv/${id}`);
-      return response;
+      // Check if we have a valid ID
+      if (!id || id === 'null' || id === 'undefined' || id === '[id]') {
+        throw new Error('Invalid video ID');
+      }
+      if (!token) throw new Error('Authentication token required');
+      
+      try {
+        // First try to fetch using the videos endpoint (new consolidated approach)
+        const response = await api.get(`/videos/${id}`);
+        return response;
+      } catch (error) {
+        // If that fails, try the parliament-tv endpoint (legacy approach)
+        try {
+          const response = await api.get(`/parliament-tv/${id}`);
+          return response;
+        } catch (innerError) {
+          console.error('Error fetching video:', innerError);
+          throw new Error('Failed to fetch video data');
+        }
+      }
     },
-    enabled: !!id && !!token && type === 'video',
+    enabled: !!id && id !== 'null' && id !== 'undefined' && id !== '[id]' && !!token && type === 'video',
     refetchOnWindowFocus: false,
   });
 
@@ -109,11 +132,11 @@ const MediaViewPage: React.FC = () => {
     if (!videoElement || !audioElement || !syncPlayback) return;
 
     const syncPlay = () => {
-      if (videoElement.paused) {
-        audioElement.pause();
-      } else {
+      if (audioElement.paused) {
         audioElement.currentTime = videoElement.currentTime;
-        audioElement.play().catch(err => console.error('Error playing audio:', err));
+        audioElement.play().catch(err => {
+          console.error('Error playing audio:', err);
+        });
       }
     };
 
@@ -122,7 +145,7 @@ const MediaViewPage: React.FC = () => {
     };
 
     const syncTimeUpdate = () => {
-      if (!audioElement.paused) {
+      if (Math.abs(videoElement.currentTime - audioElement.currentTime) > 0.5) {
         audioElement.currentTime = videoElement.currentTime;
       }
     };
@@ -140,64 +163,55 @@ const MediaViewPage: React.FC = () => {
 
   // Format file size
   const formatFileSize = (bytes: number) => {
-    if (!bytes) return 'Unknown';
-    
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-    
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    
-    return `${size.toFixed(2)} ${units[unitIndex]}`;
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   // Format duration
   const formatDuration = (seconds: number) => {
-    if (!seconds) return '--:--:--';
-    
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours > 0 ? hours + 'h ' : ''}${minutes}m ${secs}s`;
   };
 
   // Format date
   const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric'
+      });
+    } catch (e) {
+      return dateString;
+    }
   };
 
   // Get status badge color
   const getStatusBadgeColor = (status: string) => {
-    const normalizedStatus = status.toLowerCase();
-    
-    if (normalizedStatus === 'ready' || normalizedStatus === 'completed') {
+    const statusLower = status?.toLowerCase() || '';
+    if (statusLower === 'ready' || statusLower === 'completed') {
       return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
-    } else if (normalizedStatus === 'processing') {
+    } else if (statusLower === 'processing') {
       return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
-    } else if (normalizedStatus === 'failed') {
+    } else if (statusLower === 'error' || statusLower === 'failed') {
       return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300';
-    } else {
-      return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
     }
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
   };
 
   // Generate video URL based on type
   const getVideoUrl = () => {
-    if (type === 'clip' && clip) {
-      return `${API_BASE_URL}/stream/clip/${clip.id}`;
-    } else if (type === 'video' && video) {
-      return `${API_BASE_URL}/videos/stream-with-token/${video.file_path.split('/').pop()}?token=${token}`;
+    if (type === 'video' && video) {
+      const filename = video.file_path.split('/').pop();
+      return `${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`;
+    } else if (type === 'clip' && clip) {
+      const filename = clip.file_path.split('/').pop();
+      return `${API_BASE_URL}/clips/stream/${clip.id}?token=${token}`;
     }
     return '';
   };
@@ -205,20 +219,27 @@ const MediaViewPage: React.FC = () => {
   // Generate audio URL based on type
   const getAudioUrl = () => {
     if (type === 'video' && video) {
-      const captureNumber = video.id.toString().padStart(4, '0');
-      return `${API_BASE_URL}/videos/stream-audio-with-token/capture_${captureNumber}.audio.mp3?token=${token}`;
+      const videoPath = video.file_path;
+      // Handle different audio file naming conventions
+      if (videoPath.includes('.mp4')) {
+        const audioPath = videoPath.replace('.mp4', '.audio.mp3');
+        return `${API_BASE_URL}/videos/stream-audio-with-token/${audioPath.split('/').pop()}?token=${token}`;
+      } else {
+        // Fallback for other formats
+        return `${API_BASE_URL}/videos/stream-audio-with-token/${videoPath.split('/').pop()}.audio.mp3?token=${token}`;
+      }
     }
     return '';
   };
 
   // Generate thumbnail URL
   const getThumbnailUrl = () => {
-    if (type === 'clip' && clip) {
-      return clip.thumbnail_url;
+    if (type === 'clip' && clip && clip.thumbnail_url) {
+      return `${API_BASE_URL}${clip.thumbnail_url}`;
     } else if (type === 'video' && video) {
-      return `${API_BASE_URL}/thumbnail/capture/${video.id}?token=${token}`;
+      return `${API_BASE_URL}/videos/thumbnail/${video.id}?token=${token}`;
     }
-    return '/images/video-placeholder.jpg';
+    return '';
   };
 
   // Determine if we can show audio player
@@ -232,13 +253,43 @@ const MediaViewPage: React.FC = () => {
   // Determine the capture ID for recognition panel
   const getRecognitionCaptureId = () => {
     if (type === 'clip' && clip) {
-      return clip.capture_session_id || parseInt(id as string) || null;
+      return clip.capture_session_id;
     } else if (type === 'video' && video) {
       return video.id;
     }
-    return parseInt(id as string) || null;
+    return null;
   };
 
+  // Get the title based on type
+  const getTitle = () => {
+    if (type === 'clip' && clip) {
+      return clip.title;
+    } else if (type === 'video' && video) {
+      return video.title;
+    }
+    return 'Media';
+  };
+
+  // If we have an invalid ID, show an error message
+  if (isInvalidId) {
+    return (
+      <DarkLayout>
+        <div className="container mx-auto px-4 py-8">
+          <div className="bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-300 px-4 py-3 rounded relative mb-6">
+            <strong className="font-bold">Invalid Media ID</strong>
+            <span className="block sm:inline"> The media item you're trying to view doesn't exist or has an invalid ID.</span>
+            <div className="mt-4">
+              <Link href="/files" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+                Return to Media Library
+              </Link>
+            </div>
+          </div>
+        </div>
+      </DarkLayout>
+    );
+  }
+
+  // Show loading state
   if (isLoading) {
     return (
       <DarkLayout>
@@ -246,11 +297,18 @@ const MediaViewPage: React.FC = () => {
           <div className="flex justify-center items-center h-64">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
           </div>
+          <div className="text-center">
+            <p className="text-gray-400">Loading media data...</p>
+            <Link href="/files" className="text-blue-500 hover:underline">
+              Back to media library
+            </Link>
+          </div>
         </div>
       </DarkLayout>
     );
   }
 
+  // Show error state
   if (isError) {
     return (
       <DarkLayout>
@@ -267,16 +325,7 @@ const MediaViewPage: React.FC = () => {
     );
   }
 
-  // Get the title based on type
-  const getTitle = () => {
-    if (type === 'clip' && clip) {
-      return clip.title;
-    } else if (type === 'video' && video) {
-      return video.title;
-    }
-    return 'Media';
-  };
-
+  // Main content
   return (
     <DarkLayout>
       <div className="container mx-auto px-4 py-8">
@@ -373,43 +422,33 @@ const MediaViewPage: React.FC = () => {
         <div className="mb-6">
           <div className="flex border-b border-gray-700">
             <button
+              className={`px-4 py-2 ${activeTab === 'player' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-blue-300'}`}
               onClick={() => setActiveTab('player')}
-              className={`py-2 px-4 border-b-2 font-medium ${
-                activeTab === 'player'
-                  ? 'border-blue-500 text-blue-500'
-                  : 'border-transparent text-gray-400 hover:text-gray-300'
-              }`}
             >
               Player
             </button>
+            
             {canShowRecognition && (
               <button
+                className={`px-4 py-2 ${activeTab === 'recognition' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-blue-300'}`}
                 onClick={() => setActiveTab('recognition')}
-                className={`py-2 px-4 border-b-2 font-medium ${
-                  activeTab === 'recognition'
-                    ? 'border-blue-500 text-blue-500'
-                    : 'border-transparent text-gray-400 hover:text-gray-300'
-                }`}
               >
                 Recognition
               </button>
             )}
+            
             {type === 'clip' && clip?.has_transcription && (
               <button
+                className={`px-4 py-2 ${activeTab === 'transcription' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-blue-300'}`}
                 onClick={() => setActiveTab('transcription')}
-                className={`py-2 px-4 border-b-2 font-medium ${
-                  activeTab === 'transcription'
-                    ? 'border-blue-500 text-blue-500'
-                    : 'border-transparent text-gray-400 hover:text-gray-300'
-                }`}
               >
                 Transcription
               </button>
             )}
           </div>
         </div>
-
-        {/* Tab content */}
+        
+        {/* Player Tab Content */}
         {activeTab === 'player' && (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
             <div className="px-4 py-5 sm:px-6 bg-gray-800">

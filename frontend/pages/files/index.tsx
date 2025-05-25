@@ -118,12 +118,12 @@ const FileGalleryPage = () => {
     if (videos && Array.isArray(videos)) {
       videos.forEach((video: any) => {
         allFiles.push({
-          id: `video-${video.path}`,
+          id: `video-${video.id || video.capture_id}`,
           type: FILE_TYPES.VIDEO,
           path: video.path,
           filename: video.filename,
           size: video.size,
-          capture_id: video.capture_id,
+          capture_id: video.capture_id || video.id,
           title: video.title || video.filename,
           status: video.status || 'READY',
           created_at: video.created_at || new Date().toISOString(),
@@ -133,7 +133,8 @@ const FileGalleryPage = () => {
             description: video.description,
             has_audio: video.has_audio,
             has_transcription: video.has_transcription,
-            has_recognition: video.has_recognition
+            has_recognition: video.has_recognition,
+            id: video.id || video.capture_id
           }
         });
         
@@ -338,7 +339,11 @@ const FileGalleryPage = () => {
     // Navigate to appropriate view page
     if (file.type === FILE_TYPES.VIDEO) {
       // Use capture_id if available, otherwise extract the video ID from the file ID
-      const videoId = file.capture_id || file.id.split('-')[1];
+      // or from the details object
+      const videoId = file.capture_id || 
+                     (file.details?.id) || 
+                     (file.id && file.id.split('-')[1]);
+      
       if (videoId) {
         router.push(`/files/view/${videoId}?type=video`);
       } else {
