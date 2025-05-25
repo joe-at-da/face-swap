@@ -413,33 +413,6 @@ const StorageManagement: React.FC = () => {
                                   <div className="text-sm text-gray-300">{formatDate(capture.last_accessed)}</div>
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
-                                  <Link href={`/capture/${capture.id}`}>
-                                    <span className="text-blue-400 hover:text-blue-300 mr-3 cursor-pointer">
-                                      View
-                                    </span>
-                                  </Link>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteFile('capture', capture.id, capture.title)}
-                                    disabled={deleteFileMutation.isPending}
-                                    className="text-red-400 hover:text-red-300"
-                                  >
-                                    Delete
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          
-          {/* Cleanup settings */}
           <div>
             <div className="bg-gray-800 rounded-lg shadow overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-700">

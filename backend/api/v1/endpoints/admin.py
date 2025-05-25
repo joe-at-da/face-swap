@@ -395,17 +395,31 @@ async def get_storage_stats(
             "other": storage_breakdown.get("other_bytes", 0)
         }
         
-        return {
-            "total": disk_info.get("total_bytes", 0),
-            "used": disk_info.get("used_bytes", 0),
-            "available": disk_info.get("free_bytes", 0),
-            "usage_percent": usage_percent,
-            "file_count": file_count,
-            "average_file_size": average_file_size,
-            "categories": categories,
-            "breakdown": storage_breakdown,  # Keep original for backward compatibility
-            "oldest_files": oldest_files
-        }
+        # Check if we have valid data, otherwise return error indicators
+        if disk_info.get("total_bytes", 0) == 0:
+            return {
+                "total": 0,
+                "used": 0,
+                "available": 0,
+                "usage_percent": 0,
+                "file_count": 0,
+                "average_file_size": 0,
+                "categories": categories,
+                "oldest_files": oldest_files,
+                "error": "Unable to retrieve storage metrics. Docker may not be available."
+            }
+        else:
+            return {
+                "total": disk_info.get("total_bytes", 0),
+                "used": disk_info.get("used_bytes", 0),
+                "available": disk_info.get("free_bytes", 0),
+                "usage_percent": usage_percent,
+                "file_count": file_count,
+                "average_file_size": average_file_size,
+                "categories": categories,
+                "breakdown": storage_breakdown,  # Keep original for backward compatibility
+                "oldest_files": oldest_files
+            }
     except Exception as e:
         import traceback
         # Log the error with traceback

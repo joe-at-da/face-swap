@@ -37,19 +37,27 @@ async def get_dashboard_stats(
         # Count scheduled social media posts
         scheduled_posts = db.query(SocialPost).filter(SocialPost.scheduled_time > datetime.utcnow()).count()
         
-        # Calculate storage stats based on video clips
-        # Sum up the size of all video clips (assuming each minute of video is roughly 10MB)
-        total_duration = db.query(func.sum(VideoClip.duration)).scalar() or 0
-        storage_used_mb = (total_duration / 60) * 10  # Convert seconds to minutes, then to MB
-        
-        # Format storage values
-        if storage_used_mb > 1024:
-            storage_used = f"{storage_used_mb / 1024:.1f} GB"
-        else:
-            storage_used = f"{storage_used_mb:.1f} MB"
+        # Get real storage stats from DockerMetrics
+        try:
+            # Import here to avoid circular imports
+            from backend.services.system.docker_metrics import DockerMetrics
             
-        # Set a reasonable storage limit
-        storage_total = "100 GB"
+            # Get disk usage information
+            disk_usage = DockerMetrics.get_disk_usage()
+            
+            # Extract disk stats
+            disk_stats = disk_usage.get("disk_stats", {})
+            
+            # Get formatted values
+            storage_used = disk_stats.get("used", "0 GB")
+            storage_total = disk_stats.get("size", "0 GB")
+            
+            # Log the values we're using
+            print(f"Dashboard using real disk stats: Used: {storage_used}, Total: {storage_total}")
+        except Exception as disk_error:
+            print(f"Dashboard disk metrics failed: {str(disk_error)}. Using zeros.")
+            storage_used = "0 GB"
+            storage_total = "0 GB"
         
         return {
             "totalClips": total_clips,
