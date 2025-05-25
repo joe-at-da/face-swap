@@ -75,126 +75,213 @@ class DockerMetrics:
             Dictionary with disk usage statistics
         """
         try:
-            # Initialize with zeros in case we can't get real metrics
-            total_bytes = 0
-            used_bytes = 0
-            free_bytes = 0
-            percent_used = 0
-            
-            # Try to get application-specific storage metrics
+            # Get Docker volume sizes - this is the real data we care about
+            import subprocess
+            import json
             import os
+            import shutil
             
-            # Check if we're in a Docker environment by looking for media directory
+            # First, try to get Docker volumes that are actually used by our application
+            try:
+                # Get a list of Docker volumes used by our application
+                volumes_cmd = ["docker", "volume", "ls", "--filter", "name=the-mp", "-q"]
+                volumes_result = subprocess.run(volumes_cmd, capture_output=True, text=True, check=False)
+                
+                if volumes_result.returncode == 0:
+                    volumes = volumes_result.stdout.strip().split('\n')
+                    if volumes and volumes[0]:  # Check if we found any volumes
+                        print(f"Found {len(volumes)} Docker volumes for the application")
+                        
+                        # Calculate total size of all application volumes
+                        app_volume_size = 0
+                        volume_sizes = {}
+                        
+                        for volume in volumes:
+                            if not volume:
+                                continue
+                                
+                            # Try to get the mountpoint
+                            inspect_cmd = ["docker", "volume", "inspect", volume]
+                            inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, check=False)
+                            
+                            if inspect_result.returncode == 0:
+                                volume_info = json.loads(inspect_result.stdout)
+                                if volume_info and len(volume_info) > 0:
+                                    mountpoint = volume_info[0].get("Mountpoint", "")
+                                    if mountpoint and os.path.exists(mountpoint):
+                                        # Get the size of this volume
+                                        du_cmd = ["du", "-sb", mountpoint]
+                                        du_result = subprocess.run(du_cmd, capture_output=True, text=True, check=False)
+                                        
+                                        if du_result.returncode == 0:
+                                            size_str = du_result.stdout.strip().split()[0]
+                                            try:
+                                                size = int(size_str)
+                                                app_volume_size += size
+                                                volume_sizes[volume] = size
+                                                print(f"Volume {volume} size: {size / (1024*1024):.2f} MB")
+                                            except (ValueError, IndexError):
+                                                print(f"Could not parse size for volume {volume}")
+                                                volume_sizes[volume] = 0
+                        
+                        # If we found Docker volumes with actual size data
+                        if app_volume_size > 0:
+                            # Use the real Docker volume sizes
+                            total_bytes = app_volume_size * 2  # Allow for growth
+                            used_bytes = app_volume_size
+                            free_bytes = total_bytes - used_bytes
+                            print(f"Using real Docker volume metrics: {used_bytes / (1024*1024):.2f} MB used")
+                            return {
+                                "volumes": volume_sizes,
+                                "total_volume_bytes": app_volume_size,
+                                "disk_stats": {
+                                    "filesystem": "docker-volumes",
+                                    "size": f"{total_bytes / (1024**3):.2f} GB",
+                                    "used": f"{used_bytes / (1024**3):.2f} GB",
+                                    "available": f"{free_bytes / (1024**3):.2f} GB",
+                                    "use_percent": f"{(used_bytes / total_bytes) * 100 if total_bytes > 0 else 0:.1f}%",
+                                    "mount_point": "/var/lib/docker/volumes",
+                                    "total_bytes": total_bytes,
+                                    "used_bytes": used_bytes,
+                                    "free_bytes": free_bytes
+                                }
+                            }
+            except Exception as e:
+                print(f"Error getting Docker volumes: {str(e)}")
+            
+            # If we couldn't get Docker volumes, try the media directory
             media_dir = '/app/media'
             if os.path.exists(media_dir):
-                # Get the usage of the media directory which contains our application data
                 try:
-                    import shutil
                     media_usage = shutil.disk_usage(media_dir)
-                    # This gives us the real usage of the application's storage
                     total_bytes = media_usage.total
                     used_bytes = media_usage.used
                     free_bytes = media_usage.free
-                    percent_used = (used_bytes / total_bytes) * 100 if total_bytes > 0 else 0
                     print(f"Using media directory metrics: {media_dir}")
-                except Exception as media_error:
-                    print(f"Error getting media directory metrics: {str(media_error)}")
-                    # Fall back to psutil for the container's filesystem
-                    try:
-                        import psutil
-                        disk = psutil.disk_usage('/')
-                        total_bytes = disk.total
-                        used_bytes = disk.used
-                        free_bytes = disk.free
-                        percent_used = disk.percent
-                        print("Using container filesystem metrics")
-                    except Exception as psutil_error:
-                        print(f"Error getting container metrics: {str(psutil_error)}")
-            else:
-                # Not in a Docker environment, use regular filesystem metrics
+                    return {
+                        "volumes": {"media": used_bytes},
+                        "total_volume_bytes": used_bytes,
+                        "disk_stats": {
+                            "filesystem": "media-dir",
+                            "size": f"{total_bytes / (1024**3):.2f} GB",
+                            "used": f"{used_bytes / (1024**3):.2f} GB",
+                            "available": f"{free_bytes / (1024**3):.2f} GB",
+                            "use_percent": f"{(used_bytes / total_bytes) * 100 if total_bytes > 0 else 0:.1f}%",
+                            "mount_point": media_dir,
+                            "total_bytes": total_bytes,
+                            "used_bytes": used_bytes,
+                            "free_bytes": free_bytes
+                        }
+                    }
+                except Exception as e:
+                    print(f"Error getting media directory metrics: {str(e)}")
+            
+            # Try to get metrics from the /app directory
+            app_dir = '/app'
+            if os.path.exists(app_dir):
                 try:
-                    import psutil
-                    disk = psutil.disk_usage('/')
-                    total_bytes = disk.total
-                    used_bytes = disk.used
-                    free_bytes = disk.free
-                    percent_used = disk.percent
-                    print("Using host filesystem metrics")
-                except Exception as psutil_error:
-                    print(f"Error getting host metrics: {str(psutil_error)}")
-                    
-            # Format for human-readable output
-            def format_size(size_bytes):
-                # Convert bytes to GB
-                return f"{size_bytes / (1024**3):.2f} GB"
+                    app_usage = shutil.disk_usage(app_dir)
+                    total_bytes = app_usage.total
+                    used_bytes = app_usage.used
+                    free_bytes = app_usage.free
+                    print(f"Using app directory metrics: {app_dir}")
+                    return {
+                        "volumes": {"app_dir": used_bytes},
+                        "total_volume_bytes": used_bytes,
+                        "disk_stats": {
+                            "filesystem": "app-dir",
+                            "size": f"{total_bytes / (1024**3):.2f} GB",
+                            "used": f"{used_bytes / (1024**3):.2f} GB",
+                            "available": f"{free_bytes / (1024**3):.2f} GB",
+                            "use_percent": f"{(used_bytes / total_bytes) * 100 if total_bytes > 0 else 0:.1f}%",
+                            "mount_point": app_dir,
+                            "total_bytes": total_bytes,
+                            "used_bytes": used_bytes,
+                            "free_bytes": free_bytes
+                        }
+                    }
+                except Exception as e:
+                    print(f"Error getting app directory metrics: {str(e)}")
             
-            disk_stats = {
-                "filesystem": "/",
-                "size": format_size(total_bytes),
-                "used": format_size(used_bytes),
-                "available": format_size(free_bytes),
-                "use_percent": f"{percent_used}%",
-                "mount_point": "/",
-                "total_bytes": total_bytes,
-                "used_bytes": used_bytes,
-                "free_bytes": free_bytes
-            }
-            
-            # Get volume information as a supplementary data source
-            volume_sizes = {}
-            total_volume_size = 0
-            
+            # Try to get Docker Desktop stats directly
             try:
-                # Try to get Docker volume information if available
-                volumes_cmd = ["docker", "volume", "ls", "-q"]
-                volumes_result = subprocess.run(volumes_cmd, capture_output=True, text=True, check=True)
-                volumes = volumes_result.stdout.strip().split('\n')
+                # Check if docker command exists first
+                which_docker_cmd = ["which", "docker"]
+                subprocess.run(which_docker_cmd, capture_output=True, check=True)
                 
-                for volume in volumes:
-                    if not volume:
-                        continue
-                        
-                    # Get volume info
-                    inspect_cmd = ["docker", "volume", "inspect", volume]
-                    inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, check=True)
-                    volume_info = json.loads(inspect_result.stdout)
-                    
-                    if not volume_info:
-                        continue
-                        
-                    mountpoint = volume_info[0].get("Mountpoint", "")
-                    if not mountpoint:
-                        continue
-                    
-                    # Get size of volume
-                    du_cmd = ["du", "-sb", mountpoint]
+                # Docker command exists, proceed with docker info
+                docker_info_cmd = ["docker", "info", "--format", "{{json .}}"] 
+                docker_info_result = subprocess.run(docker_info_cmd, capture_output=True, text=True, check=True)
+                docker_info = json.loads(docker_info_result.stdout)
+                
+                # Extract disk usage information
+                driver_status = docker_info.get("DriverStatus", [])
+                disk_info = {}
+                
+                for item in driver_status:
+                    if isinstance(item, list) and len(item) >= 2:
+                        if "Data Space Total" in item[0]:
+                            disk_info["total"] = item[1]
+                        elif "Data Space Used" in item[0]:
+                            disk_info["used"] = item[1]
+                        elif "Data Space Available" in item[0]:
+                            disk_info["available"] = item[1]
+                
+                # Parse values (e.g., "82.41 GB")
+                def parse_size(size_str):
+                    if not size_str:
+                        return 0
                     try:
-                        du_result = subprocess.run(du_cmd, capture_output=True, text=True, check=True)
-                        size_str = du_result.stdout.strip().split()[0]
-                        size = int(size_str)
-                        volume_sizes[volume] = size
-                        total_volume_size += size
-                    except (subprocess.SubprocessError, ValueError, IndexError):
-                        volume_sizes[volume] = 0
+                        parts = size_str.split()
+                        if len(parts) != 2:
+                            return 0
+                        value = float(parts[0])
+                        unit = parts[1].upper()
+                        if unit == "GB":
+                            return int(value * 1024**3)
+                        elif unit == "MB":
+                            return int(value * 1024**2)
+                        elif unit == "KB":
+                            return int(value * 1024)
+                        else:
+                            return int(value)
+                    except (ValueError, IndexError):
+                        return 0
+                
+                total_bytes = parse_size(disk_info.get("total", ""))
+                used_bytes = parse_size(disk_info.get("used", ""))
+                free_bytes = parse_size(disk_info.get("available", ""))
+                
+                # Only use these values if they're valid
+                if total_bytes > 0 and used_bytes > 0:
+                    # Calculate percentage
+                    use_percent = round((used_bytes / total_bytes) * 100, 2) if total_bytes > 0 else 0
+                    
+                    print(f"Using Docker Desktop stats: Total: {total_bytes/(1024**3):.2f} GB, Used: {used_bytes/(1024**3):.2f} GB")
+                    return {
+                        "volumes": {"docker": used_bytes},
+                        "total_volume_bytes": used_bytes,
+                        "disk_stats": {
+                            "filesystem": "docker",
+                            "size": f"{total_bytes/(1024**3):.2f} GB",
+                            "used": f"{used_bytes/(1024**3):.2f} GB",
+                            "available": f"{free_bytes/(1024**3):.2f} GB",
+                            "use_percent": f"{use_percent}%",
+                            "mount_point": "/var/lib/docker",
+                            "total_bytes": total_bytes,
+                            "used_bytes": used_bytes,
+                            "free_bytes": free_bytes
+                        }
+                    }
             except Exception as e:
-                logger.warning(f"Could not get Docker volume info: {str(e)}")
+                print(f"Error getting Docker Desktop stats: {str(e)}")
             
-            return {
-                "volumes": volume_sizes,
-                "total_volume_bytes": total_volume_size,
-                "disk_stats": disk_stats
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to get disk usage: {str(e)}")
-            
-            # Fallback to df command if psutil fails
+            # Fallback to df command if all other methods fail
             try:
                 df_cmd = ["df", "-B1", "/"]  # -B1 for bytes
                 df_result = subprocess.run(df_cmd, capture_output=True, text=True, check=True)
                 df_lines = df_result.stdout.strip().split('\n')
                 
-                disk_stats = {}
                 if len(df_lines) > 1:
                     parts = df_lines[1].split()
                     if len(parts) >= 5:
@@ -203,122 +290,61 @@ class DockerMetrics:
                         free_bytes = int(parts[3])
                         percent_used = parts[4].strip('%')
                         
-                        # Format for human-readable output
-                        def format_size(size_bytes):
-                            return f"{size_bytes / (1024**3):.2f} GB"
-                        
-                        disk_stats = {
-                            "filesystem": parts[0],
-                            "size": format_size(total_bytes),
-                            "used": format_size(used_bytes),
-                            "available": format_size(free_bytes),
-                            "use_percent": parts[4],
-                            "mount_point": parts[5] if len(parts) > 5 else "/",
-                            "total_bytes": total_bytes,
-                            "used_bytes": used_bytes,
-                            "free_bytes": free_bytes
+                        print(f"Using df command metrics for root filesystem")
+                        return {
+                            "volumes": {"root": used_bytes},
+                            "total_volume_bytes": used_bytes,
+                            "disk_stats": {
+                                "filesystem": parts[0],
+                                "size": f"{total_bytes / (1024**3):.2f} GB",
+                                "used": f"{used_bytes / (1024**3):.2f} GB",
+                                "available": f"{free_bytes / (1024**3):.2f} GB",
+                                "use_percent": parts[4],
+                                "mount_point": parts[5] if len(parts) > 5 else "/",
+                                "total_bytes": total_bytes,
+                                "used_bytes": used_bytes,
+                                "free_bytes": free_bytes
+                            }
                         }
-                
-                return {
-                    "volumes": {},
-                    "total_volume_bytes": 0,
-                    "disk_stats": disk_stats
+            except Exception as e:
+                print(f"Error getting df metrics: {str(e)}")
+            
+            # Last resort - just report zeros rather than fake data
+            print("Could not get any storage metrics, returning zeros")
+            return {
+                "volumes": {},
+                "total_volume_bytes": 0,
+                "disk_stats": {
+                    "filesystem": "unknown",
+                    "size": "0.00 GB",
+                    "used": "0.00 GB",
+                    "available": "0.00 GB",
+                    "use_percent": "0.0%",
+                    "mount_point": "/",
+                    "total_bytes": 0,
+                    "used_bytes": 0,
+                    "free_bytes": 0
                 }
-            except Exception as df_error:
-                logger.error(f"Fallback df command failed: {str(df_error)}")
-                
-                # Last resort - try to get Docker Desktop stats directly
-                try:
-                    # Check if docker command exists first
-                    which_docker_cmd = ["which", "docker"]
-                    try:
-                        subprocess.run(which_docker_cmd, capture_output=True, check=True)
-                        # Docker command exists, proceed with docker info
-                        docker_info_cmd = ["docker", "info", "--format", "{{json .}}"] 
-                        docker_info_result = subprocess.run(docker_info_cmd, capture_output=True, text=True, check=True)
-                        docker_info = json.loads(docker_info_result.stdout)
-                    except subprocess.CalledProcessError:
-                        logger.error("Docker command not found, using fallback values")
-                        # Docker command doesn't exist, raise exception to use fallback
-                        raise FileNotFoundError("Docker command not found")
+            }
                     
-                    # Extract disk usage information
-                    driver_status = docker_info.get("DriverStatus", [])
-                    disk_info = {}
-                    
-                    for item in driver_status:
-                        if isinstance(item, list) and len(item) >= 2:
-                            if "Data Space Total" in item[0]:
-                                disk_info["total"] = item[1]
-                            elif "Data Space Used" in item[0]:
-                                disk_info["used"] = item[1]
-                            elif "Data Space Available" in item[0]:
-                                disk_info["available"] = item[1]
-                    
-                    # Parse values (e.g., "82.41 GB")
-                    def parse_size(size_str):
-                        if not size_str:
-                            return 0
-                        try:
-                            parts = size_str.split()
-                            if len(parts) != 2:
-                                return 0
-                            value = float(parts[0])
-                            unit = parts[1].upper()
-                            if unit == "GB":
-                                return int(value * 1024**3)
-                            elif unit == "MB":
-                                return int(value * 1024**2)
-                            elif unit == "KB":
-                                return int(value * 1024)
-                            else:
-                                return int(value)
-                        except (ValueError, IndexError):
-                            return 0
-                    
-                    total_bytes = parse_size(disk_info.get("total", "1006.85 GB"))
-                    used_bytes = parse_size(disk_info.get("used", "82.41 GB"))
-                    free_bytes = parse_size(disk_info.get("available", "924.44 GB"))
-                    
-                    # Calculate percentage
-                    use_percent = round((used_bytes / total_bytes) * 100, 2) if total_bytes > 0 else 0
-                    
-                    logger.info(f"Using Docker Desktop stats: Total: {total_bytes/(1024**3):.2f} GB, Used: {used_bytes/(1024**3):.2f} GB")
-                    
-                    return {
-                        "volumes": {},
-                        "total_volume_bytes": used_bytes,
-                        "disk_stats": {
-                            "filesystem": "/",
-                            "size": f"{total_bytes/(1024**3):.2f} GB",
-                            "used": f"{used_bytes/(1024**3):.2f} GB",
-                            "available": f"{free_bytes/(1024**3):.2f} GB",
-                            "use_percent": f"{use_percent}%",
-                            "mount_point": "/",
-                            "total_bytes": total_bytes,
-                            "used_bytes": used_bytes,
-                            "free_bytes": free_bytes
-                        }
-                    }
-                except Exception as docker_info_error:
-                    logger.error(f"Failed to get Docker Desktop stats: {str(docker_info_error)}")
-                    
-                    # As a last resort, use the values from the Docker Desktop screenshot
-                    return {
-                        "volumes": {},
-                        "total_volume_bytes": 0,
-                        "disk_stats": {
-                            "filesystem": "/",
-                            "size": "1006.85 GB",
-                            "used": "82.41 GB",
-                            "available": "924.44 GB",
-                            "use_percent": "8.2%",
-                            "mount_point": "/",
-                            "total_bytes": 1080982151168,  # 1006.85 GB in bytes
-                            "used_bytes": 88481939456,     # 82.41 GB in bytes
-                            "free_bytes": 992500211712     # 924.44 GB in bytes
-                        }
-                    }
+        except Exception as e:
+            logger.error(f"Failed to get disk usage: {str(e)}")
+            # Return zeros instead of fake data
+            return {
+                "volumes": {},
+                "total_volume_bytes": 0,
+                "disk_stats": {
+                    "filesystem": "error",
+                    "size": "0.00 GB",
+                    "used": "0.00 GB",
+                    "available": "0.00 GB",
+                    "use_percent": "0.0%",
+                    "mount_point": "/",
+                    "total_bytes": 0,
+                    "used_bytes": 0,
+                    "free_bytes": 0
+                }
+            }
     
     @staticmethod
     def get_container_logs(container_name: str, lines: int = 100) -> List[Dict[str, Any]]:
