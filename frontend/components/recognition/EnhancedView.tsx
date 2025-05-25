@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { formatTime } from '../../utils/formatTime';
+import { useAuth } from '../../contexts/AuthContext';
 
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -17,6 +18,23 @@ const EnhancedView: React.FC<EnhancedViewProps> = ({
   transcriptionData, 
   integratedTimeline 
 }) => {
+  const { token } = useAuth();
+  const [videoUrl, setVideoUrl] = useState('');
+  const [posterUrl, setPosterUrl] = useState('');
+  
+  useEffect(() => {
+    if (audioInfo?.file_path) {
+      // Extract filename from the path - format should be capture_XXXX.mp4
+      const captureNumber = captureId.toString().padStart(4, '0');
+      const filename = `capture_${captureNumber}.mp4`;
+      
+      // Create authenticated video URL with exact format
+      setVideoUrl(`${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`);
+      
+      // Set poster URL
+      setPosterUrl(`${API_BASE_URL}/media/thumbnail/${captureId}`);
+    }
+  }, [audioInfo, captureId, token]);
   // Format duration in seconds to HH:MM:SS
   const formatDuration = (seconds: number): string => {
     if (!seconds) return '00:00:00';
@@ -37,10 +55,10 @@ const EnhancedView: React.FC<EnhancedViewProps> = ({
             <video 
               controls 
               className="w-full max-h-[400px]" 
-              src={`${API_BASE_URL}/media/video/${captureId}`}
-              poster={`${API_BASE_URL}/media/thumbnail/${captureId}`}
+              src={videoUrl}
+              poster={posterUrl}
             >
-              <source src={`${API_BASE_URL}/media/video/${captureId}`} type="video/mp4" />
+              {videoUrl && <source src={videoUrl} type="video/mp4" />}
               Your browser does not support the video tag.
             </video>
           )}
@@ -64,10 +82,10 @@ const EnhancedView: React.FC<EnhancedViewProps> = ({
           <video 
             controls 
             className="w-full max-h-[400px]" 
-            src={`${API_BASE_URL}/media/video/${captureId}`}
-            poster={`${API_BASE_URL}/media/thumbnail/${captureId}`}
+            src={videoUrl}
+            poster={posterUrl}
           >
-            <source src={`${API_BASE_URL}/media/video/${captureId}`} type="video/mp4" />
+            {videoUrl && <source src={videoUrl} type="video/mp4" />}
             Your browser does not support the video tag.
           </video>
         )}

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { formatTime } from '../../utils/formatTime';
 import { api } from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface TimelineItem {
   type: 'face' | 'speaker';
