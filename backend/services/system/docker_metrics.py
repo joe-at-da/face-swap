@@ -75,16 +75,54 @@ class DockerMetrics:
             Dictionary with disk usage statistics
         """
         try:
-            # First try to get accurate system-wide disk usage with psutil
-            import psutil
-            disk = psutil.disk_usage('/')
+            # Initialize with zeros in case we can't get real metrics
+            total_bytes = 0
+            used_bytes = 0
+            free_bytes = 0
+            percent_used = 0
             
-            # Convert values to bytes
-            total_bytes = disk.total
-            used_bytes = disk.used
-            free_bytes = disk.free
-            percent_used = disk.percent
+            # Try to get application-specific storage metrics
+            import os
             
+            # Check if we're in a Docker environment by looking for media directory
+            media_dir = '/app/media'
+            if os.path.exists(media_dir):
+                # Get the usage of the media directory which contains our application data
+                try:
+                    import shutil
+                    media_usage = shutil.disk_usage(media_dir)
+                    # This gives us the real usage of the application's storage
+                    total_bytes = media_usage.total
+                    used_bytes = media_usage.used
+                    free_bytes = media_usage.free
+                    percent_used = (used_bytes / total_bytes) * 100 if total_bytes > 0 else 0
+                    print(f"Using media directory metrics: {media_dir}")
+                except Exception as media_error:
+                    print(f"Error getting media directory metrics: {str(media_error)}")
+                    # Fall back to psutil for the container's filesystem
+                    try:
+                        import psutil
+                        disk = psutil.disk_usage('/')
+                        total_bytes = disk.total
+                        used_bytes = disk.used
+                        free_bytes = disk.free
+                        percent_used = disk.percent
+                        print("Using container filesystem metrics")
+                    except Exception as psutil_error:
+                        print(f"Error getting container metrics: {str(psutil_error)}")
+            else:
+                # Not in a Docker environment, use regular filesystem metrics
+                try:
+                    import psutil
+                    disk = psutil.disk_usage('/')
+                    total_bytes = disk.total
+                    used_bytes = disk.used
+                    free_bytes = disk.free
+                    percent_used = disk.percent
+                    print("Using host filesystem metrics")
+                except Exception as psutil_error:
+                    print(f"Error getting host metrics: {str(psutil_error)}")
+                    
             # Format for human-readable output
             def format_size(size_bytes):
                 # Convert bytes to GB
