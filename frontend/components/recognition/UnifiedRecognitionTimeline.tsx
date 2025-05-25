@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { formatTime } from '../../utils/formatTime';
 import { api } from '../../utils/api';
+import { Tooltip } from '@chakra-ui/react';
 
 interface TimelineItem {
   type: 'face' | 'speaker';
@@ -23,7 +24,17 @@ interface Correlation {
   start: number;
   end: number;
   confidence: number;
+  confidence_level?: 'very_low' | 'low' | 'medium' | 'high' | 'very_high';
   same_person: boolean;
+  match_type?: 'explicit_id' | 'name_similarity';
+  name_similarity?: number;
+  factors?: {
+    boosters: Record<string, number>;
+    penalties: Record<string, number>;
+    face_confidence: number;
+    speaker_confidence: number;
+    base_combined: number;
+  };
 }
 
 interface TimelineData {
@@ -98,6 +109,19 @@ const UnifiedRecognitionTimeline: React.FC<UnifiedTimelineProps> = ({
       }
       groups[personId].items.push(item);
       return groups;
+    }, {});
+  }, [timelineData]);
+  
+  // Process correlations
+  const correlationsByFaceId = React.useMemo(() => {
+    if (!timelineData?.correlations) return {};
+    
+    return timelineData.correlations.reduce((acc: Record<string, Correlation[]>, correlation) => {
+      if (!acc[correlation.face_id]) {
+        acc[correlation.face_id] = [];
+      }
+      acc[correlation.face_id].push(correlation);
+      return acc;
     }, {});
   }, [timelineData]);
   
@@ -227,36 +251,159 @@ const UnifiedRecognitionTimeline: React.FC<UnifiedTimelineProps> = ({
                 style={{ height: 40, minWidth: '100%', width: timelineWidth }}
               >
                 {/* Face items */}
-                {group.items.filter((item: TimelineItem) => item.type === 'face').map((item: TimelineItem, index: number) => (
-                  <div
-                    key={`face-${item.id}-${index}`}
-                    className="absolute h-4 bg-blue-400 dark:bg-blue-600 rounded-sm cursor-pointer z-10 top-0"
-                    style={{ 
-                      left: timeToPosition(item.start),
-                      width: `calc(${timeToPosition(item.end - item.start)})`,
-                      opacity: 0.7 + (item.confidence * 0.3)
-                    }}
-                    onClick={() => onSeek(item.start)}
-                    onMouseEnter={() => setHoveredItem(item)}
-                    onMouseLeave={() => setHoveredItem(null)}
-                  />
-                ))}
+                {group.items.filter((item: TimelineItem) => item.type === 'face').map((item: TimelineItem, index: number) => {
+                  const correlations = correlationsByFaceId[item.id] || [];
+                  const hasCorrelation = correlations.length > 0;
+                  const highConfidenceCorrelation = correlations.find(c => 
+                    c.confidence_level === 'high' || c.confidence_level === 'very_high'
+                  );
+                  
+                  // Determine border color based on correlation confidence
+                  let borderColor = '';
+                  if (hasCorrelation) {
+                    if (highConfidenceCorrelation) {
+                      borderColor = 'border-yellow-400 dark:border-yellow-500';
+                    } else {
+                      borderColor = 'border-purple-400 dark:border-purple-500';
+                    }
+                  }
+                  
+                  return (
+                    <div
+                      key={`face-${item.id}-${index}`}
+                      className={`absolute h-4 bg-blue-400 dark:bg-blue-600 rounded-sm cursor-pointer z-10 top-0 ${hasCorrelation ? 'border-2 ' + borderColor : ''}`}
+                      style={{ 
+                        left: timeToPosition(item.start),
+                        width: `calc(${timeToPosition(item.end - item.start)})`,
+                        opacity: 0.7 + (item.confidence * 0.3)
+                      }}
+                      onClick={() => onSeek(item.start)}
+                      onMouseEnter={() => setHoveredItem(item)}
+                      onMouseLeave={() => setHoveredItem(null)}
+                    >
+                      {hasCorrelation && (
+                        <div className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-yellow-500" 
+                             title="Has correlation with speaker"/>
+                      )}
+                    </div>
+                  );
+                })}
                 
                 {/* Speaker items */}
-                {group.items.filter((item: TimelineItem) => item.type === 'speaker').map((item: TimelineItem, index: number) => (
-                  <div
-                    key={`speaker-${item.id}-${index}`}
-                    className="absolute h-4 bg-green-400 dark:bg-green-600 rounded-sm cursor-pointer z-10 bottom-0"
-                    style={{ 
-                      left: timeToPosition(item.start),
-                      width: `calc(${timeToPosition(item.end - item.start)})`,
-                      opacity: 0.7 + (item.confidence * 0.3)
-                    }}
-                    onClick={() => onSeek(item.start)}
-                    onMouseEnter={() => setHoveredItem(item)}
-                    onMouseLeave={() => setHoveredItem(null)}
-                  />
-                ))}
+                {group.items.filter((item: TimelineItem) => item.type === 'speaker').map((item: TimelineItem, index: number) => {
+                  // Find correlations where this speaker is mentioned
+                  const relatedCorrelations = timelineData?.correlations?.filter(c => c.speaker_id === item.id) || [];
+                  const hasCorrelation = relatedCorrelations.length > 0;
+                  const highConfidenceCorrelation = relatedCorrelations.find(c => 
+                    c.confidence_level === 'high' || c.confidence_level === 'very_high'
+                  );
+                  
+                  // Determine border color based on correlation confidence
+                  let borderColor = '';
+                  if (hasCorrelation) {
+                    if (highConfidenceCorrelation) {
+                      borderColor = 'border-yellow-400 dark:border-yellow-500';
+                    } else {
+                      borderColor = 'border-purple-400 dark:border-purple-500';
+                    }
+                  }
+                  
+                  return (
+                    <div
+                      key={`speaker-${item.id}-${index}`}
+                      className={`absolute h-4 bg-green-400 dark:bg-green-600 rounded-sm cursor-pointer z-10 bottom-0 ${hasCorrelation ? 'border-2 ' + borderColor : ''}`}
+                      style={{ 
+                        left: timeToPosition(item.start),
+                        width: `calc(${timeToPosition(item.end - item.start)})`,
+                        opacity: 0.7 + (item.confidence * 0.3)
+                      }}
+                      onClick={() => onSeek(item.start)}
+                      onMouseEnter={() => setHoveredItem(item)}
+                      onMouseLeave={() => setHoveredItem(null)}
+                    >
+                      {hasCorrelation && (
+                        <div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-500" 
+                             title="Has correlation with face"/>
+                      )}
+                    </div>
+                  );
+                })}
+                
+                {/* Correlation lines */}
+                {timelineData?.correlations?.map((correlation, index) => {
+                  // Find the face and speaker items
+                  const faceItem = timelineData.timeline.find(item => 
+                    item.type === 'face' && item.id === correlation.face_id
+                  );
+                  const speakerItem = timelineData.timeline.find(item => 
+                    item.type === 'speaker' && item.id === correlation.speaker_id
+                  );
+                  
+                  if (!faceItem || !speakerItem) return null;
+                  
+                  // Determine line color based on confidence level
+                  let lineColor = '';
+                  let lineOpacity = 0.5;
+                  
+                  switch(correlation.confidence_level) {
+                    case 'very_high':
+                      lineColor = 'rgba(234, 179, 8, 0.8)'; // yellow-500
+                      lineOpacity = 0.9;
+                      break;
+                    case 'high':
+                      lineColor = 'rgba(234, 179, 8, 0.6)'; // yellow-500
+                      lineOpacity = 0.8;
+                      break;
+                    case 'medium':
+                      lineColor = 'rgba(168, 85, 247, 0.6)'; // purple-500
+                      lineOpacity = 0.7;
+                      break;
+                    case 'low':
+                      lineColor = 'rgba(168, 85, 247, 0.4)'; // purple-500
+                      lineOpacity = 0.6;
+                      break;
+                    default:
+                      lineColor = 'rgba(168, 85, 247, 0.3)'; // purple-500
+                      lineOpacity = 0.5;
+                  }
+                  
+                  // Only show if correlation is reasonably confident
+                  if (correlation.confidence < 0.4) return null;
+                  
+                  // Calculate positions
+                  const faceStart = faceItem.start;
+                  const speakerStart = speakerItem.start;
+                  const facePos = timeToPosition(faceStart);
+                  const speakerPos = timeToPosition(speakerStart);
+                  
+                  // Draw a line or connector between the two items
+                  return (
+                    <div 
+                      key={`correlation-${index}`}
+                      className="absolute h-full w-0.5 z-5"
+                      style={{ 
+                        left: timeToPosition(correlation.start),
+                        backgroundColor: lineColor,
+                        opacity: lineOpacity
+                      }}
+                      onMouseEnter={() => {
+                        // Create a virtual item for the tooltip
+                        setHoveredItem({
+                          type: 'face', // Doesn't matter
+                          id: `correlation-${index}`,
+                          name: `Correlation: ${correlation.face_name} (face) & ${correlation.speaker_name} (voice)`,
+                          start: correlation.start,
+                          end: correlation.end,
+                          confidence: correlation.confidence,
+                          text: `Confidence: ${(correlation.confidence * 100).toFixed(1)}% - ${correlation.confidence_level || 'unknown'}
+${correlation.match_type === 'explicit_id' ? 'Matched by ID' : 'Matched by name similarity'}
+${correlation.name_similarity ? `Name similarity: ${(correlation.name_similarity * 100).toFixed(1)}%` : ''}`
+                        });
+                      }}
+                      onMouseLeave={() => setHoveredItem(null)}
+                    />
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -285,14 +432,26 @@ const UnifiedRecognitionTimeline: React.FC<UnifiedTimelineProps> = ({
         </div>
       )}
       
-      <div className="flex items-center mt-2">
-        <div className="flex items-center mr-4">
+      <div className="flex items-center mt-2 flex-wrap">
+        <div className="flex items-center mr-4 mb-1">
           <div className="w-4 h-4 bg-blue-400 dark:bg-blue-600 rounded-sm mr-1"></div>
           <span className="text-sm text-gray-600 dark:text-gray-400">Face Detection</span>
         </div>
-        <div className="flex items-center">
+        <div className="flex items-center mr-4 mb-1">
           <div className="w-4 h-4 bg-green-400 dark:bg-green-600 rounded-sm mr-1"></div>
           <span className="text-sm text-gray-600 dark:text-gray-400">Voice Detection</span>
+        </div>
+        <div className="flex items-center mr-4 mb-1">
+          <div className="w-4 h-4 bg-yellow-500 opacity-80 rounded-sm mr-1"></div>
+          <span className="text-sm text-gray-600 dark:text-gray-400">High Confidence Correlation</span>
+        </div>
+        <div className="flex items-center mr-4 mb-1">
+          <div className="w-4 h-4 bg-purple-500 opacity-60 rounded-sm mr-1"></div>
+          <span className="text-sm text-gray-600 dark:text-gray-400">Medium/Low Confidence Correlation</span>
+        </div>
+        <div className="flex items-center mb-1">
+          <div className="w-2 h-2 bg-yellow-500 rounded-full mr-1"></div>
+          <span className="text-sm text-gray-600 dark:text-gray-400">Correlated Event</span>
         </div>
       </div>
     </div>

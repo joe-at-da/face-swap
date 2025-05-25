@@ -391,118 +391,199 @@ class TimelineService:
             capture_id: ID of the capture session
             
         Returns:
-            Dict with correlation results
-        """
-        try:
-            logger.info(f"Finding correlations for capture {capture_id}")
             
-            # Get face events
-            face_data = self.get_timeline_events(db, capture_id, "face")
-            if not face_data.get("success", False):
-                return face_data
+        # Get all face events
+        face_events = db.query(models.RecognitionEvent).filter(
+            models.RecognitionEvent.capture_session_id == capture_id,
             
-            # Get speaker events
-            speaker_data = self.get_timeline_events(db, capture_id, "speaker")
-            if not speaker_data.get("success", False):
-                return speaker_data
+            # Get all speaker events
+            speaker_events = db.query(models.RecognitionEvent).filter(
+                models.RecognitionEvent.capture_session_id == capture_id,
+                models.RecognitionEvent.event_type == "speaker"
+            ).order_by(models.RecognitionEvent.start_time).all()
             
-            face_events = face_data.get("timeline", [])
-            speaker_events = speaker_data.get("timeline", [])
+            # Convert to dictionaries
+            face_items = [item.__dict__ for item in face_events]
+            speaker_items = [item.__dict__ for item in speaker_events]
             
             # Find correlations
             correlations = []
-            for face_item in face_events:
-                for speaker_item in speaker_events:
-                    # Check for temporal overlap
-                    if (face_item["start"] <= speaker_item["end"] and 
-                        face_item["end"] >= speaker_item["start"]):
+            
+            # Group face detections by person
+            face_by_person = {}
+            for face_item in face_items:
+                person_id = face_item.get("person_id")
+                person_name = face_item.get("person_name", "Unknown")
+                key = str(person_id) if person_id else person_name
+                
+                if key not in face_by_person:
+                    face_by_person[key] = []
+                
+                face_by_person[key].append(face_item)
+            
+            # Group speaker segments by person
+            speaker_by_person = {}
+            for speaker_item in speaker_items:
+                person_id = speaker_item.get("person_id")
+                person_name = speaker_item.get("person_name", "Unknown Speaker")
+                key = str(person_id) if person_id else person_name
+                
+                if key not in speaker_by_person:
+                    speaker_by_person[key] = []
+                
+                speaker_by_person[key].append(speaker_item)
+            
+            # First, try to match based on person_id (explicit links)
+            for person_key in face_by_person:
+                if person_key in speaker_by_person and person_key.isdigit():  # Matching by ID
+                    face_detections = face_by_person[person_key]
+                    speaker_segments = speaker_by_person[person_key]
+                    
+                    for face_item in face_detections:
+                        face_time = face_item["start_time"]
+                        face_confidence = face_item["confidence"]
                         
-                        # Calculate overlap
-                        overlap_start = max(face_item["start"], speaker_item["start"])
-                        overlap_end = min(face_item["end"], speaker_item["end"])
+                        for speaker_item in speaker_segments:
+                            speaker_start = speaker_item["start_time"]
+                            speaker_end = speaker_item["end_time"]
+                            speaker_confidence = speaker_item["confidence"]
+                            
+                            # Check for temporal overlap with extended window
+                            # Allow face detection to be slightly outside speaker segment (up to 2 seconds)
+                            extended_start = speaker_start - 2.0
+                            extended_end = speaker_end + 2.0
+                            
+                            if extended_start <= face_time <= extended_end:
+                                # Calculate precise temporal overlap
+                                overlap_start = max(face_time, speaker_start)
+                                overlap_end = min(face_time + 1.0, speaker_end)  # Assume face detection spans 1 second
+                                overlap_duration = max(0, overlap_end - overlap_start)
+                                
+                                # For explicit links, use higher base confidence
+                                base_combined = 0.7 * face_confidence + 0.3 * speaker_confidence
+                                
+                                # Calculate boosters for explicit links
+                                boosters = {
+                                    "explicit_link": 0.3,  # Strong boost for explicit ID match
+                                    "high_individual_confidence": 0.1 if (face_confidence > 0.8 and speaker_confidence > 0.8) else 0.0,
+                                    "temporal_overlap": min(0.1, overlap_duration / 3.0)  # Up to 0.1 boost for longer overlaps
+                                }
+                                
+                                # Calculate penalties
+                                penalties = {
+                                    "low_face_confidence": 0.1 if face_confidence < 0.5 else 0.0,
+                                    "low_speaker_confidence": 0.1 if speaker_confidence < 0.5 else 0.0,
+                                    "outside_segment": 0.1 if overlap_duration == 0 else 0.0  # Penalty if no actual overlap
+                                }
+                                
+                                # Calculate final confidence
+                                total_boosters = sum(boosters.values())
+                                total_penalties = sum(penalties.values())
+                                final_confidence = min(1.0, max(0.0, base_combined + total_boosters - total_penalties))
+                                
+                                # Determine confidence level category
+                                confidence_level = self._get_confidence_level(final_confidence)
+                                
+                                correlations.append({
+                                    "face_id": face_item["id"],
+                                    "speaker_id": speaker_item["id"],
+                                    "face_name": face_item["person_name"],
+                                    "speaker_name": speaker_item["person_name"],
+                                    "start": overlap_start if overlap_duration > 0 else face_time,
+                                    "end": overlap_end if overlap_duration > 0 else face_time + 1.0,
+                                    "confidence": final_confidence,
+                                    "confidence_level": confidence_level,
+                                    "same_person": True,  # Explicit link means same person
+                                    "match_type": "explicit_id",
+                                    "factors": {
+                                        "boosters": boosters,
+                                        "penalties": penalties,
+                                        "face_confidence": face_confidence,
+                                        "speaker_confidence": speaker_confidence,
+                                        "base_combined": base_combined
+                                    }
+                                })
+            
+            # Now try to match based on name similarity for remaining faces
+            for face_item in face_items:
+                face_time = face_item["start_time"]
+                face_name = face_item["person_name"]
+                face_confidence = face_item["confidence"]
+                face_id = face_item["id"]
+                
+                # Skip if this face is already correlated with explicit ID match
+                if any(corr["face_id"] == face_id for corr in correlations):
+                    continue
+                
+                for speaker_item in speaker_items:
+                    speaker_start = speaker_item["start_time"]
+                    speaker_end = speaker_item["end_time"]
+                    speaker_name = speaker_item["person_name"]
+                    speaker_confidence = speaker_item["confidence"]
+                    speaker_id = speaker_item["id"]
+                    
+                    # Skip if this speaker is already correlated with this face
+                    if any(corr["face_id"] == face_id and corr["speaker_id"] == speaker_id for corr in correlations):
+                        continue
+                    
+                    # Check for temporal overlap with extended window
+                    extended_start = speaker_start - 1.5
+                    extended_end = speaker_end + 1.5
+                    
+                    if extended_start <= face_time <= extended_end:
+                        # Calculate name similarity
+                        import difflib
+                        name_similarity = difflib.SequenceMatcher(None, face_name, speaker_name).ratio()
+                        
+                        # Calculate precise temporal overlap
+                        overlap_start = max(face_time, speaker_start)
+                        overlap_end = min(face_time + 1.0, speaker_end)
                         overlap_duration = max(0, overlap_end - overlap_start)
                         
-                        # Only consider significant overlaps
-                        if overlap_duration > 0.3:
-                            # Extract names for comparison
-                            face_name = face_item["person_name"].lower() if face_item["person_name"] else ""
-                            speaker_name = speaker_item["person_name"].lower() if speaker_item["person_name"] else ""
-                            
-                            # Calculate name similarity score (0-1)
-                            name_similarity = 0.0
-                            if face_name and speaker_name:
-                                # Simple string similarity
-                                if face_name == speaker_name:
-                                    name_similarity = 1.0
-                                elif face_name in speaker_name or speaker_name in face_name:
-                                    name_similarity = 0.8
-                                else:
-                                    # Simple character overlap similarity
-                                    common_chars = sum(1 for c in face_name if c in speaker_name)
-                                    name_similarity = common_chars / max(len(face_name), len(speaker_name)) if max(len(face_name), len(speaker_name)) > 0 else 0.0
-                            
-                            # Check for explicit links between profiles
-                            explicit_link = False
-                            if face_item["person_id"] and speaker_item["person_id"]:
-                                explicit_link = face_item["person_id"] == speaker_item["person_id"]
-                            
-                            # Extract confidence scores
-                            face_confidence = face_item.get("confidence", 0.5)
-                            speaker_confidence = speaker_item.get("confidence", 0.5)
-                            
-                            # Calculate confidence boosters/penalties
-                            boosters = {
-                                "explicit_link": 0.2 if explicit_link else 0.0,
-                                "name_match": 0.15 * name_similarity,
-                                "high_individual_confidence": 0.1 if (face_confidence > 0.8 and speaker_confidence > 0.8) else 0.0,
-                                "temporal_overlap": min(0.1, overlap_duration / 5.0)  # Up to 0.1 boost for longer overlaps
-                            }
-                            
-                            # Calculate penalties
-                            penalties = {
-                                "name_mismatch": 0.2 if (face_name and speaker_name and name_similarity < 0.3) else 0.0,
-                                "low_face_confidence": 0.1 if face_confidence < 0.5 else 0.0,
-                                "low_speaker_confidence": 0.1 if speaker_confidence < 0.5 else 0.0
-                            }
-                            
-                            # Calculate total boosters and penalties
-                            total_boosters = sum(boosters.values())
-                            total_penalties = sum(penalties.values())
-                            
-                            # Calculate base combined confidence (weighted average)
-                            base_combined = 0.6 * face_confidence + 0.4 * speaker_confidence
-                            
-                            # Apply boosters and penalties to get final confidence
-                            final_confidence = min(1.0, max(0.0, base_combined + total_boosters - total_penalties))
-                            
-                            # Determine if same person based on confidence and other factors
-                            same_person = explicit_link or name_similarity > 0.7 or final_confidence > 0.7
-                            
-                            # Determine confidence level category
-                            confidence_level = "unknown"
-                            if final_confidence >= 0.9:
-                                confidence_level = "very_high"
-                            elif final_confidence >= 0.75:
-                                confidence_level = "high"
-                            elif final_confidence >= 0.6:
-                                confidence_level = "medium"
-                            elif final_confidence >= 0.4:
-                                confidence_level = "low"
-                            else:
-                                confidence_level = "very_low"
-                            
+                        # Calculate boosters
+                        boosters = {
+                            "name_similarity": self._calculate_name_similarity_boost(name_similarity),
+                            "high_individual_confidence": 0.1 if (face_confidence > 0.8 and speaker_confidence > 0.8) else 0.0,
+                            "temporal_overlap": min(0.15, overlap_duration / 2.0),  # Up to 0.15 boost for longer overlaps
+                            "perfect_overlap": 0.1 if (speaker_start <= face_time <= speaker_end) else 0.0  # Boost if face is perfectly within segment
+                        }
+                        
+                        # Calculate penalties
+                        penalties = {
+                            "name_mismatch": 0.3 if (face_name and speaker_name and name_similarity < 0.3) else 0.0,
+                            "low_face_confidence": 0.15 if face_confidence < 0.5 else 0.0,
+                            "low_speaker_confidence": 0.15 if speaker_confidence < 0.5 else 0.0,
+                            "outside_segment": 0.2 if overlap_duration == 0 else 0.0  # Stronger penalty if no actual overlap
+                        }
+                        
+                        # Calculate base combined confidence (weighted average)
+                        base_combined = 0.6 * face_confidence + 0.4 * speaker_confidence
+                        
+                        # Apply boosters and penalties to get final confidence
+                        total_boosters = sum(boosters.values())
+                        total_penalties = sum(penalties.values())
+                        final_confidence = min(1.0, max(0.0, base_combined + total_boosters - total_penalties))
+                        
+                        # Determine if same person based on confidence and other factors
+                        same_person = name_similarity > 0.7 or final_confidence > 0.7
+                        
+                        # Determine confidence level category
+                        confidence_level = self._get_confidence_level(final_confidence)
+                        
+                        # Only add if confidence is above threshold
+                        if final_confidence >= 0.4 or name_similarity > 0.6:
                             correlations.append({
                                 "face_id": face_item["id"],
                                 "speaker_id": speaker_item["id"],
                                 "face_name": face_item["person_name"],
                                 "speaker_name": speaker_item["person_name"],
-                                "start": overlap_start,
-                                "end": overlap_end,
+                                "start": overlap_start if overlap_duration > 0 else face_time,
+                                "end": overlap_end if overlap_duration > 0 else face_time + 1.0,
                                 "confidence": final_confidence,
                                 "confidence_level": confidence_level,
                                 "same_person": same_person,
                                 "name_similarity": name_similarity,
-                                "explicit_link": explicit_link,
+                                "match_type": "name_similarity",
                                 "factors": {
                                     "boosters": boosters,
                                     "penalties": penalties,
@@ -512,11 +593,16 @@ class TimelineService:
                                 }
                             })
             
+            # Sort correlations by confidence (highest first)
+            correlations.sort(key=lambda x: x["confidence"], reverse=True)
+            
             return {
                 "success": True,
                 "video_id": capture_id,
                 "correlations": correlations,
-                "count": len(correlations)
+                "count": len(correlations),
+                "face_count": len(face_items),
+                "speaker_count": len(speaker_items)
             }
             
         except Exception as e:
@@ -526,3 +612,31 @@ class TimelineService:
                 "error": f"Error finding correlations: {str(e)}",
                 "correlations": []
             }
+    
+    def _get_confidence_level(self, confidence: float) -> str:
+        """Helper method to determine confidence level category."""
+        if confidence >= 0.9:
+            return "very_high"
+        elif confidence >= 0.75:
+            return "high"
+        elif confidence >= 0.6:
+            return "medium"
+        elif confidence >= 0.4:
+            return "low"
+        else:
+            return "very_low"
+            
+    def _calculate_name_similarity_boost(self, similarity: float) -> float:
+        """Calculate boost based on name similarity."""
+        if similarity > 0.9:  # Almost perfect match
+            return 0.3
+        elif similarity > 0.8:  # Very good match
+            return 0.25
+        elif similarity > 0.7:  # Good match
+            return 0.2
+        elif similarity > 0.6:  # Moderate match
+            return 0.15
+        elif similarity > 0.5:  # Weak match
+            return 0.1
+        else:
+            return 0.0
