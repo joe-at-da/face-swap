@@ -251,8 +251,9 @@ const MediaViewPage: React.FC = () => {
         return '';
       }
       
-      // For direct streaming, we can use the relative_path or filename
-      const streamUrl = `${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`;
+      // For streaming endpoints, we need to use the base URL without /api/v1
+      const baseUrl = API_BASE_URL.replace('/api/v1', '');
+      const streamUrl = `${baseUrl}/videos/stream-with-token/${filename}?token=${token}`;
       console.log('Using video URL for streaming:', streamUrl);
       return streamUrl;
     } else if (type === 'clip' && clip) {
@@ -260,7 +261,8 @@ const MediaViewPage: React.FC = () => {
         console.error('No valid file_path or id found in clip:', clip);
         return '';
       }
-      const clipUrl = `${API_BASE_URL}/clips/stream/${clip.id}?token=${token}`;
+      const baseUrl = API_BASE_URL.replace('/api/v1', '');
+      const clipUrl = `${baseUrl}/clips/stream/${clip.id}?token=${token}`;
       console.log('Using clip URL for streaming:', clipUrl);
       return clipUrl;
     }
@@ -274,10 +276,15 @@ const MediaViewPage: React.FC = () => {
       let videoPath = video.file_path || video.path || '';
       let filename = '';
       
+      // For streaming endpoints, we need to use the base URL without /api/v1
+      const baseUrl = API_BASE_URL.replace('/api/v1', '');
+      
       if (!videoPath && video.filename) {
         // If we only have a filename, use that
         filename = video.filename;
-        return `${API_BASE_URL}/videos/stream-audio-with-token/${filename.replace('.mp4', '.audio.mp3')}?token=${token}`;
+        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${filename.replace('.mp4', '.audio.mp3')}?token=${token}`;
+        console.log('Using audio URL for streaming (filename only):', audioUrl);
+        return audioUrl;
       }
       
       if (!videoPath) {
@@ -288,10 +295,14 @@ const MediaViewPage: React.FC = () => {
       // Handle different audio file naming conventions
       if (videoPath.includes('.mp4')) {
         const audioPath = videoPath.replace('.mp4', '.audio.mp3');
-        return `${API_BASE_URL}/videos/stream-audio-with-token/${audioPath.split('/').pop()}?token=${token}`;
+        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${audioPath.split('/').pop()}?token=${token}`;
+        console.log('Using audio URL for streaming (mp4):', audioUrl);
+        return audioUrl;
       } else {
         // Fallback for other formats
-        return `${API_BASE_URL}/videos/stream-audio-with-token/${videoPath.split('/').pop()}.audio.mp3?token=${token}`;
+        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${videoPath.split('/').pop()}.audio.mp3?token=${token}`;
+        console.log('Using audio URL for streaming (other format):', audioUrl);
+        return audioUrl;
       }
     }
     return '';
