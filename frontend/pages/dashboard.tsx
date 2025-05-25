@@ -82,12 +82,12 @@ const Dashboard: React.FC = () => {
         console.error('Failed to fetch dashboard stats:', error);
         // Return placeholder data when the API endpoint isn't available
         return {
-          totalClips: 5,
-          recentClips: 3,
-          pendingCaptures: 1,
-          scheduledPosts: 2,
-          storageUsed: '2.4 GB',
-          storageTotal: '100 GB'
+          totalClips: 0,
+          recentClips: 0,
+          pendingCaptures: 0,
+          scheduledPosts: 0,
+          storageUsed: '0 GB',
+          storageTotal: '0 GB'
         };
       }
     },

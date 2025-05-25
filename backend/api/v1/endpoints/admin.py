@@ -97,11 +97,11 @@ async def get_system_stats(
                 }
             except Exception as disk_error:
                 print(f"Dashboard disk usage fallback failed: {str(disk_error)}. Using Docker Desktop values.")
-                # If all else fails, use values from Docker Desktop
+                # If all else fails, use zero values
                 disk_info = {
-                    "total_bytes": 1080982151168,  # 1006.85 GB in bytes
-                    "used_bytes": 88481939456,     # 82.41 GB in bytes
-                    "free_bytes": 992500211712     # 924.44 GB in bytes
+                    "total_bytes": 0,
+                    "used_bytes": 0,
+                    "free_bytes": 0
                 }
         
         return {
