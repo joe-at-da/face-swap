@@ -67,13 +67,18 @@ const VideoClipDetailPage: React.FC = () => {
   });
 
   // Fetch transcription if available
-  const { data: transcription, isLoading: transcriptionLoading } = useQuery<Transcription>({
+  const { data: transcription, isLoading: transcriptionLoading, isError: transcriptionError } = useQuery<Transcription>({
     queryKey: ['transcription', id],
     queryFn: async () => {
       if (!id) throw new Error('No clip ID provided');
-      return await api.get(`/transcriptions/clip/${id}`);
+      try {
+        return await api.get(`/transcriptions/clip/${id}`);
+      } catch (error) {
+        console.log('Transcription data not available yet');
+        return null;
+      }
     },
-    enabled: !!id && !!clip?.has_transcription,
+    enabled: !!id && !!clip?.has_transcription && clip?.status === 'COMPLETED',
     refetchOnWindowFocus: false,
   });
   
@@ -89,7 +94,7 @@ const VideoClipDetailPage: React.FC = () => {
         return null;
       }
     },
-    enabled: !!id,
+    enabled: !!id && clip?.status === 'COMPLETED',
     refetchOnWindowFocus: false,
   });
   
@@ -105,7 +110,7 @@ const VideoClipDetailPage: React.FC = () => {
         return null;
       }
     },
-    enabled: !!id,
+    enabled: !!id && clip?.status === 'COMPLETED',
     refetchOnWindowFocus: false,
   });
 
@@ -351,13 +356,33 @@ const VideoClipDetailPage: React.FC = () => {
                 <h2 className="text-lg font-medium text-gray-900 mb-4">Transcription</h2>
                 
                 {transcriptionLoading ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                    <p className="mt-4 text-gray-600">Loading transcription...</p>
+                  <div className="flex justify-center items-center h-64">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
                   </div>
-                ) : !transcription ? (
-                  <div className="text-center py-8">
-                    <p className="text-gray-600">No transcription available for this clip.</p>
+                ) : clipLoading ? (
+                  <div className="flex justify-center items-center h-64">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                  </div>
+                ) : clipError ? (
+                  <div className="text-center p-8">
+                    <h2 className="text-xl text-red-500 mb-4">Error loading clip</h2>
+                    <p className="text-gray-400 mb-4">There was an error loading this clip. It may have been deleted or you don't have permission to view it.</p>
+                    <Link href="/clips" className="text-blue-500 hover:underline">
+                      Back to clips
+                    </Link>
+                  </div>
+                ) : clip?.status === 'PROCESSING' ? (
+                  <div className="text-center p-8">
+                    <h2 className="text-xl text-blue-500 mb-4">Clip is being processed</h2>
+                    <p className="text-gray-400 mb-4">This clip is currently being processed. Please check back in a few minutes.</p>
+                    <div className="flex justify-center mt-4">
+                      <div className="animate-pulse rounded-full h-3 w-3 bg-blue-500 mr-1"></div>
+                      <div className="animate-pulse rounded-full h-3 w-3 bg-blue-500 mr-1" style={{ animationDelay: '0.2s' }}></div>
+                      <div className="animate-pulse rounded-full h-3 w-3 bg-blue-500" style={{ animationDelay: '0.4s' }}></div>
+                    </div>
+                    <Link href="/clips" className="block mt-6 text-blue-500 hover:underline">
+                      Back to clips
+                    </Link>
                   </div>
                 ) : (
                   <div>

@@ -84,14 +84,32 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
     facebook: 500
   };
   
+  // Track clip status
+  const [clipStatus, setClipStatus] = useState<string>('');
+  
   useEffect(() => {
-    // Load transcription if available
-    if (hasTranscription) {
-      fetchTranscription();
-    }
+    // Check clip status first
+    const checkClipStatus = async () => {
+      try {
+        const clipData = await api.get(`/clips/${clipId}`);
+        setClipStatus(clipData.status);
+        
+        // Only proceed with other data fetching if clip is COMPLETED
+        if (clipData.status === 'COMPLETED') {
+          // Load transcription if available
+          if (hasTranscription) {
+            fetchTranscription();
+          }
+          
+          // Fetch face and speaker recognition data
+          fetchRecognitionData();
+        }
+      } catch (error) {
+        console.error('Error checking clip status:', error);
+      }
+    };
     
-    // Fetch face and speaker recognition data
-    fetchRecognitionData();
+    checkClipStatus();
     
     // Generate initial share text
     generateShareText();
@@ -150,7 +168,10 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
   
   // Fetch face and speaker recognition data
   const fetchRecognitionData = async () => {
-    if (!clipId) return;
+    if (!clipId || clipStatus !== 'COMPLETED') {
+      console.log('Skipping recognition data fetch - clip not completed yet');
+      return;
+    }
     
     try {
       setIsLoading(true);
@@ -172,7 +193,12 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
           setFaceRecognitionData([faceData]);
         }
       } catch (error) {
-        console.log('No face recognition data available or error fetching it:', error);
+        // Silently handle 404 errors for clips still being processed
+        if (error.message?.includes('404')) {
+          console.log('Face recognition data not available yet - clip may still be processing');
+        } else {
+          console.log('Error fetching face recognition data:', error);
+        }
       }
       
       // Fetch speaker recognition data
@@ -192,7 +218,12 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
           setSpeakerRecognitionData([speakerData]);
         }
       } catch (error) {
-        console.log('No speaker recognition data available or error fetching it:', error);
+        // Silently handle 404 errors for clips still being processed
+        if (error.message?.includes('404')) {
+          console.log('Speaker recognition data not available yet - clip may still be processing');
+        } else {
+          console.log('Error fetching speaker recognition data:', error);
+        }
       }
     } catch (error) {
       console.error('Error fetching recognition data:', error);
@@ -593,11 +624,25 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
             </div>
           </div>
           
+          {/* Processing status */}
+          {clipStatus === 'PROCESSING' && (
+            <div className="mb-4 p-3 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-md">
+              <div className="flex items-center">
+                <div className="mr-3">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"></div>
+                </div>
+                <p className="text-sm text-blue-300">
+                  This clip is still being processed. Recognition data and transcription will be available once processing is complete.
+                </p>
+              </div>
+            </div>
+          )}
+          
           {/* Action buttons */}
           <div className="flex space-x-3">
             <button
               onClick={shareToSocialMedia}
-              disabled={remainingCharacters < 0 || isLoading}
+              disabled={remainingCharacters < 0 || isLoading || clipStatus === 'PROCESSING'}
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded disabled:opacity-50"
             >
               Share Now
@@ -605,7 +650,8 @@ const SocialMediaShare: React.FC<SocialMediaShareProps> = ({
             
             <button
               onClick={createSocialPost}
-              className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 px-4 rounded"
+              disabled={clipStatus === 'PROCESSING'}
+              className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 px-4 rounded disabled:opacity-50"
             >
               Create Post
             </button>
