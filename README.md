@@ -72,6 +72,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 ## Documentation
 
 - [Setup Guide](docs/setup_guide.md) - Detailed installation and configuration
+- [Database Management](docs/database_management.md) - Database setup, rebuild, and SQL IDE connections
 - [Authentication](docs/authentication.md) - Auth system and user roles
 - [Video Capture](docs/video_capture.md) - Video capture functionality and configuration
 - [Technical Roadmap](ROADMAP.md) - Project roadmap and phases

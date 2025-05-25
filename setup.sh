@@ -107,6 +107,76 @@ initialize_database() {
   echo "Database initialized successfully."
 }
 
+# Rebuild database
+rebuild_database() {
+  print_header "Rebuilding database"
+  
+  # Check if we should include sample data
+  if [ "$INCLUDE_SAMPLE_DATA" = true ]; then
+    print_info "Rebuilding database with sample data..."
+  else
+    print_info "Rebuilding database with clean structure..."
+  fi
+  
+  # Drop and recreate the database
+  print_info "Dropping and recreating the database..."
+  docker exec the-mp-db-1 psql -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-postgres}" -c "
+    SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${POSTGRES_DB:-parliament_db}';
+    DROP DATABASE IF EXISTS ${POSTGRES_DB:-parliament_db};
+    CREATE DATABASE ${POSTGRES_DB:-parliament_db};
+  "
+  
+  # Run migrations to create the schema
+  print_info "Running database migrations to create schema..."
+  docker exec the-mp-app-1 alembic upgrade head
+  
+  # Add sample data if requested
+  if [ "$INCLUDE_SAMPLE_DATA" = true ]; then
+    print_info "Adding sample data to the database..."
+    
+    # Check if we have a custom sample data file
+    SAMPLE_DATA_FILE="database/create_sample_data.sql"
+    if [ -f "$SAMPLE_DATA_FILE" ]; then
+      docker exec -i the-mp-db-1 psql -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" \
+        -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-parliament_db}" < "$SAMPLE_DATA_FILE"
+      echo "Sample data added successfully."
+    else
+      print_error "Sample data file not found: $SAMPLE_DATA_FILE"
+      echo "Continuing without sample data."
+    fi
+  fi
+  
+  # Create a database dump for future reference
+  print_info "Creating a database dump for future reference..."
+  mkdir -p database/dumps
+  
+  # Dump structure only
+  docker exec the-mp-db-1 pg_dump -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" \
+    -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-parliament_db}" \
+    --schema-only --no-owner --no-acl > "database/dumps/initial_structure.sql"
+  
+  # If sample data was included, dump that too
+  if [ "$INCLUDE_SAMPLE_DATA" = true ]; then
+    docker exec the-mp-db-1 pg_dump -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" \
+      -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-parliament_db}" \
+      --data-only --no-owner --no-acl > "database/dumps/sample_data.sql"
+    
+    # Create a full dump as well
+    docker exec the-mp-db-1 pg_dump -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" \
+      -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-parliament_db}" \
+      --no-owner --no-acl > "database/dumps/initial_full.sql"
+    
+    # Create symlinks for latest dumps
+    ln -sf "initial_structure.sql" "database/dumps/latest_structure.sql"
+    ln -sf "sample_data.sql" "database/dumps/latest_data.sql"
+    ln -sf "initial_full.sql" "database/dumps/latest_full.sql"
+    
+    echo "Database dumps created successfully."
+  fi
+  
+  echo "Database rebuild completed successfully."
+}
+
 # Setup facial recognition
 setup_facial_recognition() {
   print_header "Setting up facial recognition"
@@ -148,9 +218,63 @@ print_completion() {
   echo "For more information, see the documentation in the docs/ directory."
 }
 
+# Print usage information
+print_usage() {
+  echo "Usage: $0 [OPTIONS]"
+  echo ""
+  echo "Options:"
+  echo "  --rebuild-db           Rebuild the database from scratch"
+  echo "  --with-sample-data     Include sample data when rebuilding the database"
+  echo "  --skip-docker          Skip Docker container setup (use for database operations only)"
+  echo "  --skip-recognition     Skip facial recognition setup"
+  echo "  --help                 Show this help message"
+  echo ""
+  echo "Examples:"
+  echo "  $0                     # Run normal setup"
+  echo "  $0 --rebuild-db        # Rebuild database with clean structure"
+  echo "  $0 --rebuild-db --with-sample-data  # Rebuild database with sample data"
+}
+
 # Main function
 main() {
   print_header "Parliament Video Clip Manager - Setup"
+  
+  # Default options
+  REBUILD_DB=false
+  INCLUDE_SAMPLE_DATA=false
+  SKIP_DOCKER=false
+  SKIP_RECOGNITION=false
+  
+  # Parse command line arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --rebuild-db)
+        REBUILD_DB=true
+        shift
+        ;;
+      --with-sample-data)
+        INCLUDE_SAMPLE_DATA=true
+        shift
+        ;;
+      --skip-docker)
+        SKIP_DOCKER=true
+        shift
+        ;;
+      --skip-recognition)
+        SKIP_RECOGNITION=true
+        shift
+        ;;
+      --help)
+        print_usage
+        exit 0
+        ;;
+      *)
+        print_error "Unknown option: $1"
+        print_usage
+        exit 1
+        ;;
+    esac
+  done
   
   # Check if script is run with sudo/root
   if [ "$EUID" -eq 0 ]; then
@@ -162,11 +286,25 @@ main() {
   check_docker
   create_directories
   setup_env_file
-  start_docker_containers
-  fix_numpy_compatibility
-  initialize_database
-  setup_facial_recognition
-  generate_mp_encodings
+  
+  if [ "$SKIP_DOCKER" = false ]; then
+    start_docker_containers
+    fix_numpy_compatibility
+  fi
+  
+  # Database operations
+  if [ "$REBUILD_DB" = true ]; then
+    rebuild_database
+  else
+    initialize_database
+  fi
+  
+  # Facial recognition setup
+  if [ "$SKIP_RECOGNITION" = false ]; then
+    setup_facial_recognition
+    generate_mp_encodings
+  fi
+  
   print_completion
 }
 

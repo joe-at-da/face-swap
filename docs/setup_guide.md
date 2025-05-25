@@ -62,6 +62,33 @@ alembic revision --autogenerate -m "Initial migration"
 alembic upgrade head
 ```
 
+### 5. Database Rebuild (Optional)
+
+The setup script includes functionality to completely rebuild the database:
+
+```bash
+# Rebuild with clean structure (no data)
+./setup.sh --rebuild-db
+
+# Rebuild with sample data
+./setup.sh --rebuild-db --with-sample-data
+```
+
+For more detailed database management options, see the [Database Management Guide](database_management.md).
+
+### 6. Connecting with SQL IDEs
+
+You can connect to the database using SQL IDEs like TablePlus, DBeaver, or pgAdmin:
+
+**Connection Details:**
+- Host: localhost
+- Port: 5432
+- Database: parliament_db
+- Username: postgres
+- Password: postgres
+
+See the [Database Management Guide](database_management.md) for detailed instructions on setting up TablePlus and other SQL IDEs.
+
 ## Development Server
 
 ### Running the Server
