@@ -66,9 +66,22 @@ async def get_system_stats(
         
         # Get social stats
         total_posts = db.query(func.count(SocialPost.id)).scalar() or 0
-        # Use the correct enum values that match the database
-        scheduled_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.SCHEDULED).scalar() or 0
-        published_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.PUBLISHED).scalar() or 0
+        
+        # Handle the database enum mismatch
+        try:
+            # Try to use SCHEDULED first
+            scheduled_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.SCHEDULED).scalar() or 0
+        except Exception as e:
+            print(f"Error querying scheduled posts: {str(e)}. The database schema might not have the SCHEDULED enum value.")
+            # If that fails, just return 0 for scheduled posts
+            scheduled_posts = 0
+            
+        try:
+            # Try to use PUBLISHED
+            published_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.PUBLISHED).scalar() or 0
+        except Exception as e:
+            print(f"Error querying published posts: {str(e)}. Falling back to default value.")
+            published_posts = 0
         
         # Get disk info using our improved method
         try:

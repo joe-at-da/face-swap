@@ -85,6 +85,10 @@ const AdminDashboard: React.FC = () => {
       try {
         const response = await api.get('/admin/stats');
         console.log('System stats API response:', response);
+        console.log('Storage metrics:', response.storage);
+        console.log('Storage total:', response.storage?.total);
+        console.log('Storage used:', response.storage?.used);
+        console.log('Storage available:', response.storage?.available);
         return response as SystemStats;
       } catch (error) {
         console.error('Error fetching system stats:', error);
@@ -228,7 +232,8 @@ const AdminDashboard: React.FC = () => {
                 {/* Storage usage */}
                 <div className="bg-gray-900 rounded-lg p-6">
                   <h3 className="text-lg font-medium text-white mb-4">Storage Usage</h3>
-                  {!systemStats.storage || systemStats.storage.total === 0 ? (
+                  {/* Only show warning if storage object doesn't exist */}
+                  {!systemStats.storage ? (
                     <div className="text-center py-4">
                       <svg className="mx-auto h-10 w-10 text-yellow-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
