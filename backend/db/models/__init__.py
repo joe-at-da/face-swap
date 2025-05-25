@@ -9,6 +9,7 @@ from .video import VideoClip  # Import VideoClip from video.py
 from .face_profile import FaceProfile, FaceSample
 from .voice_profile import VoiceProfile, VoiceSample
 from .enums import ClipStatus, SocialPlatform, PostStatus
+from .recognition_event import RecognitionEvent  # Import RecognitionEvent model
 
 __all__ = [
     "User",
@@ -27,5 +28,6 @@ __all__ = [
     "SpeakerIdentification",
     "Speaker",
     "SpeakerAppearance",
-    "ClipStatus"
+    "ClipStatus",
+    "RecognitionEvent"
 ]

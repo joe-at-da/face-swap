@@ -4,7 +4,7 @@ from backend.api.v1.endpoints import (auth, video, capture, transcription, stora
                                        parliament_tv, speaker_identification, videos, recognition, recognition_status, 
                                        recognition_list, voice_profiles, face_profiles, multimodal_recognition, 
                                        facial_recognition, mp_profiles, files, recognition_timeline, media, system, 
-                                       metrics, recognition_processor, transcription_recognition)
+                                       metrics, recognition_processor, transcription_recognition, audio_transcription)
 
 api_router = APIRouter()
 
@@ -21,7 +21,6 @@ api_router.include_router(admin.router, prefix='/admin', tags=['admin'])
 api_router.include_router(parliament_tv.router, prefix='/parliament-tv', tags=['parliament-tv'])
 api_router.include_router(recognition.router, prefix="/recognition", tags=["recognition"])
 api_router.include_router(recognition_timeline.router, prefix="/recognition/timeline", tags=["recognition"])
-api_router.include_router(recognition_results.router, prefix="/recognition/results", tags=["recognition"])
 api_router.include_router(recognition_processor.router, prefix="/recognition/processor", tags=["recognition"])
 api_router.include_router(transcription_recognition.router, prefix="/transcription-recognition", tags=["transcription", "recognition"])
 api_router.include_router(recognition_status.router, prefix='/recognition/status', tags=['recognition'])

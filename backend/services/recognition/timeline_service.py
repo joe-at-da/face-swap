@@ -214,6 +214,174 @@ class TimelineService:
                 "error": f"Error updating timeline data: {str(e)}"
             }
     
+    def update_correlation_confidence(self, db: Session, capture_id: int) -> Dict[str, Any]:
+        """
+        Update existing correlations with enhanced confidence scoring.
+        
+        Args:
+            db: Database session
+            capture_id: ID of the capture session
+            
+        Returns:
+            Dict with updated correlation results
+        """
+        try:
+            logger.info(f"Updating correlation confidence for capture {capture_id}")
+            
+            # Get the capture session
+            capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+            if not capture:
+                logger.error(f"Capture session not found: {capture_id}")
+                return {"success": False, "error": f"Capture session not found: {capture_id}"}
+            
+            # Check if timeline data exists
+            if not capture.timeline_data:
+                logger.error(f"No timeline data found for capture {capture_id}")
+                return {"success": False, "error": f"No timeline data found for capture {capture_id}"}
+            
+            # Parse timeline data
+            try:
+                timeline_data = json.loads(capture.timeline_data)
+                correlations = timeline_data.get("correlations", [])
+                
+                if not correlations:
+                    logger.info(f"No correlations found for capture {capture_id}")
+                    return {"success": True, "message": f"No correlations found for capture {capture_id}", "correlations": []}
+                
+                # Get all events to use for confidence calculation
+                events = self.get_timeline_events(db, capture_id)
+                if not events.get("success", False):
+                    return events
+                
+                event_map = {}
+                for event in events.get("timeline", []):
+                    event_map[event["id"]] = event
+                
+                # Update confidence scores for each correlation
+                updated_correlations = []
+                for correlation in correlations:
+                    face_id = correlation.get("face_id")
+                    speaker_id = correlation.get("speaker_id")
+                    
+                    face_event = event_map.get(face_id)
+                    speaker_event = event_map.get(speaker_id)
+                    
+                    if not face_event or not speaker_event:
+                        # Skip if events not found
+                        updated_correlations.append(correlation)
+                        continue
+                    
+                    # Calculate enhanced confidence
+                    face_name = face_event["person_name"].lower() if face_event["person_name"] else ""
+                    speaker_name = speaker_event["person_name"].lower() if speaker_event["person_name"] else ""
+                    
+                    # Calculate name similarity score (0-1)
+                    name_similarity = 0.0
+                    if face_name and speaker_name:
+                        # Simple string similarity
+                        if face_name == speaker_name:
+                            name_similarity = 1.0
+                        elif face_name in speaker_name or speaker_name in face_name:
+                            name_similarity = 0.8
+                        else:
+                            # Simple character overlap similarity
+                            common_chars = sum(1 for c in face_name if c in speaker_name)
+                            name_similarity = common_chars / max(len(face_name), len(speaker_name)) if max(len(face_name), len(speaker_name)) > 0 else 0.0
+                    
+                    # Check for explicit links between profiles
+                    explicit_link = False
+                    if face_event.get("person_id") and speaker_event.get("person_id"):
+                        explicit_link = face_event["person_id"] == speaker_event["person_id"]
+                    
+                    # Extract confidence scores
+                    face_confidence = face_event.get("confidence", 0.5)
+                    speaker_confidence = speaker_event.get("confidence", 0.5)
+                    
+                    # Calculate overlap duration
+                    overlap_start = max(face_event["start"], speaker_event["start"])
+                    overlap_end = min(face_event["end"], speaker_event["end"])
+                    overlap_duration = max(0, overlap_end - overlap_start)
+                    
+                    # Calculate confidence boosters/penalties
+                    boosters = {
+                        "explicit_link": 0.2 if explicit_link else 0.0,
+                        "name_match": 0.15 * name_similarity,
+                        "high_individual_confidence": 0.1 if (face_confidence > 0.8 and speaker_confidence > 0.8) else 0.0,
+                        "temporal_overlap": min(0.1, overlap_duration / 5.0)  # Up to 0.1 boost for longer overlaps
+                    }
+                    
+                    # Calculate penalties
+                    penalties = {
+                        "name_mismatch": 0.2 if (face_name and speaker_name and name_similarity < 0.3) else 0.0,
+                        "low_face_confidence": 0.1 if face_confidence < 0.5 else 0.0,
+                        "low_speaker_confidence": 0.1 if speaker_confidence < 0.5 else 0.0
+                    }
+                    
+                    # Calculate total boosters and penalties
+                    total_boosters = sum(boosters.values())
+                    total_penalties = sum(penalties.values())
+                    
+                    # Calculate base combined confidence (weighted average)
+                    base_combined = 0.6 * face_confidence + 0.4 * speaker_confidence
+                    
+                    # Apply boosters and penalties to get final confidence
+                    final_confidence = min(1.0, max(0.0, base_combined + total_boosters - total_penalties))
+                    
+                    # Determine if same person based on confidence and other factors
+                    same_person = explicit_link or name_similarity > 0.7 or final_confidence > 0.7
+                    
+                    # Determine confidence level category
+                    confidence_level = "unknown"
+                    if final_confidence >= 0.9:
+                        confidence_level = "very_high"
+                    elif final_confidence >= 0.75:
+                        confidence_level = "high"
+                    elif final_confidence >= 0.6:
+                        confidence_level = "medium"
+                    elif final_confidence >= 0.4:
+                        confidence_level = "low"
+                    else:
+                        confidence_level = "very_low"
+                    
+                    # Update correlation with enhanced confidence
+                    updated_correlation = correlation.copy()
+                    updated_correlation.update({
+                        "confidence": final_confidence,
+                        "confidence_level": confidence_level,
+                        "same_person": same_person,
+                        "name_similarity": name_similarity,
+                        "explicit_link": explicit_link,
+                        "factors": {
+                            "boosters": boosters,
+                            "penalties": penalties,
+                            "face_confidence": face_confidence,
+                            "speaker_confidence": speaker_confidence,
+                            "base_combined": base_combined
+                        }
+                    })
+                    
+                    updated_correlations.append(updated_correlation)
+                
+                # Update timeline data
+                timeline_data["correlations"] = updated_correlations
+                capture.timeline_data = json.dumps(make_json_serializable(timeline_data))
+                db.commit()
+                
+                return {
+                    "success": True,
+                    "message": f"Updated correlation confidence for {len(updated_correlations)} correlations",
+                    "correlations": updated_correlations
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing timeline data: {str(e)}")
+                return {"success": False, "error": f"Error parsing timeline data: {str(e)}"}
+                
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error updating correlation confidence: {str(e)}")
+            return {"success": False, "error": f"Error updating correlation confidence: {str(e)}"}
+    
     def find_correlations(self, db: Session, capture_id: int) -> Dict[str, Any]:
         """
         Find correlations between face and speaker events.

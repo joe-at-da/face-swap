@@ -228,8 +228,80 @@ def find_correlations(recognition_data):
     return correlations
 
 
-@router.get("/{capture_id}/correlations")
+@router.get("/{capture_id}/correlations", response_model=Dict[str, Any])
 def get_recognition_correlations(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
+    """Get correlations between face and speaker events."""
+    logger.info(f"Getting recognition correlations for capture: {capture_id}")
+    
+    try:
+        # Get the capture session
+        try:
+            capture_id_int = int(capture_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid capture ID")
+        
+        # Get the correlations
+        correlations_result = timeline_service.find_correlations(db, capture_id_int)
+        
+        if not correlations_result["success"]:
+            raise HTTPException(status_code=400, detail=correlations_result.get("error", "Unknown error"))
+        
+        # Return the correlations
+        return correlations_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting recognition correlations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting recognition correlations: {str(e)}")
+
+
+@router.post("/{capture_id}/correlations/update-confidence", response_model=Dict[str, Any])
+def update_correlation_confidence(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
+    """Update correlation confidence scores with enhanced algorithm.
+    
+    This endpoint applies an improved confidence scoring algorithm to existing correlations between
+    face and voice recognition events. The enhanced algorithm considers:
+    
+    1. Name similarity between face and voice profiles
+    2. Explicit links between profiles
+    3. Individual confidence scores from each recognition system
+    4. Temporal overlap between events
+    5. Various boosters and penalties based on recognition quality
+    
+    Returns updated correlations with detailed confidence metrics.
+    """
+    logger.info(f"Updating correlation confidence for capture: {capture_id}")
+    
+    try:
+        # Get the capture session
+        try:
+            capture_id_int = int(capture_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid capture ID")
+        
+        # Update the correlation confidence
+        update_result = timeline_service.update_correlation_confidence(db, capture_id_int)
+        
+        if not update_result["success"]:
+            raise HTTPException(status_code=400, detail=update_result.get("error", "Unknown error"))
+        
+        # Return the updated correlations
+        return update_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error updating correlation confidence: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating correlation confidence: {str(e)}")
+
+
+# The get_recognition_correlations endpoint is now implemented above using the timeline_service directly
+
+'''  
+# This code is commented out to avoid duplication
+@router.get("/{capture_id}/correlations")
+def get_recognition_correlations_old(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
     """Get correlations between face and voice recognition."""
     logger.info(f"Getting recognition correlations for capture: {capture_id}")
     
@@ -279,6 +351,7 @@ def get_recognition_correlations(capture_id: str, db: Session = Depends(get_db),
     except Exception as e:
         logger.exception(f"Error getting recognition correlations: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting recognition correlations: {str(e)}")
+'''
 
 
 @router.post("/{capture_id}/update")
