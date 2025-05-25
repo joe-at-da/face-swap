@@ -66,8 +66,9 @@ async def get_system_stats(
         
         # Get social stats
         total_posts = db.query(func.count(SocialPost.id)).scalar() or 0
+        # Use the correct enum values that match the database
         scheduled_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.SCHEDULED).scalar() or 0
-        published_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.POSTED).scalar() or 0
+        published_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.PUBLISHED).scalar() or 0
         
         # Get disk info using our improved method
         try:
