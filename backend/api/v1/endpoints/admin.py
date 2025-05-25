@@ -74,14 +74,8 @@ async def get_system_stats(
             # Use the improved get_disk_usage method that matches Docker Desktop
             disk_usage = DockerMetrics.get_disk_usage()
             
-            # Print the entire disk_usage response for debugging
-            print(f"DEBUG: Full disk_usage response: {disk_usage}")
-            
             # Extract disk stats from the disk_usage response
             disk_stats = disk_usage.get("disk_stats", {})
-            
-            # Print the disk_stats for debugging
-            print(f"DEBUG: disk_stats: {disk_stats}")
             
             # Use the disk_stats values which include total_bytes, used_bytes, and free_bytes
             disk_info = {

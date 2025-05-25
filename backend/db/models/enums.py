@@ -17,3 +17,11 @@ class PostStatus(str, enum.Enum):
     PENDING = "pending"
     PUBLISHED = "published"
     FAILED = "failed"
+    SCHEDULED = "scheduled"
+
+class SessionStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    ERROR = "ERROR"
+    CANCELLED = "CANCELLED"
