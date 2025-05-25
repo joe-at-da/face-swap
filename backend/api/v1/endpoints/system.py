@@ -5,11 +5,13 @@ import psutil
 import platform
 import os
 import json
+import subprocess
+import logging
+import re
 from datetime import datetime, timedelta
 
 from backend.api import deps
 from backend.db.models.user import User, UserRole
-from backend.services.system.docker_metrics import DockerMetrics
 
 router = APIRouter()
 
@@ -29,33 +31,43 @@ async def get_system_info(
         )
     
     try:
-        # Get Docker system info
-        docker_info = DockerMetrics.get_system_info()
-        
         # Get host system info
         system_info = {
             "os": {
                 "name": platform.system(),
                 "version": platform.version(),
                 "platform": platform.platform(),
-                "architecture": platform.machine()
+                "architecture": platform.machine(),
+                "python_version": platform.python_version()
             },
             "cpu": {
                 "count": psutil.cpu_count(logical=True),
                 "physical_count": psutil.cpu_count(logical=False),
-                "usage_percent": psutil.cpu_percent(interval=0.1)
+                "usage_percent": psutil.cpu_percent(interval=0.1),
+                "per_cpu_percent": psutil.cpu_percent(interval=0.1, percpu=True)
             },
             "memory": {
                 "total": psutil.virtual_memory().total,
                 "available": psutil.virtual_memory().available,
                 "used": psutil.virtual_memory().used,
-                "percent": psutil.virtual_memory().percent
+                "percent": psutil.virtual_memory().percent,
+                "swap_total": psutil.swap_memory().total,
+                "swap_used": psutil.swap_memory().used,
+                "swap_percent": psutil.swap_memory().percent
             },
             "disk": {
                 "total": psutil.disk_usage('/').total,
                 "used": psutil.disk_usage('/').used,
                 "free": psutil.disk_usage('/').free,
-                "percent": psutil.disk_usage('/').percent
+                "percent": psutil.disk_usage('/').percent,
+                "partitions": [
+                    {
+                        "device": p.device,
+                        "mountpoint": p.mountpoint,
+                        "fstype": p.fstype,
+                        "opts": p.opts
+                    } for p in psutil.disk_partitions(all=False)
+                ]
             },
             "network": {
                 "interfaces": list(psutil.net_if_addrs().keys()),
@@ -76,15 +88,27 @@ async def get_system_info(
             "uptime_seconds": int(datetime.now().timestamp() - psutil.boot_time())
         }
         
-        # Merge Docker info with system info
+        # Get process information
+        processes = []
+        for proc in psutil.process_iter(['pid', 'name', 'username', 'memory_percent', 'cpu_percent', 'create_time']):
+            try:
+                # Only include processes related to our application
+                if any(x in proc.name().lower() for x in ['python', 'uvicorn', 'gunicorn', 'node', 'npm']):
+                    proc_info = proc.info
+                    proc_info['create_time'] = datetime.fromtimestamp(proc_info['create_time']).isoformat() if proc_info.get('create_time') else None
+                    processes.append(proc_info)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        
+        # Return comprehensive system info
         return {
             "host": system_info,
-            "docker": docker_info.get("docker", {}),
-            "containers": DockerMetrics.get_container_stats()
+            "processes": processes[:10],  # Limit to top 10 processes
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         # Log the error
-        print(f"Error getting system info: {str(e)}")
+        logging.error(f"Error getting system info: {str(e)}")
         
         # Return basic info in case of error
         return {
@@ -97,13 +121,13 @@ async def get_system_info(
             }
         }
 
-@router.get("/containers", response_model=Dict[str, Any])
-async def get_containers(
+@router.get("/processes", response_model=Dict[str, Any])
+async def get_processes(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
     """
-    Get container statistics.
+    Get process statistics.
     Only accessible to admin users.
     """
     if current_user.role != "ADMIN":
@@ -113,22 +137,54 @@ async def get_containers(
         )
     
     try:
-        # Get container stats
-        containers = DockerMetrics.get_container_stats()
+        # Get process information
+        processes = []
+        for proc in psutil.process_iter(['pid', 'name', 'username', 'memory_percent', 'cpu_percent', 'create_time', 'cmdline', 'status']):
+            try:
+                proc_info = proc.info
+                proc_info['create_time'] = datetime.fromtimestamp(proc_info['create_time']).isoformat() if proc_info.get('create_time') else None
+                
+                # Add additional process details
+                try:
+                    proc_info['memory_info'] = {
+                        'rss': proc.memory_info().rss,
+                        'vms': proc.memory_info().vms,
+                        'rss_mb': proc.memory_info().rss / (1024 * 1024),
+                        'vms_mb': proc.memory_info().vms / (1024 * 1024)
+                    }
+                    proc_info['num_threads'] = proc.num_threads()
+                    proc_info['nice'] = proc.nice()
+                    proc_info['io_counters'] = {
+                        'read_count': proc.io_counters().read_count if hasattr(proc.io_counters(), 'read_count') else 0,
+                        'write_count': proc.io_counters().write_count if hasattr(proc.io_counters(), 'write_count') else 0,
+                        'read_bytes': proc.io_counters().read_bytes if hasattr(proc.io_counters(), 'read_bytes') else 0,
+                        'write_bytes': proc.io_counters().write_bytes if hasattr(proc.io_counters(), 'write_bytes') else 0
+                    }
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+                
+                processes.append(proc_info)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        
+        # Sort processes by memory usage (descending)
+        processes.sort(key=lambda x: x.get('memory_percent', 0), reverse=True)
         
         return {
-            "containers": containers,
-            "count": len(containers)
+            "processes": processes[:20],  # Limit to top 20 processes
+            "count": len(processes),
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         # Log the error
-        print(f"Error getting container stats: {str(e)}")
+        logging.error(f"Error getting process stats: {str(e)}")
         
-        # Return empty list in case of error
+        # Return error message
         return {
-            "containers": [],
+            "error": str(e),
+            "processes": [],
             "count": 0,
-            "error": str(e)
+            "timestamp": datetime.now().isoformat()
         }
 
 @router.get("/disk", response_model=Dict[str, Any])
@@ -147,46 +203,108 @@ async def get_disk_usage(
         )
     
     try:
-        # Get disk usage
-        disk_usage = DockerMetrics.get_disk_usage()
+        # Get system disk usage
+        root_usage = psutil.disk_usage('/')
         
-        # Get storage breakdown
-        storage_breakdown = DockerMetrics.get_storage_breakdown()
+        # Format disk usage data
+        disk_stats = {
+            "total": f"{root_usage.total / (1024**3):.2f} GB",
+            "used": f"{root_usage.used / (1024**3):.2f} GB",
+            "free": f"{root_usage.free / (1024**3):.2f} GB",
+            "use_percent": f"{root_usage.percent}%",
+            "total_bytes": root_usage.total,
+            "used_bytes": root_usage.used,
+            "free_bytes": root_usage.free
+        }
         
-        # Merge disk usage with storage breakdown
-        return {
-            "volumes": disk_usage.get("volumes", {}),
-            "total_volume_bytes": disk_usage.get("total_volume_bytes", 0),
-            "breakdown": storage_breakdown,
-            "host_disk": {
-                "total": psutil.disk_usage('/').total,
-                "used": psutil.disk_usage('/').used,
-                "free": psutil.disk_usage('/').free,
-                "percent": psutil.disk_usage('/').percent
+        # Get all disk partitions
+        partitions = []
+        for partition in psutil.disk_partitions(all=False):
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+                partitions.append({
+                    "device": partition.device,
+                    "mountpoint": partition.mountpoint,
+                    "fstype": partition.fstype,
+                    "total": f"{usage.total / (1024**3):.2f} GB",
+                    "used": f"{usage.used / (1024**3):.2f} GB",
+                    "free": f"{usage.free / (1024**3):.2f} GB",
+                    "use_percent": f"{usage.percent}%",
+                    "total_bytes": usage.total,
+                    "used_bytes": usage.used,
+                    "free_bytes": usage.free
+                })
+            except (PermissionError, OSError):
+                # Skip partitions we can't access
+                pass
+        
+        # Get IO statistics
+        io_stats = psutil.disk_io_counters(perdisk=True)
+        io_summary = {}
+        for disk, stats in io_stats.items():
+            io_summary[disk] = {
+                "read_count": stats.read_count,
+                "write_count": stats.write_count,
+                "read_bytes": stats.read_bytes,
+                "write_bytes": stats.write_bytes,
+                "read_time": stats.read_time,
+                "write_time": stats.write_time,
+                "read_mb": f"{stats.read_bytes / (1024**2):.2f} MB",
+                "write_mb": f"{stats.write_bytes / (1024**2):.2f} MB"
             }
+        
+        # Check for application-specific directories
+        app_directories = [
+            "/app",
+            "/app/data",
+            "/app/uploads",
+            "/app/media",
+            "./uploads",
+            "./media",
+            "./data"
+        ]
+        
+        directory_stats = {}
+        for directory in app_directories:
+            try:
+                if os.path.exists(directory) and os.path.isdir(directory):
+                    # Get directory size
+                    total_size = 0
+                    for dirpath, dirnames, filenames in os.walk(directory):
+                        for f in filenames:
+                            fp = os.path.join(dirpath, f)
+                            if os.path.exists(fp):
+                                total_size += os.path.getsize(fp)
+                    
+                    directory_stats[directory] = {
+                        "size": f"{total_size / (1024**2):.2f} MB",
+                        "size_bytes": total_size,
+                        "files": len([f for dirpath, dirnames, filenames in os.walk(directory) for f in filenames])
+                    }
+            except (PermissionError, OSError) as e:
+                directory_stats[directory] = {"error": str(e)}
+        
+        return {
+            "disk_stats": disk_stats,
+            "partitions": partitions,
+            "io_stats": io_summary,
+            "app_directories": directory_stats,
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         # Log the error
-        print(f"Error getting disk usage: {str(e)}")
+        logging.error(f"Error getting disk usage: {str(e)}")
         
         # Return basic info in case of error
         return {
-            "volumes": {},
-            "total_volume_bytes": 0,
-            "breakdown": {
-                "video_clips_bytes": 0,
-                "capture_sessions_bytes": 0,
-                "thumbnails_bytes": 0,
-                "transcriptions_bytes": 0,
-                "other_bytes": 0
+            "error": str(e),
+            "disk_stats": {
+                "total": "0 GB",
+                "used": "0 GB",
+                "free": "0 GB",
+                "use_percent": "0%"
             },
-            "host_disk": {
-                "total": 0,
-                "used": 0,
-                "free": 0,
-                "percent": 0
-            },
-            "error": str(e)
+            "timestamp": datetime.now().isoformat()
         }
 
 def format_log_source(source: str) -> str:
@@ -461,6 +579,9 @@ def get_application_logs(lines: int) -> List[Dict[str, Any]]:
     
     logs = []
     
+    # Create a list to track any errors we encounter while trying to get logs
+    system_errors = []
+    
     # Try to read application log files
     log_files = [
         "/app/logs/app.log",
@@ -568,203 +689,229 @@ def get_application_logs(lines: int) -> List[Dict[str, Any]]:
             except Exception as e:
                 logging.error(f"Error reading log file {log_file}: {str(e)}")
     
-    # Try to get logs from Docker metrics if available
+    # Try to get logs from process monitoring
     if not logs:
         try:
-            from backend.services.system.docker_metrics import DockerMetrics
-            system_logs = DockerMetrics.get_container_logs("app", lines)
-            for log in system_logs:
-                level = "info"
-                if "error" in log.get("message", "").lower():
-                    level = "error"
-                elif "warn" in log.get("message", "").lower():
-                    level = "warning"
-                
-                logs.append({
-                    "timestamp": log.get("timestamp", datetime.now().isoformat()),
-                    "level": level,
-                    "message": log.get("message", "No message"),
-                    "source": log.get("source", "app")
-                })
-        except Exception as e:
-            logging.warning(f"Could not get Docker logs: {str(e)}")
-    
-    # If still no logs, try to get system logs using journalctl if available
-    if not logs:
-        try:
-            # Check if journalctl is available
-            journalctl_cmd = ["journalctl", "-n", str(lines), "--no-pager"]
-            result = subprocess.run(journalctl_cmd, capture_output=True, text=True, check=False, timeout=2)
+            # Use psutil to get process information
+            import psutil
+            app_processes = []
             
-            if result.returncode == 0 and result.stdout:
-                for line in result.stdout.strip().split('\n'):
-                    if not line:
-                        continue
+            # Look for processes that might be related to our application
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+                try:
+                    # Check if this process is related to our application
+                    cmdline = proc.info.get('cmdline', [])
+                    name = proc.info.get('name', '')
                     
-                    # Parse journalctl output
-                    parts = line.split(' ', 3)  # Split into date, time, host, message
-                    if len(parts) >= 4:
-                        timestamp = f"{parts[0]}T{parts[1]}"
-                        source = parts[2]
-                        message = parts[3]
+                    # Look for Python processes running our app
+                    if cmdline and any(x for x in cmdline if 'python' in x.lower() and ('app' in x.lower() or 'backend' in x.lower() or 'api' in x.lower())):
+                        app_processes.append(proc)
+                    # Also look for uvicorn/gunicorn processes
+                    elif name and ('uvicorn' in name.lower() or 'gunicorn' in name.lower()):
+                        app_processes.append(proc)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+            
+            # If we found application processes, generate logs from them
+            if app_processes:
+                now = datetime.now()
+                for i, proc in enumerate(app_processes):
+                    try:
+                        # Get process info
+                        pid = proc.info.get('pid', 0)
+                        name = proc.info.get('name', 'unknown')
+                        create_time = datetime.fromtimestamp(proc.info.get('create_time', now.timestamp()))
+                        uptime = now - create_time
                         
-                        # Determine log level
-                        level = "info"
-                        if "error" in message.lower():
-                            level = "error"
-                        elif "warn" in message.lower():
-                            level = "warning"
-                        
+                        # Add process info as logs
                         logs.append({
-                            "timestamp": timestamp,
-                            "level": level,
-                            "message": message,
-                            "source": source
+                            "timestamp": now.isoformat(),
+                            "level": "info",
+                            "message": f"Process {name} (PID: {pid}) running for {uptime.total_seconds():.1f} seconds",
+                            "source": "process-monitor"
+                        })
+                        
+                        # Try to get memory usage
+                        try:
+                            mem_info = proc.memory_info()
+                            logs.append({
+                                "timestamp": (now - timedelta(seconds=1)).isoformat(),
+                                "level": "info",
+                                "message": f"Memory usage: {mem_info.rss / (1024 * 1024):.1f} MB",
+                                "source": f"process-{pid}"
+                            })
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                        
+                        # Try to get CPU usage
+                        try:
+                            cpu_percent = proc.cpu_percent(interval=0.1)
+                            logs.append({
+                                "timestamp": (now - timedelta(seconds=2)).isoformat(),
+                                "level": "info",
+                                "message": f"CPU usage: {cpu_percent:.1f}%",
+                                "source": f"process-{pid}"
+                            })
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    except Exception as proc_err:
+                        system_errors.append({
+                            "timestamp": now.isoformat(),
+                            "level": "warning",
+                            "message": f"Error getting process info: {str(proc_err)}",
+                            "source": "process-monitor"
                         })
         except Exception as e:
-            logging.warning(f"Could not get journalctl logs: {str(e)}")
-    
-    # Capture system errors and warnings from the log gathering process
-    system_errors = []
-    
-    # Try to get logs from Docker metrics if available
-    if not logs:
-        try:
-            from backend.services.system.docker_metrics import DockerMetrics
-            system_logs = DockerMetrics.get_container_logs("app", lines)
-            for log in system_logs:
-                level = "info"
-                if "error" in log.get("message", "").lower():
-                    level = "error"
-                elif "warn" in log.get("message", "").lower():
-                    level = "warning"
-                
-                logs.append({
-                    "timestamp": log.get("timestamp", datetime.now().isoformat()),
-                    "level": level,
-                    "message": log.get("message", "No message"),
-                    "source": log.get("source", "app")
-                })
-        except Exception as e:
-            error_msg = f"Failed to get Docker logs: {str(e)}"
+            error_msg = f"Failed to get process information: {str(e)}"
             logging.warning(error_msg)
             system_errors.append({
                 "timestamp": datetime.now().isoformat(),
                 "level": "warning",
                 "message": error_msg,
-                "source": "logging-system"
+                "source": "system-monitor"
             })
     
-    # If still no logs, try to get system logs using journalctl if available
+    # Create a custom handler to capture log messages
+    class LogCaptureHandler(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.logs = []
+            
+        def emit(self, record):
+            try:
+                self.logs.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "level": record.levelname.lower(),
+                    "message": record.getMessage(),
+                    "source": record.name if hasattr(record, 'name') else "application"
+                })
+            except Exception:
+                pass
+    
+    # Set up log capture for this request
+    log_capture = LogCaptureHandler()
+    log_capture.setLevel(logging.WARNING)  # Capture warnings and errors
+    logging.getLogger().addHandler(log_capture)
+    
+    # Log a test message to ensure our capture works
+    logging.warning("Checking log capture system")
+    
+    # Add any captured logs to our system_errors
+    if log_capture.logs:
+        system_errors.extend(log_capture.logs)
+    
+    # Remove the handler after we're done
+    logging.getLogger().removeHandler(log_capture)
+    
+    # Also check for common error messages in log files
+    try:
+        # Check the application log file if it exists
+        log_files = [
+            "/app/logs/app.log",
+            "/var/log/app.log",
+            "/tmp/app.log",
+            "./logs/app.log",
+            "./backend/logs/app.log"
+        ]
+        
+        for log_file in log_files:
+            if os.path.exists(log_file):
+                with open(log_file, 'r') as f:
+                    # Read the last 50 lines
+                    file_lines = f.readlines()
+                    last_lines = file_lines[-50:] if len(file_lines) > 50 else file_lines
+                    for line in last_lines:
+                        if "Failed to get logs" in line or "No logs found" in line or "Error:" in line or "error" in line.lower():
+                            # Try to extract timestamp from the line
+                            timestamp = datetime.now().isoformat()
+                            timestamp_match = re.search(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', line)
+                            if timestamp_match:
+                                timestamp_str = timestamp_match.group(0)
+                                try:
+                                    timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").isoformat()
+                                except ValueError:
+                                    pass
+                            
+                            system_errors.append({
+                                "timestamp": timestamp,
+                                "level": "warning",
+                                "message": line.strip(),
+                                "source": "app-logs"
+                            })
+                    break  # Stop after finding the first valid log file
+    except Exception as e:
+        logging.warning(f"Failed to check log files: {str(e)}")
+    
+    # Always include any system errors we encountered
+    if system_errors:
+        logs.extend(system_errors)
+    
+    # If no logs were found, add system information
     if not logs:
+        # Add a specific message about no logs being found
+        logs.append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "info",
+            "message": "No application logs found. Using system metrics instead.",
+            "source": "logging-system"
+        })
+        
+        # Add system metrics as logs
         try:
-            # Check if journalctl is available
-            journalctl_cmd = ["journalctl", "-n", str(lines), "--no-pager"]
-            result = subprocess.run(journalctl_cmd, capture_output=True, text=True, check=False, timeout=2)
-            
-            if result.returncode == 0 and result.stdout:
-                for line in result.stdout.strip().split('\n'):
-                    if not line:
-                        continue
-                    
-                    # Parse journalctl output
-                    parts = line.split(' ', 3)  # Split into date, time, host, message
-                    if len(parts) >= 4:
-                        timestamp = f"{parts[0]}T{parts[1]}"
-                        source = parts[2]
-                        message = parts[3]
-                        
-                        # Determine log level
-                        level = "info"
-                        if "error" in message.lower():
-                            level = "error"
-                        elif "warn" in message.lower():
-                            level = "warning"
-                        
-                        logs.append({
-                            "timestamp": timestamp,
-                            "level": level,
-                            "message": message,
-                            "source": source
-                        })
-        except Exception as e:
-            error_msg = f"Failed to get logs from journalctl: {str(e)}"
-            logging.warning(error_msg)
-            system_errors.append({
-                "timestamp": datetime.now().isoformat(),
-                "level": "warning",
-                "message": error_msg,
-                "source": "logging-system"
-            })
-    
-    # If no logs were found, include the system errors and add real system information
-    if not logs:
-        # Add any system errors we encountered while trying to get logs
-        if system_errors:
-            logs.extend(system_errors)
-            
-            # Also add a specific message about no logs being found
+            # Get CPU usage
+            cpu_percent = psutil.cpu_percent(interval=0.1)
             logs.append({
                 "timestamp": datetime.now().isoformat(),
                 "level": "info",
-                "message": "No application logs found. This could be because the application just started or logs are stored in a different location.",
-                "source": "logging-system"
+                "message": f"CPU usage: {cpu_percent}%",
+                "source": "system-metrics"
             })
-        
-        # Get system information for additional context
-        try:
-            from backend.services.system.docker_metrics import DockerMetrics
-            system_info = DockerMetrics.get_system_info()
-            disk_usage = DockerMetrics.get_disk_usage()
             
-            # Generate logs based on real system information
-            now = datetime.now()
+            # Get memory usage
+            memory = psutil.virtual_memory()
+            logs.append({
+                "timestamp": (datetime.now() - timedelta(seconds=1)).isoformat(),
+                "level": "info",
+                "message": f"Memory usage: {memory.percent}% (Used: {memory.used / (1024*1024*1024):.2f} GB, Total: {memory.total / (1024*1024*1024):.2f} GB)",
+                "source": "system-metrics"
+            })
             
-            # CPU usage log
-            cpu_usage = system_info.get("cpu", {}).get("usage_percent", 0)
-            cpu_level = "info"
-            if cpu_usage > 90:
-                cpu_level = "error"
-            elif cpu_usage > 70:
-                cpu_level = "warning"
+            # Get disk usage
+            disk = psutil.disk_usage('/')
+            logs.append({
+                "timestamp": (datetime.now() - timedelta(seconds=2)).isoformat(),
+                "level": "info",
+                "message": f"Disk usage: {disk.percent}% (Used: {disk.used / (1024*1024*1024):.2f} GB, Total: {disk.total / (1024*1024*1024):.2f} GB)",
+                "source": "system-metrics"
+            })
             
-            # Memory usage log
-            memory_percent = system_info.get("memory", {}).get("percent", 0)
-            memory_level = "info"
-            if memory_percent > 90:
-                memory_level = "error"
-            elif memory_percent > 70:
-                memory_level = "warning"
+            # Get network info
+            net_io = psutil.net_io_counters()
+            logs.append({
+                "timestamp": (datetime.now() - timedelta(seconds=3)).isoformat(),
+                "level": "info",
+                "message": f"Network: Sent: {net_io.bytes_sent / (1024*1024):.2f} MB, Received: {net_io.bytes_recv / (1024*1024):.2f} MB",
+                "source": "system-metrics"
+            })
             
-            # Disk usage log
-            disk_percent = disk_usage.get("disk_stats", {}).get("use_percent", "0%").replace("%", "")
-            try:
-                disk_percent = float(disk_percent)
-            except ValueError:
-                disk_percent = 0
-            
-            disk_level = "info"
-            if disk_percent > 90:
-                disk_level = "error"
-            elif disk_percent > 70:
-                disk_level = "warning"
-            
-            # Generate system logs based on real metrics
-            system_events = [
-                {"timestamp": (now - timedelta(minutes=5)).isoformat(), "level": cpu_level, "message": f"CPU usage: {cpu_usage}%", "source": "monitoring"},
-                {"timestamp": (now - timedelta(minutes=10)).isoformat(), "level": memory_level, "message": f"Memory usage: {memory_percent}%", "source": "monitoring"},
-                {"timestamp": (now - timedelta(minutes=15)).isoformat(), "level": disk_level, "message": f"Disk usage: {disk_percent}%", "source": "storage"}
-            ]
-            logs.extend(system_events)
+            # Get boot time
+            boot_time = datetime.fromtimestamp(psutil.boot_time())
+            uptime = datetime.now() - boot_time
+            logs.append({
+                "timestamp": (datetime.now() - timedelta(seconds=4)).isoformat(),
+                "level": "info",
+                "message": f"System uptime: {uptime.days} days, {uptime.seconds // 3600} hours, {(uptime.seconds % 3600) // 60} minutes",
+                "source": "system-metrics"
+            })
         except Exception as e:
-            error_msg = f"Failed to get system metrics: {str(e)}"
-            logging.warning(error_msg)
             logs.append({
                 "timestamp": datetime.now().isoformat(),
                 "level": "warning",
-                "message": error_msg,
-                "source": "monitoring"
+                "message": f"Failed to get system metrics: {str(e)}",
+                "source": "system-metrics"
             })
+        
+        # We've already added system metrics above, so no need for additional context
     
     # Sort by timestamp
     logs.sort(key=lambda x: x["timestamp"], reverse=True)

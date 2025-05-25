@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func, text, or_
 from pydantic import BaseModel, Field
 import logging
 
@@ -73,22 +73,20 @@ async def get_system_stats(
         # Handle the database enum mismatch by using raw string values
         # instead of enum values to avoid type mismatches
         try:
-            # Use raw SQL with text() to query for scheduled posts
-            scheduled_posts_result = db.execute(
-                text("SELECT COUNT(*) FROM social_posts WHERE status = 'scheduled' OR status = 'SCHEDULED'")
-            ).scalar()
-            scheduled_posts = scheduled_posts_result or 0
+            # Use SQLAlchemy ORM to query for scheduled posts
+            scheduled_posts = db.query(func.count(SocialPost.id)).filter(
+                SocialPost.status == PostStatus.SCHEDULED
+            ).scalar() or 0
             logger.info(f"Found {scheduled_posts} scheduled posts")
         except Exception as e:
             logger.error(f"Error querying scheduled posts: {str(e)}")
             scheduled_posts = 0
             
         try:
-            # Use raw SQL with text() to query for published/posted posts
-            published_posts_result = db.execute(
-                text("SELECT COUNT(*) FROM social_posts WHERE status = 'published' OR status = 'posted' OR status = 'PUBLISHED' OR status = 'POSTED'")
-            ).scalar()
-            published_posts = published_posts_result or 0
+            # Use SQLAlchemy ORM to query for published/posted posts
+            published_posts = db.query(func.count(SocialPost.id)).filter(
+                or_(SocialPost.status == PostStatus.PUBLISHED, SocialPost.status == PostStatus.POSTED)
+            ).scalar() or 0
             logger.info(f"Found {published_posts} published posts")
         except Exception as e:
             logger.error(f"Error querying published posts: {str(e)}")
