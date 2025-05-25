@@ -1,14 +1,17 @@
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from pydantic import BaseModel, Field
+import logging
 
 from backend.api import deps
 from backend.db.models.user import User, UserRole
 from backend.schemas.auth import UserCreate, UserUpdate, User as UserResponse
 from backend.schemas.admin import SystemStats
 from backend.core.security import get_password_hash
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -67,20 +70,28 @@ async def get_system_stats(
         # Get social stats
         total_posts = db.query(func.count(SocialPost.id)).scalar() or 0
         
-        # Handle the database enum mismatch
+        # Handle the database enum mismatch by using raw string values
+        # instead of enum values to avoid type mismatches
         try:
-            # Try to use SCHEDULED first
-            scheduled_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.SCHEDULED).scalar() or 0
+            # Use raw SQL with text() to query for scheduled posts
+            scheduled_posts_result = db.execute(
+                text("SELECT COUNT(*) FROM social_posts WHERE status = 'scheduled' OR status = 'SCHEDULED'")
+            ).scalar()
+            scheduled_posts = scheduled_posts_result or 0
+            logger.info(f"Found {scheduled_posts} scheduled posts")
         except Exception as e:
-            print(f"Error querying scheduled posts: {str(e)}. The database schema might not have the SCHEDULED enum value.")
-            # If that fails, just return 0 for scheduled posts
+            logger.error(f"Error querying scheduled posts: {str(e)}")
             scheduled_posts = 0
             
         try:
-            # Try to use PUBLISHED
-            published_posts = db.query(func.count(SocialPost.id)).filter(SocialPost.status == PostStatus.PUBLISHED).scalar() or 0
+            # Use raw SQL with text() to query for published/posted posts
+            published_posts_result = db.execute(
+                text("SELECT COUNT(*) FROM social_posts WHERE status = 'published' OR status = 'posted' OR status = 'PUBLISHED' OR status = 'POSTED'")
+            ).scalar()
+            published_posts = published_posts_result or 0
+            logger.info(f"Found {published_posts} published posts")
         except Exception as e:
-            print(f"Error querying published posts: {str(e)}. Falling back to default value.")
+            logger.error(f"Error querying published posts: {str(e)}")
             published_posts = 0
         
         # Get disk info using our improved method
