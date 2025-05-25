@@ -337,10 +337,12 @@ const FileGalleryPage = () => {
   const viewFileDetails = (file: FileItem) => {
     // Navigate to appropriate view page
     if (file.type === FILE_TYPES.VIDEO) {
-      if (file.capture_id) {
-        router.push(`/files/view/${file.capture_id}?type=video`);
+      // Use capture_id if available, otherwise extract the video ID from the file ID
+      const videoId = file.capture_id || file.id.split('-')[1];
+      if (videoId) {
+        router.push(`/files/view/${videoId}?type=video`);
       } else {
-        toast.error('Unable to view this video. Missing capture ID.');
+        toast.error('Unable to view this video. Could not determine video ID.');
       }
     } else if (file.type === FILE_TYPES.CLIP) {
       // Extract the clip ID from the file ID (format: 'clip-123')
@@ -354,16 +356,20 @@ const FileGalleryPage = () => {
       // For audio files, open the modal
       setSelectedFile(file);
     } else if (file.type === FILE_TYPES.TRANSCRIPTION) {
-      if (file.capture_id) {
-        router.push(`/files/view/${file.capture_id}?type=video&tab=transcription`);
+      // Use capture_id if available, otherwise extract the ID from the file ID
+      const transcriptionId = file.capture_id || file.id.split('-')[1];
+      if (transcriptionId) {
+        router.push(`/files/view/${transcriptionId}?type=video&tab=transcription`);
       } else {
-        toast.error('Unable to view this transcription. Missing capture ID.');
+        toast.error('Unable to view this transcription. Could not determine ID.');
       }
     } else if (file.type === FILE_TYPES.RECOGNITION) {
-      if (file.capture_id) {
-        router.push(`/files/view/${file.capture_id}?type=video&tab=recognition`);
+      // Use capture_id if available, otherwise extract the ID from the file ID
+      const recognitionId = file.capture_id || file.id.split('-')[1];
+      if (recognitionId) {
+        router.push(`/files/view/${recognitionId}?type=video&tab=recognition`);
       } else {
-        toast.error('Unable to view this recognition data. Missing capture ID.');
+        toast.error('Unable to view this recognition data. Could not determine ID.');
       }
     }
   };
