@@ -13,40 +13,57 @@ import { Button, Card, Badge, Input, Select } from '../../components/ui';
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 
-// File types
-enum FileType {
-  VIDEO = 'video',
-  AUDIO = 'audio',
-  TRANSCRIPTION = 'transcription',
-  RECOGNITION = 'recognition'
-}
+// File types - use string literals instead of enum for better type compatibility
+type FileTypeValue = 'video' | 'audio' | 'transcription' | 'recognition' | 'clip';
+
+// Constants for file types
+const FILE_TYPES = {
+  VIDEO: 'video' as FileTypeValue,
+  AUDIO: 'audio' as FileTypeValue,
+  TRANSCRIPTION: 'transcription' as FileTypeValue,
+  RECOGNITION: 'recognition' as FileTypeValue,
+  CLIP: 'clip' as FileTypeValue
+};
 
 // File interface
 interface FileItem {
-  id: string; // Unique identifier
-  type: FileType;
+  id: string;
+  type: FileTypeValue;
   path: string;
   filename: string;
   size: number;
-  modified_time: number;
-  capture_id: number | null;
+  capture_id?: string;
   title: string;
   status: string;
   created_at: string;
-  original_id?: number; // Original ID from source system
+  description?: string;
   details?: any; // Additional details specific to file type
 }
 
-const FileGalleryPage: React.FC = () => {
+const FileGalleryPage = () => {
   const router = useRouter();
   const { token, user } = useAuth();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  
+  // Check for type parameter in URL and set filter accordingly
+  useEffect(() => {
+    const { type } = router.query;
+    if (type && typeof type === 'string') {
+      if (type === 'clip') {
+        setSelectedType(FILE_TYPES.CLIP);
+      } else if (type === 'video') {
+        setSelectedType(FILE_TYPES.VIDEO);
+      } else if (type === 'audio') {
+        setSelectedType(FILE_TYPES.AUDIO);
+      }
+    }
+  }, [router.query]);
   
   // Fetch videos
   const { data: videos, isLoading: isLoadingVideos } = useQuery({
@@ -57,6 +74,16 @@ const FileGalleryPage: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       return response.data;
+    },
+    enabled: !!token
+  });
+  
+  // Fetch clips
+  const { data: clips, isLoading: isLoadingClips } = useQuery({
+    queryKey: ['clips'],
+    queryFn: async () => {
+      if (!token) return { items: [] };
+      return await api.get('/clips', { size: 100 });
     },
     enabled: !!token
   });
@@ -83,7 +110,7 @@ const FileGalleryPage: React.FC = () => {
   
   // Combine all files into a single array
   useEffect(() => {
-    if (!videos && !transcriptions && !recognitions) return;
+    if (!videos && !transcriptions && !recognitions && !clips) return;
     
     const allFiles: FileItem[] = [];
     
@@ -92,18 +119,21 @@ const FileGalleryPage: React.FC = () => {
       videos.forEach((video: any) => {
         allFiles.push({
           id: `video-${video.path}`,
-          type: FileType.VIDEO,
+          type: FILE_TYPES.VIDEO,
           path: video.path,
           filename: video.filename,
           size: video.size,
-          modified_time: video.modified_time,
           capture_id: video.capture_id,
           title: video.title || video.filename,
-          status: video.status || 'ready',
-          created_at: new Date(video.modified_time * 1000).toISOString(),
+          status: video.status || 'READY',
+          created_at: video.created_at || new Date().toISOString(),
+          description: video.description || '',
           details: {
             duration: video.duration,
-            stream_url: video.stream_url
+            description: video.description,
+            has_audio: video.has_audio,
+            has_transcription: video.has_transcription,
+            has_recognition: video.has_recognition
           }
         });
         
@@ -112,20 +142,40 @@ const FileGalleryPage: React.FC = () => {
           const audioFilename = video.filename.replace('.mp4', '.audio.mp3');
           allFiles.push({
             id: `audio-${video.path.replace('.mp4', '.audio.mp3')}`,
-            type: FileType.AUDIO,
+            type: FILE_TYPES.AUDIO,
             path: video.path.replace('.mp4', '.audio.mp3'),
             filename: audioFilename,
             size: 0, // Size unknown
-            modified_time: video.modified_time,
             capture_id: video.capture_id,
             title: `Audio: ${video.title || video.filename}`,
-            status: 'ready',
-            created_at: new Date(video.modified_time * 1000).toISOString(),
+            status: video.status || 'READY',
+            created_at: video.created_at || new Date().toISOString(),
+            description: `Audio track for ${video.title || video.filename}`,
             details: {
-              related_video: video.filename
+              related_video: video.path,
+              duration: video.duration
             }
           });
         }
+      });
+    }
+    
+    // Add clips
+    if (clips && clips.items) {
+      clips.items.forEach((clip: any) => {
+        allFiles.push({
+          id: `clip-${clip.id}`,
+          type: FILE_TYPES.CLIP,
+          path: clip.file_path || '',
+          filename: clip.file_path ? clip.file_path.split('/').pop() : `clip_${clip.id}.mp4`,
+          size: clip.size || 0,
+          created_at: clip.created_at || new Date().toISOString(),
+          status: clip.status || 'READY',
+          title: clip.title || `Clip ${clip.id}`,
+          description: clip.description || '',
+          capture_id: clip.capture_id || '',
+          details: clip
+        });
       });
     }
     
@@ -134,16 +184,15 @@ const FileGalleryPage: React.FC = () => {
       transcriptions.forEach((transcription: any) => {
         allFiles.push({
           id: `transcription-${transcription.id}`,
-          type: FileType.TRANSCRIPTION,
+          type: FILE_TYPES.TRANSCRIPTION,
           path: `/transcription/${transcription.id}`,
           filename: `transcription_${transcription.capture_id}.json`,
           size: 0, // Size unknown
-          modified_time: new Date(transcription.created_at).getTime() / 1000,
-          capture_id: transcription.capture_id,
-          title: `Transcription: Capture ${transcription.capture_id}`,
+          created_at: transcription.created_at || new Date().toISOString(),
           status: transcription.status,
-          created_at: transcription.created_at,
-          original_id: transcription.id,
+          title: `Transcription: Capture ${transcription.capture_id}`,
+          description: '',
+          capture_id: transcription.capture_id,
           details: {
             language: transcription.language,
             text_preview: transcription.text?.substring(0, 100) + '...',
@@ -158,16 +207,15 @@ const FileGalleryPage: React.FC = () => {
       recognitions.forEach((recognition: any) => {
         allFiles.push({
           id: `recognition-${recognition.id}`,
-          type: FileType.RECOGNITION,
+          type: FILE_TYPES.RECOGNITION,
           path: `/recognition/${recognition.id}`,
           filename: `recognition_${recognition.capture_id}.json`,
           size: 0, // Size unknown
-          modified_time: new Date(recognition.created_at).getTime() / 1000,
-          capture_id: recognition.capture_id,
-          title: `Recognition: ${recognition.type} (Capture ${recognition.capture_id})`,
+          created_at: recognition.created_at || new Date().toISOString(),
           status: recognition.status,
-          created_at: recognition.created_at,
-          original_id: recognition.id,
+          title: `Recognition: ${recognition.type} (Capture ${recognition.capture_id})`,
+          description: '',
+          capture_id: recognition.capture_id,
           details: {
             type: recognition.type,
             confidence: recognition.confidence,
@@ -177,30 +225,26 @@ const FileGalleryPage: React.FC = () => {
       });
     }
     
-    // Sort by modified time (newest first)
-    allFiles.sort((a, b) => b.modified_time - a.modified_time);
+    // Sort by created time (newest first)
+    allFiles.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     
     setFiles(allFiles);
     setLoading(false);
-  }, [videos, transcriptions, recognitions]);
+  }, [videos, transcriptions, recognitions, clips]);
   
-  // Filter files based on search term and filters
+  // Filter files based on search query and selected type
   const filteredFiles = files.filter(file => {
-    // Filter by search term
-    const matchesSearch = 
-      searchTerm === '' || 
-      file.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      file.filename.toLowerCase().includes(searchTerm.toLowerCase());
+    // Match search query
+    const matchesSearch = searchQuery === '' || 
+      (file.filename && file.filename.toLowerCase().includes(searchQuery.toLowerCase())) || 
+      (file.title && file.title.toLowerCase().includes(searchQuery.toLowerCase())) || 
+      (file.details?.description && file.details.description.toLowerCase().includes(searchQuery.toLowerCase()));
     
-    // Filter by type
-    const matchesType = 
-      selectedType === 'all' || 
-      file.type === selectedType;
+    // Match file type
+    const matchesType = selectedType === 'all' ? true : file.type === selectedType;
     
-    // Filter by status
-    const matchesStatus = 
-      selectedStatus === 'all' || 
-      file.status === selectedStatus;
+    // Match status
+    const matchesStatus = selectedStatus === 'all' ? true : file.status === selectedStatus;
     
     return matchesSearch && matchesType && matchesStatus;
   });
@@ -221,37 +265,40 @@ const FileGalleryPage: React.FC = () => {
     return `${size.toFixed(2)} ${units[unitIndex]}`;
   };
   
-  const formatDate = (timestamp: number | string) => {
-    if (typeof timestamp === 'number') {
-      return new Date(timestamp * 1000).toLocaleString();
-    }
+  const formatDate = (timestamp: string) => {
     return new Date(timestamp).toLocaleString();
   };
   
-  const getFileTypeIcon = (type: FileType) => {
+  const getFileTypeIcon = (type: FileTypeValue) => {
     switch (type) {
-      case FileType.VIDEO:
+      case FILE_TYPES.VIDEO:
         return (
           <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
           </svg>
         );
-      case FileType.AUDIO:
+      case FILE_TYPES.AUDIO:
         return (
           <svg className="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
           </svg>
         );
-      case FileType.TRANSCRIPTION:
+      case FILE_TYPES.TRANSCRIPTION:
         return (
           <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
           </svg>
         );
-      case FileType.RECOGNITION:
+      case FILE_TYPES.RECOGNITION:
         return (
           <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+          </svg>
+        );
+      case FILE_TYPES.CLIP:
+        return (
+          <svg className="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 4v1a2 2 0 00-2 2h2.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2h-2.586a1 1 0 01-.707-.293l-5.414-5.414a1 1 0 01-.293-.707V6H2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6"></path>
           </svg>
         );
     }
@@ -273,35 +320,51 @@ const FileGalleryPage: React.FC = () => {
     }
   };
   
-  // Handle file click
-  const handleFileClick = (file: FileItem) => {
-    setSelectedFile(file);
-  };
-  
   // Close file modal
   const closeFileModal = () => {
     setSelectedFile(null);
   };
   
+  // Handle file click
+  const handleFileClick = (file: FileItem) => {
+    if (file.type === FILE_TYPES.VIDEO || file.type === FILE_TYPES.AUDIO || file.type === FILE_TYPES.CLIP) {
+      setSelectedFile(file);
+    } else {
+      viewFileDetails(file);
+    }
+  };
   // Navigate to appropriate view page
   const viewFileDetails = (file: FileItem) => {
-    switch (file.type) {
-      case FileType.VIDEO:
-        // Open video player
-        setSelectedFile(file);
-        break;
-      case FileType.AUDIO:
-        // Open audio player
-        setSelectedFile(file);
-        break;
-      case FileType.TRANSCRIPTION:
-        // Navigate to transcription view
-        router.push(`/capture/${file.capture_id}/transcription?id=${file.original_id}`);
-        break;
-      case FileType.RECOGNITION:
-        // Navigate to recognition view
-        router.push(`/capture/${file.capture_id}/recognition?id=${file.original_id}`);
-        break;
+    // Navigate to appropriate view page
+    if (file.type === FILE_TYPES.VIDEO) {
+      if (file.capture_id) {
+        router.push(`/files/view/${file.capture_id}?type=video`);
+      } else {
+        toast.error('Unable to view this video. Missing capture ID.');
+      }
+    } else if (file.type === FILE_TYPES.CLIP) {
+      // Extract the clip ID from the file ID (format: 'clip-123')
+      const clipId = file.id.split('-')[1];
+      if (clipId) {
+        router.push(`/files/view/${clipId}?type=clip`);
+      } else {
+        toast.error('Unable to view this clip. Invalid clip ID.');
+      }
+    } else if (file.type === FILE_TYPES.AUDIO) {
+      // For audio files, open the modal
+      setSelectedFile(file);
+    } else if (file.type === FILE_TYPES.TRANSCRIPTION) {
+      if (file.capture_id) {
+        router.push(`/files/view/${file.capture_id}?type=video&tab=transcription`);
+      } else {
+        toast.error('Unable to view this transcription. Missing capture ID.');
+      }
+    } else if (file.type === FILE_TYPES.RECOGNITION) {
+      if (file.capture_id) {
+        router.push(`/files/view/${file.capture_id}?type=video&tab=recognition`);
+      } else {
+        toast.error('Unable to view this recognition data. Missing capture ID.');
+      }
     }
   };
   
@@ -309,10 +372,15 @@ const FileGalleryPage: React.FC = () => {
     <DarkLayout>
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-white">File Gallery</h1>
-          <Link href="/capture/new" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-            New Capture
-          </Link>
+          <h1 className="text-2xl font-bold text-white">Media Library</h1>
+          <div className="flex space-x-4">
+            <Link href="/capture/new">
+              <Button variant="secondary">Capture New Video</Button>
+            </Link>
+            <Link href="/capture/create-clip">
+              <Button variant="primary">Create New Clip</Button>
+            </Link>
+          </div>
         </div>
         
         {/* Search and filters */}
@@ -323,33 +391,34 @@ const FileGalleryPage: React.FC = () => {
                 type="text"
                 placeholder="Search files..."
                 className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
             <div className="flex gap-2">
               <select
-                className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                id="typeFilter"
                 value={selectedType}
                 onChange={(e) => setSelectedType(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Types</option>
-                <option value={FileType.VIDEO}>Videos</option>
-                <option value={FileType.AUDIO}>Audio</option>
-                <option value={FileType.TRANSCRIPTION}>Transcriptions</option>
-                <option value={FileType.RECOGNITION}>Recognitions</option>
+                <option value={FILE_TYPES.VIDEO}>Videos</option>
+                <option value={FILE_TYPES.CLIP}>Clips</option>
+                <option value={FILE_TYPES.AUDIO}>Audio</option>
+                <option value={FILE_TYPES.TRANSCRIPTION}>Transcriptions</option>
+                <option value={FILE_TYPES.RECOGNITION}>Recognition Data</option>
               </select>
               <select
-                className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                id="statusFilter"
                 value={selectedStatus}
                 onChange={(e) => setSelectedStatus(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Statuses</option>
-                <option value="ready">Ready</option>
-                <option value="completed">Completed</option>
-                <option value="processing">Processing</option>
-                <option value="failed">Failed</option>
-                <option value="pending">Pending</option>
+                <option value="READY">Ready</option>
+                <option value="PROCESSING">Processing</option>
+                <option value="ERROR">Error</option>
               </select>
             </div>
           </div>
@@ -396,17 +465,17 @@ const FileGalleryPage: React.FC = () => {
                     <span>{file.size ? formatFileSize(file.size) : 'N/A'}</span>
                   </div>
                   <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {formatDate(file.created_at || file.modified_time)}
+                    {formatDate(file.created_at)}
                   </div>
                   
                   {/* Additional details based on file type */}
-                  {file.type === FileType.TRANSCRIPTION && file.details?.text_preview && (
+                  {file.type === FILE_TYPES.TRANSCRIPTION && file.details?.text_preview && (
                     <div className="mt-2 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
                       {file.details.text_preview}
                     </div>
                   )}
                   
-                  {file.type === FileType.RECOGNITION && file.details?.type && (
+                  {file.type === FILE_TYPES.RECOGNITION && file.details?.type && (
                     <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">
                       Type: {file.details.type}
                       {file.details.confidence !== undefined && (
@@ -437,7 +506,7 @@ const FileGalleryPage: React.FC = () => {
             </svg>
             <h3 className="mt-2 text-lg font-medium text-gray-900 dark:text-white">No files found</h3>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {searchTerm || selectedType !== 'all' || selectedStatus !== 'all'
+              {searchQuery || selectedType !== 'all' || selectedStatus !== 'all'
                 ? 'Try adjusting your search filters'
                 : 'Start by capturing a new video or uploading files'}
             </p>
@@ -445,16 +514,17 @@ const FileGalleryPage: React.FC = () => {
         )}
         
         {/* File modal for video/audio playback */}
-        {selectedFile && (selectedFile.type === FileType.VIDEO || selectedFile.type === FileType.AUDIO) && (
+        {selectedFile && (selectedFile.type === FILE_TYPES.VIDEO || selectedFile.type === FILE_TYPES.AUDIO || selectedFile.type === FILE_TYPES.CLIP) && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-4xl max-h-[90vh] overflow-auto">
               <div className="p-4 border-b">
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{selectedFile.title}</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400">{selectedFile.filename}</p>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{selectedFile?.title}</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{selectedFile?.filename}</p>
               </div>
               
               <div className="p-4">
-                {selectedFile.type === FileType.VIDEO && (
+                {/* Video player based on file type */}
+                {selectedFile && selectedFile.type === FILE_TYPES.VIDEO && (
                   <video 
                     src={`${API_BASE_URL}/videos/stream-with-token/${selectedFile.filename}?token=${token}`}
                     controls
@@ -463,9 +533,19 @@ const FileGalleryPage: React.FC = () => {
                   />
                 )}
                 
-                {selectedFile.type === FileType.AUDIO && (
+                {selectedFile && selectedFile.type === FILE_TYPES.CLIP && (
+                  <video 
+                    src={selectedFile.details?.stream_url || ''}
+                    controls
+                    className="w-full"
+                    autoPlay
+                    poster={selectedFile.details?.thumbnail_url || ''}
+                  />
+                )}
+                
+                {selectedFile && selectedFile.type === FILE_TYPES.AUDIO && (
                   <audio 
-                    src={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile.details?.related_video}?token=${token}`}
+                    src={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile.details?.related_video || ''}?token=${token}`}
                     controls
                     className="w-full"
                     autoPlay
@@ -476,7 +556,7 @@ const FileGalleryPage: React.FC = () => {
               <div className="p-4 border-t flex justify-end">
                 <button
                   onClick={closeFileModal}
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded"
+                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
                 >
                   Close
                 </button>

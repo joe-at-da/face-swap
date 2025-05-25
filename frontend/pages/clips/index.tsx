@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -31,6 +31,13 @@ interface VideoClipsResponse {
 
 const VideoClipsPage: React.FC = () => {
   const router = useRouter();
+  
+  // Redirect to the new unified media library with clips filter
+  useEffect(() => {
+    router.replace('/files?type=clip');
+  }, [router]);
+  
+  // Keep the original state variables in case we need to revert
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchTerm, setSearchTerm] = useState('');
