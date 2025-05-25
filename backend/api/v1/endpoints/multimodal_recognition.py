@@ -142,3 +142,44 @@ async def combine_recognition_results(
     except Exception as e:
         logger.exception(f"Error combining recognition results: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error combining recognition results: {str(e)}")
+
+@router.post("/calculate-speaker-confidence", response_model=Dict[str, Any])
+async def calculate_speaker_confidence(
+    face_data: Dict[str, Any] = Body(...),
+    voice_data: Dict[str, Any] = Body(...),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Calculate confidence score for speaker identification based on both face and voice recognition.
+    
+    This endpoint will:
+    1. Take data from both face and voice recognition
+    2. Calculate a detailed confidence score with boosters and penalties
+    3. Return the confidence assessment with detailed factors
+    
+    The confidence calculation includes:
+    - Name similarity between profiles
+    - Explicit links between face and voice profiles
+    - Individual confidence scores from each modality
+    - Confidence boosters for matching data
+    - Confidence penalties for mismatches
+    """
+    try:
+        logger.info("Calculating speaker confidence score")
+        
+        # Calculate confidence score
+        results = multimodal_service.calculate_speaker_confidence(
+            face_data=face_data,
+            voice_data=voice_data
+        )
+        
+        if not results["success"]:
+            raise HTTPException(status_code=400, detail=results.get("error", "Unknown error"))
+        
+        # Return results
+        return make_json_serializable(results)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error calculating speaker confidence: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error calculating speaker confidence: {str(e)}")

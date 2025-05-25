@@ -94,104 +94,354 @@ class MultimodalRecognitionService:
             os.makedirs(output_dir, exist_ok=True)
             
             # Extract faces from speaker segments
-            face_results = self.face_profile_service.extract_faces_from_speaker_segments(
-                db=db,
-                video_path=video_path,
-                speaker_segments=segments,
-                output_dir=output_dir
-            )
+            faces_by_speaker = {}
+            faces_by_time = {}
+            all_faces = []
             
-            if not face_results["success"]:
-                logger.error(f"Error extracting faces: {face_results.get('error', 'Unknown error')}")
-                return {"success": False, "error": f"Error extracting faces: {face_results.get('error', 'Unknown error')}"}
-            
-            # Process each speaker's faces
-            speaker_profiles = {}
-            
-            for segment_result in face_results["results"]:
-                speaker_id = segment_result["speaker_id"]
-                speaker_name = segment_result["speaker_name"]
+            # Process each segment to extract faces
+            for segment in segments:
+                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
+                start_time = segment.get("start", 0)
+                end_time = segment.get("end", 0)
                 
-                # Skip if no faces found for this speaker
-                if segment_result["faces_found"] == 0:
+                if end_time <= start_time:
                     continue
                 
-                # Create or get speaker profile
-                if speaker_id not in speaker_profiles:
-                    # Check if we have a voice profile for this speaker
-                    voice_profile = None
-                    if hasattr(video, "recognition_results") and video.recognition_results:
-                        try:
-                            recognition_results = json.loads(video.recognition_results)
-                            speakers = recognition_results.get("speakers", [])
-                            
-                            for speaker in speakers:
-                                if speaker.get("id") == speaker_id or speaker.get("name") == speaker_name:
-                                    voice_profile_id = speaker.get("voice_profile_id")
-                                    if voice_profile_id:
-                                        voice_profile = db.query(models.VoiceProfile).filter(
-                                            models.VoiceProfile.id == voice_profile_id
-                                        ).first()
-                                    break
-                        except Exception as e:
-                            logger.error(f"Error parsing recognition results: {str(e)}")
-                    
-                    # Check if we already have a face profile linked to this voice profile
-                    face_profile = None
-                    if voice_profile:
-                        face_profile = db.query(models.FaceProfile).filter(
-                            models.FaceProfile.voice_profile_id == voice_profile.id
-                        ).first()
-                    
-                    # If no face profile found, create a new one
-                    if not face_profile:
-                        face_profile = self.face_profile_service.create_face_profile(
-                            db=db,
-                            name=speaker_name,
-                            voice_profile_id=voice_profile.id if voice_profile else None
-                        )
-                    
-                    speaker_profiles[speaker_id] = {
-                        "face_profile": face_profile,
-                        "voice_profile": voice_profile,
-                        "face_samples": []
-                    }
+                # Calculate segment duration and adjust sampling rate based on duration
+                duration = end_time - start_time
                 
-                # Add face samples for this speaker
-                for face_data in segment_result["face_data"]:
-                    # Add the face sample to the profile
-                    face_sample = self.face_profile_service.add_face_sample(
-                        db=db,
-                        face_profile_id=speaker_profiles[speaker_id]["face_profile"].id,
-                        image_path=face_data["path"],
-                        encoding=face_data["encoding"],
-                        confidence_score=0.8,  # Default confidence score
-                        source_video_id=video_id,
-                        timestamp=face_data["timestamp"]
-                    )
+                # For short segments (< 5s), extract 1-2 frames
+                # For medium segments (5-15s), extract a frame every 2-3 seconds
+                # For long segments (> 15s), extract a frame every 3-5 seconds
+                if duration < 5:
+                    interval = max(1.0, duration / 2)  # 1-2 frames for short segments
+                elif duration < 15:
+                    interval = 2.5  # Frame every 2-3 seconds for medium segments
+                else:
+                    interval = 4.0  # Frame every 3-5 seconds for long segments
+                
+                # Extract frames at calculated intervals within this segment
+                for timestamp in np.arange(start_time, end_time, interval):
+                    # Extract frame at this timestamp
+                    frame_filename = f"frame_{video_id}_{timestamp:.2f}.jpg"
+                    frame_path = os.path.join(output_dir, frame_filename)
                     
-                    speaker_profiles[speaker_id]["face_samples"].append(face_sample)
+                    # Extract the frame using ffmpeg if it doesn't exist
+                    if not os.path.exists(frame_path):
+                        try:
+                            cmd = [
+                                "ffmpeg",
+                                "-ss", str(timestamp),
+                                "-i", video_path,
+                                "-vframes", "1",
+                                "-q:v", "2",
+                                frame_path,
+                                "-y"
+                            ]
+                            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        except subprocess.CalledProcessError as e:
+                            logger.error(f"Error extracting frame at {timestamp}: {str(e)}")
+                            continue
+                    
+                    # Identify speaker in this frame
+                    result = self.identify_speaker_in_frame(db, frame_path)
+                    
+                    if result.get("success", False):
+                        # Store the face detection result
+                        face_profile = result.get("face_profile", {})
+                        confidence = result.get("confidence_score", 0.0)
+                        
+                        # Create face detection entry
+                        face_detection = {
+                            "timestamp": timestamp,
+                            "frame_path": frame_path,
+                            "frame_url": f"/api/v1/media/frames/{os.path.basename(frame_path)}",
+                            "face_profile": face_profile,
+                            "confidence": confidence,
+                            "speaker": speaker,
+                            "text": segment.get("text", ""),
+                            "segment_id": segment.get("id"),
+                            "segment_start": start_time,
+                            "segment_end": end_time
+                        }
+                        
+                        # Add to all faces list
+                        all_faces.append(face_detection)
+                        
+                        # Add to faces by speaker
+                        if speaker not in faces_by_speaker:
+                            faces_by_speaker[speaker] = []
+                        
+                        faces_by_speaker[speaker].append(face_detection)
+                        
+                        # Add to faces by time
+                        faces_by_time[timestamp] = face_detection
             
-            # Update the video with face recognition results
-            face_recognition_results = {
-                "processed_at": datetime.now().isoformat(),
-                "speakers": [
-                    {
-                        "id": speaker_id,
-                        "name": speaker_profiles[speaker_id]["face_profile"].name,
-                        "face_profile_id": speaker_profiles[speaker_id]["face_profile"].id,
-                        "voice_profile_id": speaker_profiles[speaker_id]["voice_profile"].id if speaker_profiles[speaker_id]["voice_profile"] else None,
-                        "face_samples": len(speaker_profiles[speaker_id]["face_samples"])
+            # Create a timeline of speakers with face detections
+            timeline = []
+            for timestamp, data in sorted(faces_by_time.items()):
+                timeline.append({
+                    "timestamp": timestamp,
+                    "speaker": data["speaker"],
+                    "face_profile": data["face_profile"],
+                    "confidence": data["confidence"],
+                    "frame_path": data["frame_path"],
+                    "frame_url": data["frame_url"],
+                    "text": data["text"]
+                })
+            
+            # Create a mapping of speakers to face profiles using a more sophisticated algorithm
+            speaker_to_face_profile = {}
+            for speaker, faces in faces_by_speaker.items():
+                if not faces:
+                    continue
+                
+                # Group faces by profile ID
+                profiles = {}
+                for face in faces:
+                    profile_id = face.get("face_profile", {}).get("id")
+                    if not profile_id:
+                        continue
+                    
+                    if profile_id not in profiles:
+                        profiles[profile_id] = {
+                            "profile": face.get("face_profile", {}),
+                            "count": 0,
+                            "total_confidence": 0.0,
+                            "frames": [],
+                            "timestamps": []
+                        }
+                    
+                    profiles[profile_id]["count"] += 1
+                    profiles[profile_id]["total_confidence"] += face.get("confidence", 0.0)
+                    profiles[profile_id]["frames"].append(face.get("frame_path"))
+                    profiles[profile_id]["timestamps"].append(face.get("timestamp"))
+                
+                # Calculate weighted scores for each profile
+                for profile_id, data in profiles.items():
+                    # Calculate average confidence
+                    avg_confidence = data["total_confidence"] / data["count"] if data["count"] > 0 else 0.0
+                    
+                    # Calculate temporal consistency (how well distributed the detections are)
+                    timestamps = sorted(data["timestamps"])
+                    if len(timestamps) > 1:
+                        time_span = max(timestamps) - min(timestamps)
+                        time_consistency = min(1.0, time_span / 60.0)  # Normalize to max of 1.0 for spans of 60s or more
+                    else:
+                        time_consistency = 0.0
+                    
+                    # Calculate final weighted score
+                    # Weight: 60% count, 30% confidence, 10% temporal consistency
+                    data["weighted_score"] = (
+                        0.6 * (data["count"] / len(faces)) + 
+                        0.3 * avg_confidence + 
+                        0.1 * time_consistency
+                    )
+                    data["avg_confidence"] = avg_confidence
+                    data["time_consistency"] = time_consistency
+                
+                # Find the profile with the highest weighted score
+                best_profile_id = None
+                best_score = 0.0
+                
+                for profile_id, data in profiles.items():
+                    if data["weighted_score"] > best_score:
+                        best_profile_id = profile_id
+                        best_score = data["weighted_score"]
+                
+                if best_profile_id:
+                    best_data = profiles[best_profile_id]
+                    speaker_to_face_profile[speaker] = {
+                        "profile": best_data["profile"],
+                        "count": best_data["count"],
+                        "confidence": best_data["avg_confidence"],
+                        "time_consistency": best_data["time_consistency"],
+                        "weighted_score": best_data["weighted_score"],
+                        "best_frames": best_data["frames"][:5]  # Include up to 5 best frames
                     }
-                    for speaker_id in speaker_profiles
-                ]
+            
+            # Create voice recognition data from transcription segments
+            voice_segments = []
+            for segment in segments:
+                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
+                start_time = segment.get("start", 0)
+                end_time = segment.get("end", 0)
+                
+                voice_segment = {
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "speaker": speaker,
+                    "text": segment.get("text", ""),
+                    "confidence": segment.get("confidence", 0.5),
+                    "segment_id": segment.get("id")
+                }
+                
+                # Add face profile information if available
+                if speaker in speaker_to_face_profile:
+                    voice_segment["face_profile"] = speaker_to_face_profile[speaker]["profile"]
+                    voice_segment["face_confidence"] = speaker_to_face_profile[speaker]["confidence"]
+                
+                voice_segments.append(voice_segment)
+            
+            # Update the transcription segments with face profile information
+            for segment in segments:
+                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
+                
+                if speaker in speaker_to_face_profile:
+                    segment["face_profile"] = speaker_to_face_profile[speaker]["profile"]
+                    segment["face_confidence"] = speaker_to_face_profile[speaker]["confidence"]
+                    segment["face_detection_count"] = speaker_to_face_profile[speaker]["count"]
+            
+            # Create integrated recognition results
+            integrated_results = {
+                "faces": all_faces,  # All individual face detections
+                "voices": voice_segments,  # All voice segments with speaker info
+                "speaker_face_mapping": speaker_to_face_profile,  # Mapping of speakers to their best face profile
+                "timeline": timeline,  # Timeline of face detections
+                "transcription": transcription,  # Original transcription with added face info
+                "metadata": {
+                    "video_id": video_id,
+                    "processed_at": datetime.now().isoformat(),
+                    "faces_count": len(all_faces),
+                    "speakers_count": len(speaker_to_face_profile),
+                    "segments_count": len(segments)
+                }
             }
             
-            # Update the video record
-            if not video.metadata:
-                video.metadata = {}
+            # Create recognition events for the timeline
+            recognition_events = []
             
-            video.metadata["face_recognition"] = face_recognition_results
+            # Add face detection events
+            for face in all_faces:
+                face_event = {
+                    "type": "face",
+                    "start": face["timestamp"],
+                    "end": face["timestamp"] + 1.0,  # Assume 1 second duration
+                    "person_name": face["face_profile"].get("name", "Unknown"),
+                    "confidence": face["confidence"],
+                    "data": {
+                        "frame_path": face["frame_path"],
+                        "frame_url": face["frame_url"],
+                        "face_id": face["face_profile"].get("id"),
+                        "speaker": face["speaker"],
+                        "text": face["text"]
+                    }
+                }
+                recognition_events.append(face_event)
+            
+            # Add voice segment events
+            for voice in voice_segments:
+                voice_event = {
+                    "type": "speaker",
+                    "start": voice["start_time"],
+                    "end": voice["end_time"],
+                    "person_name": voice["speaker"],
+                    "confidence": voice["confidence"],
+                    "data": {
+                        "text": voice["text"],
+                        "segment_id": voice["segment_id"],
+                        "face_profile_id": voice.get("face_profile", {}).get("id")
+                    }
+                }
+                recognition_events.append(voice_event)
+            
+            # Sort events by start time
+            recognition_events.sort(key=lambda x: x["start"])
+            
+            # Find correlations between face and voice events
+            correlations = []
+            face_events = [event for event in recognition_events if event["type"] == "face"]
+            voice_events = [event for event in recognition_events if event["type"] == "speaker"]
+            
+            for face_event in face_events:
+                for voice_event in voice_events:
+                    # Check for temporal overlap
+                    if (face_event["start"] <= voice_event["end"] and 
+                        face_event["end"] >= voice_event["start"]):
+                        
+                        # Calculate overlap
+                        overlap_start = max(face_event["start"], voice_event["start"])
+                        overlap_end = min(face_event["end"], voice_event["end"])
+                        overlap_duration = max(0, overlap_end - overlap_start)
+                        
+                        # Only consider significant overlaps
+                        if overlap_duration > 0.3:
+                            # Check if they refer to the same person
+                            face_name = face_event["person_name"]
+                            voice_name = voice_event["person_name"]
+                            
+                            # Calculate name similarity
+                            name_similarity = 0.0
+                            if face_name and voice_name:
+                                face_name_lower = face_name.lower()
+                                voice_name_lower = voice_name.lower()
+                                
+                                if face_name_lower == voice_name_lower:
+                                    name_similarity = 1.0
+                                elif face_name_lower in voice_name_lower or voice_name_lower in face_name_lower:
+                                    name_similarity = 0.8
+                                else:
+                                    # Simple character overlap similarity
+                                    common_chars = sum(1 for c in face_name_lower if c in voice_name_lower)
+                                    name_similarity = common_chars / max(len(face_name_lower), len(voice_name_lower)) if max(len(face_name_lower), len(voice_name_lower)) > 0 else 0.0
+                            
+                            # Determine if same person based on name similarity
+                            same_person = name_similarity > 0.7
+                            
+                            correlations.append({
+                                "face_event_id": face_events.index(face_event),
+                                "voice_event_id": voice_events.index(voice_event),
+                                "face_name": face_name,
+                                "voice_name": voice_name,
+                                "start": overlap_start,
+                                "end": overlap_end,
+                                "confidence": 0.8 if same_person else 0.5,
+                                "same_person": same_person,
+                                "name_similarity": name_similarity
+                            })
+            
+            # Add timeline data to the integrated results
+            integrated_results["recognition_events"] = recognition_events
+            integrated_results["correlations"] = correlations
+            
+            # Save the results to the database
+            video.recognition_results = json.dumps(make_json_serializable(integrated_results))
+            
+            # Save timeline data separately for efficient retrieval
+            timeline_data = {
+                "success": True,
+                "video_id": video_id,
+                "timeline": recognition_events,
+                "correlations": correlations
+            }
+            video.timeline_data = json.dumps(make_json_serializable(timeline_data))
+            
+            # Store recognition events in the database if RecognitionEvent model exists
+            try:
+                from backend.db.models.recognition_event import RecognitionEvent
+                
+                # Delete existing events for this capture
+                db.query(RecognitionEvent).filter(
+                    RecognitionEvent.capture_session_id == video_id
+                ).delete()
+                
+                # Add new events
+                for event in recognition_events:
+                    recognition_event = RecognitionEvent(
+                        capture_session_id=video_id,
+                        event_type=event["type"],
+                        start_time=event["start"],
+                        end_time=event["end"],
+                        confidence=event["confidence"],
+                        person_name=event["person_name"],
+                        data=event
+                    )
+                    db.add(recognition_event)
+            except ImportError:
+                logger.warning("RecognitionEvent model not found, skipping event storage")
+            except Exception as e:
+                logger.error(f"Error storing recognition events: {str(e)}")
+            
             db.commit()
             
             logger.info(f"Completed multimodal processing for video {video_id}")
@@ -199,100 +449,225 @@ class MultimodalRecognitionService:
             return {
                 "success": True,
                 "video_id": video_id,
-                "speakers_processed": len(speaker_profiles),
-                "total_faces": face_results["total_faces"],
-                "face_recognition_results": face_recognition_results
+                "faces_count": len(all_faces),
+                "speakers_count": len(speaker_to_face_profile),
+                "segments_count": len(segments),
+                "events_count": len(recognition_events),
+                "correlations_count": len(correlations),
+                "timeline": recognition_events[:10],  # Return just the first 10 events to avoid large response
+                "speaker_face_mapping": speaker_to_face_profile
             }
             
         except Exception as e:
             logger.exception(f"Error in multimodal processing: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def identify_speaker_in_frame(self, db: Session, frame_path: str, 
-                                threshold: float = 0.6) -> Dict[str, Any]:
+    def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.6) -> Dict[str, Any]:
         """
         Identify a speaker in a video frame using facial recognition.
         
         Args:
             db: Database session
-            frame_path: Path to the video frame
-            threshold: Similarity threshold for matching
+            frame_path: Path to the frame image
+            threshold: Confidence threshold for face recognition
             
         Returns:
             Dictionary with identification results
         """
         try:
-            import face_recognition
-            
             logger.info(f"Identifying speaker in frame: {frame_path}")
             
-            # Check if the frame exists
+            # Check if the frame file exists
             if not os.path.exists(frame_path):
                 logger.error(f"Frame file not found: {frame_path}")
                 return {"success": False, "error": f"Frame file not found: {frame_path}"}
             
-            # Load the image and extract face encoding
-            image = face_recognition.load_image_file(frame_path)
-            face_locations = face_recognition.face_locations(image)
-            
-            if not face_locations:
-                logger.warning("No face detected in the frame")
-                return {"success": False, "error": "No face detected in the frame"}
-            
-            face_encodings = face_recognition.face_encodings(image, face_locations)
-            if not face_encodings:
-                logger.warning("Failed to extract face encoding")
-                return {"success": False, "error": "Failed to extract face encoding"}
-            
-            # Use the first face encoding
-            face_encoding = face_encodings[0].tolist()
-            
-            # Match the face with existing profiles
-            face_profile, confidence_score = self.face_profile_service.match_face_with_profiles(
-                db=db,
-                face_encoding=face_encoding,
-                threshold=threshold
+            # Detect and identify faces in the frame
+            face_results = self.facial_recognition.identify_faces_in_image(
+                image_path=frame_path,
+                threshold=threshold,
+                db=db
             )
             
-            if not face_profile:
-                logger.info("No matching face profile found")
-                return {
-                    "success": True,
-                    "identified": False,
-                    "message": "No matching face profile found"
-                }
+            if not face_results["success"]:
+                logger.error(f"Error identifying faces: {face_results.get('error', 'Unknown error')}")
+                return {"success": False, "error": f"Error identifying faces: {face_results.get('error', 'Unknown error')}"}
             
-            # Get the voice profile if linked
+            # If no faces found, return empty result
+            if len(face_results["faces"]) == 0:
+                logger.info("No faces found in the frame")
+                return {"success": True, "faces_found": 0}
+            
+            # Get the face with the highest confidence
+            best_face = None
+            best_confidence = 0.0
+            
+            for face in face_results["faces"]:
+                confidence = face.get("confidence", 0.0)
+                if confidence > best_confidence:
+                    best_face = face
+                    best_confidence = confidence
+            
+            # Get the face profile
+            face_profile = best_face.get("face_profile", {})
+            
+            # Check if the face profile has a linked voice profile
             voice_profile = None
-            if face_profile.voice_profile_id:
-                voice_profile = db.query(models.VoiceProfile).filter(
-                    models.VoiceProfile.id == face_profile.voice_profile_id
+            if face_profile and face_profile.get("id"):
+                face_profile_obj = db.query(models.FaceProfile).filter(
+                    models.FaceProfile.id == face_profile.get("id")
                 ).first()
-            
-            logger.info(f"Identified speaker: {face_profile.name} (confidence: {confidence_score:.2f})")
+                
+                if face_profile_obj and face_profile_obj.voice_profile_id:
+                    voice_profile = db.query(models.VoiceProfile).filter(
+                        models.VoiceProfile.id == face_profile_obj.voice_profile_id
+                    ).first()
             
             return {
                 "success": True,
-                "identified": True,
-                "face_profile": {
-                    "id": face_profile.id,
-                    "name": face_profile.name,
-                    "role": face_profile.role,
-                    "party": face_profile.party,
-                    "confidence_score": confidence_score
-                },
-                "voice_profile": {
-                    "id": voice_profile.id,
-                    "name": voice_profile.name,
-                    "role": voice_profile.role,
-                    "party": voice_profile.party
-                } if voice_profile else None
+                "faces_found": len(face_results["faces"]),
+                "face_profile": face_profile,
+                "voice_profile": voice_profile.to_dict() if voice_profile else None,
+                "confidence_score": best_confidence
             }
             
         except Exception as e:
-            logger.exception(f"Error identifying speaker: {str(e)}")
+            logger.exception(f"Error identifying speaker in frame: {str(e)}")
             return {"success": False, "error": str(e)}
-    
+            
+    def calculate_speaker_confidence(self, face_data: Dict[str, Any], voice_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calculate confidence score for speaker identification based on both face and voice recognition.
+        
+        Args:
+            face_data: Face recognition data including confidence scores
+            voice_data: Voice recognition data including confidence scores
+            
+        Returns:
+            Dictionary with combined confidence scores and metadata
+        """
+        try:
+            # Extract basic confidence scores
+            face_confidence = face_data.get("confidence", 0.0)
+            voice_confidence = voice_data.get("confidence", 0.0)
+            
+            # Extract profile information
+            face_profile = face_data.get("face_profile", {})
+            voice_profile = voice_data.get("voice_profile", {})
+            
+            # Extract names for comparison
+            face_name = face_profile.get("name", "").lower() if face_profile else ""
+            voice_name = voice_profile.get("name", "").lower() if voice_profile else ""
+            
+            # Calculate base confidence scores
+            base_confidence = {
+                "face": face_confidence,
+                "voice": voice_confidence,
+                "combined": 0.0  # Will be calculated below
+            }
+            
+            # Calculate name similarity score (0-1)
+            name_similarity = 0.0
+            if face_name and voice_name:
+                # Simple string similarity
+                if face_name == voice_name:
+                    name_similarity = 1.0
+                elif face_name in voice_name or voice_name in face_name:
+                    name_similarity = 0.8
+                else:
+                    # Simple character overlap similarity
+                    common_chars = sum(1 for c in face_name if c in voice_name)
+                    name_similarity = common_chars / max(len(face_name), len(voice_name)) if max(len(face_name), len(voice_name)) > 0 else 0.0
+            
+            # Check for explicit links between profiles
+            face_profile_id = face_profile.get("id") if face_profile else None
+            voice_profile_id = voice_profile.get("id") if voice_profile else None
+            
+            face_linked_voice_id = face_profile.get("voice_profile_id") if face_profile else None
+            voice_linked_face_id = voice_profile.get("face_profile_id") if voice_profile else None
+            
+            explicit_link = (face_linked_voice_id == voice_profile_id) or (voice_linked_face_id == face_profile_id)
+            
+            # Calculate confidence boosters/penalties
+            boosters = {
+                "explicit_link": 0.2 if explicit_link else 0.0,
+                "name_match": 0.15 * name_similarity,
+                "high_individual_confidence": 0.1 if (face_confidence > 0.8 and voice_confidence > 0.8) else 0.0
+            }
+            
+            # Calculate penalties
+            penalties = {
+                "name_mismatch": 0.2 if (face_name and voice_name and name_similarity < 0.3) else 0.0,
+                "low_face_confidence": 0.1 if face_confidence < 0.5 else 0.0,
+                "low_voice_confidence": 0.1 if voice_confidence < 0.5 else 0.0
+            }
+            
+            # Calculate total boosters and penalties
+            total_boosters = sum(boosters.values())
+            total_penalties = sum(penalties.values())
+            
+            # Calculate base combined confidence (weighted average)
+            if face_confidence > 0 or voice_confidence > 0:
+                # If we have both face and voice, weight them 60/40
+                if face_confidence > 0 and voice_confidence > 0:
+                    base_combined = 0.6 * face_confidence + 0.4 * voice_confidence
+                # If we only have one, use that one
+                else:
+                    base_combined = face_confidence if face_confidence > 0 else voice_confidence
+            else:
+                base_combined = 0.0
+            
+            # Apply boosters and penalties to get final confidence
+            final_confidence = min(1.0, max(0.0, base_combined + total_boosters - total_penalties))
+            
+            # Determine confidence level category
+            confidence_level = "unknown"
+            if final_confidence >= 0.9:
+                confidence_level = "very_high"
+            elif final_confidence >= 0.75:
+                confidence_level = "high"
+            elif final_confidence >= 0.6:
+                confidence_level = "medium"
+            elif final_confidence >= 0.4:
+                confidence_level = "low"
+            else:
+                confidence_level = "very_low"
+            
+            # Create detailed result
+            result = {
+                "success": True,
+                "confidence": {
+                    "face": face_confidence,
+                    "voice": voice_confidence,
+                    "base_combined": base_combined,
+                    "final": final_confidence,
+                    "level": confidence_level
+                },
+                "factors": {
+                    "boosters": boosters,
+                    "penalties": penalties
+                },
+                "metadata": {
+                    "name_similarity": name_similarity,
+                    "explicit_link": explicit_link,
+                    "face_name": face_name,
+                    "voice_name": voice_name
+                }
+            }
+            
+            return result
+            
+        except Exception as e:
+            logger.exception(f"Error calculating speaker confidence: {str(e)}")
+            return {
+                "success": False, 
+                "error": str(e),
+                "confidence": {
+                    "face": face_data.get("confidence", 0.0),
+                    "voice": voice_data.get("confidence", 0.0),
+                    "final": max(face_data.get("confidence", 0.0), voice_data.get("confidence", 0.0))
+                }
+            }
     def combine_recognition_results(self, voice_results: Dict[str, Any], 
                                   face_results: Dict[str, Any]) -> Dict[str, Any]:
         """
