@@ -228,7 +228,7 @@ def find_correlations(recognition_data):
     return correlations
 
 
-@router.get("/{capture_id}/correlations", response_model=Dict[str, Any])
+@router.get("/{capture_id}/correlations")
 def get_recognition_correlations(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
     """Get correlations between face and speaker events."""
     logger.info(f"Getting recognition correlations for capture: {capture_id}")
@@ -238,22 +238,109 @@ def get_recognition_correlations(capture_id: str, db: Session = Depends(get_db),
         try:
             capture_id_int = int(capture_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid capture ID")
+            raise HTTPException(status_code=400, detail=f"Invalid capture ID: {capture_id}")
         
-        # Get the correlations
-        correlations_result = timeline_service.find_correlations(db, capture_id_int)
+        # Get correlations from timeline service
+        result = timeline_service.get_correlations(db, capture_id_int)
         
-        if not correlations_result["success"]:
-            raise HTTPException(status_code=400, detail=correlations_result.get("error", "Unknown error"))
+        if not result.get("success", False):
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to get correlations")
+            }
         
-        # Return the correlations
-        return correlations_result
+        return {
+            "success": True,
+            "correlations": result.get("correlations", []),
+            "face_count": result.get("face_count", 0),
+            "speaker_count": result.get("speaker_count", 0)
+        }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.exception(f"Error getting recognition correlations: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting recognition correlations: {str(e)}")
+
+
+@router.post("/{capture_id}/update-correlations")
+def update_correlations(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
+    """Update correlations between face and speaker events using the enhanced algorithm.
+    
+    This endpoint triggers a full recalculation of correlations between face and voice recognition events
+    using the enhanced correlation detection algorithm. The algorithm considers:
+    
+    1. Temporal overlap between face detections and speaker segments
+    2. Name similarity between detected persons
+    3. Explicit links between profiles
+    4. Individual recognition confidence scores
+    5. Extended time window for potential matches
+    
+    Returns updated correlations with detailed confidence metrics and correlation types.
+    """
+    logger.info(f"Updating correlations for capture: {capture_id}")
+    
+    try:
+        # Get the capture session
+        try:
+            capture_id_int = int(capture_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid capture ID: {capture_id}")
+        
+        capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id_int).first()
+        if not capture:
+            raise HTTPException(status_code=404, detail=f"Capture not found: {capture_id}")
+        
+        # Get the timeline data
+        timeline_result = timeline_service.get_timeline_events(db, capture_id_int)
+        
+        if not timeline_result.get("success", False):
+            return {
+                "success": False,
+                "error": "No timeline data found for this capture session"
+            }
+        
+        # Get face and speaker events
+        timeline_events = timeline_result.get("timeline", [])
+        face_events = [event for event in timeline_events if event.get("type") == "face"]
+        speaker_events = [event for event in timeline_events if event.get("type") == "speaker"]
+        
+        if not face_events or not speaker_events:
+            return {
+                "success": False,
+                "error": "Insufficient data: Need both face and speaker events to find correlations"
+            }
+        
+        # Find correlations using the enhanced algorithm
+        correlations = timeline_service.find_correlations({
+            "face_events": face_events,
+            "speaker_events": speaker_events
+        })
+        
+        # Update the correlations in the timeline data
+        if timeline_result.get("timeline_id"):
+            timeline_record = db.query(models.RecognitionTimeline).filter(
+                models.RecognitionTimeline.id == timeline_result.get("timeline_id")
+            ).first()
+            
+            if timeline_record:
+                # Update the correlations field
+                timeline_record.correlations = json.dumps(make_json_serializable(correlations))
+                db.commit()
+        
+        return {
+            "success": True,
+            "message": "Correlations updated successfully",
+            "correlations": correlations,
+            "face_count": len(face_events),
+            "speaker_count": len(speaker_events)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error updating correlations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating correlations: {str(e)}")
 
 
 @router.post("/{capture_id}/correlations/update-confidence", response_model=Dict[str, Any])

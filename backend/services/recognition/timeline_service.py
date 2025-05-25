@@ -382,31 +382,28 @@ class TimelineService:
             logger.error(f"Error updating correlation confidence: {str(e)}")
             return {"success": False, "error": f"Error updating correlation confidence: {str(e)}"}
     
-    def find_correlations(self, db: Session, capture_id: int) -> Dict[str, Any]:
+    def find_correlations(self, recognition_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Find correlations between face and speaker events.
         
         Args:
-            db: Database session
-            capture_id: ID of the capture session
+            recognition_data: Dictionary containing face_events and speaker_events lists
             
         Returns:
+            List of correlation objects with confidence scores and match details
+        """
+        try:
+            logger.info("Finding correlations between face and speaker events")
             
-        # Get all face events
-        face_events = db.query(models.RecognitionEvent).filter(
-            models.RecognitionEvent.capture_session_id == capture_id,
+            # Get face and speaker events from the input data
+            face_items = recognition_data.get("face_events", [])
+            speaker_items = recognition_data.get("speaker_events", [])
             
-            # Get all speaker events
-            speaker_events = db.query(models.RecognitionEvent).filter(
-                models.RecognitionEvent.capture_session_id == capture_id,
-                models.RecognitionEvent.event_type == "speaker"
-            ).order_by(models.RecognitionEvent.start_time).all()
+            if not face_items or not speaker_items:
+                logger.warning("Insufficient data for correlation: missing face or speaker events")
+                return []
             
-            # Convert to dictionaries
-            face_items = [item.__dict__ for item in face_events]
-            speaker_items = [item.__dict__ for item in speaker_events]
-            
-            # Find correlations
+            # Initialize correlations list
             correlations = []
             
             # Group face detections by person
@@ -596,22 +593,11 @@ class TimelineService:
             # Sort correlations by confidence (highest first)
             correlations.sort(key=lambda x: x["confidence"], reverse=True)
             
-            return {
-                "success": True,
-                "video_id": capture_id,
-                "correlations": correlations,
-                "count": len(correlations),
-                "face_count": len(face_items),
-                "speaker_count": len(speaker_items)
-            }
+            return correlations
             
         except Exception as e:
             logger.error(f"Error finding correlations: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Error finding correlations: {str(e)}",
-                "correlations": []
-            }
+            return []
     
     def _get_confidence_level(self, confidence: float) -> str:
         """Helper method to determine confidence level category."""
@@ -640,3 +626,90 @@ class TimelineService:
             return 0.1
         else:
             return 0.0
+            
+    def get_correlations(self, db: Session, capture_id: int) -> Dict[str, Any]:
+        """
+        Get correlations between face and speaker events for a capture session.
+        
+        Args:
+            db: Database session
+            capture_id: ID of the capture session
+            
+        Returns:
+            Dict with correlation results
+        """
+        try:
+            logger.info(f"Getting correlations for capture {capture_id}")
+            
+            # First check if we have a timeline record with correlations
+            timeline = db.query(models.RecognitionTimeline).filter(
+                models.RecognitionTimeline.capture_session_id == capture_id
+            ).first()
+            
+            if timeline and timeline.correlations:
+                try:
+                    correlations_data = json.loads(timeline.correlations)
+                    
+                    # Get face and speaker counts
+                    face_events = db.query(models.RecognitionEvent).filter(
+                        models.RecognitionEvent.capture_session_id == capture_id,
+                        models.RecognitionEvent.event_type == "face"
+                    ).count()
+                    
+                    speaker_events = db.query(models.RecognitionEvent).filter(
+                        models.RecognitionEvent.capture_session_id == capture_id,
+                        models.RecognitionEvent.event_type == "speaker"
+                    ).count()
+                    
+                    return {
+                        "success": True,
+                        "correlations": correlations_data,
+                        "face_count": face_events,
+                        "speaker_count": speaker_events
+                    }
+                except json.JSONDecodeError:
+                    logger.error(f"Invalid correlations JSON for timeline {timeline.id}")
+            
+            # If no correlations found in timeline, try to generate them
+            # Get the timeline events
+            timeline_result = self.get_timeline_events(db, capture_id)
+            
+            if not timeline_result.get("success", False):
+                return {
+                    "success": False,
+                    "error": "No timeline events found for this capture session",
+                    "correlations": []
+                }
+            
+            # Get face and speaker events
+            timeline_events = timeline_result.get("timeline", [])
+            face_events = [event for event in timeline_events if event.get("type") == "face"]
+            speaker_events = [event for event in timeline_events if event.get("type") == "speaker"]
+            
+            if not face_events or not speaker_events:
+                return {
+                    "success": False,
+                    "error": "Insufficient data: Need both face and speaker events to find correlations",
+                    "correlations": []
+                }
+            
+            # Find correlations
+            correlations_result = self.find_correlations({
+                "face_events": face_events,
+                "speaker_events": speaker_events
+            })
+            
+            return {
+                "success": True,
+                "correlations": correlations_result,
+                "face_count": len(face_events),
+                "speaker_count": len(speaker_events)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting correlations: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error getting correlations: {str(e)}",
+                "correlations": []
+            }

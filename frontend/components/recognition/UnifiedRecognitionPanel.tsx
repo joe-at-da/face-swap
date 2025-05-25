@@ -28,6 +28,9 @@ interface RecognitionStatus {
   started_at?: string;
   completed_at?: string;
   results?: any;
+  correlations_count?: number;
+  face_count?: number;
+  speaker_count?: number;
 }
 
 interface TranscriptionOptions {
@@ -39,6 +42,17 @@ interface AudioInfo {
   file_path: string | null;
   file_name: string | null;
   source_url: string | null;
+}
+
+interface CorrelationStats {
+  total: number;
+  high_confidence: number;
+  medium_confidence: number;
+  low_confidence: number;
+  face_count: number;
+  speaker_count: number;
+  processing: boolean;
+  error?: string;
 }
 
 const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
@@ -59,13 +73,30 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
+  const [correlationStats, setCorrelationStats] = useState<CorrelationStats>({
+    total: 0,
+    high_confidence: 0,
+    medium_confidence: 0,
+    low_confidence: 0,
+    face_count: 0,
+    speaker_count: 0,
+    processing: false
+  });
+  const [isUpdatingCorrelations, setIsUpdatingCorrelations] = useState(false);
 
   useEffect(() => {
     if (captureId) {
       fetchStatus();
+      fetchAudioInfo();
+      fetchCorrelationStats();
       
       // Set up polling interval
-      const interval = setInterval(fetchStatus, 5000);
+      const interval = setInterval(() => {
+        fetchStatus();
+        if (correlationStats.processing) {
+          fetchCorrelationStats();
+        }
+      }, 5000);
       setRefreshInterval(interval);
       
       return () => {
@@ -120,6 +151,9 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           const mappedStatus: RecognitionStatus = {
             status: (statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed") || 'not_started',
             started_at: statusData.started_at,
+            correlations_count: statusData.correlations_count,
+            face_count: statusData.face_count,
+            speaker_count: statusData.speaker_count,
             completed_at: statusData.completed_at,
             progress: statusData.completion_percentage || statusData.progress || 0,
             steps: statusData.steps || []
@@ -184,27 +218,97 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   
   const fetchAudioInfo = async () => {
     try {
-      // Use the capture endpoint instead of audio-info which doesn't exist
-      const response = await api.get(`/capture/${captureId}`);
+      console.log('Fetching audio info for captureId:', captureId);
+      const response = await api.get(`/capture/${captureId}/audio`);
+      console.log('Audio info response:', response);
       
-      if (response) {
-        // Extract audio information from capture data
-        setAudioInfo({
-          file_path: response.audio_path || (response.file_path ? response.file_path.replace('.mp4', '.audio.mp3') : null),
-          file_name: response.audio_path ? Path.basename(response.audio_path) : 
-                    (response.file_path ? Path.basename(response.file_path).replace('.mp4', '.audio.mp3') : null),
-          source_url: response.url || null
-        });
+      if (response && response.data) {
+        setAudioInfo(response.data);
+      } else {
+        setAudioInfo(null);
       }
     } catch (err) {
       console.error('Error fetching audio info:', err);
-      // Don't set an error state here, as this is supplementary information
+      setAudioInfo(null);
     }
   };
 
-  // Helper function to get basename from path
-  const basename = (path: string) => {
-    return path ? Path.basename(path) : '';
+  const fetchCorrelationStats = async () => {
+    try {
+      console.log('Fetching correlation stats for captureId:', captureId);
+      const response = await api.get(`/recognition/timeline/${captureId}/correlations`);
+      console.log('Correlation stats response:', response);
+      
+      if (response && response.success) {
+        // Count confidence levels
+        const correlations = response.correlations || [];
+        const highConfidence = correlations.filter((c: any) => 
+          c.confidence_level === 'high' || c.confidence_level === 'very_high'
+        ).length;
+        const mediumConfidence = correlations.filter((c: any) => 
+          c.confidence_level === 'medium'
+        ).length;
+        const lowConfidence = correlations.filter((c: any) => 
+          c.confidence_level === 'low' || c.confidence_level === 'very_low'
+        ).length;
+        
+        setCorrelationStats({
+          total: correlations.length,
+          high_confidence: highConfidence,
+          medium_confidence: mediumConfidence,
+          low_confidence: lowConfidence,
+          face_count: response.face_count || 0,
+          speaker_count: response.speaker_count || 0,
+          processing: false
+        });
+      } else {
+        setCorrelationStats(prev => ({
+          ...prev,
+          processing: false,
+          error: response.error || 'Failed to fetch correlation stats'
+        }));
+      }
+    } catch (err: any) {
+      console.error('Error fetching correlation stats:', err);
+      setCorrelationStats(prev => ({
+        ...prev,
+        processing: false,
+        error: err.message || 'Error fetching correlation stats'
+      }));
+    }
+  };
+  
+  const updateCorrelations = async () => {
+    try {
+      setIsUpdatingCorrelations(true);
+      setCorrelationStats(prev => ({ ...prev, processing: true }));
+      
+      const response = await api.post(`/recognition/timeline/${captureId}/update-correlations`);
+      console.log('Update correlations response:', response);
+      
+      if (response && response.success) {
+        toast.success('Correlation detection updated successfully');
+        // Fetch updated stats
+        fetchCorrelationStats();
+      } else {
+        toast.error(response.error || 'Failed to update correlations');
+        setCorrelationStats(prev => ({
+          ...prev,
+          processing: false,
+          error: response.error || 'Failed to update correlations'
+        }));
+      }
+    } catch (err: any) {
+      console.error('Error updating correlations:', err);
+      toast.error('Error updating correlations');
+      setCorrelationStats(prev => ({
+        ...prev,
+        processing: false,
+        error: err.message || 'Error updating correlations'
+      }));
+    } finally {
+      setIsUpdatingCorrelations(false);
+    }
   };
   
   const startRecognitionProcess = async () => {
@@ -283,7 +387,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   };
   
   const handleOptionChange = (option: keyof TranscriptionOptions) => {
-    setTranscriptionOptions(prev => ({
+    setTranscriptionOptions((prev: TranscriptionOptions) => ({
       ...prev,
       [option]: !prev[option]
     }));
@@ -580,6 +684,90 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         </button>
       </div>
 
+      {/* Correlation Statistics */}
+      {recognitionStatus?.status === 'completed' && (
+        <div className="mt-6 bg-gray-800 dark:bg-gray-900 rounded-lg p-4">
+          <h3 className="text-lg font-semibold mb-3 text-white">Correlation Statistics</h3>
+          
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="bg-gray-700 dark:bg-gray-800 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-blue-400">{correlationStats.face_count}</div>
+              <div className="text-sm text-gray-300">Face Detections</div>
+            </div>
+            <div className="bg-gray-700 dark:bg-gray-800 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-green-400">{correlationStats.speaker_count}</div>
+              <div className="text-sm text-gray-300">Speaker Segments</div>
+            </div>
+            <div className="bg-gray-700 dark:bg-gray-800 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-purple-400">{correlationStats.total}</div>
+              <div className="text-sm text-gray-300">Total Correlations</div>
+            </div>
+          </div>
+          
+          <div className="mb-4">
+            <div className="flex justify-between mb-1">
+              <span className="text-sm text-gray-300">Confidence Levels</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
+              {correlationStats.total > 0 ? (
+                <div className="flex h-full">
+                  <div 
+                    className="bg-yellow-500" 
+                    style={{ width: `${(correlationStats.high_confidence / correlationStats.total) * 100}%` }}
+                    title={`High Confidence: ${correlationStats.high_confidence}`}
+                  ></div>
+                  <div 
+                    className="bg-purple-500" 
+                    style={{ width: `${(correlationStats.medium_confidence / correlationStats.total) * 100}%` }}
+                    title={`Medium Confidence: ${correlationStats.medium_confidence}`}
+                  ></div>
+                  <div 
+                    className="bg-purple-700" 
+                    style={{ width: `${(correlationStats.low_confidence / correlationStats.total) * 100}%` }}
+                    title={`Low Confidence: ${correlationStats.low_confidence}`}
+                  ></div>
+                </div>
+              ) : (
+                <div className="h-full w-full bg-gray-600"></div>
+              )}
+            </div>
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-yellow-500 mr-1 rounded-sm"></div>
+                <span>High: {correlationStats.high_confidence}</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-purple-500 mr-1 rounded-sm"></div>
+                <span>Medium: {correlationStats.medium_confidence}</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-purple-700 mr-1 rounded-sm"></div>
+                <span>Low: {correlationStats.low_confidence}</span>
+              </div>
+            </div>
+          </div>
+          
+          <button
+            onClick={updateCorrelations}
+            disabled={isUpdatingCorrelations || correlationStats.processing}
+            className={`w-full py-2 px-4 rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${isUpdatingCorrelations || correlationStats.processing ? 'bg-gray-600 text-gray-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
+          >
+            {isUpdatingCorrelations || correlationStats.processing ? (
+              <div className="flex justify-center items-center">
+                <div className="spinner-xs mr-2"></div>
+                <span>Updating Correlations...</span>
+              </div>
+            ) : (
+              'Run Enhanced Correlation Detection'
+            )}
+          </button>
+          
+          {correlationStats.error && (
+            <div className="mt-2 text-sm text-red-400">{correlationStats.error}</div>
+          )}
+        </div>
+      )}
+      
       {/* Debug Information */}
       <div className="mt-4 border-t border-gray-700 pt-4">
         <button
@@ -614,6 +802,11 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             <h4 className="font-medium mt-3 mb-1">Recognition Status</h4>
             <pre className="overflow-x-auto">
               {JSON.stringify(recognitionStatus, null, 2)}
+            </pre>
+            
+            <h4 className="font-medium mt-3 mb-1">Correlation Stats</h4>
+            <pre className="overflow-x-auto">
+              {JSON.stringify(correlationStats, null, 2)}
             </pre>
           </div>
         )}
