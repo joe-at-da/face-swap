@@ -77,12 +77,21 @@ const UnifiedRecognitionTimeline: React.FC<UnifiedTimelineProps> = ({
         // Handle different response formats
         const data = response.data || response;
         
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to fetch timeline data');
+        if (!data || !data.success) {
+          // Log the actual response for debugging
+          console.error('Invalid timeline data response:', data);
+          throw new Error((data && data.error) || 'Failed to fetch timeline data');
         }
         
-        setTimelineData(data);
-        console.log('Timeline data loaded:', data);
+        // Ensure timeline and correlations are arrays
+        const safeData = {
+          ...data,
+          timeline: Array.isArray(data.timeline) ? data.timeline : [],
+          correlations: Array.isArray(data.correlations) ? data.correlations : []
+        };
+        
+        setTimelineData(safeData);
+        console.log('Timeline data loaded:', safeData);
       } catch (err) {
         console.error('Error loading timeline data:', err);
         setError('Error loading recognition data. Please try again.');

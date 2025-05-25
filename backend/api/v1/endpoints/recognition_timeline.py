@@ -525,6 +525,102 @@ def update_recognition_timeline(capture_id: str, db: Session = Depends(get_db), 
         raise HTTPException(status_code=500, detail=f"Error updating recognition timeline: {str(e)}")
 
 
+@router.get("/{capture_id}/transcription")
+def get_transcription_timeline(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
+    """Get transcription data integrated with the timeline for a capture session."""
+    logger.info(f"Getting transcription timeline for capture: {capture_id}")
+    
+    try:
+        # Get the capture session
+        try:
+            capture_id_int = int(capture_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid capture ID: {capture_id}")
+        
+        capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id_int).first()
+        if not capture:
+            raise HTTPException(status_code=404, detail=f"Capture not found: {capture_id}")
+        
+        # Check if transcription results exist
+        if not capture.transcription_results:
+            return {
+                "success": False,
+                "error": "No transcription data found for this capture session"
+            }
+        
+        # Parse transcription results
+        try:
+            transcription_data = json.loads(capture.transcription_results)
+        except json.JSONDecodeError:
+            return {
+                "success": False,
+                "error": "Invalid transcription data format"
+            }
+        
+        # Get timeline data
+        timeline_result = timeline_service.get_timeline_events(db, capture_id_int)
+        
+        if not timeline_result.get("success", False):
+            return {
+                "success": False,
+                "error": "No timeline data found for this capture session"
+            }
+        
+        # Get correlations
+        correlations_result = timeline_service.get_correlations(db, capture_id_int)
+        
+        # Integrate transcription with timeline
+        timeline_events = timeline_result.get("timeline", [])
+        transcription_segments = transcription_data.get("segments", [])
+        correlations = correlations_result.get("correlations", []) if correlations_result.get("success", False) else []
+        
+        # Create integrated timeline with transcription
+        integrated_timeline = []
+        
+        # Add transcription segments to timeline
+        for segment in transcription_segments:
+            # Find matching speaker in timeline
+            matching_speakers = []
+            for event in timeline_events:
+                if event.get("type") == "speaker" and (
+                    (segment.get("start") >= event.get("start") and segment.get("start") <= event.get("end")) or
+                    (segment.get("end") >= event.get("start") and segment.get("end") <= event.get("end")) or
+                    (segment.get("start") <= event.get("start") and segment.get("end") >= event.get("end"))
+                ):
+                    matching_speakers.append(event)
+            
+            # Create integrated segment
+            integrated_segment = {
+                "id": segment.get("id"),
+                "type": "transcription",
+                "start": segment.get("start"),
+                "end": segment.get("end"),
+                "text": segment.get("text"),
+                "speaker": segment.get("speaker"),
+                "speaker_events": matching_speakers,
+                "confidence": segment.get("confidence", 1.0)
+            }
+            
+            integrated_timeline.append(integrated_segment)
+        
+        return {
+            "success": True,
+            "transcription": {
+                "text": transcription_data.get("text", ""),
+                "segments": integrated_timeline,
+                "language": transcription_data.get("language", "en"),
+                "duration": transcription_data.get("duration", 0)
+            },
+            "timeline": timeline_events,
+            "correlations": correlations
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting transcription timeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting transcription timeline: {str(e)}")
+
 @router.post("/{capture_id}/process")
 def process_video_recognition(capture_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(deps.get_current_user)):
     """Process a video for face and voice recognition."""

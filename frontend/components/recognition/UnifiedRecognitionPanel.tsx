@@ -55,6 +55,32 @@ interface CorrelationStats {
   error?: string;
 }
 
+interface TranscriptionSegment {
+  id: number;
+  type: string;
+  start: number;
+  end: number;
+  text: string;
+  speaker?: string;
+  speaker_events?: any[];
+  confidence: number;
+}
+
+interface TranscriptionData {
+  text: string;
+  segments: TranscriptionSegment[];
+  language: string;
+  duration: number;
+}
+
+interface IntegratedTimelineData {
+  success: boolean;
+  transcription: TranscriptionData;
+  timeline: any[];
+  correlations: any[];
+  error?: string;
+}
+
 const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   captureId,
   onProcessingComplete
@@ -83,12 +109,58 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     processing: false
   });
   const [isUpdatingCorrelations, setIsUpdatingCorrelations] = useState(false);
+  const [transcriptionData, setTranscriptionData] = useState<TranscriptionData | null>(null);
+  const [integratedTimeline, setIntegratedTimeline] = useState<IntegratedTimelineData | null>(null);
+  const [isLoadingTranscription, setIsLoadingTranscription] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState('');
+
+  const fetchTranscriptionData = async () => {
+    try {
+      setIsLoadingTranscription(true);
+      setTranscriptionError('');
+      
+      console.log('Fetching transcription data for captureId:', captureId);
+      const response = await api.get(`/recognition/timeline/${captureId}/transcription`);
+      console.log('Transcription data response:', response);
+      
+      // Handle different response formats
+      const data = response.data || response;
+      
+      if (data && data.success) {
+        // Ensure transcription data has the expected structure
+        if (data.transcription) {
+          setTranscriptionData(data.transcription);
+          setIntegratedTimeline(data);
+          console.log('Transcription data loaded successfully');
+        } else {
+          console.error('Transcription data missing in response:', data);
+          setTranscriptionError('Invalid transcription data format');
+          setTranscriptionData(null);
+          setIntegratedTimeline(null);
+        }
+      } else {
+        const errorMessage = data?.error || 'Failed to fetch transcription data';
+        console.error('Transcription data error:', errorMessage);
+        setTranscriptionError(errorMessage);
+        setTranscriptionData(null);
+        setIntegratedTimeline(null);
+      }
+    } catch (error) {
+      console.error('Error fetching transcription data:', error);
+      setTranscriptionError('Failed to fetch transcription data');
+      setTranscriptionData(null);
+      setIntegratedTimeline(null);
+    } finally {
+      setIsLoadingTranscription(false);
+    }
+  };
 
   useEffect(() => {
     if (captureId) {
       fetchStatus();
       fetchAudioInfo();
       fetchCorrelationStats();
+      fetchTranscriptionData();
       
       // Set up polling interval
       const interval = setInterval(() => {
@@ -549,53 +621,142 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       </div>
     );
   }
+  // Render transcription timeline
+  const renderTranscriptionTimeline = () => {
+    if (isLoadingTranscription) {
+      return (
+        <div className="flex justify-center items-center h-40">
+          <div className="spinner-sm"></div>
+          <span className="ml-2">Loading transcription...</span>
+        </div>
+      );
+    }
+    
+    if (transcriptionError) {
+      return (
+        <div className="text-red-400 p-3 border border-red-600 rounded-md text-sm">
+          <p>Error loading transcription: {transcriptionError}</p>
+          <button 
+            onClick={fetchTranscriptionData}
+            className="mt-2 px-3 py-1 bg-red-700 hover:bg-red-600 rounded-md text-xs"
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    
+    if (!transcriptionData || !transcriptionData.segments || transcriptionData.segments.length === 0) {
+      return (
+        <div className="text-gray-400 p-3 border border-gray-700 rounded-md text-sm">
+          No transcription data available for this video.
+        </div>
+      );
+    }
+    
+    return (
+      <div className="mt-4">
+        <h3 className="text-lg font-medium mb-2">Transcription Timeline</h3>
+        <div className="max-h-80 overflow-y-auto pr-2">
+          {transcriptionData.segments.map((segment: TranscriptionSegment, index: number) => {
+            // Find speaker color based on speaker name
+            const speakerColor = segment.speaker ? 
+              `hsl(${(segment.speaker.charCodeAt(0) * 10) % 360}, 70%, 50%)` : 
+              '#6B7280';
+            
+            return (
+              <div 
+                key={`segment-${segment.id || index}`}
+                className="mb-3 p-3 bg-gray-900 rounded-md border-l-4"
+                style={{ borderLeftColor: speakerColor }}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <div className="flex items-center">
+                    {segment.speaker && (
+                      <span 
+                        className="px-2 py-1 rounded-md text-xs font-medium mr-2"
+                        style={{ backgroundColor: `${speakerColor}30` }}
+                      >
+                        {segment.speaker}
+                      </span>
+                    )}
+                    <span className="text-gray-400 text-xs">
+                      {formatDuration(segment.start)} - {formatDuration(segment.end)}
+                    </span>
+                  </div>
+                  <span className="text-gray-500 text-xs">
+                    {Math.round(segment.confidence * 100)}% confidence
+                  </span>
+                </div>
+                <p className="text-sm">{segment.text}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="bg-gray-800 text-white rounded-lg p-6 mb-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold">Recognition & Transcription</h2>
       </div>
-
-      {error && (
-        <div className="bg-red-900 border border-red-700 text-white px-4 py-3 rounded mb-4">
+      
+      {loading ? (
+        <div className="flex justify-center items-center h-40">
+          <div className="spinner"></div>
+        </div>
+      ) : error ? (
+        <div className="text-red-400 p-4 border border-red-600 rounded-md">
           {error}
+          <button 
+            onClick={fetchStatus}
+            className="mt-2 px-3 py-1 bg-red-700 hover:bg-red-600 rounded-md text-sm"
+          >
+            Retry
+          </button>
         </div>
-      )}
+      ) : recognitionStatus ? (
+        <div>
+          <div className="mb-4">
+            <div className="flex items-center">
+              <div className={`w-3 h-3 rounded-full mr-2 ${
+                recognitionStatus.status === 'completed' ? 'bg-green-500' : 
+                recognitionStatus.status === 'processing' ? 'bg-blue-500' : 
+                recognitionStatus.status === 'failed' ? 'bg-red-500' : 
+                'bg-gray-500'
+              }`}></div>
+              <span className="font-medium">Status: </span>
+              <span className="ml-1 capitalize">
+                {recognitionStatus.status === 'not_started' ? 'Not Started' : 
+                 recognitionStatus.status === 'processing' ? 'Processing' : 
+                 recognitionStatus.status === 'scheduled' ? 'Scheduled' : 
+                 recognitionStatus.status === 'completed' ? 'Completed' : 
+                 recognitionStatus.status === 'failed' ? 'Failed' : 'Unknown'}
+              </span>
+              {recognitionStatus.status === 'processing' && (
+                <div className="spinner-xs ml-2"></div>
+              )}
+            </div>
 
-      {/* Status Summary */}
-      <div className="mb-6">
-        <div className="flex items-center mb-2">
-          <div className={`w-3 h-3 rounded-full mr-2 ${
-            recognitionStatus?.status === 'completed' ? 'bg-green-500' :
-            recognitionStatus?.status === 'processing' ? 'bg-blue-500' :
-            recognitionStatus?.status === 'failed' ? 'bg-red-500' :
-            'bg-gray-500'
-          }`}></div>
-          <span className="font-medium">Status: </span>
-          <span className="ml-1 capitalize">
-            {recognitionStatus?.status === 'not_started' ? 'Not Started' : 
-             recognitionStatus?.status === 'processing' ? 'Processing' : 
-             recognitionStatus?.status === 'completed' ? 'Completed' :
-             recognitionStatus?.status === 'failed' ? 'Failed' :
-             recognitionStatus?.status === 'scheduled' ? 'Scheduled' : 'Unknown'}
-          </span>
-          {isRefreshing && !isStartingProcess && (
-            <div className="spinner-xs ml-2"></div>
-          )}
+            {recognitionStatus.started_at && (
+              <div className="text-sm text-gray-300 mt-1">
+                Started: {new Date(recognitionStatus.started_at).toLocaleString()}
+              </div>
+            )}
+
+            {recognitionStatus.completed_at && (
+              <div className="text-sm text-gray-300 mb-1">
+                Completed: {new Date(recognitionStatus.completed_at).toLocaleString()}
+              </div>
+            )}
+          </div>
+          
+          {/* Display transcription timeline */}
+          {renderTranscriptionTimeline()}
         </div>
-
-        {recognitionStatus?.started_at && (
-          <div className="text-sm text-gray-300 mb-1">
-            Started: {new Date(recognitionStatus.started_at).toLocaleString()}
-          </div>
-        )}
-
-        {recognitionStatus?.completed_at && (
-          <div className="text-sm text-gray-300 mb-1">
-            Completed: {new Date(recognitionStatus.completed_at).toLocaleString()}
-          </div>
-        )}
-      </div>
+      ) : null}
 
       {/* Processing Status */}
       {recognitionStatus?.status === 'processing' && (
