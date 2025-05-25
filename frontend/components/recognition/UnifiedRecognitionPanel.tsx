@@ -612,15 +612,6 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     );
   };
 
-  if (loading && !recognitionStatus) {
-    return (
-      <div className="bg-gray-800 text-white rounded-lg p-6 mb-6">
-        <div className="flex justify-center items-center h-32">
-          <div className="spinner"></div>
-        </div>
-      </div>
-    );
-  }
   // Render transcription timeline
   const renderTranscriptionTimeline = () => {
     if (isLoadingTranscription) {
@@ -653,10 +644,25 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         </div>
       );
     }
+
+    // Get correlation data if available
+    const correlations = integratedTimeline?.correlations || [];
+    const hasCorrelations = correlations.length > 0;
     
     return (
       <div className="mt-4">
         <h3 className="text-lg font-medium mb-2">Transcription Timeline</h3>
+        
+        {/* Show correlation stats if available */}
+        {hasCorrelations && (
+          <div className="mb-4 p-3 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-md">
+            <h4 className="text-sm font-medium mb-1">Correlation Statistics</h4>
+            <p className="text-xs text-gray-300">
+              Found {correlations.length} correlations between face and voice recognition
+            </p>
+          </div>
+        )}
+        
         <div className="max-h-80 overflow-y-auto pr-2">
           {transcriptionData.segments.map((segment: TranscriptionSegment, index: number) => {
             // Find speaker color based on speaker name
@@ -664,11 +670,21 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               `hsl(${(segment.speaker.charCodeAt(0) * 10) % 360}, 70%, 50%)` : 
               '#6B7280';
             
+            // Find any correlations that match this segment's time range
+            const matchingCorrelations = hasCorrelations ? correlations.filter((corr: any) => {
+              return (segment.start <= corr.end_time && segment.end >= corr.start_time);
+            }) : [];
+            
+            // Use a different style if there are matching correlations
+            const hasMatches = matchingCorrelations.length > 0;
+            const borderColor = hasMatches ? '#10B981' : speakerColor; // Green for matches
+            const bgColor = hasMatches ? 'rgba(16, 185, 129, 0.1)' : 'rgba(31, 41, 55, 0.8)';
+            
             return (
               <div 
                 key={`segment-${segment.id || index}`}
-                className="mb-3 p-3 bg-gray-900 rounded-md border-l-4"
-                style={{ borderLeftColor: speakerColor }}
+                className="mb-3 p-3 rounded-md border-l-4"
+                style={{ borderLeftColor: borderColor, backgroundColor: bgColor }}
               >
                 <div className="flex justify-between items-start mb-1">
                   <div className="flex items-center">
@@ -684,11 +700,28 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
                       {formatDuration(segment.start)} - {formatDuration(segment.end)}
                     </span>
                   </div>
-                  <span className="text-gray-500 text-xs">
-                    {Math.round(segment.confidence * 100)}% confidence
-                  </span>
+                  {segment.confidence && (
+                    <span className="text-gray-500 text-xs">
+                      {(segment.confidence * 100).toFixed(1)}% confidence
+                    </span>
+                  )}
                 </div>
                 <p className="text-sm">{segment.text}</p>
+                
+                {/* Show correlation details if any */}
+                {hasMatches && (
+                  <div className="mt-2 p-2 bg-gray-900 bg-opacity-50 rounded-sm border border-green-800 border-opacity-50">
+                    <p className="text-xs font-medium text-green-400">
+                      {matchingCorrelations.length} face-voice correlation{matchingCorrelations.length > 1 ? 's' : ''}
+                    </p>
+                    {matchingCorrelations.map((corr: any, i: number) => (
+                      <p key={i} className="text-xs text-gray-400 mt-1">
+                        Confidence: {(corr.confidence * 100).toFixed(1)}% 
+                        ({formatDuration(corr.start_time)} - {formatDuration(corr.end_time)})
+                      </p>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}

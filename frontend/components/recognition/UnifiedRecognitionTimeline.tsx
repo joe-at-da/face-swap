@@ -76,6 +76,23 @@ const UnifiedRecognitionTimeline: React.FC<UnifiedTimelineProps> = ({
         
         // Handle different response formats
         const data = response.data || response;
+        console.log('Raw timeline response:', data);
+        
+        // Handle the case where we only have correlations but no success flag
+        // This happens when the endpoint returns partial data
+        if (data && data.correlations && !data.success) {
+          // Create a valid timeline data structure with the correlations
+          const safeData = {
+            success: true, // Assume success if we have correlations
+            video_id: videoId,
+            timeline: [],
+            correlations: Array.isArray(data.correlations) ? data.correlations : []
+          };
+          
+          setTimelineData(safeData);
+          console.log('Timeline data loaded with correlations only:', safeData);
+          return;
+        }
         
         if (!data || !data.success) {
           // Log the actual response for debugging
