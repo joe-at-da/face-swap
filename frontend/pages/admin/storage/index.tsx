@@ -11,6 +11,8 @@ interface StorageStats {
   used: number;
   available: number;
   usage_percent: number;
+  file_count: number;
+  average_file_size: number;
   categories: {
     clips: number;
     captures: number;
@@ -18,20 +20,21 @@ interface StorageStats {
     transcriptions: number;
     other: number;
   };
+  error?: string;
   oldest_files: {
-    clips: Array<{
+    video_clips: Array<{
       id: number;
-      title: string;
+      name: string;
       file_path: string;
-      file_size: number;
+      size_bytes: number;
       created_at: string;
       last_accessed: string | null;
     }>;
-    captures: Array<{
+    capture_sessions: Array<{
       id: number;
-      title: string;
+      name: string;
       file_path: string;
-      file_size: number;
+      size_bytes: number;
       created_at: string;
       last_accessed: string | null;
     }>;
@@ -57,7 +60,7 @@ const StorageManagement: React.FC = () => {
   });
   
   // Fetch storage stats
-  const { data: storageStats, isLoading: statsLoading } = useQuery<StorageStats>({
+  const { data: storageStats, isLoading, isError } = useQuery<StorageStats>({
     queryKey: ['storageStats'],
     queryFn: async () => {
       return await api.get('/admin/storage/stats');
@@ -149,14 +152,14 @@ const StorageManagement: React.FC = () => {
   
   // Handle run cleanup
   const handleRunCleanup = () => {
-    if (window.confirm('Are you sure you want to run storage cleanup? This will permanently delete files according to your settings.')) {
+    if (window.confirm('Are you sure you want to run storage cleanup? This will delete files based on your settings.')) {
       runCleanupMutation.mutate();
     }
   };
   
   // Handle delete file
   const handleDeleteFile = (type: 'clip' | 'capture', id: number, title: string) => {
-    if (window.confirm(`Are you sure you want to delete "${title}"? This action cannot be undone.`)) {
+    if (window.confirm(`Are you sure you want to delete ${type} "${title}"? This action cannot be undone.`)) {
       deleteFileMutation.mutate({ type, id });
     }
   };
@@ -168,16 +171,16 @@ const StorageManagement: React.FC = () => {
   };
   
   return (
-    <DarkLayout>
+    <DarkLayout title="Storage Management | Parliament Video Clip Manager">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-white">Storage Management</h1>
           <button
             onClick={handleRunCleanup}
             disabled={runCleanupMutation.isPending}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50"
           >
-            {runCleanupMutation.isPending ? 'Running Cleanup...' : 'Run Cleanup Now'}
+            {runCleanupMutation.isPending ? 'Running...' : 'Run Cleanup Now'}
           </button>
         </div>
         
@@ -189,166 +192,151 @@ const StorageManagement: React.FC = () => {
                 <h2 className="text-lg font-medium text-white">Storage Overview</h2>
               </div>
               
-              {statsLoading ? (
-                <div className="p-6 text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-                  <p className="mt-4 text-gray-300">Loading storage statistics...</p>
-                </div>
-              ) : storageStats ? (
-                <div className="p-6">
-                  <div className="mb-6">
-                    <div className="flex justify-between mb-2">
-                      <span className="text-gray-300">Used Storage</span>
-                      <span className="text-gray-300">
-                        {formatBytes(storageStats.used)} of {formatBytes(storageStats.total)} ({storageStats.usage_percent}%)
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-700 rounded-full h-2.5">
-                      <div 
-                        className="bg-blue-600 h-2.5 rounded-full" 
-                        style={{ width: `${storageStats.usage_percent}%` }}
-                      ></div>
-                    </div>
-                    <div className="mt-2 flex justify-between text-sm text-gray-400">
-                      <span>Available: {formatBytes(storageStats.available)}</span>
-                    </div>
+              <div className="p-6">
+                {isLoading ? (
+                  <div className="flex justify-center items-center h-40">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
                   </div>
-                  
+                ) : isError ? (
+                  <div className="text-center py-8">
+                    <svg className="mx-auto h-12 w-12 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h3 className="text-lg font-medium mt-2 text-white">Error loading storage statistics</h3>
+                    <p className="text-sm text-gray-400 mt-1">Please try refreshing the page or check system logs.</p>
+                  </div>
+                ) : !storageStats ? (
+                  <div className="p-6 text-center text-gray-400">
+                    <p>No storage statistics available</p>
+                  </div>
+                ) : storageStats.error ? (
+                  <div className="text-center py-8">
+                    <svg className="mx-auto h-12 w-12 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <h3 className="text-lg font-medium mt-2 text-white">Storage Metrics Unavailable</h3>
+                    <p className="text-sm text-gray-400 mt-2">{storageStats.error}</p>
+                    <p className="text-sm text-gray-400 mt-1">Check system logs for more details.</p>
+                  </div>
+                ) : (
                   <div>
-                    <h3 className="text-lg font-medium text-white mb-4">Storage Breakdown</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm text-gray-300">Video Clips</span>
-                          <span className="text-sm text-gray-300">
-                            {formatBytes(storageStats?.categories?.clips || 0)} ({calculateCategoryPercentage(storageStats?.categories?.clips || 0)}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div
-                            className="h-1.5 rounded-full bg-blue-600"
-                            style={{ width: `${calculateCategoryPercentage(storageStats?.categories?.clips || 0)}%` }}
-                          ></div>
-                        </div>
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-gray-400">
+                          {formatBytes(storageStats.used)} of {formatBytes(storageStats.total)} used
+                        </span>
+                        <span className="text-sm font-medium text-gray-400">
+                          {storageStats.usage_percent}%
+                        </span>
                       </div>
-                      
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm text-gray-300">Capture Sessions</span>
-                          <span className="text-sm text-gray-300">
-                            {formatBytes(storageStats?.categories?.captures || 0)} ({calculateCategoryPercentage(storageStats?.categories?.captures || 0)}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div
-                            className="h-1.5 rounded-full bg-green-600"
-                            style={{ width: `${calculateCategoryPercentage(storageStats?.categories?.captures || 0)}%` }}
-                          ></div>
-                        </div>
+                      <div className="w-full bg-gray-700 rounded-full h-2.5">
+                        <div
+                          className={`h-2.5 rounded-full ${
+                            storageStats.usage_percent > 90
+                              ? 'bg-red-600'
+                              : storageStats.usage_percent > 70
+                              ? 'bg-yellow-500'
+                              : 'bg-green-600'
+                          }`}
+                          style={{ width: `${storageStats.usage_percent}%` }}
+                        ></div>
                       </div>
-                      
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm text-gray-300">Thumbnails</span>
-                          <span className="text-sm text-gray-300">
-                            {formatBytes(storageStats?.categories?.thumbnails || 0)} ({calculateCategoryPercentage(storageStats?.categories?.thumbnails || 0)}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div
-                            className="h-1.5 rounded-full bg-yellow-500"
-                            style={{ width: `${calculateCategoryPercentage(storageStats?.categories?.thumbnails || 0)}%` }}
-                          ></div>
-                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                      <div className="bg-gray-700 rounded-lg p-4 text-center">
+                        <p className="text-sm text-gray-400">Total</p>
+                        <p className="text-xl font-semibold text-white">{formatBytes(storageStats.total)}</p>
                       </div>
-                      
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm text-gray-300">Transcriptions</span>
-                          <span className="text-sm text-gray-300">
-                            {formatBytes(storageStats?.categories?.transcriptions || 0)} ({calculateCategoryPercentage(storageStats?.categories?.transcriptions || 0)}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div
-                            className="h-1.5 rounded-full bg-purple-600"
-                            style={{ width: `${calculateCategoryPercentage(storageStats?.categories?.transcriptions || 0)}%` }}
-                          ></div>
-                        </div>
+                      <div className="bg-gray-700 rounded-lg p-4 text-center">
+                        <p className="text-sm text-gray-400">Used</p>
+                        <p className="text-xl font-semibold text-white">{formatBytes(storageStats.used)}</p>
                       </div>
-                      
+                      <div className="bg-gray-700 rounded-lg p-4 text-center">
+                        <p className="text-sm text-gray-400">Available</p>
+                        <p className="text-xl font-semibold text-white">{formatBytes(storageStats.available)}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="mb-6">
+                      <h3 className="text-md font-medium text-white mb-3">Storage Breakdown</h3>
+                      {Object.entries(storageStats.categories).map(([category, bytes]) => {
+                        const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
+                        const percentage = calculateCategoryPercentage(bytes);
+                        const formattedSize = formatBytes(bytes);
+                        
+                        return (
+                          <div key={category} className="mb-3">
+                            <div className="flex justify-between mb-1">
+                              <span className="text-sm font-medium text-gray-400">{categoryName}</span>
+                              <span className="text-sm font-medium text-gray-400">{formattedSize} ({percentage}%)</span>
+                            </div>
+                            <div className="w-full bg-gray-700 rounded-full h-1.5">
+                              <div
+                                className="h-1.5 rounded-full bg-blue-500"
+                                style={{ width: `${percentage}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm text-gray-300">Other</span>
-                          <span className="text-sm text-gray-300">
-                            {formatBytes(storageStats?.categories?.other || 0)} ({calculateCategoryPercentage(storageStats?.categories?.other || 0)}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-700 rounded-full h-1.5">
-                          <div
-                            className="h-1.5 rounded-full bg-gray-500"
-                            style={{ width: `${calculateCategoryPercentage(storageStats?.categories?.other || 0)}%` }}
-                          ></div>
+                        <h3 className="text-md font-medium text-white mb-3">File Statistics</h3>
+                        <div className="bg-gray-700 rounded-lg p-4">
+                          <div className="flex justify-between mb-2">
+                            <span className="text-sm text-gray-400">Total Files</span>
+                            <span className="text-sm font-medium text-white">{storageStats.file_count.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-400">Average File Size</span>
+                            <span className="text-sm font-medium text-white">{formatBytes(storageStats.average_file_size)}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="p-6 text-center text-red-400">Error loading storage statistics</div>
-              )}
+                )}
+              </div>
             </div>
             
             {/* Oldest files */}
-            {storageStats && (
-              <div className="bg-gray-800 rounded-lg shadow overflow-hidden mt-6">
+            {storageStats && !isLoading && !isError && !storageStats.error && (
+              <div className="mt-6 bg-gray-800 rounded-lg shadow overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-700">
                   <h2 className="text-lg font-medium text-white">Oldest Files</h2>
                 </div>
                 
                 <div className="p-6">
                   <div className="mb-6">
-                    <h3 className="text-sm font-medium text-white mb-3">Oldest Video Clips</h3>
-                    {!storageStats.oldest_files?.clips || storageStats.oldest_files.clips.length === 0 ? (
+                    <h3 className="text-md font-medium text-white mb-3">Video Clips</h3>
+                    {storageStats.oldest_files.video_clips.length === 0 ? (
                       <p className="text-sm text-gray-400">No video clips found</p>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-700">
-                          <thead className="bg-gray-900">
+                          <thead className="bg-gray-700">
                             <tr>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Title
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Size
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Created
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Last Accessed
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Actions
-                              </th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Name</th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Size</th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Created</th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Last Accessed</th>
+                              <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="bg-gray-800 divide-y divide-gray-700">
-                            {storageStats.oldest_files?.clips?.map((clip) => (
-                              <tr key={clip.id} className="hover:bg-gray-700">
+                            {storageStats.oldest_files.video_clips.map((clip) => (
+                              <tr key={clip.id}>
                                 <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm font-medium text-white">{clip.title}</div>
+                                  <div className="text-sm font-medium text-white">{clip.name}</div>
+                                  <div className="text-xs text-gray-400">{clip.file_path}</div>
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm text-gray-300">{formatBytes(clip.file_size)}</div>
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm text-gray-300">{formatDate(clip.created_at)}</div>
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm text-gray-300">{formatDate(clip.last_accessed)}</div>
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatBytes(clip.size_bytes)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatDate(clip.created_at)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatDate(clip.last_accessed)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-right">
                                   <Link href={`/clips/${clip.id}`}>
                                     <span className="text-blue-400 hover:text-blue-300 mr-3 cursor-pointer">
                                       View
@@ -356,7 +344,7 @@ const StorageManagement: React.FC = () => {
                                   </Link>
                                   <button
                                     type="button"
-                                    onClick={() => handleDeleteFile('clip', clip.id, clip.title)}
+                                    onClick={() => handleDeleteFile('clip', clip.id, clip.name)}
                                     disabled={deleteFileMutation.isPending}
                                     className="text-red-400 hover:text-red-300"
                                   >
@@ -372,47 +360,59 @@ const StorageManagement: React.FC = () => {
                   </div>
                   
                   <div>
-                    <h3 className="text-sm font-medium text-white mb-3">Oldest Capture Sessions</h3>
-                    {!storageStats.oldest_files?.captures || storageStats.oldest_files.captures.length === 0 ? (
+                    <h3 className="text-md font-medium text-white mb-3">Capture Sessions</h3>
+                    {storageStats.oldest_files.capture_sessions.length === 0 ? (
                       <p className="text-sm text-gray-400">No capture sessions found</p>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-700">
-                          <thead className="bg-gray-900">
+                          <thead className="bg-gray-700">
                             <tr>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Title
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Size
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Created
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Last Accessed
-                              </th>
-                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                                Actions
-                              </th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Name</th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Size</th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Created</th>
+                              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Last Accessed</th>
+                              <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="bg-gray-800 divide-y divide-gray-700">
-                            {storageStats.oldest_files?.captures?.map((capture) => (
-                              <tr key={capture.id} className="hover:bg-gray-700">
+                            {storageStats.oldest_files.capture_sessions.map((capture) => (
+                              <tr key={capture.id}>
                                 <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm font-medium text-white">{capture.title}</div>
+                                  <div className="text-sm font-medium text-white">{capture.name}</div>
+                                  <div className="text-xs text-gray-400">{capture.file_path}</div>
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm text-gray-300">{formatBytes(capture.file_size)}</div>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatBytes(capture.size_bytes)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatDate(capture.created_at)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">{formatDate(capture.last_accessed)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-right">
+                                  <Link href={`/capture/${capture.id}`}>
+                                    <span className="text-blue-400 hover:text-blue-300 mr-3 cursor-pointer">
+                                      View
+                                    </span>
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteFile('capture', capture.id, capture.name)}
+                                    disabled={deleteFileMutation.isPending}
+                                    className="text-red-400 hover:text-red-300"
+                                  >
+                                    Delete
+                                  </button>
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm text-gray-300">{formatDate(capture.created_at)}</div>
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <div className="text-sm text-gray-300">{formatDate(capture.last_accessed)}</div>
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Cleanup settings */}
           <div>
             <div className="bg-gray-800 rounded-lg shadow overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-700">
@@ -420,26 +420,21 @@ const StorageManagement: React.FC = () => {
               </div>
               
               <div className="p-6">
-                <div className="space-y-6">
-                  <div className="flex items-start">
-                    <div className="flex items-center h-5">
+                <div className="space-y-4">
+                  <div>
+                    <label className="flex items-center">
                       <input
-                        id="auto_cleanup_enabled"
-                        name="auto_cleanup_enabled"
                         type="checkbox"
+                        name="auto_cleanup_enabled"
                         checked={cleanupSettings.auto_cleanup_enabled}
                         onChange={handleSettingsChange}
-                        className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-600 rounded bg-gray-700"
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-600 rounded"
                       />
-                    </div>
-                    <div className="ml-3 text-sm">
-                      <label htmlFor="auto_cleanup_enabled" className="font-medium text-white">
-                        Enable Automatic Cleanup
-                      </label>
-                      <p className="text-gray-400">
-                        Automatically delete old files when storage is low
-                      </p>
-                    </div>
+                      <span className="ml-2 text-sm font-medium text-white">Enable Automatic Cleanup</span>
+                    </label>
+                    <p className="mt-1 text-sm text-gray-400">
+                      Automatically cleans old files when storage is low
+                    </p>
                   </div>
                   
                   <div>

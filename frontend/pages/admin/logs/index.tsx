@@ -32,6 +32,7 @@ const SystemLogsPage: React.FC = () => {
     data: logsData,
     isLoading,
     isError,
+    error,
     refetch
   } = useQuery<LogEntry[]>({
     queryKey: ['systemLogs', page, logLevel],
@@ -71,6 +72,11 @@ const SystemLogsPage: React.FC = () => {
         
         console.log('Processed logs array:', logsArray);
         
+        if (!logsArray || logsArray.length === 0) {
+          console.warn('No logs found in response');
+          return [];
+        }
+        
         // Add unique IDs to logs if they don't have them
         return logsArray.map((log: any, index: number) => ({
           ...log,
@@ -85,6 +91,7 @@ const SystemLogsPage: React.FC = () => {
     },
     staleTime: 30000, // Consider data fresh for 30 seconds
     refetchInterval: 30000, // Refresh every 30 seconds
+    retry: 2, // Retry failed requests twice
   });
   
   // Process logs for pagination
@@ -122,7 +129,7 @@ const SystemLogsPage: React.FC = () => {
   };
 
   return (
-    <DarkLayout>
+    <DarkLayout title="System Logs | Parliament Video Clip Manager">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6 flex justify-between items-center">
           <h1 className="text-3xl font-bold text-white">System Logs</h1>
@@ -151,12 +158,48 @@ const SystemLogsPage: React.FC = () => {
             </div>
           ) : isError ? (
             <div className="bg-gray-800 border border-red-600 text-red-400 px-4 py-3 rounded relative mb-4" role="alert">
-              <strong className="font-bold">Error: </strong>
-              <span className="block sm:inline">Failed to load system logs.</span>
+              <div className="flex items-center mb-2">
+                <svg className="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <strong className="font-bold text-lg">Error Loading Logs</strong>
+              </div>
+              <p className="block sm:inline mb-2">Failed to load system logs. This could be due to:</p>
+              <ul className="list-disc ml-6 mb-2">
+                <li>Docker services not running properly</li>
+                <li>Backend API connectivity issues</li>
+                <li>Log files not being accessible</li>
+              </ul>
+              <p className="text-sm">Check the browser console for more details.</p>
+              <div className="mt-4">
+                <button 
+                  onClick={() => refetch()} 
+                  className="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded mr-2"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
           ) : logs?.items.length === 0 ? (
             <div className="text-center py-8 text-gray-300">
-              <p>No logs found.</p>
+              <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <h3 className="text-lg font-medium text-white mb-2">No logs found</h3>
+              <p className="mb-2">There are no system logs matching your current filters.</p>
+              {logLevel !== 'all' && (
+                <p className="mb-4">Try changing the log level filter to see more results.</p>
+              )}
+              <button 
+                onClick={() => {
+                  setLogLevel('all');
+                  setPage(1);
+                  refetch();
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+              >
+                View All Logs
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">

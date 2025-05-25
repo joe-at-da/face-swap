@@ -37,12 +37,64 @@ interface SystemStats {
 }
 
 const AdminDashboard: React.FC = () => {
-  // Fetch system stats
-  const { data: systemStats, isLoading: statsLoading, isError: statsError } = useQuery({
+  // Define the SystemStats type
+  interface SystemStats {
+    storage: {
+      total: number;
+      used: number;
+      available: number;
+    };
+    clips: {
+      total: number;
+      processing: number;
+      completed: number;
+      failed: number;
+    };
+    captures: {
+      total: number;
+      active: number;
+      completed: number;
+      failed: number;
+    };
+    users: {
+      total: number;
+      active: number;
+      inactive: number;
+    };
+    social: {
+      total: number;
+      scheduled: number;
+      published: number;
+    };
+  }
+
+  // Default empty stats for initial state
+  const emptyStats: SystemStats = {
+    storage: { total: 0, used: 0, available: 0 },
+    clips: { total: 0, processing: 0, completed: 0, failed: 0 },
+    captures: { total: 0, active: 0, completed: 0, failed: 0 },
+    users: { total: 0, active: 0, inactive: 0 },
+    social: { total: 0, scheduled: 0, published: 0 }
+  };
+
+  // Fetch system stats with proper typing
+  const { data: systemStats = emptyStats, isLoading: statsLoading, isError: statsError, refetch } = useQuery<SystemStats>({
     queryKey: ['systemStats'],
     queryFn: async () => {
-      return await api.get('/admin/stats');
+      console.log('Fetching system stats from API...');
+      try {
+        const response = await api.get('/admin/stats');
+        console.log('System stats API response:', response);
+        return response as SystemStats;
+      } catch (error) {
+        console.error('Error fetching system stats:', error);
+        throw error;
+      }
     },
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+    staleTime: 0, // Always consider data stale
+    retry: 2,
   });
   
   // Format bytes to human-readable format
@@ -67,6 +119,18 @@ const AdminDashboard: React.FC = () => {
       <div className="page-container">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-white">Admin Dashboard</h1>
+          <button 
+            onClick={() => {
+              console.log('Manually refreshing system stats...');
+              refetch();
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded flex items-center"
+          >
+            <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh Data
+          </button>
         </div>
         
         {/* Quick links */}
@@ -103,7 +167,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           </Link>
           
-          <Link href="/admin/settings">
+          <Link href="/admin/system">
             <div className="bg-gray-800 rounded-lg shadow p-6 hover:shadow-md transition-shadow cursor-pointer border border-gray-700">
               <div className="flex items-center">
                 <div className="p-3 rounded-full bg-gray-700 text-green-400">
@@ -164,45 +228,61 @@ const AdminDashboard: React.FC = () => {
                 {/* Storage usage */}
                 <div className="bg-gray-900 rounded-lg p-6">
                   <h3 className="text-lg font-medium text-white mb-4">Storage Usage</h3>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-400">
-                      {formatBytes(systemStats.storage.used)} of {formatBytes(systemStats.storage.total)} used
-                    </span>
-                    <span className="text-sm font-medium text-gray-500">
-                      {calculateStoragePercentage(systemStats)}%
-                    </span>
+                  {/* Debug info */}
+                  <div className="bg-gray-800 p-2 mb-4 rounded text-xs text-gray-400 overflow-auto">
+                    <pre>Storage data: {JSON.stringify(systemStats.storage, null, 2)}</pre>
                   </div>
-                  <div className="w-full bg-gray-700 rounded-full h-2.5">
-                    <div
-                      className={`h-2.5 rounded-full ${
-                        calculateStoragePercentage(systemStats) > 90
-                          ? 'bg-red-600'
-                          : calculateStoragePercentage(systemStats) > 70
-                          ? 'bg-yellow-500'
-                          : 'bg-green-600'
-                      }`}
-                      style={{ width: `${calculateStoragePercentage(systemStats)}%` }}
-                    ></div>
-                  </div>
-                  <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-sm font-medium text-gray-400">Total</p>
-                      <p className="text-lg font-semibold text-white">{formatBytes(systemStats.storage.total)}</p>
+                  {systemStats.storage && systemStats.storage.total === 0 ? (
+                    <div className="text-center py-4">
+                      <svg className="mx-auto h-10 w-10 text-yellow-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <p className="text-sm text-gray-400">Storage metrics unavailable</p>
+                      <p className="text-xs text-gray-500 mt-1">Docker may not be available</p>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-400">Used</p>
-                      <p className="text-lg font-semibold text-white">{formatBytes(systemStats.storage.used)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-400">Available</p>
-                      <p className="text-lg font-semibold text-white">{formatBytes(systemStats.storage.available)}</p>
-                    </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-gray-400">
+                          {formatBytes(systemStats.storage.used)} of {formatBytes(systemStats.storage.total)} used
+                        </span>
+                        <span className="text-sm font-medium text-gray-500">
+                          {calculateStoragePercentage(systemStats)}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-2.5">
+                        <div
+                          className={`h-2.5 rounded-full ${
+                            calculateStoragePercentage(systemStats) > 90
+                              ? 'bg-red-600'
+                              : calculateStoragePercentage(systemStats) > 70
+                              ? 'bg-yellow-500'
+                              : 'bg-green-600'
+                          }`}
+                          style={{ width: `${calculateStoragePercentage(systemStats)}%` }}
+                        ></div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                        <div>
+                          <p className="text-sm font-medium text-gray-400">Total</p>
+                          <p className="text-lg font-semibold text-white">{formatBytes(systemStats.storage.total)}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-400">Used</p>
+                          <p className="text-lg font-semibold text-white">{formatBytes(systemStats.storage.used)}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-400">Available</p>
+                          <p className="text-lg font-semibold text-white">{formatBytes(systemStats.storage.available)}</p>
+                        </div>
+                      </div>
+                    </>
+                  )}
                   <div className="mt-4">
                     <Link href="/admin/storage">
-                      <span className="text-blue-400 hover:text-blue-300 text-sm cursor-pointer">
-                        Manage Storage →
-                      </span>
+                      <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                        Manage Storage
+                      </button>
                     </Link>
                   </div>
                 </div>
@@ -321,15 +401,15 @@ const AdminDashboard: React.FC = () => {
                 <div>
                   <div className="grid grid-cols-3 gap-4 mb-4">
                     <div className="bg-gray-900 p-4 rounded-lg text-center">
-                      <p className="text-2xl font-bold text-white">{systemStats.social.total_posts}</p>
+                      <p className="text-2xl font-bold text-white">{systemStats.social.total}</p>
                       <p className="text-sm text-gray-400">Total Posts</p>
                     </div>
                     <div className="bg-gray-900 p-4 rounded-lg text-center">
-                      <p className="text-2xl font-bold text-blue-400">{systemStats.social.scheduled_posts}</p>
+                      <p className="text-2xl font-bold text-blue-400">{systemStats.social.scheduled}</p>
                       <p className="text-sm text-gray-400">Scheduled</p>
                     </div>
                     <div className="bg-gray-900 p-4 rounded-lg text-center">
-                      <p className="text-2xl font-bold text-green-400">{systemStats.social.published_posts}</p>
+                      <p className="text-2xl font-bold text-green-400">{systemStats.social.published}</p>
                       <p className="text-sm text-gray-400">Published</p>
                     </div>
                   </div>
@@ -372,6 +452,7 @@ const AdminDashboard: React.FC = () => {
                 </span>
               </Link>
               
+              {/* TODO: Setup API doc and link to it from here */}
               <Link href="/admin/settings/api">
                 <span className="block p-4 bg-gray-900 rounded-lg text-center hover:bg-gray-700 transition-colors cursor-pointer">
                   <svg className="h-6 w-6 mx-auto text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">

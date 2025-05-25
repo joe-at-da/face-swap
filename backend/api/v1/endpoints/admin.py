@@ -74,8 +74,14 @@ async def get_system_stats(
             # Use the improved get_disk_usage method that matches Docker Desktop
             disk_usage = DockerMetrics.get_disk_usage()
             
+            # Print the entire disk_usage response for debugging
+            print(f"DEBUG: Full disk_usage response: {disk_usage}")
+            
             # Extract disk stats from the disk_usage response
             disk_stats = disk_usage.get("disk_stats", {})
+            
+            # Print the disk_stats for debugging
+            print(f"DEBUG: disk_stats: {disk_stats}")
             
             # Use the disk_stats values which include total_bytes, used_bytes, and free_bytes
             disk_info = {
@@ -84,6 +90,8 @@ async def get_system_stats(
                 "free_bytes": disk_stats.get("free_bytes", 0)
             }
             
+            # Print the disk_info for debugging
+            print(f"DEBUG: disk_info: {disk_info}")
             print(f"Dashboard using disk stats: Total: {disk_info['total_bytes'] / (1024**3):.2f} GB, Used: {disk_info['used_bytes'] / (1024**3):.2f} GB")
         except Exception as docker_error:
             print(f"Dashboard disk metrics failed: {str(docker_error)}. Using fallback method.")
@@ -141,9 +149,9 @@ async def get_system_stats(
         # Return default values instead of throwing an error
         return {
             "storage": {
-                "total": 1000000000000,  # 1 TB
-                "used": 250000000000,    # 250 GB
-                "available": 750000000000 # 750 GB
+                "total": 0,
+                "used": 0,
+                "available": 0
             },
             "clips": {
                 "total": 0,
@@ -280,14 +288,13 @@ async def get_storage_stats(
                 }
             except Exception as disk_error:
                 print(f"Disk usage fallback failed: {str(disk_error)}. Using default values.")
-                # If all else fails, use the values from Docker Desktop
                 disk_info = {
-                    "total_bytes": 1144307056640,  # 1065.85 GB in bytes
-                    "used_bytes": 99216228352,     # 92.41 GB in bytes
-                    "free_bytes": 1045090828288    # 973.44 GB in bytes
+                    "total_bytes": 0,
+                    "used_bytes": 0,
+                    "free_bytes": 0
                 }
                 disk_usage = {
-                    "total_volume_bytes": 99216228352,  # 92.41 GB in bytes
+                    "total_volume_bytes": 0,
                     "volumes": {}
                 }
         
@@ -427,9 +434,9 @@ async def get_storage_stats(
         print(traceback.format_exc())
         
         # Calculate default usage percentage
-        total_bytes = 1000000000000  # 1 TB
-        used_bytes = 250000000000    # 250 GB
-        usage_percent = 25.0  # 25%
+        total_bytes = 0
+        used_bytes = 0
+        usage_percent = 0.0
         
         # Return default values in case of error in the format expected by the frontend
         return {
@@ -438,20 +445,20 @@ async def get_storage_stats(
             "available": total_bytes - used_bytes,
             "usage_percent": usage_percent,
             "file_count": file_count if 'file_count' in locals() else 0,
-            "average_file_size": 250000000,  # 250 MB average
+            "average_file_size": 0,
             "categories": {
-                "clips": 150000000000,  # 150 GB
-                "captures": 50000000000,  # 50 GB
-                "thumbnails": 5000000000,  # 5 GB
-                "transcriptions": 5000000000,  # 5 GB
-                "other": 40000000000  # 40 GB
+                "clips": 0,
+                "captures": 0,
+                "thumbnails": 0,
+                "transcriptions": 0,
+                "other": 0
             },
             "breakdown": {
-                "video_clips_bytes": 150000000000,  # 150 GB
-                "capture_sessions_bytes": 50000000000,  # 50 GB
-                "thumbnails_bytes": 5000000000,  # 5 GB
-                "transcriptions_bytes": 5000000000,  # 5 GB
-                "other_bytes": 40000000000  # 40 GB
+                "video_clips_bytes": 0,
+                "capture_sessions_bytes": 0,
+                "thumbnails_bytes": 0,
+                "transcriptions_bytes": 0,
+                "other_bytes": 0
             },
             "oldest_files": {
                 "video_clips": [],
