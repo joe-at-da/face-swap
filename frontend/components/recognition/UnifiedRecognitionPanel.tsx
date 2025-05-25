@@ -225,11 +225,20 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       if (response && response.data) {
         setAudioInfo(response.data);
       } else {
-        setAudioInfo(null);
+        setAudioInfo({
+          file_path: null,
+          file_name: null,
+          source_url: null
+        });
       }
     } catch (err) {
       console.error('Error fetching audio info:', err);
-      setAudioInfo(null);
+      // Set default audio info instead of null to prevent UI errors
+      setAudioInfo({
+        file_path: null,
+        file_name: null,
+        source_url: null
+      });
     }
   };
 
@@ -259,21 +268,36 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           low_confidence: lowConfidence,
           face_count: response.face_count || 0,
           speaker_count: response.speaker_count || 0,
-          processing: false
+          processing: false,
+          error: undefined // Clear any previous errors
         });
       } else {
+        // Keep existing stats but update processing status and error
         setCorrelationStats(prev => ({
           ...prev,
+          total: prev.total || 0,
+          high_confidence: prev.high_confidence || 0,
+          medium_confidence: prev.medium_confidence || 0,
+          low_confidence: prev.low_confidence || 0,
+          face_count: prev.face_count || 0,
+          speaker_count: prev.speaker_count || 0,
           processing: false,
-          error: response.error || 'Failed to fetch correlation stats'
+          error: response?.error || 'Failed to fetch correlation stats'
         }));
       }
     } catch (err: any) {
       console.error('Error fetching correlation stats:', err);
+      // Maintain existing stats but update error state
       setCorrelationStats(prev => ({
         ...prev,
+        total: prev.total || 0,
+        high_confidence: prev.high_confidence || 0,
+        medium_confidence: prev.medium_confidence || 0,
+        low_confidence: prev.low_confidence || 0,
+        face_count: prev.face_count || 0,
+        speaker_count: prev.speaker_count || 0,
         processing: false,
-        error: err.message || 'Error fetching correlation stats'
+        error: err?.message || 'Error fetching correlation stats'
       }));
     }
   };
@@ -281,7 +305,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const updateCorrelations = async () => {
     try {
       setIsUpdatingCorrelations(true);
-      setCorrelationStats(prev => ({ ...prev, processing: true }));
+      setCorrelationStats(prev => ({ ...prev, processing: true, error: undefined }));
       
       const response = await api.post(`/recognition/timeline/${captureId}/update-correlations`);
       console.log('Update correlations response:', response);
@@ -289,22 +313,24 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       if (response && response.success) {
         toast.success('Correlation detection updated successfully');
         // Fetch updated stats
-        fetchCorrelationStats();
+        await fetchCorrelationStats();
       } else {
-        toast.error(response.error || 'Failed to update correlations');
+        const errorMessage = response?.error || 'Failed to update correlations';
+        toast.error(errorMessage);
         setCorrelationStats(prev => ({
           ...prev,
           processing: false,
-          error: response.error || 'Failed to update correlations'
+          error: errorMessage
         }));
       }
     } catch (err: any) {
       console.error('Error updating correlations:', err);
-      toast.error('Error updating correlations');
+      const errorMessage = err?.message || 'Error updating correlations';
+      toast.error(errorMessage);
       setCorrelationStats(prev => ({
         ...prev,
         processing: false,
-        error: err.message || 'Error updating correlations'
+        error: errorMessage
       }));
     } finally {
       setIsUpdatingCorrelations(false);

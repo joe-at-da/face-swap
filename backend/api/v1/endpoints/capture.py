@@ -612,6 +612,45 @@ async def get_capture_logs(
         "total_pages": total_pages
     }
 
+@router.get("/{capture_id}/audio", response_model=Dict[str, Any])
+async def get_capture_audio(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Get audio information for a specific capture session."""
+    has_permission(current_user, [UserRole.ADMIN, UserRole.MP, UserRole.STAFF])
+    
+    # Get the capture session
+    capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == capture_id).first()
+    if not capture:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capture session with ID {capture_id} not found"
+        )
+    
+    # Get the file path
+    file_path = getattr(capture, 'file_path', None)
+    
+    # If no file path, check if there's an audio path
+    audio_path = getattr(capture, 'audio_path', None)
+    
+    # Extract the file name from the path
+    file_name = None
+    if file_path:
+        file_name = os.path.basename(file_path)
+    elif audio_path:
+        file_name = os.path.basename(audio_path)
+    
+    # Get the source URL
+    source_url = getattr(capture, 'source_url', None)
+    
+    return {
+        "file_path": file_path or audio_path,
+        "file_name": file_name,
+        "source_url": source_url
+    }
+
 @router.get("/{capture_id}/metadata", response_model=Dict[str, Any])
 async def get_capture_metadata(
     capture_id: int,

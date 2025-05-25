@@ -317,16 +317,25 @@ def update_correlations(capture_id: str, db: Session = Depends(get_db), current_
             "speaker_events": speaker_events
         })
         
-        # Update the correlations in the timeline data
-        if timeline_result.get("timeline_id"):
-            timeline_record = db.query(models.RecognitionTimeline).filter(
-                models.RecognitionTimeline.id == timeline_result.get("timeline_id")
-            ).first()
-            
-            if timeline_record:
-                # Update the correlations field
-                timeline_record.correlations = json.dumps(make_json_serializable(correlations))
-                db.commit()
+        # Update the correlations in the capture session's timeline_data
+        try:
+            if capture.timeline_data:
+                timeline_data = json.loads(capture.timeline_data)
+                timeline_data['correlations'] = correlations
+                capture.timeline_data = json.dumps(make_json_serializable(timeline_data))
+            else:
+                # Create new timeline data with correlations
+                capture.timeline_data = json.dumps(make_json_serializable({
+                    'timeline': timeline_events,
+                    'correlations': correlations
+                }))
+            db.commit()
+        except Exception as e:
+            logger.error(f"Error updating timeline data with correlations: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error updating timeline data: {str(e)}"
+            }
         
         return {
             "success": True,

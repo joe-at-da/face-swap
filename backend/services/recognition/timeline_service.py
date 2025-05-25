@@ -641,34 +641,39 @@ class TimelineService:
         try:
             logger.info(f"Getting correlations for capture {capture_id}")
             
-            # First check if we have a timeline record with correlations
-            timeline = db.query(models.RecognitionTimeline).filter(
-                models.RecognitionTimeline.capture_session_id == capture_id
+            # Update the correlations in the capture session
+            capture = db.query(models.CaptureSession).filter(
+                models.CaptureSession.id == capture_id
             ).first()
             
-            if timeline and timeline.correlations:
+            # First check if the capture session has stored correlations
+            capture = db.query(models.CaptureSession).filter(
+                models.CaptureSession.id == capture_id
+            ).first()
+            
+            if capture and hasattr(capture, 'timeline_data') and capture.timeline_data:
                 try:
-                    correlations_data = json.loads(timeline.correlations)
-                    
-                    # Get face and speaker counts
-                    face_events = db.query(models.RecognitionEvent).filter(
-                        models.RecognitionEvent.capture_session_id == capture_id,
-                        models.RecognitionEvent.event_type == "face"
-                    ).count()
-                    
-                    speaker_events = db.query(models.RecognitionEvent).filter(
-                        models.RecognitionEvent.capture_session_id == capture_id,
-                        models.RecognitionEvent.event_type == "speaker"
-                    ).count()
-                    
-                    return {
-                        "success": True,
-                        "correlations": correlations_data,
-                        "face_count": face_events,
-                        "speaker_count": speaker_events
-                    }
+                    timeline_data = json.loads(capture.timeline_data)
+                    if 'correlations' in timeline_data:
+                        # Get face and speaker counts
+                        face_events = db.query(models.RecognitionEvent).filter(
+                            models.RecognitionEvent.capture_session_id == capture_id,
+                            models.RecognitionEvent.event_type == "face"
+                        ).count()
+                        
+                        speaker_events = db.query(models.RecognitionEvent).filter(
+                            models.RecognitionEvent.capture_session_id == capture_id,
+                            models.RecognitionEvent.event_type == "speaker"
+                        ).count()
+                        
+                        return {
+                            "success": True,
+                            "correlations": timeline_data['correlations'],
+                            "face_count": face_events,
+                            "speaker_count": speaker_events
+                        }
                 except json.JSONDecodeError:
-                    logger.error(f"Invalid correlations JSON for timeline {timeline.id}")
+                    logger.error(f"Invalid timeline data JSON for capture {capture_id}")
             
             # If no correlations found in timeline, try to generate them
             # Get the timeline events
