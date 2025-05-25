@@ -256,10 +256,72 @@ class TimelineService:
                         
                         # Only consider significant overlaps
                         if overlap_duration > 0.3:
-                            # Check if they refer to the same person
-                            same_person = False
+                            # Extract names for comparison
+                            face_name = face_item["person_name"].lower() if face_item["person_name"] else ""
+                            speaker_name = speaker_item["person_name"].lower() if speaker_item["person_name"] else ""
+                            
+                            # Calculate name similarity score (0-1)
+                            name_similarity = 0.0
+                            if face_name and speaker_name:
+                                # Simple string similarity
+                                if face_name == speaker_name:
+                                    name_similarity = 1.0
+                                elif face_name in speaker_name or speaker_name in face_name:
+                                    name_similarity = 0.8
+                                else:
+                                    # Simple character overlap similarity
+                                    common_chars = sum(1 for c in face_name if c in speaker_name)
+                                    name_similarity = common_chars / max(len(face_name), len(speaker_name)) if max(len(face_name), len(speaker_name)) > 0 else 0.0
+                            
+                            # Check for explicit links between profiles
+                            explicit_link = False
                             if face_item["person_id"] and speaker_item["person_id"]:
-                                same_person = face_item["person_id"] == speaker_item["person_id"]
+                                explicit_link = face_item["person_id"] == speaker_item["person_id"]
+                            
+                            # Extract confidence scores
+                            face_confidence = face_item.get("confidence", 0.5)
+                            speaker_confidence = speaker_item.get("confidence", 0.5)
+                            
+                            # Calculate confidence boosters/penalties
+                            boosters = {
+                                "explicit_link": 0.2 if explicit_link else 0.0,
+                                "name_match": 0.15 * name_similarity,
+                                "high_individual_confidence": 0.1 if (face_confidence > 0.8 and speaker_confidence > 0.8) else 0.0,
+                                "temporal_overlap": min(0.1, overlap_duration / 5.0)  # Up to 0.1 boost for longer overlaps
+                            }
+                            
+                            # Calculate penalties
+                            penalties = {
+                                "name_mismatch": 0.2 if (face_name and speaker_name and name_similarity < 0.3) else 0.0,
+                                "low_face_confidence": 0.1 if face_confidence < 0.5 else 0.0,
+                                "low_speaker_confidence": 0.1 if speaker_confidence < 0.5 else 0.0
+                            }
+                            
+                            # Calculate total boosters and penalties
+                            total_boosters = sum(boosters.values())
+                            total_penalties = sum(penalties.values())
+                            
+                            # Calculate base combined confidence (weighted average)
+                            base_combined = 0.6 * face_confidence + 0.4 * speaker_confidence
+                            
+                            # Apply boosters and penalties to get final confidence
+                            final_confidence = min(1.0, max(0.0, base_combined + total_boosters - total_penalties))
+                            
+                            # Determine if same person based on confidence and other factors
+                            same_person = explicit_link or name_similarity > 0.7 or final_confidence > 0.7
+                            
+                            # Determine confidence level category
+                            confidence_level = "unknown"
+                            if final_confidence >= 0.9:
+                                confidence_level = "very_high"
+                            elif final_confidence >= 0.75:
+                                confidence_level = "high"
+                            elif final_confidence >= 0.6:
+                                confidence_level = "medium"
+                            elif final_confidence >= 0.4:
+                                confidence_level = "low"
+                            else:
+                                confidence_level = "very_low"
                             
                             correlations.append({
                                 "face_id": face_item["id"],
@@ -268,8 +330,18 @@ class TimelineService:
                                 "speaker_name": speaker_item["person_name"],
                                 "start": overlap_start,
                                 "end": overlap_end,
-                                "confidence": 0.8 if same_person else 0.5,
-                                "same_person": same_person
+                                "confidence": final_confidence,
+                                "confidence_level": confidence_level,
+                                "same_person": same_person,
+                                "name_similarity": name_similarity,
+                                "explicit_link": explicit_link,
+                                "factors": {
+                                    "boosters": boosters,
+                                    "penalties": penalties,
+                                    "face_confidence": face_confidence,
+                                    "speaker_confidence": speaker_confidence,
+                                    "base_combined": base_combined
+                                }
                             })
             
             return {

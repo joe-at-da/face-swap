@@ -18,6 +18,7 @@ from backend.db import models
 from backend.db.session import get_db
 from backend.services.recognition.facial_recognition import FacialRecognitionService
 from backend.services.recognition.face_profile_service import FaceProfileService
+from backend.services.recognition.timeline_service import TimelineService
 from backend.services.utils import make_json_serializable
 
 # Set up logging
@@ -30,6 +31,7 @@ class MultimodalRecognitionService:
         """Initialize the multimodal recognition service."""
         self.facial_recognition = FacialRecognitionService()
         self.face_profile_service = FaceProfileService()
+        self.timeline_service = TimelineService()
         
         # Use Docker container paths as per user preference
         self.base_dir = Path("/app/data")
@@ -308,139 +310,45 @@ class MultimodalRecognitionService:
                 }
             }
             
-            # Create recognition events for the timeline
-            recognition_events = []
-            
-            # Add face detection events
+            # Store face detections in the timeline service
             for face in all_faces:
-                face_event = {
-                    "type": "face",
-                    "start": face["timestamp"],
-                    "end": face["timestamp"] + 1.0,  # Assume 1 second duration
-                    "person_name": face["face_profile"].get("name", "Unknown"),
+                face_detection = {
+                    "timestamp": face["timestamp"],
                     "confidence": face["confidence"],
-                    "data": {
-                        "frame_path": face["frame_path"],
-                        "frame_url": face["frame_url"],
-                        "face_id": face["face_profile"].get("id"),
-                        "speaker": face["speaker"],
-                        "text": face["text"]
-                    }
+                    "name": face["face_profile"].get("name", "Unknown"),
+                    "person_id": face["face_profile"].get("id"),
+                    "frame_path": face["frame_path"],
+                    "frame_url": face["frame_url"],
+                    "speaker": face["speaker"],
+                    "text": face["text"]
                 }
-                recognition_events.append(face_event)
+                self.timeline_service.store_face_detection(db, video_id, face_detection)
             
-            # Add voice segment events
+            # Store speaker segments in the timeline service
             for voice in voice_segments:
-                voice_event = {
-                    "type": "speaker",
+                speaker_segment = {
                     "start": voice["start_time"],
                     "end": voice["end_time"],
-                    "person_name": voice["speaker"],
+                    "speaker": voice["speaker"],
+                    "speaker_id": voice.get("face_profile", {}).get("id"),
                     "confidence": voice["confidence"],
-                    "data": {
-                        "text": voice["text"],
-                        "segment_id": voice["segment_id"],
-                        "face_profile_id": voice.get("face_profile", {}).get("id")
-                    }
+                    "text": voice["text"],
+                    "segment_id": voice["segment_id"]
                 }
-                recognition_events.append(voice_event)
+                self.timeline_service.store_speaker_segment(db, video_id, speaker_segment)
             
-            # Sort events by start time
-            recognition_events.sort(key=lambda x: x["start"])
+            # Update the timeline data using the timeline service
+            timeline_result = self.timeline_service.update_timeline_data(db, video_id)
             
             # Find correlations between face and voice events
-            correlations = []
-            face_events = [event for event in recognition_events if event["type"] == "face"]
-            voice_events = [event for event in recognition_events if event["type"] == "speaker"]
-            
-            for face_event in face_events:
-                for voice_event in voice_events:
-                    # Check for temporal overlap
-                    if (face_event["start"] <= voice_event["end"] and 
-                        face_event["end"] >= voice_event["start"]):
-                        
-                        # Calculate overlap
-                        overlap_start = max(face_event["start"], voice_event["start"])
-                        overlap_end = min(face_event["end"], voice_event["end"])
-                        overlap_duration = max(0, overlap_end - overlap_start)
-                        
-                        # Only consider significant overlaps
-                        if overlap_duration > 0.3:
-                            # Check if they refer to the same person
-                            face_name = face_event["person_name"]
-                            voice_name = voice_event["person_name"]
-                            
-                            # Calculate name similarity
-                            name_similarity = 0.0
-                            if face_name and voice_name:
-                                face_name_lower = face_name.lower()
-                                voice_name_lower = voice_name.lower()
-                                
-                                if face_name_lower == voice_name_lower:
-                                    name_similarity = 1.0
-                                elif face_name_lower in voice_name_lower or voice_name_lower in face_name_lower:
-                                    name_similarity = 0.8
-                                else:
-                                    # Simple character overlap similarity
-                                    common_chars = sum(1 for c in face_name_lower if c in voice_name_lower)
-                                    name_similarity = common_chars / max(len(face_name_lower), len(voice_name_lower)) if max(len(face_name_lower), len(voice_name_lower)) > 0 else 0.0
-                            
-                            # Determine if same person based on name similarity
-                            same_person = name_similarity > 0.7
-                            
-                            correlations.append({
-                                "face_event_id": face_events.index(face_event),
-                                "voice_event_id": voice_events.index(voice_event),
-                                "face_name": face_name,
-                                "voice_name": voice_name,
-                                "start": overlap_start,
-                                "end": overlap_end,
-                                "confidence": 0.8 if same_person else 0.5,
-                                "same_person": same_person,
-                                "name_similarity": name_similarity
-                            })
+            correlations_result = self.timeline_service.find_correlations(db, video_id)
             
             # Add timeline data to the integrated results
-            integrated_results["recognition_events"] = recognition_events
-            integrated_results["correlations"] = correlations
+            integrated_results["timeline"] = timeline_result.get("timeline", [])
+            integrated_results["correlations"] = correlations_result.get("correlations", [])
             
             # Save the results to the database
             video.recognition_results = json.dumps(make_json_serializable(integrated_results))
-            
-            # Save timeline data separately for efficient retrieval
-            timeline_data = {
-                "success": True,
-                "video_id": video_id,
-                "timeline": recognition_events,
-                "correlations": correlations
-            }
-            video.timeline_data = json.dumps(make_json_serializable(timeline_data))
-            
-            # Store recognition events in the database if RecognitionEvent model exists
-            try:
-                from backend.db.models.recognition_event import RecognitionEvent
-                
-                # Delete existing events for this capture
-                db.query(RecognitionEvent).filter(
-                    RecognitionEvent.capture_session_id == video_id
-                ).delete()
-                
-                # Add new events
-                for event in recognition_events:
-                    recognition_event = RecognitionEvent(
-                        capture_session_id=video_id,
-                        event_type=event["type"],
-                        start_time=event["start"],
-                        end_time=event["end"],
-                        confidence=event["confidence"],
-                        person_name=event["person_name"],
-                        data=event
-                    )
-                    db.add(recognition_event)
-            except ImportError:
-                logger.warning("RecognitionEvent model not found, skipping event storage")
-            except Exception as e:
-                logger.error(f"Error storing recognition events: {str(e)}")
             
             db.commit()
             
