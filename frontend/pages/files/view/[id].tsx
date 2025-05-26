@@ -290,26 +290,13 @@ const MediaViewPage: React.FC = () => {
     return '';
   };
 
-  // Generate audio URL based on video filename - EXACT match to capture page implementation
+  // Generate audio URL based on video ID - exactly like in the capture page
   const getAudioUrl = () => {
-    if (type === 'video' && video) {
-      // Use the exact format from the capture page that works
-      if (video.capture_id) {
-        // This is the format that works in the capture page
-        const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_${video.capture_id.toString().padStart(4, '0')}.audio.mp3`;
-        console.log('Using capture ID-based audio URL:', audioUrl);
-        return audioUrl;
-      } else if (video.id) {
-        // Try using the video ID if available
-        const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_${video.id.toString().padStart(4, '0')}.audio.mp3`;
-        console.log('Using video ID-based audio URL:', audioUrl);
-        return audioUrl;
-      }
-      
-      // Fallback to a sample audio file
-      const sampleUrl = `${API_BASE_URL}/videos/static/audio/sample1.mp3`;
-      console.log('Using sample audio URL:', sampleUrl);
-      return sampleUrl;
+    if (type === 'video' && video && video.id) {
+      // Use the exact same format that works in the capture page
+      const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_${video.id.toString().padStart(4, '0')}.audio.mp3`;
+      console.log('Using audio URL:', audioUrl);
+      return audioUrl;
     }
     return '';
   };
@@ -610,46 +597,16 @@ const MediaViewPage: React.FC = () => {
                         Your browser does not support the audio element.
                       </audio>
                       
-                      {/* Audio URL information and alternative sources */}
+                      {/* Simple audio URL link for testing */}
                       <div className="mt-2 text-sm text-gray-500">
-                        <p>Audio URL: {getAudioUrl()}</p>
-                        <p>Try alternative audio sources:</p>
-                        <ul className="list-disc pl-5 mt-1">
-                          {video && video.capture_id && (
-                            <li>
-                              <a 
-                                href={`${API_BASE_URL}/videos/static/audio/capture_${video.capture_id.toString().padStart(4, '0')}.audio.mp3`} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-blue-500 hover:underline"
-                              >
-                                ID-based audio file
-                              </a>
-                            </li>
-                          )}
-                          {video && video.filename && (
-                            <li>
-                              <a 
-                                href={`${API_BASE_URL}/videos/static/audio/${video.filename.replace(/\.[^/.]+$/, '.audio.mp3')}`} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-blue-500 hover:underline"
-                              >
-                                Static audio file
-                              </a>
-                            </li>
-                          )}
-                          <li>
-                            <a 
-                              href={`${API_BASE_URL}/videos/static/audio/sample1.mp3`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:underline"
-                            >
-                              Sample audio file 1
-                            </a>
-                          </li>
-                        </ul>
+                        If the audio doesn't play automatically, you can <a 
+                          href={getAudioUrl()} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-500 hover:underline"
+                        >
+                          open it directly in a new tab
+                        </a>.
                       </div>
                     </>
                   )}
