@@ -61,6 +61,7 @@ const MediaViewPage: React.FC = () => {
   
   const [activeTab, setActiveTab] = useState<string>(tab as string || 'player');
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [playerError, setPlayerError] = useState(false);
   const [syncPlayback, setSyncPlayback] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -238,27 +239,70 @@ const MediaViewPage: React.FC = () => {
   // Generate video URL based on type
   const getVideoUrl = () => {
     if (type === 'video' && video) {
-      // Extract filename from file_path, path, or use the filename directly
+      // Try different approaches to get the filename and path
       let filename = '';
-      if (video.file_path) {
-        filename = video.file_path.split('/').pop() || '';
-      } else if (video.path) {
-        filename = video.path.split('/').pop() || '';
-      } else if (video.filename) {
+      let videoId = '';
+      let fullPath = '';
+      
+      // First try to get the filename and path
+      if (video.filename) {
         filename = video.filename;
-      } else {
-        console.error('No valid path or filename found in video:', video);
+      } else if (video.file_path) {
+        fullPath = video.file_path;
+        filename = fullPath.split('/').pop() || '';
+      } else if (video.path) {
+        fullPath = video.path;
+        filename = fullPath.split('/').pop() || '';
+      }
+      
+      // Try to get the video ID
+      if (video.id) {
+        videoId = String(video.id);
+      } else if (typeof id === 'string' && id.startsWith('file-')) {
+        videoId = id.substring(5); // Remove 'file-' prefix
+      } else if (typeof id === 'string' && id.startsWith('video-file-')) {
+        videoId = id.substring(11); // Remove 'video-file-' prefix
+      }
+      
+      // If we don't have a filename or ID, we can't generate a URL
+      if (!filename && !videoId && !fullPath) {
+        console.error('No valid filename, path, or ID found for video:', video);
         return '';
       }
       
-      // For streaming endpoints, we need to use the base URL without /api/v1
+      // Try different URL formats
       const baseUrl = API_BASE_URL.replace('/api/v1', '');
-      const streamUrl = `${baseUrl}/videos/stream-with-token/${filename}?token=${token}`;
-      console.log('Using video URL for streaming:', streamUrl);
-      return streamUrl;
+      
+      // Try multiple approaches for streaming URLs
+      
+      // Approach 1: Use the direct file path if available (for development/testing)
+      if (fullPath && fullPath.startsWith('/app/data/')) {
+        // For Docker environment, the files are mounted at /app/data
+        // Try a direct file URL approach
+        const relativePath = fullPath.replace('/app/data/', '');
+        const directUrl = `${baseUrl}/data/${relativePath}?token=${token}`;
+        console.log('Using direct file path URL for streaming:', directUrl);
+        return directUrl;
+      }
+      
+      // Approach 2: Use the standard streaming endpoint with filename
+      if (filename) {
+        const streamUrl = `${baseUrl}/videos/stream-with-token/${filename}?token=${token}`;
+        console.log('Using video URL with filename for streaming:', streamUrl);
+        return streamUrl;
+      }
+      
+      // Approach 3: Use the video ID in the URL
+      if (videoId) {
+        const streamUrl = `${baseUrl}/videos/stream/${videoId}?token=${token}`;
+        console.log('Using video URL with ID for streaming:', streamUrl);
+        return streamUrl;
+      }
+      
+      return '';
     } else if (type === 'clip' && clip) {
-      if (!clip.file_path && !clip.id) {
-        console.error('No valid file_path or id found in clip:', clip);
+      if (!clip.id) {
+        console.error('No valid ID found in clip:', clip);
         return '';
       }
       const baseUrl = API_BASE_URL.replace('/api/v1', '');
@@ -272,38 +316,68 @@ const MediaViewPage: React.FC = () => {
   // Generate audio URL based on type
   const getAudioUrl = () => {
     if (type === 'video' && video) {
-      // Get the video path from any available property
-      let videoPath = video.file_path || video.path || '';
+      // Try different approaches to get the filename and ID
       let filename = '';
+      let videoId = '';
+      let videoPath = '';
+      
+      // Get the filename
+      if (video.filename) {
+        filename = video.filename;
+      } else if (video.file_path) {
+        videoPath = video.file_path;
+        filename = videoPath.split('/').pop() || '';
+      } else if (video.path) {
+        videoPath = video.path;
+        filename = videoPath.split('/').pop() || '';
+      }
+      
+      // Get the video ID
+      if (video.id) {
+        videoId = String(video.id);
+      } else if (typeof id === 'string' && id.startsWith('file-')) {
+        videoId = id.substring(5); // Remove 'file-' prefix
+      } else if (typeof id === 'string' && id.startsWith('video-file-')) {
+        videoId = id.substring(11); // Remove 'video-file-' prefix
+      }
       
       // For streaming endpoints, we need to use the base URL without /api/v1
       const baseUrl = API_BASE_URL.replace('/api/v1', '');
       
-      if (!videoPath && video.filename) {
-        // If we only have a filename, use that
-        filename = video.filename;
-        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${filename.replace('.mp4', '.audio.mp3')}?token=${token}`;
-        console.log('Using audio URL for streaming (filename only):', audioUrl);
+      // Try different URL formats
+      
+      // Option 1: Use the filename directly if available
+      if (filename) {
+        const audioFilename = filename.replace('.mp4', '.audio.mp3');
+        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${audioFilename}?token=${token}`;
+        console.log('Using audio URL with filename for streaming:', audioUrl);
         return audioUrl;
       }
       
-      if (!videoPath) {
-        console.error('No valid path found for audio in video:', video);
-        return '';
+      // Option 2: Use the video path if available
+      if (videoPath) {
+        // Handle different audio file naming conventions
+        if (videoPath.includes('.mp4')) {
+          const audioPath = videoPath.replace('.mp4', '.audio.mp3');
+          const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${audioPath.split('/').pop()}?token=${token}`;
+          console.log('Using audio URL with path for streaming:', audioUrl);
+          return audioUrl;
+        } else {
+          // Fallback for other formats
+          const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${videoPath.split('/').pop()}.audio.mp3?token=${token}`;
+          console.log('Using audio URL with path for streaming (other format):', audioUrl);
+          return audioUrl;
+        }
       }
       
-      // Handle different audio file naming conventions
-      if (videoPath.includes('.mp4')) {
-        const audioPath = videoPath.replace('.mp4', '.audio.mp3');
-        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${audioPath.split('/').pop()}?token=${token}`;
-        console.log('Using audio URL for streaming (mp4):', audioUrl);
-        return audioUrl;
-      } else {
-        // Fallback for other formats
-        const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${videoPath.split('/').pop()}.audio.mp3?token=${token}`;
-        console.log('Using audio URL for streaming (other format):', audioUrl);
+      // Option 3: Use the video ID if available
+      if (videoId) {
+        const audioUrl = `${baseUrl}/videos/stream-audio/${videoId}?token=${token}`;
+        console.log('Using audio URL with ID for streaming:', audioUrl);
         return audioUrl;
       }
+      
+      console.error('No valid path, filename, or ID found for audio in video:', video);
     }
     return '';
   };
@@ -536,15 +610,59 @@ const MediaViewPage: React.FC = () => {
             </div>
             <div className="border-t border-gray-700 p-4">
               <div className="aspect-w-16 aspect-h-9">
+                {/* Primary video player */}
                 <video 
                   ref={videoRef}
                   controls 
                   className="w-full h-full object-cover rounded-lg"
                   src={getVideoUrl()}
                   poster={getThumbnailUrl()}
+                  onError={(e) => {
+                    console.error('Video playback error:', e);
+                    setPlayerError(true);
+                    // Try to reload the video element
+                    const videoElement = e.target as HTMLVideoElement;
+                    if (videoElement.src) {
+                      console.log('Attempting to reload video with same URL');
+                      const currentSrc = videoElement.src;
+                      videoElement.src = '';
+                      setTimeout(() => {
+                        videoElement.src = currentSrc;
+                        videoElement.load();
+                        videoElement.play().catch(playErr => {
+                          console.error('Error playing video after reload:', playErr);
+                          setPlayerError(true);
+                        });
+                      }, 1000);
+                    }
+                  }}
                 >
                   Your browser does not support the video tag.
                 </video>
+                
+                {/* Fallback iframe player */}
+                {playerError && (
+                  <div className="mt-4">
+                    <h4 className="text-lg font-medium text-white mb-2">Fallback Video Player</h4>
+                    <iframe 
+                      src={getVideoUrl()}
+                      className="w-full aspect-video rounded-lg border border-gray-700"
+                      allowFullScreen
+                    ></iframe>
+                  </div>
+                )}
+                
+                {/* Direct video URL link for testing */}
+                <div className="mt-2 text-sm text-gray-500">
+                  If the video doesn't play automatically, you can <a 
+                    href={getVideoUrl()} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-500 hover:underline"
+                  >
+                    open it directly in a new tab
+                  </a>.
+                </div>
               </div>
               
               {/* Audio Player Section */}
@@ -572,16 +690,45 @@ const MediaViewPage: React.FC = () => {
                   </div>
                   
                   {showAudioPlayer && (
-                    <div className="mt-2">
-                      <audio 
+                    <>
+                      <audio
                         ref={audioRef}
-                        controls 
-                        className="w-full" 
+                        controls
+                        className="w-full mt-2"
                         src={getAudioUrl()}
+                        onError={(e) => {
+                          console.error('Audio playback error:', e);
+                          // Try to reload the audio element
+                          const audioElement = e.target as HTMLAudioElement;
+                          if (audioElement.src) {
+                            console.log('Attempting to reload audio with same URL');
+                            const currentSrc = audioElement.src;
+                            audioElement.src = '';
+                            setTimeout(() => {
+                              audioElement.src = currentSrc;
+                              audioElement.load();
+                              audioElement.play().catch(playErr => {
+                                console.error('Error playing audio after reload:', playErr);
+                              });
+                            }, 1000);
+                          }
+                        }}
                       >
                         Your browser does not support the audio element.
                       </audio>
-                    </div>
+                      
+                      {/* Direct audio URL link for testing */}
+                      <div className="mt-2 text-sm text-gray-500">
+                        If the audio doesn't play automatically, you can <a 
+                          href={getAudioUrl()} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-500 hover:underline"
+                        >
+                          open it directly in a new tab
+                        </a>.
+                      </div>
+                    </>
                   )}
                 </div>
               )}
