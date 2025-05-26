@@ -172,7 +172,7 @@ async def get_all_videos(
                 "title": capture.title if capture else filename,
                 "status": capture.status if capture else "unknown",
                 "duration": capture.duration if capture else None,
-                "created_by": capture.created_by.full_name if capture and capture.created_by else "Unknown",
+                "created_by": "Unknown",  # Removed reference to capture.created_by which doesn't exist
                 "stream_url": f"/api/v1/videos/stream/{os.path.basename(file_path)}"
             })
     

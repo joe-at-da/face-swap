@@ -203,8 +203,11 @@ class ApiClient {
 
   /**
    * Make a POST request
+   * @param endpoint API endpoint
+   * @param data Data to send
+   * @param isFormData Whether the data is FormData (if true, headers will be set automatically by fetch)
    */
-  async post(endpoint: string, data?: any) {
+  async post(endpoint: string, data?: any, isFormData: boolean = false) {
     // Add special debug logging for capture endpoints
     if (endpoint.includes('/capture')) {
       console.log(`[CAPTURE DEBUG] POST request to ${endpoint}`, data ? 'with data' : 'without data');
@@ -213,10 +216,16 @@ class ApiClient {
       }
     }
     
+    // For FormData, don't set Content-Type header (browser will set it with boundary)
+    // But still include the authorization header
+    const headers = isFormData ? {
+      'Authorization': `Bearer ${this.token}`
+    } : this.getHeaders();
+    
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
-      headers: this.getHeaders(),
-      body: data ? JSON.stringify(data) : undefined,
+      headers: headers,
+      body: isFormData ? data : (data ? JSON.stringify(data) : undefined),
       // Don't include credentials when using wildcard origins
       // credentials: 'include',
     });
