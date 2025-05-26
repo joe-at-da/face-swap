@@ -275,20 +275,36 @@ def stream_video_file(filename: str, db: Session):
         media_type="video/mp4"
     )
 
-# This function has been removed as part of the audio/video extraction cleanup
-    
-    # Step 4: Handle Parliament TV captures differently
-    if is_parliament_tv:
-        logger.warning("This is a Parliament TV capture - audio must be extracted from the dedicated audio URL")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Parliament TV captures require using the dedicated audio extraction endpoint: /api/v1/audio-extraction/{capture_id}"
-        )
-    
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Could not find or create audio for {filename}"
-    )
+@router.get("/{video_id}", response_model=Dict)
+async def get_video_by_id(video_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_active_user)):
+    """
+    Get a single video by ID
+    """
+    try:
+        # First, check if this is a CaptureSession video
+        capture = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        if capture:
+            # Format the response to match the structure expected by the frontend
+            return {
+                "id": capture.id,
+                "title": capture.title or f"Capture {capture.id}",
+                "status": capture.status,
+                "file_path": capture.file_path,
+                "file_size": capture.file_size,
+                "created_at": capture.created_at.isoformat() if capture.created_at else None,
+                "updated_at": capture.updated_at.isoformat() if capture.updated_at else None,
+                "duration": capture.duration,
+                "created_by": "Unknown"  # Using the same fallback as in combine_audio_video
+            }
+        
+        # If not found in CaptureSession, check other video sources
+        # This could be expanded to check other tables that store videos
+        
+        # If no video is found, raise a 404 error
+        raise HTTPException(status_code=404, detail=f"Video with ID {video_id} not found")
+    except Exception as e:
+        logger.error(f"Error retrieving video with ID {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving video: {str(e)}")
 
 @router.post("/combine-audio-video", response_model=None)
 async def combine_audio_video(
