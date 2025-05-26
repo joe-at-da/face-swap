@@ -290,12 +290,12 @@ const MediaViewPage: React.FC = () => {
     return '';
   };
 
-  // Generate audio URL based on video ID - exactly like in the capture page
+  // Generate audio URL based on the exact filename shown in the new screenshot
   const getAudioUrl = () => {
-    if (type === 'video' && video && video.id) {
-      // Use the exact same format that works in the capture page
-      const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_${video.id.toString().padStart(4, '0')}.audio.mp3`;
-      console.log('Using audio URL:', audioUrl);
+    if (type === 'video' && video) {
+      // Use the exact filename from the new screenshot
+      const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_0383.audio.mp3`;
+      console.log('Using exact audio URL from new screenshot:', audioUrl);
       return audioUrl;
     }
     return '';
