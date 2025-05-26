@@ -10,7 +10,7 @@ import { toast } from 'react-toastify';
 import { api } from '../../../utils/api';
 
 // API base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 
 interface VideoClip {
   id: number;
@@ -236,20 +236,16 @@ const MediaViewPage: React.FC = () => {
     return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
   };
 
-  // Generate video URL based on type - simplified approach
+  // Generate video URL based on type - using exact format from working implementation
   const getVideoUrl = () => {
-    // For streaming endpoints, we need to use the base URL without /api/v1
-    const baseUrl = API_BASE_URL.replace('/api/v1', '');
-    
     if (type === 'video' && video) {
-      // Get the filename - this is the most reliable approach
-      let filename = '';
+      // Extract filename from video object
+      let filename = video.filename || '';
       
-      if (video.filename) {
-        filename = video.filename;
-      } else if (video.file_path) {
+      // If no direct filename, try to extract from path
+      if (!filename && video.file_path) {
         filename = video.file_path.split('/').pop() || '';
-      } else if (video.path) {
+      } else if (!filename && video.path) {
         filename = video.path.split('/').pop() || '';
       }
       
@@ -258,49 +254,49 @@ const MediaViewPage: React.FC = () => {
         return '';
       }
       
-      // Use the simple, consistent URL pattern that works in the dev branch
-      const streamUrl = `${baseUrl}/videos/stream-with-token/${filename}?token=${token}`;
-      console.log('Using video URL for streaming:', streamUrl);
+      // Use the exact URL format from the working implementation
+      // Important: Don't replace /api/v1 in the URL
+      const streamUrl = `${API_BASE_URL}/videos/stream-with-token/${filename}?token=${token}`;
+      console.log('Video URL:', streamUrl);
       return streamUrl;
     } else if (type === 'clip' && clip) {
       if (!clip.id) {
         console.error('No valid ID found in clip:', clip);
         return '';
       }
-      const clipUrl = `${baseUrl}/clips/stream/${clip.id}?token=${token}`;
-      console.log('Using clip URL for streaming:', clipUrl);
+      // For clips, use the clip streaming endpoint
+      const clipUrl = `${API_BASE_URL}/clips/stream/${clip.id}?token=${token}`;
+      console.log('Clip URL:', clipUrl);
       return clipUrl;
     }
     return '';
   };
 
-  // Generate audio URL based on type - simplified approach
+  // Generate audio URL based on video filename
   const getAudioUrl = () => {
-    // For streaming endpoints, we need to use the base URL without /api/v1
-    const baseUrl = API_BASE_URL.replace('/api/v1', '');
-    
     if (type === 'video' && video) {
-      // Get the filename - this is the most reliable approach
-      let filename = '';
+      // Extract filename from video object
+      let filename = video.filename || '';
       
-      if (video.filename) {
-        filename = video.filename;
-      } else if (video.file_path) {
+      // If no direct filename, try to extract from path
+      if (!filename && video.file_path) {
         filename = video.file_path.split('/').pop() || '';
-      } else if (video.path) {
+      } else if (!filename && video.path) {
         filename = video.path.split('/').pop() || '';
       }
       
       if (!filename) {
-        console.error('No valid filename found for audio:', video);
+        console.error('No valid filename found for video:', video);
         return '';
       }
       
-      // Use the simple, consistent URL pattern that works in the dev branch
-      // Convert video filename to audio filename by replacing .mp4 with .audio.mp3
-      const audioFilename = filename.replace('.mp4', '.audio.mp3');
-      const audioUrl = `${baseUrl}/videos/stream-audio-with-token/${audioFilename}?token=${token}`;
-      console.log('Using audio URL for streaming:', audioUrl);
+      // Replace the extension with .mp3 for audio
+      const audioFilename = filename.replace(/\.[^/.]+$/, '.mp3');
+      
+      // Use the exact URL format from the working implementation
+      // Important: Don't replace /api/v1 in the URL
+      const audioUrl = `${API_BASE_URL}/videos/stream-audio-with-token/${audioFilename}?token=${token}`;
+      console.log('Audio URL:', audioUrl);
       return audioUrl;
     }
     return '';
