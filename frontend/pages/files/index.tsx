@@ -74,6 +74,14 @@ const FileGalleryPage = () => {
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   
+  // State variables for audio/video combination
+  const [showCombineModal, setShowCombineModal] = useState(false);
+  const [selectedAudioFile, setSelectedAudioFile] = useState<string>('');
+  const [selectedVideoFile, setSelectedVideoFile] = useState<string>('');
+  const [isCombining, setIsCombining] = useState(false);
+  const [combinedVideoFilename, setCombinedVideoFilename] = useState<string | null>(null);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  
   // Check for type parameter in URL and set filter accordingly
   useEffect(() => {
     const { type } = router.query;
@@ -404,6 +412,48 @@ const FileGalleryPage = () => {
   // Close file modal
   const closeFileModal = () => {
     setSelectedFile(null);
+    setShowAudioPlayer(false);
+  };
+  
+  // Function to handle combining audio and video files
+  const handleCombineAudioVideo = async () => {
+    if (!selectedAudioFile || !selectedVideoFile) {
+      toast.error('Please select both audio and video files');
+      return;
+    }
+    
+    setIsCombining(true);
+    try {
+      // Make API call to combine audio and video
+      const response = await api.post('/videos/combine', {
+        audio_file: selectedAudioFile,
+        video_file: selectedVideoFile
+      });
+      
+      // Check response
+      if (response && response.status === 'success' && response.filename) {
+        // Show success message
+        toast.success('Audio and video combined successfully!');
+        setCombinedVideoFilename(response.filename);
+        
+        // Close the modal and refresh the video list
+        setShowCombineModal(false);
+        setSelectedAudioFile('');
+        setSelectedVideoFile('');
+        
+        // Refresh the videos list
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        toast.error('Failed to combine audio and video');
+      }
+    } catch (error) {
+      console.error('Error combining audio and video:', error);
+      toast.error('An error occurred while combining audio and video');
+    } finally {
+      setIsCombining(false);
+    }
   };
   
   // Handle file click
@@ -667,12 +717,115 @@ const FileGalleryPage = () => {
                 )}
               </div>
               
-              <div className="p-4 border-t flex justify-end">
+              {/* Audio Player (initially hidden) */}
+              <div className={`p-4 border-t ${showAudioPlayer ? 'block' : 'hidden'}`}>
+                <h4 className="text-lg font-medium mb-2">Audio Track</h4>
+                <audio 
+                  src={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile?.filename?.replace('.mp4', '.audio.mp3')}?token=${token}`}
+                  controls
+                  className="w-full"
+                  autoPlay={showAudioPlayer}
+                />
+                
+                {/* Debug Information */}
+                <div className="mt-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-sm">
+                  <h5 className="font-medium mb-2">Debug Information</h5>
+                  <p className="mb-1"><span className="font-medium">Audio URL:</span> <a href={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile?.filename?.replace('.mp4', '.audio.mp3')}?token=${token}&debug=true`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile?.filename?.replace('.mp4', '.audio.mp3')}?token=${token}&debug=true`}</a></p>
+                  <p className="mb-1"><span className="font-medium">Video Path:</span> {selectedFile?.path}</p>
+                  <p className="mb-1"><span className="font-medium">Try Direct Audio:</span> <a href={`${API_BASE_URL}/videos/static/audio/${selectedFile?.filename?.replace('.mp4', '.audio.mp3')}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">MP3 Version</a></p>
+                  <p className="mb-1"><span className="font-medium">Alternative:</span> <a href={`${API_BASE_URL}/videos/static/audio/audio_${selectedFile?.filename?.replace('.mp4', '.mp3')}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Audio Prefix Version</a></p>
+                </div>
+              </div>
+              
+              <div className="p-4 border-t flex justify-end space-x-2">
+                <button
+                  onClick={() => setShowAudioPlayer(!showAudioPlayer)}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded"
+                >
+                  {showAudioPlayer ? 'Hide Audio Player' : 'Play Audio Only'}
+                </button>
+                {selectedFile?.type === FILE_TYPES.VIDEO && (
+                  <button
+                    onClick={() => {
+                      setSelectedVideoFile(selectedFile.filename);
+                      setSelectedAudioFile(selectedFile.filename.replace('.mp4', '.audio.mp3'));
+                      setShowCombineModal(true);
+                    }}
+                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
+                  >
+                    Combine Audio/Video
+                  </button>
+                )}
                 <button
                   onClick={closeFileModal}
                   className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Combine Audio/Video Modal */}
+        {showCombineModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-lg p-6">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Combine Audio and Video</h2>
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Video File</label>
+                <select 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                  value={selectedVideoFile}
+                  onChange={(e) => setSelectedVideoFile(e.target.value)}
+                >
+                  <option value="">Select a video file</option>
+                  {files.filter(file => file.type === FILE_TYPES.VIDEO).map(file => (
+                    <option key={file.id} value={file.filename}>{file.title || file.filename}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Audio File</label>
+                <select 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                  value={selectedAudioFile}
+                  onChange={(e) => setSelectedAudioFile(e.target.value)}
+                >
+                  <option value="">Select an audio file</option>
+                  {files.filter(file => file.type === FILE_TYPES.AUDIO).map(file => (
+                    <option key={file.id} value={file.filename}>{file.title || file.filename}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {combinedVideoFilename && (
+                <div className="mb-4 p-3 bg-green-100 dark:bg-green-900 rounded">
+                  <p className="text-green-800 dark:text-green-200">Successfully combined! New file: {combinedVideoFilename}</p>
+                </div>
+              )}
+              
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setShowCombineModal(false);
+                    setSelectedAudioFile('');
+                    setSelectedVideoFile('');
+                    setCombinedVideoFilename(null);
+                  }}
+                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+                  disabled={isCombining}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCombineAudioVideo}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isCombining || !selectedAudioFile || !selectedVideoFile}
+                >
+                  {isCombining ? 'Combining...' : 'Combine Files'}
                 </button>
               </div>
             </div>
