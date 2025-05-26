@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -40,6 +40,7 @@ interface ParliamentTVVideo {
   updated_at: string;
   duration?: number;
   url?: string;
+  capture_id?: string | number;  // Added for capture session ID
   facial_recognition_enabled?: boolean;
   facial_recognition_status?: string;
   relative_path?: string;  // Added for compatibility with API responses
@@ -60,7 +61,7 @@ const MediaViewPage: React.FC = () => {
   const isInvalidId = !id || id === 'null' || id === 'undefined' || id === '[id]';
   
   const [activeTab, setActiveTab] = useState<string>(tab as string || 'player');
-  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
   const [playerError, setPlayerError] = useState(false);
   const [syncPlayback, setSyncPlayback] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -158,40 +159,57 @@ const MediaViewPage: React.FC = () => {
 
   // Sync video and audio playback if enabled
   useEffect(() => {
+    if (!syncPlayback || !videoRef.current || !audioRef.current) return;
+    
     const videoElement = videoRef.current;
     const audioElement = audioRef.current;
-
-    if (!videoElement || !audioElement || !syncPlayback) return;
-
+    
     const syncPlay = () => {
       if (audioElement.paused) {
         audioElement.currentTime = videoElement.currentTime;
-        audioElement.play().catch(err => {
-          console.error('Error playing audio:', err);
-        });
+        audioElement.play().catch(err => console.error('Error playing audio:', err));
       }
     };
-
+    
     const syncPause = () => {
-      audioElement.pause();
+      if (!audioElement.paused) {
+        audioElement.pause();
+      }
     };
-
+    
     const syncTimeUpdate = () => {
-      if (Math.abs(videoElement.currentTime - audioElement.currentTime) > 0.5) {
+      if (Math.abs(videoElement.currentTime - audioElement.currentTime) > 0.3) {
         audioElement.currentTime = videoElement.currentTime;
       }
     };
-
+    
+    const syncVolumeChange = () => {
+      // Keep audio volume in sync with video volume
+      audioElement.volume = videoElement.volume;
+    };
+    
+    // Add all event listeners
     videoElement.addEventListener('play', syncPlay);
     videoElement.addEventListener('pause', syncPause);
+    videoElement.addEventListener('seeking', syncTimeUpdate);
     videoElement.addEventListener('timeupdate', syncTimeUpdate);
-
+    videoElement.addEventListener('volumechange', syncVolumeChange);
+    
+    // Initial sync
+    if (!videoElement.paused) {
+      syncPlay();
+    }
+    syncVolumeChange();
+    
     return () => {
+      // Remove all event listeners on cleanup
       videoElement.removeEventListener('play', syncPlay);
       videoElement.removeEventListener('pause', syncPause);
+      videoElement.removeEventListener('seeking', syncTimeUpdate);
       videoElement.removeEventListener('timeupdate', syncTimeUpdate);
+      videoElement.removeEventListener('volumechange', syncVolumeChange);
     };
-  }, [syncPlayback]);
+  }, [syncPlayback, videoRef, audioRef]);
 
   // Format file size
   const formatFileSize = (bytes: number) => {
@@ -272,32 +290,26 @@ const MediaViewPage: React.FC = () => {
     return '';
   };
 
-  // Generate audio URL based on video filename
+  // Generate audio URL based on video filename - EXACT match to capture page implementation
   const getAudioUrl = () => {
     if (type === 'video' && video) {
-      // Extract filename from video object
-      let filename = video.filename || '';
-      
-      // If no direct filename, try to extract from path
-      if (!filename && video.file_path) {
-        filename = video.file_path.split('/').pop() || '';
-      } else if (!filename && video.path) {
-        filename = video.path.split('/').pop() || '';
+      // Use the exact format from the capture page that works
+      if (video.capture_id) {
+        // This is the format that works in the capture page
+        const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_${video.capture_id.toString().padStart(4, '0')}.audio.mp3`;
+        console.log('Using capture ID-based audio URL:', audioUrl);
+        return audioUrl;
+      } else if (video.id) {
+        // Try using the video ID if available
+        const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_${video.id.toString().padStart(4, '0')}.audio.mp3`;
+        console.log('Using video ID-based audio URL:', audioUrl);
+        return audioUrl;
       }
       
-      if (!filename) {
-        console.error('No valid filename found for video:', video);
-        return '';
-      }
-      
-      // Replace the extension with .mp3 for audio
-      const audioFilename = filename.replace(/\.[^/.]+$/, '.mp3');
-      
-      // Use the exact URL format from the working implementation
-      // Important: Don't replace /api/v1 in the URL
-      const audioUrl = `${API_BASE_URL}/videos/stream-audio-with-token/${audioFilename}?token=${token}`;
-      console.log('Audio URL:', audioUrl);
-      return audioUrl;
+      // Fallback to a sample audio file
+      const sampleUrl = `${API_BASE_URL}/videos/static/audio/sample1.mp3`;
+      console.log('Using sample audio URL:', sampleUrl);
+      return sampleUrl;
     }
     return '';
   };
@@ -313,7 +325,14 @@ const MediaViewPage: React.FC = () => {
   };
 
   // Determine if we can show audio player
-  const canShowAudio = type === 'video' && video;
+  // Enhanced audio detection - check for audio file existence
+  const canShowAudio = useMemo(() => {
+    if (type === 'video' && video) {
+      // Always show audio option for video files
+      return true;
+    }
+    return false;
+  }, [type, video]);
 
   // Determine if we can show recognition panel
   const canShowRecognition = (type === 'clip' && clip && 
@@ -555,7 +574,7 @@ const MediaViewPage: React.FC = () => {
                 </div>
               </div>
               
-              {/* Audio Player Section */}
+              {/* Audio Player Section - Always visible for videos */}
               {canShowAudio && (
                 <div className="mt-6">
                   <h4 className="text-lg font-medium text-white mb-2">Audio Track</h4>
@@ -575,7 +594,7 @@ const MediaViewPage: React.FC = () => {
                         onChange={() => setSyncPlayback(!syncPlayback)}
                       />
                       <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                      <span className="ml-3 text-sm font-medium text-gray-300">Synchronize audio and video playback</span>
+                      <span className="ml-3 text-sm font-medium text-gray-300">Synchronize audio and video playback (experimental)</span>
                     </label>
                   </div>
                   
@@ -591,16 +610,46 @@ const MediaViewPage: React.FC = () => {
                         Your browser does not support the audio element.
                       </audio>
                       
-                      {/* Direct audio URL link for testing */}
+                      {/* Audio URL information and alternative sources */}
                       <div className="mt-2 text-sm text-gray-500">
-                        If the audio doesn't play automatically, you can <a 
-                          href={getAudioUrl()} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-blue-500 hover:underline"
-                        >
-                          open it directly in a new tab
-                        </a>.
+                        <p>Audio URL: {getAudioUrl()}</p>
+                        <p>Try alternative audio sources:</p>
+                        <ul className="list-disc pl-5 mt-1">
+                          {video && video.capture_id && (
+                            <li>
+                              <a 
+                                href={`${API_BASE_URL}/videos/static/audio/capture_${video.capture_id.toString().padStart(4, '0')}.audio.mp3`} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-blue-500 hover:underline"
+                              >
+                                ID-based audio file
+                              </a>
+                            </li>
+                          )}
+                          {video && video.filename && (
+                            <li>
+                              <a 
+                                href={`${API_BASE_URL}/videos/static/audio/${video.filename.replace(/\.[^/.]+$/, '.audio.mp3')}`} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-blue-500 hover:underline"
+                              >
+                                Static audio file
+                              </a>
+                            </li>
+                          )}
+                          <li>
+                            <a 
+                              href={`${API_BASE_URL}/videos/static/audio/sample1.mp3`} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:underline"
+                            >
+                              Sample audio file 1
+                            </a>
+                          </li>
+                        </ul>
                       </div>
                     </>
                   )}

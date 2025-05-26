@@ -549,6 +549,29 @@ const FileGalleryPage = () => {
         
         {/* Search and filters */}
         <div className="mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">File Gallery</h1>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setShowCombineModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 mr-2"
+              >
+                <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12z" clipRule="evenodd" />
+                </svg>
+                Combine Audio/Video
+              </button>
+              <button
+                onClick={() => router.push('/files/upload')}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 3a1 1 0 00-1 1v5H4a1 1 0 100 2h5v5a1 1 0 102 0v-5h5a1 1 0 100-2h-5V4a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                Upload File
+              </button>
+            </div>
+          </div>
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex-grow">
               <input
@@ -659,6 +682,121 @@ const FileGalleryPage = () => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        
+        {/* Audio/Video Combination Modal */}
+        {showCombineModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+              <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+                <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+              </div>
+              <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+              <div className="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div className="px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                  <div className="sm:flex sm:items-start">
+                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900 dark:text-white">
+                        Combine Audio and Video
+                      </h3>
+                      <div className="mt-4">
+                        <div className="mb-4">
+                          <label htmlFor="videoFile" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Select Video File
+                          </label>
+                          <select
+                            id="videoFile"
+                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            value={selectedVideoFile}
+                            onChange={(e) => setSelectedVideoFile(e.target.value)}
+                          >
+                            <option value="">Select a video file</option>
+                            {files
+                              .filter(file => file.type === 'video' && file.status === 'ready')
+                              .map(file => (
+                                <option key={file.id} value={file.id}>
+                                  {file.title || file.filename || `Video #${file.id}`}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        
+                        <div className="mb-4">
+                          <label htmlFor="audioFile" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Select Audio File
+                          </label>
+                          <select
+                            id="audioFile"
+                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            value={selectedAudioFile}
+                            onChange={(e) => setSelectedAudioFile(e.target.value)}
+                          >
+                            <option value="">Select an audio file</option>
+                            {files
+                              .filter(file => file.type === 'audio' && file.status === 'ready')
+                              .map(file => (
+                                <option key={file.id} value={file.id}>
+                                  {file.title || file.filename || `Audio #${file.id}`}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        
+                        {isCombining && (
+                          <div className="flex justify-center items-center my-4">
+                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span className="text-sm text-gray-600 dark:text-gray-300">Combining files...</span>
+                          </div>
+                        )}
+                        
+                        {combinedVideoFilename && (
+                          <div className="bg-green-50 dark:bg-green-900 p-3 rounded-md mb-4">
+                            <div className="flex">
+                              <div className="flex-shrink-0">
+                                <svg className="h-5 w-5 text-green-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                              </div>
+                              <div className="ml-3">
+                                <p className="text-sm font-medium text-green-800 dark:text-green-200">
+                                  Files combined successfully! New video: {combinedVideoFilename}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                  <button
+                    type="button"
+                    className="inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
+                    onClick={handleCombineAudioVideo}
+                    disabled={isCombining || !selectedAudioFile || !selectedVideoFile}
+                  >
+                    {isCombining ? 'Processing...' : 'Combine Files'}
+                  </button>
+                  <button
+                    type="button"
+                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white dark:bg-gray-600 text-base font-medium text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                    onClick={() => {
+                      setShowCombineModal(false);
+                      setSelectedAudioFile('');
+                      setSelectedVideoFile('');
+                      setCombinedVideoFilename(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
         
