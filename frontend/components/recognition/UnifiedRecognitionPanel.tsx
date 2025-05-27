@@ -178,42 +178,60 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     try {
       setIsRefreshing(true);
       
+      // Check if captureId is valid
+      if (!captureId || isNaN(Number(captureId))) {
+        console.error('Invalid capture ID:', captureId);
+        setError('Invalid capture ID. Please check the URL and try again.');
+        setLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+      
       // First try to get detailed status
       try {
         console.log('Fetching detailed status for captureId:', captureId);
         const detailedResponse = await api.get(`/recognition/detailed-status/${captureId}`);
         
         console.log('Detailed status response:', detailedResponse);
-        const detailedData = detailedResponse as { success: boolean; status?: string; video_id?: number; progress?: any; completion_percentage?: number; started_at?: string; completed_at?: string };
-        if (detailedData.success) {
-          // The backend returns the status information directly in the response, not nested under a 'status' property
-          const statusData = detailedData;
+        // Handle both response formats (data property or direct response)
+        const detailedData = detailedResponse.data || detailedResponse;
+        
+        // Map the backend status format to our component's format
+        const mappedStatus: RecognitionStatus = {
+          status: detailedData.status || 'not_started',
+          started_at: detailedData.started_at,
+          completed_at: detailedData.completed_at,
+          // Use completion_percentage directly if available, otherwise try to get it from progress
+          progress: detailedData.completion_percentage || detailedData.progress?.completion_percentage || 0,
+          results: detailedData.results || null,
+          steps: []
+        };
+        
+        // Map steps if available
+        if (detailedData.progress?.steps) {
+          mappedStatus.steps = detailedData.progress.steps.map((step: any) => ({
+            name: step.name,
+            status: step.status === 'completed' ? 'completed' : 
+                   step.status === 'failed' ? 'failed' : 'in_progress'
+          }));
+        }
+        
+        // Add error if present
+        if (detailedData.progress?.error || detailedData.error) {
+          mappedStatus.error = detailedData.progress?.error || detailedData.error;
+        }
+        
+        console.log('Mapped status:', mappedStatus);
+        setRecognitionStatus(mappedStatus);
+        
+        // If completed, fetch transcription data
+        if (mappedStatus.status === 'completed') {
+          fetchAudioInfo();
           
-          // Map the backend status format to our component's format
-          const mappedStatus: RecognitionStatus = {
-            status: statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed" || 'not_started',
-            started_at: statusData.started_at,
-            completed_at: statusData.completed_at,
-            // Use completion_percentage directly if available, otherwise try to get it from progress
-            progress: statusData.completion_percentage || statusData.progress?.completion_percentage || 0,
-            steps: []
-          };
-          
-          // Map steps if available
-          if (statusData.progress?.steps) {
-            mappedStatus.steps = statusData.progress.steps.map((step: any) => ({
-              name: step.name,
-              status: step.status === 'completed' ? 'completed' : 
-                     step.status === 'failed' ? 'failed' : 'in_progress'
-            }));
+          // Notify parent component if recognition is complete
+          if (onProcessingComplete) {
+            onProcessingComplete();
           }
-          
-          // Add error if present
-          if (statusData.progress?.error) {
-            mappedStatus.error = statusData.progress.error;
-          }
-          
-          setRecognitionStatus(mappedStatus);
         }
       } catch (detailedErr) {
         // If detailed status fails, fall back to basic status
@@ -221,20 +239,29 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         const basicResponse = await api.get(`/recognition/recognition-status/${captureId}`);
         
         console.log('Basic status response:', basicResponse);
-        const basicData = basicResponse as { success: boolean; status?: string; video_id?: number; started_at?: string; completed_at?: string };
-        if (basicData.success) {
-          // The backend returns the status information directly in the response, not nested under a 'status' property
-          const statusData = basicData;
+        // Handle both response formats (data property or direct response)
+        const basicData = basicResponse.data || basicResponse;
+        
+        // Map the basic status
+        const mappedStatus: RecognitionStatus = {
+          status: basicData.status || 'not_started',
+          started_at: basicData.started_at,
+          completed_at: basicData.completed_at,
+          results: basicData.results || null,
+          progress: basicData.progress || 0 // Use progress if available
+        };
+        
+        console.log('Mapped basic status:', mappedStatus);
+        setRecognitionStatus(mappedStatus);
+        
+        // If completed, fetch transcription data
+        if (mappedStatus.status === 'completed') {
+          fetchAudioInfo();
           
-          // Map the basic status
-          const mappedStatus: RecognitionStatus = {
-            status: statusData.status as "not_started" | "scheduled" | "processing" | "completed" | "failed" || 'not_started',
-            started_at: statusData.started_at,
-            completed_at: statusData.completed_at,
-            progress: 0 // No progress info in basic status
-          };
-          
-          setRecognitionStatus(mappedStatus);
+          // Notify parent component if recognition is complete
+          if (onProcessingComplete) {
+            onProcessingComplete();
+          }
         }
       }
       
