@@ -153,7 +153,7 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
                                     isActive
                                       ? 'text-blue-400 bg-gray-700'
                                       : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
-                                  } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200 block`}
+                                  } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
                                 >
                                   <svg
                                     className="mr-3 h-5 w-5"
@@ -191,7 +191,7 @@ const DarkLayout: React.FC<DarkLayoutProps> = ({
                                       isActive
                                         ? 'text-blue-400 bg-gray-700'
                                         : 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
-                                    } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200 block`}
+                                    } group flex items-center px-2 py-2 text-sm font-medium rounded-md cursor-pointer transition-colors duration-200`}
                                   >
                                     <svg
                                       className="mr-3 h-5 w-5"

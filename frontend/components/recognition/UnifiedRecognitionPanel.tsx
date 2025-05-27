@@ -11,6 +11,13 @@ import TimelineView from './TimelineView';
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 
+// Extend Window interface to include our custom properties
+declare global {
+  interface Window {
+    __audioInfoErrorLogged?: boolean;
+  }
+}
+
 interface UnifiedRecognitionPanelProps {
   captureId: number;
   onProcessingComplete?: () => void;
@@ -145,9 +152,16 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         // If completed or has results, fetch transcription data and notify parent
         if (status.status === 'completed' || status.has_results || responseData.results) {
           console.log('Status is completed or has results, fetching additional data');
-          fetchTranscriptionData();
-          fetchAudioInfo();
-          
+          // Fetch transcription data first - this is critical for functionality
+          await fetchTranscriptionData();
+          // Try to fetch audio info, but don't block if it fails
+          // This is wrapped in a try/catch to ensure it doesn't affect the main flow
+          try {
+            await fetchAudioInfo();
+          } catch (audioErr) {
+            // Audio info is not critical, so just log and continue
+            console.info('Audio info fetch failed, but continuing with other data');
+          }
           // Notify parent component if recognition is complete
           if (onProcessingComplete) {
             onProcessingComplete();
@@ -168,6 +182,13 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch audio info
   const fetchAudioInfo = async () => {
+    // Use a flag to track if we've already logged this error for this session
+    // to avoid flooding the console with the same error
+    if (window.__audioInfoErrorLogged) {
+      // If we've already logged this error, just return silently
+      return;
+    }
+    
     try {
       // Attempt to fetch audio info, but don't block the UI if it fails
       const response = await api.get(`/capture/${captureId}/audio-info`);
@@ -175,20 +196,28 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       // Only process the response if it was successful
       if (response && response.data) {
         const audioInfo = response.data;
-        console.log('Audio info successfully fetched:', audioInfo);
         setAudioInfo(audioInfo);
         return;
       }
       
       // If we get here, we didn't get valid data
-      console.warn('No valid audio info data received');
       setAudioInfo(null);
     } catch (err: any) {
       // Handle 404 errors gracefully - the endpoint might not be implemented yet
       if (err?.response?.status === 404) {
-        console.warn('Audio info endpoint not available (404) - this is expected if the feature is not yet implemented');
+        // Mark that we've logged this error to avoid duplicate logs
+        window.__audioInfoErrorLogged = true;
+        
+        // Only log in development, not in production
+        if (process.env.NODE_ENV === 'development') {
+          console.info('Audio info endpoint returned 404 - this is expected if the feature is not yet implemented');
+        }
       } else {
-        console.error('Error fetching audio info:', err);
+        // For other errors, log once but don't flood the console
+        if (!window.__audioInfoErrorLogged) {
+          window.__audioInfoErrorLogged = true;
+          console.error('Error fetching audio info:', err);
+        }
       }
       
       // Don't block the UI if audio info fails - just continue with null audio info
@@ -203,23 +232,30 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       const response = await api.get(`/recognition/timeline/${captureId}/transcription`);
       const data = response.data || response;
       
-      console.log('Transcription data:', data);
-      
       if (data && data.success) {
         // Make sure we have valid transcription data
         if (data.transcription) {
           setTranscriptionData(data.transcription);
           setIntegratedTimeline(data);
         } else {
-          console.warn('Transcription data is missing in the response');
+          // Log only in development environment
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('Transcription data is missing in the response');
+          }
           setTranscriptionError('Transcription data is missing in the response');
         }
       } else {
-        console.error('Error in transcription data:', data?.error || 'Unknown error');
+        // Log only in development environment
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Error in transcription data:', data?.error || 'Unknown error');
+        }
         setTranscriptionError(data?.error || 'Failed to load transcription data');
       }
     } catch (err) {
-      console.error('Error fetching transcription data:', err);
+      // Log only in development environment
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Error fetching transcription data:', err);
+      }
       setTranscriptionError('Error fetching transcription data');
     } finally {
       setIsLoadingTranscription(false);
