@@ -11,13 +11,6 @@ import TimelineView from './TimelineView';
 // API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 
-// Extend Window interface to include our custom properties
-declare global {
-  interface Window {
-    __audioInfoErrorLogged?: boolean;
-  }
-}
-
 interface UnifiedRecognitionPanelProps {
   captureId: number;
   onProcessingComplete?: () => void;
@@ -74,6 +67,24 @@ interface IntegratedTimelineData {
   error?: string;
 }
 
+interface FaceData {
+  name: string;
+  confidence: number;
+  timestamp: number;
+  image_path: string;
+}
+
+interface FacialRecognitionData {
+  faces: FaceData[];
+}
+
+interface RecognitionResultsData {
+  success: boolean;
+  video_id: number;
+  facial_recognition: FacialRecognitionData;
+  error?: string;
+}
+
 const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   captureId,
   onProcessingComplete
@@ -81,32 +92,17 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const router = useRouter();
   const { token } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('enhanced');
+  const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus | null>(null);
   const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
-  const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [transcriptionData, setTranscriptionData] = useState<TranscriptionData | null>(null);
   const [integratedTimeline, setIntegratedTimeline] = useState<IntegratedTimelineData | null>(null);
   const [isLoadingTranscription, setIsLoadingTranscription] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState('');
-  const [recognitionResults, setRecognitionResults] = useState<any>(null);
-
-  // Fetch recognition status on component mount and set up polling
-  useEffect(() => {
-    // Initial fetch of status
-    fetchStatus();
-    
-    // Set up polling interval to check status every 5 seconds
-    const intervalId = setInterval(() => {
-      if (recognitionStatus?.status === 'processing' || recognitionStatus?.status === 'scheduled') {
-        fetchStatus();
-      }
-    }, 5000);
-    
-    // Clean up interval on component unmount
-    return () => clearInterval(intervalId);
-  }, [captureId]); // Only re-run when captureId changes, not on status changes
+  const [recognitionResults, setRecognitionResults] = useState<RecognitionResultsData | null>(null);
+  const [isLoadingRecognition, setIsLoadingRecognition] = useState(false);
+  const [recognitionError, setRecognitionError] = useState('');
 
   // Fetch recognition status
   const fetchStatus = async () => {
@@ -120,59 +116,21 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     
     try {
       const response = await api.get(`/recognition/recognition-status/${captureId}`);
-      const responseData = response.data || response;
+      const status = response.data || response;
       
-      console.log('Recognition status response:', responseData);
+      console.log('Recognition status:', status);
+      setRecognitionStatus(status);
       
-      // Extract the status object - it might be nested inside a 'status' property
-      // or it might be the direct response
-      const status = responseData.status && typeof responseData.status === 'object' 
-        ? responseData.status 
-        : responseData;
-      
-      console.log('Extracted status:', status);
-      console.log('Status type:', status.status, 'Has results:', status.has_results);
-      
-      // Check if we have detailed recognition results
-      if (responseData.results) {
-        console.log('Recognition results found in response');
-      }
-      
-      // Ensure status is properly formatted
-      if (status && typeof status === 'object') {
-        // Make sure we have a valid status object
-        setRecognitionStatus({
-          status: status.status || 'not_started',
-          progress: status.progress || 0,
-          error: responseData.error || status.error,
-          results: responseData.results || status.results,
-          started_at: status.started_at,
-          completed_at: status.completed_at
-        });
+      // If completed, fetch transcription data
+      if (status.status === 'completed') {
+        fetchTranscriptionData();
+        fetchAudioInfo();
+        fetchRecognitionResults();
         
-        // If completed or has results, fetch transcription data and notify parent
-        if (status.status === 'completed' || status.has_results || responseData.results) {
-          console.log('Status is completed or has results, fetching additional data');
-          // Fetch transcription data first - this is critical for functionality
-          await fetchTranscriptionData();
-          // Fetch recognition results for facial recognition data
-          await fetchRecognitionResults();
-          // Try to fetch audio info, but don't block if it fails
-          // This is wrapped in a try/catch to ensure it doesn't affect the main flow
-          try {
-            await fetchAudioInfo();
-          } catch (audioErr) {
-            // Audio info is not critical, so just log and continue
-            console.info('Audio info fetch failed, but continuing with other data');
-          }
-          // Notify parent component if recognition is complete
-          if (onProcessingComplete) {
-            onProcessingComplete();
-          }
+        // Notify parent component if recognition is complete
+        if (onProcessingComplete) {
+          onProcessingComplete();
         }
-      } else {
-        console.error('Invalid status format:', status);
-        setError('Received invalid status format from server');
       }
       
       setLoading(false);
@@ -185,81 +143,46 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch audio info
   const fetchAudioInfo = async () => {
-    // Use a flag to track if we've already logged this error for this session
-    // to avoid flooding the console with the same error
-    if (window.__audioInfoErrorLogged) {
-      // If we've already logged this error, just return silently
-      return;
-    }
-    
     try {
-      // Attempt to fetch audio info, but don't block the UI if it fails
+      // Use the correct endpoint path
       const response = await api.get(`/capture/${captureId}/audio`);
+      const audioInfo = response.data || response;
       
-      // Only process the response if it was successful
-      if (response && response.data) {
-        const audioInfo = response.data;
-        setAudioInfo(audioInfo);
-        return;
-      }
-      
-      // If we get here, we didn't get valid data
-      setAudioInfo(null);
-    } catch (err: any) {
-      // Handle 404 errors gracefully - the endpoint might not be implemented yet
-      if (err?.response?.status === 404) {
-        // Mark that we've logged this error to avoid duplicate logs
-        window.__audioInfoErrorLogged = true;
-        
-        // Only log in development, not in production
-        if (process.env.NODE_ENV === 'development') {
-          console.info('Audio endpoint returned 404 - this is expected if the feature is not yet implemented');
-        }
-      } else {
-        // For other errors, log once but don't flood the console
-        if (!window.__audioInfoErrorLogged) {
-          window.__audioInfoErrorLogged = true;
-          console.error('Error fetching audio info:', err);
-        }
-      }
-      
-      // Don't block the UI if audio info fails - just continue with null audio info
-      setAudioInfo(null);
+      console.log('Audio info:', audioInfo);
+      setAudioInfo(audioInfo);
+    } catch (err) {
+      console.error('Error fetching audio info:', err);
+      // Don't fail the UI if audio info can't be fetched
     }
   };
 
   // Fetch transcription data
   const fetchTranscriptionData = async () => {
-    setIsLoadingTranscription(true);
     try {
+      setIsLoadingTranscription(true);
+      setTranscriptionError('');
+      
+      console.log('Fetching transcription data for captureId:', captureId);
       const response = await api.get(`/recognition/timeline/${captureId}/transcription`);
+      console.log('Transcription data response:', response);
+      
+      // Handle different response formats
       const data = response.data || response;
       
       if (data && data.success) {
-        // Make sure we have valid transcription data
+        // Ensure transcription data has the expected structure
         if (data.transcription) {
           setTranscriptionData(data.transcription);
           setIntegratedTimeline(data);
         } else {
-          // Log only in development environment
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('Transcription data is missing in the response');
-          }
-          setTranscriptionError('Transcription data is missing in the response');
+          setTranscriptionError('Invalid transcription data format');
         }
       } else {
-        // Log only in development environment
-        if (process.env.NODE_ENV === 'development') {
-          console.error('Error in transcription data:', data?.error || 'Unknown error');
-        }
-        setTranscriptionError(data?.error || 'Failed to load transcription data');
+        setTranscriptionError(data?.error || 'Failed to fetch transcription data');
       }
     } catch (err) {
-      // Log only in development environment
-      if (process.env.NODE_ENV === 'development') {
-        console.error('Error fetching transcription data:', err);
-      }
-      setTranscriptionError('Error fetching transcription data');
+      console.error('Error fetching transcription data:', err);
+      setTranscriptionError('Error fetching transcription data. Please try again.');
     } finally {
       setIsLoadingTranscription(false);
     }
@@ -268,40 +191,113 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   // Fetch recognition results
   const fetchRecognitionResults = async () => {
     try {
+      setIsLoadingRecognition(true);
+      setRecognitionError('');
+      
+      // First try to get the full recognition results
       const response = await api.get(`/recognition/results/${captureId}`);
       const data = response.data || response;
       
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Recognition results data:', data);
+      console.log('Recognition results data:', data);
+      
+      // Create a properly structured result object for the FacesView component
+      const structuredResults: RecognitionResultsData = {
+        success: true,
+        video_id: captureId,
+        facial_recognition: {
+          faces: []
+        }
+      };
+      
+      // Check if we have facial recognition data in the response
+      if (data && data.success) {
+        // If the response has facial_recognition data directly
+        if (data.facial_recognition && data.facial_recognition.faces) {
+          structuredResults.facial_recognition = data.facial_recognition;
+        }
+        // If the response has a different structure, try to extract faces
+        else if (data.faces && Array.isArray(data.faces)) {
+          structuredResults.facial_recognition.faces = data.faces;
+        }
+        // If there's a results object that might contain facial data
+        else if (data.results && typeof data.results === 'object') {
+          if (data.results.facial_recognition) {
+            structuredResults.facial_recognition = data.results.facial_recognition;
+          } else if (data.results.faces && Array.isArray(data.results.faces)) {
+            structuredResults.facial_recognition.faces = data.results.faces;
+          }
+        }
       }
       
-      if (data) {
-        setRecognitionResults(data);
-      } else {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('No recognition results data received');
-        }
-        setRecognitionResults(null);
+      // Add mock data for testing if in development mode and no real data found
+      if (process.env.NODE_ENV === 'development' && 
+          (!structuredResults.facial_recognition.faces || 
+           structuredResults.facial_recognition.faces.length === 0)) {
+        console.log('Adding mock facial recognition data for development testing');
+        structuredResults.facial_recognition.faces = [
+          {
+            name: 'Unknown Person #1',
+            confidence: 0.85,
+            timestamp: 60,
+            image_path: '/placeholder-face.png'
+          },
+          {
+            name: 'Unknown Person #2',
+            confidence: 0.78,
+            timestamp: 120,
+            image_path: '/placeholder-face.png'
+          }
+        ];
       }
+      
+      setRecognitionResults(structuredResults);
     } catch (err: any) {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('Error fetching recognition results:', err);
-      }
-      setRecognitionResults(null);
+      console.error('Error fetching recognition results:', err);
+      // Create a minimal structure with empty faces array
+      setRecognitionResults({
+        success: false,
+        video_id: captureId,
+        facial_recognition: {
+          faces: []
+        },
+        error: err?.message || 'Failed to fetch recognition results'
+      } as RecognitionResultsData);
+      setRecognitionError(err?.message || 'Failed to fetch recognition results');
+    } finally {
+      setIsLoadingRecognition(false);
     }
   };
 
-  // Debug info toggle
-  const toggleDebugInfo = () => {
-    setShowDebugInfo(!showDebugInfo);
-  };
+  // Initial fetch
+  useEffect(() => {
+    fetchStatus();
+    
+    // Set up polling interval
+    const interval = setInterval(() => {
+      if (recognitionStatus?.status === 'processing' || recognitionStatus?.status === 'scheduled') {
+        fetchStatus();
+      }
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [captureId]);
+  
+  // Fetch recognition results when tab changes to 'faces'
+  useEffect(() => {
+    if (activeTab === 'faces' && recognitionStatus?.status === 'completed' && !recognitionResults) {
+      fetchRecognitionResults();
+    }
+  }, [activeTab, recognitionStatus, recognitionResults]);
 
   // Render loading state
   if (loading) {
     return (
-      <div className="bg-gray-800 rounded-lg shadow-lg p-6 flex flex-col items-center justify-center min-h-[300px]">
-        <div className="spinner mb-4"></div>
-        <p className="text-white">Loading recognition status...</p>
+      <div className="bg-gray-800 rounded-lg shadow-lg p-6">
+        <h2 className="text-xl font-bold mb-6 text-white">Recognition Results</h2>
+        <div className="flex justify-center items-center h-32">
+          <div className="spinner"></div>
+          <span className="ml-3 text-gray-300">Loading recognition status...</span>
+        </div>
       </div>
     );
   }
@@ -310,7 +306,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   if (error) {
     return (
       <div className="bg-gray-800 rounded-lg shadow-lg p-6">
-        <div className="bg-red-900 border-l-4 border-red-500 p-4">
+        <h2 className="text-xl font-bold mb-6 text-white">Recognition Results</h2>
+        <div className="bg-red-900 border-l-4 border-red-500 p-4 mb-4">
           <div className="flex">
             <div className="flex-shrink-0">
               <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -341,45 +338,48 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     <div className="bg-gray-800 rounded-lg shadow-lg p-6">
       <h2 className="text-xl font-bold mb-6 text-white">Recognition Results</h2>
       
-      {/* Show processing status if we're still processing */}
-      {recognitionStatus?.status === 'processing' && (
-        <div className="mb-4">
-          <div className="flex items-center">
-            <div className="w-3 h-3 rounded-full mr-2 bg-blue-500"></div>
-            <span className="font-medium text-white">Status: </span>
-            <span className="ml-1 capitalize text-white">Processing</span>
-            {recognitionStatus.progress !== undefined && (
-              <span className="ml-2 text-gray-400">
-                ({Math.round(recognitionStatus.progress)}%)
+      {recognitionStatus?.status === 'not_started' || recognitionStatus?.status === 'scheduled' || recognitionStatus?.status === 'processing' ? (
+        <div>
+          <div className="mb-4">
+            <div className="flex items-center">
+              <div className={`w-3 h-3 rounded-full mr-2 ${
+                recognitionStatus.status === 'processing' ? 'bg-blue-500' : 
+                'bg-gray-500'
+              }`}></div>
+              <span className="font-medium text-white">Status: </span>
+              <span className="ml-1 capitalize text-white">
+                {recognitionStatus.status === 'not_started' ? 'Not Started' : 
+                 recognitionStatus.status === 'processing' ? 'Processing' : 
+                 recognitionStatus.status === 'scheduled' ? 'Scheduled' : 'Unknown'}
               </span>
-            )}
+              {recognitionStatus.status === 'processing' && recognitionStatus.progress && (
+                <span className="ml-2 text-gray-400">
+                  ({Math.round(recognitionStatus.progress)}%)
+                </span>
+              )}
+            </div>
           </div>
           
           {/* Progress bar */}
-          <div className="w-full bg-gray-700 rounded-full h-4 mt-2">
-            <div 
-              className="h-4 rounded-full bg-blue-500" 
-              style={{ width: `${Math.min(100, Math.max(0, recognitionStatus.progress || 0))}%` }}
-            ></div>
+          {recognitionStatus.status === 'processing' && (
+            <div className="w-full bg-gray-700 rounded-full h-4 mb-4">
+              <div 
+                className="h-4 rounded-full bg-blue-500" 
+                style={{ width: `${Math.min(100, Math.max(0, recognitionStatus.progress || 0))}%` }}
+              ></div>
+            </div>
+          )}
+          
+          <div className="mt-4">
+            <button
+              onClick={() => router.push(`/capture/${captureId}`)}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-md mr-2"
+            >
+              Back to Capture
+            </button>
           </div>
         </div>
-      )}
-      
-      {/* Show scheduled or not started status */}
-      {(recognitionStatus?.status === 'scheduled' || recognitionStatus?.status === 'not_started') && (
-        <div className="mb-4">
-          <div className="flex items-center">
-            <div className="w-3 h-3 rounded-full mr-2 bg-gray-500"></div>
-            <span className="font-medium text-white">Status: </span>
-            <span className="ml-1 capitalize text-white">
-              {recognitionStatus.status === 'not_started' ? 'Not Started' : 'Scheduled'}
-            </span>
-          </div>
-        </div>
-      )}
-      
-      {/* Show results if they exist or if status is completed */}
-      {(recognitionStatus?.results || recognitionStatus?.status === 'completed') ? (
+      ) : recognitionStatus?.status === 'completed' ? (
         <div>
           {/* Tab Navigation */}
           <div className="flex border-b border-gray-700 mb-6 overflow-x-auto">
@@ -418,7 +418,58 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           )}
           
           {activeTab === 'faces' && (
-            <FacesView recognitionResults={recognitionResults || recognitionStatus?.results || {}} />
+            <div>
+              {isLoadingRecognition ? (
+                <div className="flex justify-center items-center h-32">
+                  <div className="spinner"></div>
+                  <span className="ml-3 text-gray-300">Loading facial recognition data...</span>
+                </div>
+              ) : recognitionError ? (
+                <div className="p-6 text-center">
+                  <p className="text-red-400">{recognitionError}</p>
+                  <button 
+                    onClick={fetchRecognitionResults}
+                    className="mt-2 px-3 py-1 bg-blue-800 hover:bg-blue-700 rounded-md text-xs text-white"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <FacesView recognitionResults={recognitionResults} />
+                  {recognitionResults?.facial_recognition?.faces?.length === 0 && (
+                    <div className="mt-4 p-4 bg-yellow-900/30 border border-yellow-800 rounded-md">
+                      <p className="text-yellow-300">No facial recognition data was found for this video.</p>
+                      <p className="text-sm text-yellow-400 mt-2">This could be because:</p>
+                      <ul className="list-disc list-inside text-sm text-yellow-400 mt-1">
+                        <li>The video doesn't contain any recognizable faces</li>
+                        <li>The facial recognition process hasn't completed</li>
+                        <li>There was an error during facial recognition processing</li>
+                      </ul>
+                      <button 
+                        onClick={() => {
+                          // Trigger facial recognition processing
+                          toast.info('Requesting facial recognition processing...');
+                          api.post(`/facial-recognition/process-video/${captureId}`)
+                            .then(() => {
+                              toast.success('Facial recognition processing started');
+                              // Wait a bit and then fetch results again
+                              setTimeout(fetchRecognitionResults, 5000);
+                            })
+                            .catch(err => {
+                              console.error('Error triggering facial recognition:', err);
+                              toast.error('Failed to start facial recognition processing');
+                            });
+                        }}
+                        className="mt-3 px-3 py-2 bg-yellow-800 hover:bg-yellow-700 rounded-md text-sm text-white"
+                      >
+                        Process Facial Recognition
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
           
           {activeTab === 'timeline' && (
@@ -429,7 +480,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             />
           )}
         </div>
-      ) : recognitionStatus?.status === 'failed' ? (
+      ) : (
         <div className="bg-red-900 border-l-4 border-red-500 p-4">
           <div className="flex">
             <div className="flex-shrink-0">
@@ -438,11 +489,10 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               </svg>
             </div>
             <div className="ml-3">
-              <p className="text-sm text-red-300">Recognition failed. {recognitionStatus?.error || 'Please try again.'}</p>
+              <p className="text-sm text-red-300">Recognition failed. Please try again.</p>
               <button 
                 onClick={() => {
                   setLoading(true);
-                  setError('');
                   fetchStatus();
                 }}
                 className="mt-2 px-3 py-1 bg-red-800 hover:bg-red-700 rounded-md text-xs text-white"
@@ -451,15 +501,6 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               </button>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex justify-center items-center p-6">
-          <button 
-            onClick={() => router.push(`/capture/${captureId}`)}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-md"
-          >
-            Back to Capture
-          </button>
         </div>
       )}
       
