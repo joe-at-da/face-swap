@@ -114,6 +114,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       const status = response.data || response;
       
       console.log('Recognition status:', status);
+      console.log('Recognition status type:', status.status, 'Results present:', !!status.results);
       
       // Ensure status is properly formatted
       if (status && typeof status === 'object') {
@@ -127,8 +128,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           completed_at: status.completed_at
         });
         
-        // If completed, fetch transcription data and notify parent
-        if (status.status === 'completed') {
+        // If completed or has results, fetch transcription data and notify parent
+        if (status.status === 'completed' || status.results) {
           fetchTranscriptionData();
           fetchAudioInfo();
           
@@ -252,48 +253,45 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     <div className="bg-gray-800 rounded-lg shadow-lg p-6">
       <h2 className="text-xl font-bold mb-6 text-white">Recognition Results</h2>
       
-      {recognitionStatus?.status === 'not_started' || recognitionStatus?.status === 'scheduled' || recognitionStatus?.status === 'processing' ? (
-        <div>
-          <div className="mb-4">
-            <div className="flex items-center">
-              <div className={`w-3 h-3 rounded-full mr-2 ${
-                recognitionStatus.status === 'processing' ? 'bg-blue-500' : 
-                'bg-gray-500'
-              }`}></div>
-              <span className="font-medium text-white">Status: </span>
-              <span className="ml-1 capitalize text-white">
-                {recognitionStatus.status === 'not_started' ? 'Not Started' : 
-                 recognitionStatus.status === 'processing' ? 'Processing' : 
-                 recognitionStatus.status === 'scheduled' ? 'Scheduled' : 'Unknown'}
+      {/* Show processing status if we're still processing */}
+      {recognitionStatus?.status === 'processing' && (
+        <div className="mb-4">
+          <div className="flex items-center">
+            <div className="w-3 h-3 rounded-full mr-2 bg-blue-500"></div>
+            <span className="font-medium text-white">Status: </span>
+            <span className="ml-1 capitalize text-white">Processing</span>
+            {recognitionStatus.progress !== undefined && (
+              <span className="ml-2 text-gray-400">
+                ({Math.round(recognitionStatus.progress)}%)
               </span>
-              {recognitionStatus.status === 'processing' && recognitionStatus.progress !== undefined && (
-                <span className="ml-2 text-gray-400">
-                  ({Math.round(recognitionStatus.progress)}%)
-                </span>
-              )}
-            </div>
+            )}
           </div>
           
           {/* Progress bar */}
-          {recognitionStatus.status === 'processing' && (
-            <div className="w-full bg-gray-700 rounded-full h-4 mb-4">
-              <div 
-                className="h-4 rounded-full bg-blue-500" 
-                style={{ width: `${Math.min(100, Math.max(0, recognitionStatus.progress || 0))}%` }}
-              ></div>
-            </div>
-          )}
-          
-          <div className="mt-4">
-            <button
-              onClick={() => router.push(`/capture/${captureId}`)}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-md mr-2"
-            >
-              Back to Capture
-            </button>
+          <div className="w-full bg-gray-700 rounded-full h-4 mt-2">
+            <div 
+              className="h-4 rounded-full bg-blue-500" 
+              style={{ width: `${Math.min(100, Math.max(0, recognitionStatus.progress || 0))}%` }}
+            ></div>
           </div>
         </div>
-      ) : recognitionStatus?.status === 'completed' ? (
+      )}
+      
+      {/* Show scheduled or not started status */}
+      {(recognitionStatus?.status === 'scheduled' || recognitionStatus?.status === 'not_started') && (
+        <div className="mb-4">
+          <div className="flex items-center">
+            <div className="w-3 h-3 rounded-full mr-2 bg-gray-500"></div>
+            <span className="font-medium text-white">Status: </span>
+            <span className="ml-1 capitalize text-white">
+              {recognitionStatus.status === 'not_started' ? 'Not Started' : 'Scheduled'}
+            </span>
+          </div>
+        </div>
+      )}
+      
+      {/* Show results if they exist */}
+      {recognitionStatus?.results ? (
         <div>
           {/* Tab Navigation */}
           <div className="flex border-b border-gray-700 mb-6 overflow-x-auto">
@@ -343,7 +341,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             />
           )}
         </div>
-      ) : (
+      ) : recognitionStatus?.status === 'failed' ? (
         <div className="bg-red-900 border-l-4 border-red-500 p-4">
           <div className="flex">
             <div className="flex-shrink-0">
@@ -365,6 +363,15 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      ) : (
+        <div className="flex justify-center items-center p-6">
+          <button 
+            onClick={() => router.push(`/capture/${captureId}`)}
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-md"
+          >
+            Back to Capture
+          </button>
         </div>
       )}
       
