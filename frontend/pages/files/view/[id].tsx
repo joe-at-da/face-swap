@@ -140,7 +140,6 @@ const MediaViewPage: React.FC = () => {
         console.error('Error fetching video:', error);
         throw new Error('Failed to fetch video data');
       }
-      }
     },
     enabled: !!id && id !== 'null' && id !== 'undefined' && id !== '[id]' && !!token && type === 'video',
     refetchOnWindowFocus: false,
