@@ -107,10 +107,11 @@ const MediaViewPage: React.FC = () => {
         try {
           const videosResponse = await api.get('/videos');
           if (Array.isArray(videosResponse)) {
-            // Find the video that matches our filename hash
+            // Find the video that matches our ID
             const matchingVideo = videosResponse.find(v => {
-              // Check if this is the video we're looking for based on filename
-              return v.filename && v.path && (v.path.includes('capture_0383.mp4') || v.filename.includes('capture_0383.mp4'));
+              // Check if this is the video we're looking for based on ID
+              const numericId = typeof videoId === 'string' ? videoId.replace('file-', '') : videoId;
+              return v.id && v.id.toString() === numericId.toString();
             });
             
             if (matchingVideo) {
@@ -290,12 +291,34 @@ const MediaViewPage: React.FC = () => {
     return '';
   };
 
-  // Generate audio URL based on the exact filename shown in the new screenshot
+  // Generate audio URL based on the current video's filename
   const getAudioUrl = () => {
     if (type === 'video' && video) {
-      // Use the exact filename from the new screenshot
-      const audioUrl = `${API_BASE_URL}/videos/static/audio/capture_0383.audio.mp3`;
-      console.log('Using exact audio URL from new screenshot:', audioUrl);
+      // Extract filename from video object
+      let filename = '';
+      if (video.filename) {
+        filename = video.filename;
+      } else if (video.file_path) {
+        // Extract filename from path
+        const pathParts = video.file_path.split('/');
+        filename = pathParts[pathParts.length - 1];
+      } else if (video.path) {
+        // Extract filename from path
+        const pathParts = video.path.split('/');
+        filename = pathParts[pathParts.length - 1];
+      }
+      
+      if (!filename) {
+        console.error('No filename found for audio generation:', video);
+        return '';
+      }
+      
+      // Extract base name without extension
+      const baseName = filename.replace(/\.mp4$|\.avi$|\.mov$/i, '');
+      
+      // Construct audio URL with the correct filename
+      const audioUrl = `${API_BASE_URL}/videos/static/audio/${baseName}.audio.mp3`;
+      console.log('Generated audio URL based on video filename:', audioUrl);
       return audioUrl;
     }
     return '';
