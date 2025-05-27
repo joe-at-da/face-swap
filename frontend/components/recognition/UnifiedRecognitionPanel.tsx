@@ -90,6 +90,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const [integratedTimeline, setIntegratedTimeline] = useState<IntegratedTimelineData | null>(null);
   const [isLoadingTranscription, setIsLoadingTranscription] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState('');
+  const [recognitionResults, setRecognitionResults] = useState<any>(null);
 
   // Fetch recognition status on component mount and set up polling
   useEffect(() => {
@@ -154,6 +155,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           console.log('Status is completed or has results, fetching additional data');
           // Fetch transcription data first - this is critical for functionality
           await fetchTranscriptionData();
+          // Fetch recognition results for facial recognition data
+          await fetchRecognitionResults();
           // Try to fetch audio info, but don't block if it fails
           // This is wrapped in a try/catch to ensure it doesn't affect the main flow
           try {
@@ -191,7 +194,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     
     try {
       // Attempt to fetch audio info, but don't block the UI if it fails
-      const response = await api.get(`/capture/${captureId}/audio-info`);
+      const response = await api.get(`/capture/${captureId}/audio`);
       
       // Only process the response if it was successful
       if (response && response.data) {
@@ -210,7 +213,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         
         // Only log in development, not in production
         if (process.env.NODE_ENV === 'development') {
-          console.info('Audio info endpoint returned 404 - this is expected if the feature is not yet implemented');
+          console.info('Audio endpoint returned 404 - this is expected if the feature is not yet implemented');
         }
       } else {
         // For other errors, log once but don't flood the console
@@ -259,6 +262,32 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       setTranscriptionError('Error fetching transcription data');
     } finally {
       setIsLoadingTranscription(false);
+    }
+  };
+
+  // Fetch recognition results
+  const fetchRecognitionResults = async () => {
+    try {
+      const response = await api.get(`/recognition/results/${captureId}`);
+      const data = response.data || response;
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Recognition results data:', data);
+      }
+      
+      if (data) {
+        setRecognitionResults(data);
+      } else {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('No recognition results data received');
+        }
+        setRecognitionResults(null);
+      }
+    } catch (err: any) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Error fetching recognition results:', err);
+      }
+      setRecognitionResults(null);
     }
   };
 
@@ -389,7 +418,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           )}
           
           {activeTab === 'faces' && (
-            <FacesView recognitionResults={recognitionStatus?.results || {}} />
+            <FacesView recognitionResults={recognitionResults || recognitionStatus?.results || {}} />
           )}
           
           {activeTab === 'timeline' && (
