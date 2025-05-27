@@ -89,6 +89,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   captureId,
   onProcessingComplete
 }) => {
+  // Ensure captureId is a valid number
+  const validCaptureId = typeof captureId === 'number' && !isNaN(captureId) ? captureId : null;
   const router = useRouter();
   const { token } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('enhanced');
@@ -106,8 +108,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch recognition status
   const fetchStatus = async () => {
-    // Check if captureId is valid
-    if (!captureId || isNaN(Number(captureId))) {
+    // Check if we have a valid capture ID
+    if (!validCaptureId) {
       console.error('Invalid capture ID:', captureId);
       setError('Invalid capture ID. Please check the URL and try again.');
       setLoading(false);
@@ -115,7 +117,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     }
     
     try {
-      const response = await api.get(`/recognition/recognition-status/${captureId}`);
+      const response = await api.get(`/recognition/recognition-status/${validCaptureId}`);
       const status = response.data || response;
       
       console.log('Recognition status:', status);
@@ -143,9 +145,11 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch audio info
   const fetchAudioInfo = async () => {
+    if (!validCaptureId) return;
+    
     try {
       // Use the correct endpoint path
-      const response = await api.get(`/capture/${captureId}/audio`);
+      const response = await api.get(`/capture/${validCaptureId}/audio`);
       const audioInfo = response.data || response;
       
       console.log('Audio info:', audioInfo);
@@ -158,12 +162,14 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch transcription data
   const fetchTranscriptionData = async () => {
+    if (!validCaptureId) return;
+    
     try {
       setIsLoadingTranscription(true);
       setTranscriptionError('');
       
-      console.log('Fetching transcription data for captureId:', captureId);
-      const response = await api.get(`/recognition/timeline/${captureId}/transcription`);
+      console.log('Fetching transcription data for captureId:', validCaptureId);
+      const response = await api.get(`/recognition/timeline/${validCaptureId}/transcription`);
       console.log('Transcription data response:', response);
       
       // Handle different response formats
@@ -190,12 +196,14 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Fetch recognition results
   const fetchRecognitionResults = async () => {
+    if (!validCaptureId) return;
+    
     try {
       setIsLoadingRecognition(true);
       setRecognitionError('');
       
       // First try to get the full recognition results
-      const response = await api.get(`/recognition/results/${captureId}`);
+      const response = await api.get(`/recognition/results/${validCaptureId}`);
       const data = response.data || response;
       
       console.log('Recognition results data:', data);
@@ -203,7 +211,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       // Create a properly structured result object for the FacesView component
       const structuredResults: RecognitionResultsData = {
         success: true,
-        video_id: captureId,
+        video_id: validCaptureId as number,
         facial_recognition: {
           faces: []
         }
@@ -256,7 +264,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       // Create a minimal structure with empty faces array
       setRecognitionResults({
         success: false,
-        video_id: captureId,
+        video_id: validCaptureId as number,
         facial_recognition: {
           faces: []
         },
@@ -270,24 +278,30 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
 
   // Initial fetch
   useEffect(() => {
-    fetchStatus();
-    
-    // Set up polling interval
-    const interval = setInterval(() => {
-      if (recognitionStatus?.status === 'processing' || recognitionStatus?.status === 'scheduled') {
-        fetchStatus();
-      }
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [captureId]);
+    // Only fetch if we have a valid capture ID
+    if (validCaptureId) {
+      fetchStatus();
+      
+      // Set up polling interval
+      const interval = setInterval(() => {
+        if (recognitionStatus?.status === 'processing' || recognitionStatus?.status === 'scheduled') {
+          fetchStatus();
+        }
+      }, 5000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [validCaptureId]);
   
   // Fetch recognition results when tab changes to 'faces'
   useEffect(() => {
-    if (activeTab === 'faces' && recognitionStatus?.status === 'completed' && !recognitionResults) {
+    if (validCaptureId && 
+        activeTab === 'faces' && 
+        recognitionStatus?.status === 'completed' && 
+        !recognitionResults) {
       fetchRecognitionResults();
     }
-  }, [activeTab, recognitionStatus, recognitionResults]);
+  }, [activeTab, recognitionStatus, recognitionResults, validCaptureId]);
 
   // Render loading state
   if (loading) {
@@ -450,7 +464,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
                         onClick={() => {
                           // Trigger facial recognition processing
                           toast.info('Requesting facial recognition processing...');
-                          api.post(`/facial-recognition/process-video/${captureId}`)
+                          api.post(`/facial-recognition/process-video/${validCaptureId}`)
                             .then(() => {
                               toast.success('Facial recognition processing started');
                               // Wait a bit and then fetch results again

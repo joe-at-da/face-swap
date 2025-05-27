@@ -210,14 +210,23 @@ const RecognitionPage: React.FC = () => {
 
         {/* Unified Recognition Panel */}
         <div className="mb-8">
-          <UnifiedRecognitionPanel 
-            captureId={Number(id)} 
-            onProcessingComplete={() => {
-              toast.success('Recognition processing completed');
-              queryClient.invalidateQueries({ queryKey: ['capture', id] });
-              queryClient.invalidateQueries({ queryKey: ['recognition-status', id] });
-            }}
-          />
+          {id ? (
+            <UnifiedRecognitionPanel 
+              captureId={parseInt(id as string, 10)} 
+              onProcessingComplete={() => {
+                toast.success('Recognition processing completed');
+                queryClient.invalidateQueries({ queryKey: ['capture', id] });
+                queryClient.invalidateQueries({ queryKey: ['recognition-status', id] });
+              }}
+            />
+          ) : (
+            <div className="bg-gray-800 rounded-lg shadow-lg p-6">
+              <h2 className="text-xl font-bold mb-6 text-white">Recognition Results</h2>
+              <div className="bg-yellow-900/30 border border-yellow-800 rounded-md p-4">
+                <p className="text-yellow-300">Loading capture information...</p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-gray-800 shadow overflow-hidden sm:rounded-lg">
