@@ -225,11 +225,16 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     try {
       const response = await api.get(`/capture/${captureId}/audio-info`);
       const audioInfo = response.data || response;
-      
-      console.log('Audio info:', audioInfo);
       setAudioInfo(audioInfo);
     } catch (err) {
       console.error('Error fetching audio info:', err);
+      // Create a default audio info object when the endpoint returns an error
+      setAudioInfo({
+        file_path: null,
+        file_name: null,
+        source_url: null
+      });
+      // Don't set an error state, as this is not critical
     }
   };
 
@@ -251,46 +256,127 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         throw new Error('Empty response from transcription API');
       }
       
-      // Check if we have a valid success response
-      if (data.success === true) {
-        // Ensure transcription data has the expected structure
-        if (data.transcription && typeof data.transcription === 'object') {
-          // Validate transcription structure
-          if (!data.transcription.segments || !Array.isArray(data.transcription.segments)) {
-            console.warn('Invalid transcription segments:', data.transcription);
-            data.transcription.segments = [];
-          }
-          
-          setTranscriptionData(data.transcription);
-          setIntegratedTimeline(data);
-        } else {
-          console.warn('Missing or invalid transcription data:', data);
-          setTranscriptionError('Invalid transcription data format');
-        }
-      } else {
-        // Create a minimal valid structure for the UI to work with
-        console.warn('Transcription data missing success flag:', data);
+      // Log the raw data structure to better understand the format
+      console.log('Raw transcription data structure:', JSON.stringify(data).substring(0, 200) + '...');
+      
+      // Create default transcription data object
+      const transcriptionData: TranscriptionData = {
+        text: '',
+        segments: [],
+        language: 'en',
+        duration: 0
+      };
+      
+      // Create default integrated timeline data
+      const integratedData: IntegratedTimelineData = {
+        success: true,
+        transcription: transcriptionData,
+        timeline: [],
+        correlations: []
+      };
+      
+      // Try to extract data from various possible formats
+      // Check for direct text and segments
+      if (typeof data.text === 'string') {
+        transcriptionData.text = data.text;
+        console.log('Found text in response');
+      }
+      
+      if (Array.isArray(data.segments)) {
+        transcriptionData.segments = data.segments;
+        console.log('Found segments in response');
+      }
+      
+      if (typeof data.language === 'string') {
+        transcriptionData.language = data.language;
+      }
+      
+      if (typeof data.duration === 'number') {
+        transcriptionData.duration = data.duration;
+      }
+      
+      // Check for nested transcription object
+      if (data.transcription && typeof data.transcription === 'object') {
+        console.log('Found nested transcription object');
         
-        // If we have some data but missing the success flag, try to use what we have
-        if (data.transcription && typeof data.transcription === 'object') {
-          setTranscriptionData(data.transcription);
-          
-          // Create a minimal valid integrated timeline
-          const fallbackTimeline = {
-            success: true,
-            transcription: data.transcription,
-            timeline: data.timeline || [],
-            correlations: data.correlations || []
-          };
-          
-          setIntegratedTimeline(fallbackTimeline);
-          console.log('Created fallback timeline from partial data:', fallbackTimeline);
-        } else {
-          setTranscriptionError(data?.error || 'Failed to fetch transcription data');
+        if (typeof data.transcription.text === 'string') {
+          transcriptionData.text = data.transcription.text;
         }
+        
+        if (Array.isArray(data.transcription.segments)) {
+          transcriptionData.segments = data.transcription.segments;
+        }
+        
+        if (typeof data.transcription.language === 'string') {
+          transcriptionData.language = data.transcription.language;
+        }
+        
+        if (typeof data.transcription.duration === 'number') {
+          transcriptionData.duration = data.transcription.duration;
+        }
+      }
+      
+      // Check for timeline data
+      if (Array.isArray(data.timeline)) {
+        integratedData.timeline = data.timeline;
+        console.log('Found timeline data');
+      }
+      
+      // Check for correlations data
+      if (Array.isArray(data.correlations)) {
+        integratedData.correlations = data.correlations;
+        console.log('Found correlations data');
+      }
+      
+      // If we have a transcript property that's a string, use it as text
+      if (typeof data.transcript === 'string' && data.transcript.length > 0) {
+        transcriptionData.text = data.transcript;
+        console.log('Found transcript string');
+      }
+      
+      // If we have a result property that contains text, use it
+      if (data.result && typeof data.result.text === 'string') {
+        transcriptionData.text = data.result.text;
+        console.log('Found text in result object');
+      }
+      
+      // Update the integrated data with our transcription data
+      integratedData.transcription = transcriptionData;
+      
+      // Set state with whatever data we were able to extract
+      setTranscriptionData(transcriptionData);
+      setIntegratedTimeline(integratedData);
+      
+      // Log what we're using
+      console.log('Using transcription data:', transcriptionData);
+      console.log('Using integrated timeline data:', integratedData);
+      
+      // If we couldn't extract any meaningful data, set an error
+      if (transcriptionData.text === '' && transcriptionData.segments.length === 0) {
+        console.warn('No usable transcription data found');
+        setTranscriptionError('No transcription data available');
       }
     } catch (err) {
       console.error('Error fetching transcription data:', err);
+      
+      // Create minimal valid objects to prevent UI errors
+      const emptyTranscription: TranscriptionData = {
+        text: '',
+        segments: [],
+        language: 'en',
+        duration: 0
+      };
+      
+      const emptyIntegratedData: IntegratedTimelineData = {
+        success: false,
+        transcription: emptyTranscription,
+        timeline: [],
+        correlations: [],
+        error: err instanceof Error ? err.message : 'Unknown error'
+      };
+      
+      setTranscriptionData(emptyTranscription);
+      setIntegratedTimeline(emptyIntegratedData);
       setTranscriptionError('Error fetching transcription data. Please try again.');
     } finally {
       setIsLoadingTranscription(false);
