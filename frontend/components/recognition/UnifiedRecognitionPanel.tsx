@@ -126,25 +126,83 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     }
     try {
       const response = await api.get(`/recognition/recognition-status/${captureId}`);
-      const status = response.data || response;
+      // Get the data from the response
+      let responseData = response.data || response;
       
-      console.log('Recognition status:', status);
+      console.log('Raw recognition status response:', responseData);
       
-      // Validate the response structure
-      if (!status || typeof status !== 'object') {
-        throw new Error('Invalid response format from recognition status API');
+      // Create a valid RecognitionStatus object
+      const statusData: RecognitionStatus = {
+        // Default to 'not_started' if no status is present
+        status: 'not_started',
+        // Add other fields with defaults
+        steps: [],
+        progress: 0
+      };
+      
+      // If we have a valid response object, extract properties
+      if (responseData && typeof responseData === 'object') {
+        // Check if the response has a nested status object structure
+        // Format: { success: true, status: { status: 'completed', ... }, error: null }
+        if (responseData.success === true && responseData.status && typeof responseData.status === 'object') {
+          console.log('Found nested status object:', responseData.status);
+          
+          // Extract the nested status object
+          const nestedStatus = responseData.status;
+          
+          // Copy properties from the nested status object
+          if (nestedStatus.status && typeof nestedStatus.status === 'string') {
+            statusData.status = nestedStatus.status;
+          }
+          
+          // Copy other properties from the nested status
+          ['progress', 'started_at', 'completed_at', 'results', 'has_results'].forEach(key => {
+            if (key in nestedStatus) {
+              (statusData as any)[key] = (nestedStatus as any)[key];
+            }
+          });
+          
+          // If there's an error in the response, store it
+          if (responseData.error) {
+            statusData.error = responseData.error;
+          }
+        } else {
+          // Handle flat structure (no nested status object)
+          // Copy all existing properties
+          Object.keys(responseData).forEach(key => {
+            if (key in responseData) {
+              (statusData as any)[key] = (responseData as any)[key];
+            }
+          });
+        }
+        
+        // Ensure status is a valid value
+        if (typeof statusData.status === 'string' && 
+            ['not_started', 'scheduled', 'processing', 'completed', 'failed'].includes(statusData.status)) {
+          // Status is already valid
+        } else {
+          console.warn('Recognition status has invalid status property:', statusData.status);
+          
+          // Try to determine status from other properties
+          if (statusData.completed_at) {
+            statusData.status = 'completed';
+          } else if (statusData.started_at) {
+            statusData.status = 'processing';
+          } else {
+            statusData.status = 'not_started';
+          }
+          
+          console.log('Determined status from properties:', statusData.status);
+        }
+      } else {
+        console.warn('Empty or invalid response from recognition status API');
       }
       
-      // Ensure the status has a valid status property
-      if (!status.status || !['not_started', 'scheduled', 'processing', 'completed', 'failed'].includes(status.status)) {
-        console.warn('Recognition status has invalid status property:', status);
-        throw new Error('Invalid recognition status format');
-      }
-      
-      setRecognitionStatus(status);
+      console.log('Processed recognition status:', statusData);
+      setRecognitionStatus(statusData);
       
       // If recognition is completed, fetch additional data
-      if (status.status === 'completed') {
+      if (statusData.status === 'completed') {
         fetchAudioInfo();
         fetchTranscriptionData();
         

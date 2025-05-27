@@ -83,50 +83,111 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
         const data = response.data || response;
         console.log('Raw timeline response:', data);
         
-        // Validate the response
-        if (!data) {
-          throw new Error('Empty response from timeline API');
+        // Validate the response and create a properly structured timeline data object
+        // regardless of what the API returns
+        
+        // First, log the raw response for debugging
+        console.log('Raw API response:', data);
+        
+        // Initialize a valid timeline data structure with defaults
+        const validTimelineData: TimelineData = {
+          success: true, // Default to success and let validation potentially change it
+          video_id: videoId,
+          timeline: [],
+          correlations: []
+        };
+        
+        // If we have a valid response object
+        if (data && typeof data === 'object') {
+          // Extract timeline data if available
+          if (Array.isArray(data.timeline)) {
+            validTimelineData.timeline = data.timeline;
+          } else if (data.timeline && typeof data.timeline === 'object') {
+            // Handle case where timeline might be an object instead of array
+            console.warn('Timeline is an object, not an array. Converting:', data.timeline);
+            validTimelineData.timeline = Object.values(data.timeline);
+          }
+          
+          // Extract correlations if available
+          if (Array.isArray(data.correlations)) {
+            validTimelineData.correlations = data.correlations;
+          } else if (data.correlations && typeof data.correlations === 'object') {
+            // Handle case where correlations might be an object instead of array
+            console.warn('Correlations is an object, not an array. Converting:', data.correlations);
+            validTimelineData.correlations = Object.values(data.correlations);
+          }
+          
+          // If we have an explicit error message, mark as not successful
+          if (data.error) {
+            validTimelineData.success = false;
+            console.error('API returned error:', data.error);
+          }
+        } else if (!data) {
+          console.error('Empty response from timeline API');
+          validTimelineData.success = false;
         }
         
-        // Create a valid timeline data structure regardless of the response format
-        let validTimelineData: TimelineData;
-        
-        if (data.success === true) {
-          // Response has the expected success flag
-          validTimelineData = {
-            success: true,
-            video_id: videoId,
-            timeline: Array.isArray(data.timeline) ? data.timeline : [],
-            correlations: Array.isArray(data.correlations) ? data.correlations : []
-          };
-        } else if (data.correlations || data.timeline) {
-          // We have some data but missing the success flag
-          console.warn('Timeline data missing success flag but has some data:', data);
-          validTimelineData = {
-            success: true, // Assume success if we have any data
-            video_id: videoId,
-            timeline: Array.isArray(data.timeline) ? data.timeline : [],
-            correlations: Array.isArray(data.correlations) ? data.correlations : []
-          };
-        } else {
-          // No valid data found
-          console.error('Invalid timeline data format:', data);
-          throw new Error(data?.error || 'Failed to fetch timeline data: Invalid format');
+        // If we have no timeline data at all, this is probably an error
+        if (validTimelineData.timeline.length === 0 && validTimelineData.correlations.length === 0) {
+          console.warn('No timeline or correlation data found in response');
+          // We'll still continue with empty arrays rather than throwing an error
         }
         
         // Process timeline items to ensure all required fields are present
-        if (validTimelineData.timeline) {
-          validTimelineData.timeline = validTimelineData.timeline.map(item => ({
-            ...item,
-            // Ensure required fields have default values if missing
-            type: item.type || 'unknown',
-            id: item.id || `generated-${Math.random().toString(36).substring(2, 9)}`,
-            name: item.name || 'Unknown',
-            start: typeof item.start === 'number' ? item.start : 0,
-            end: typeof item.end === 'number' ? item.end : 0,
-            confidence: typeof item.confidence === 'number' ? item.confidence : 0
-          }));
-        }
+        validTimelineData.timeline = validTimelineData.timeline.map(item => {
+          // First, copy the original item properties
+          const originalProperties = { ...item };
+          
+          // Create a new object with defaults for any missing required fields
+          const processedItem: TimelineItem = {
+            ...originalProperties,
+            // Only set defaults if properties are missing
+            type: originalProperties.type || ('unknown' as 'face' | 'speaker'),
+            id: originalProperties.id || `generated-${Math.random().toString(36).substring(2, 9)}`,
+            name: originalProperties.name || 'Unknown',
+            start: 0, // Will be overwritten below
+            end: 0,   // Will be overwritten below
+            confidence: 0 // Will be overwritten below
+          };
+          
+          // Ensure type is valid
+          if (processedItem.type !== 'face' && processedItem.type !== 'speaker') {
+            console.warn(`Invalid type '${processedItem.type}' for timeline item, defaulting to 'unknown'`);
+            processedItem.type = 'unknown' as 'face' | 'speaker';
+          }
+          
+          // Ensure numeric fields are actually numbers
+          processedItem.start = typeof originalProperties.start === 'number' ? originalProperties.start : 
+                               (typeof originalProperties.start === 'string' ? parseFloat(originalProperties.start) : 0);
+          
+          processedItem.end = typeof originalProperties.end === 'number' ? originalProperties.end : 
+                             (typeof originalProperties.end === 'string' ? parseFloat(originalProperties.end) : 0);
+          
+          processedItem.confidence = typeof originalProperties.confidence === 'number' ? originalProperties.confidence : 
+                                    (typeof originalProperties.confidence === 'string' ? parseFloat(originalProperties.confidence) : 0);
+          
+          return processedItem;
+        });
+        
+        // Process correlations to ensure all required fields are present
+        validTimelineData.correlations = validTimelineData.correlations.map(item => {
+          // First, copy the original item properties
+          const originalProperties = { ...item };
+          
+          // Create a new object with defaults for any missing required fields
+          return {
+            ...originalProperties,
+            // Only set defaults if properties are missing
+            face_id: originalProperties.face_id || '',
+            speaker_id: originalProperties.speaker_id || '',
+            face_name: originalProperties.face_name || 'Unknown',
+            speaker_name: originalProperties.speaker_name || 'Unknown',
+            start: typeof originalProperties.start === 'number' ? originalProperties.start : 0,
+            end: typeof originalProperties.end === 'number' ? originalProperties.end : 0,
+            confidence: typeof originalProperties.confidence === 'number' ? originalProperties.confidence : 0,
+            same_person: originalProperties.same_person !== undefined ? !!originalProperties.same_person : false
+          };
+        });
         
         setTimelineData(validTimelineData);
         console.log('Timeline data processed and loaded:', validTimelineData);
