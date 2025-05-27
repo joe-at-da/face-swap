@@ -84,8 +84,9 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const [isLoadingTranscription, setIsLoadingTranscription] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState('');
 
-  // Fetch recognition status on component mount
+  // Fetch recognition status on component mount and set up polling
   useEffect(() => {
+    // Initial fetch of status
     fetchStatus();
     
     // Set up polling interval to check status every 5 seconds
@@ -97,7 +98,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     
     // Clean up interval on component unmount
     return () => clearInterval(intervalId);
-  }, [captureId]);
+  }, [captureId]); // Only re-run when captureId changes, not on status changes
 
   // Fetch recognition status
   const fetchStatus = async () => {
@@ -168,13 +169,30 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   // Fetch audio info
   const fetchAudioInfo = async () => {
     try {
+      // Attempt to fetch audio info, but don't block the UI if it fails
       const response = await api.get(`/capture/${captureId}/audio-info`);
-      const audioInfo = response.data || response;
       
-      console.log('Audio info:', audioInfo);
-      setAudioInfo(audioInfo);
-    } catch (err) {
-      console.error('Error fetching audio info:', err);
+      // Only process the response if it was successful
+      if (response && response.data) {
+        const audioInfo = response.data;
+        console.log('Audio info successfully fetched:', audioInfo);
+        setAudioInfo(audioInfo);
+        return;
+      }
+      
+      // If we get here, we didn't get valid data
+      console.warn('No valid audio info data received');
+      setAudioInfo(null);
+    } catch (err: any) {
+      // Handle 404 errors gracefully - the endpoint might not be implemented yet
+      if (err?.response?.status === 404) {
+        console.warn('Audio info endpoint not available (404) - this is expected if the feature is not yet implemented');
+      } else {
+        console.error('Error fetching audio info:', err);
+      }
+      
+      // Don't block the UI if audio info fails - just continue with null audio info
+      setAudioInfo(null);
     }
   };
 
@@ -208,19 +226,10 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     }
   };
 
-  // Initial fetch
-  useEffect(() => {
-    fetchStatus();
-    
-    // Set up polling interval
-    const interval = setInterval(() => {
-      if (recognitionStatus?.status === 'processing' || recognitionStatus?.status === 'scheduled') {
-        fetchStatus();
-      }
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [captureId]);
+  // Debug info toggle
+  const toggleDebugInfo = () => {
+    setShowDebugInfo(!showDebugInfo);
+  };
 
   // Render loading state
   if (loading) {
