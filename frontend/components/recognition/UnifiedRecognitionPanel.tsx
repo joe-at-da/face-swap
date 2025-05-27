@@ -82,6 +82,38 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
   const [integratedTimeline, setIntegratedTimeline] = useState<IntegratedTimelineData | null>(null);
   const [isLoadingTranscription, setIsLoadingTranscription] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState('');
+  const [isStartingRecognition, setIsStartingRecognition] = useState(false);
+
+  // Start recognition process
+  const startRecognition = async () => {
+    if (!captureId || isNaN(Number(captureId))) {
+      console.error('Invalid capture ID:', captureId);
+      setError('Invalid capture ID. Please check the URL and try again.');
+      return;
+    }
+    
+    setIsStartingRecognition(true);
+    try {
+      console.log('Starting recognition process for capture ID:', captureId);
+      const response = await api.post('/recognition/combined-recognition', {
+        video_id: Number(captureId),
+        save_output: true
+      });
+      
+      console.log('Recognition process started:', response);
+      toast.success('Recognition process started');
+      
+      // Fetch the updated status
+      fetchStatus();
+    } catch (err) {
+      console.error('Error starting recognition process:', err);
+      toast.error('Failed to start recognition process');
+      setError('Failed to start recognition process. Please try again.');
+      setLoading(false);
+    } finally {
+      setIsStartingRecognition(false);
+    }
+  };
 
   // Fetch recognition status
   const fetchStatus = async () => {
@@ -331,7 +363,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
               <button 
                 onClick={() => {
                   setLoading(true);
-                  fetchStatus();
+                  startRecognition();
                 }}
                 className="mt-2 px-3 py-1 bg-red-800 hover:bg-red-700 rounded-md text-xs text-white"
               >
