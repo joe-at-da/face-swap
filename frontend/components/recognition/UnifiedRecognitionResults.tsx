@@ -83,117 +83,30 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
         const data = response.data || response;
         console.log('Raw timeline response:', data);
         
-        // Validate the response and create a properly structured timeline data object
-        // regardless of what the API returns
-        
-        // First, log the raw response for debugging
-        console.log('Raw API response:', data);
-        
-        // Initialize a valid timeline data structure with defaults
-        const validTimelineData: TimelineData = {
-          success: true, // Default to success and let validation potentially change it
-          video_id: videoId,
-          timeline: [],
-          correlations: []
-        };
-        
-        // If we have a valid response object
-        if (data && typeof data === 'object') {
-          // Extract timeline data if available
-          if (Array.isArray(data.timeline)) {
-            validTimelineData.timeline = data.timeline;
-          } else if (data.timeline && typeof data.timeline === 'object') {
-            // Handle case where timeline might be an object instead of array
-            console.warn('Timeline is an object, not an array. Converting:', data.timeline);
-            validTimelineData.timeline = Object.values(data.timeline);
-          }
-          
-          // Extract correlations if available
-          if (Array.isArray(data.correlations)) {
-            validTimelineData.correlations = data.correlations;
-          } else if (data.correlations && typeof data.correlations === 'object') {
-            // Handle case where correlations might be an object instead of array
-            console.warn('Correlations is an object, not an array. Converting:', data.correlations);
-            validTimelineData.correlations = Object.values(data.correlations);
-          }
-          
-          // If we have an explicit error message, mark as not successful
-          if (data.error) {
-            validTimelineData.success = false;
-            console.error('API returned error:', data.error);
-          }
-        } else if (!data) {
-          console.error('Empty response from timeline API');
-          validTimelineData.success = false;
-        }
-        
-        // If we have no timeline data at all, this is probably an error
-        if (validTimelineData.timeline.length === 0 && validTimelineData.correlations.length === 0) {
-          console.warn('No timeline or correlation data found in response');
-          // We'll still continue with empty arrays rather than throwing an error
-        }
-        
-        // Process timeline items to ensure all required fields are present
-        validTimelineData.timeline = validTimelineData.timeline.map(item => {
-          // First, copy the original item properties
-          const originalProperties = { ...item };
-          
-          // Create a new object with defaults for any missing required fields
-          const processedItem: TimelineItem = {
-            ...originalProperties,
-            // Only set defaults if properties are missing
-            type: originalProperties.type || ('unknown' as 'face' | 'speaker'),
-            id: originalProperties.id || `generated-${Math.random().toString(36).substring(2, 9)}`,
-            name: originalProperties.name || 'Unknown',
-            start: 0, // Will be overwritten below
-            end: 0,   // Will be overwritten below
-            confidence: 0 // Will be overwritten below
+        // Handle the case where we only have correlations but no success flag
+        if (data && data.correlations && !data.success) {
+          // Create a valid timeline data structure with the correlations
+          const validData = {
+            success: true, // Assume success if we have correlations
+            video_id: videoId,
+            timeline: [],
+            correlations: Array.isArray(data.correlations) ? data.correlations : []
           };
           
-          // Ensure type is valid
-          if (processedItem.type !== 'face' && processedItem.type !== 'speaker') {
-            console.warn(`Invalid type '${processedItem.type}' for timeline item, defaulting to 'unknown'`);
-            processedItem.type = 'unknown' as 'face' | 'speaker';
-          }
-          
-          // Ensure numeric fields are actually numbers
-          processedItem.start = typeof originalProperties.start === 'number' ? originalProperties.start : 
-                               (typeof originalProperties.start === 'string' ? parseFloat(originalProperties.start) : 0);
-          
-          processedItem.end = typeof originalProperties.end === 'number' ? originalProperties.end : 
-                             (typeof originalProperties.end === 'string' ? parseFloat(originalProperties.end) : 0);
-          
-          processedItem.confidence = typeof originalProperties.confidence === 'number' ? originalProperties.confidence : 
-                                    (typeof originalProperties.confidence === 'string' ? parseFloat(originalProperties.confidence) : 0);
-          
-          return processedItem;
-        });
+          setTimelineData(validData);
+          console.log('Timeline data loaded with correlations only:', validData);
+          return;
+        }
         
-        // Process correlations to ensure all required fields are present
-        validTimelineData.correlations = validTimelineData.correlations.map(item => {
-          // First, copy the original item properties
-          const originalProperties = { ...item };
-          
-          // Create a new object with defaults for any missing required fields
-          return {
-            ...originalProperties,
-            // Only set defaults if properties are missing
-            face_id: originalProperties.face_id || '',
-            speaker_id: originalProperties.speaker_id || '',
-            face_name: originalProperties.face_name || 'Unknown',
-            speaker_name: originalProperties.speaker_name || 'Unknown',
-            start: typeof originalProperties.start === 'number' ? originalProperties.start : 0,
-            end: typeof originalProperties.end === 'number' ? originalProperties.end : 0,
-            confidence: typeof originalProperties.confidence === 'number' ? originalProperties.confidence : 0,
-            same_person: originalProperties.same_person !== undefined ? !!originalProperties.same_person : false
-          };
-        });
+        if (!data || !data.success) {
+          throw new Error(data?.error || 'Failed to fetch timeline data');
+        }
         
-        setTimelineData(validTimelineData);
-        console.log('Timeline data processed and loaded:', validTimelineData);
+        setTimelineData(data);
+        console.log('Timeline data loaded:', data);
       } catch (err) {
         console.error('Error loading timeline data:', err);
-        setError('Error loading recognition data. Please try again.');
+        setError('Invalid capture ID. Please check the URL and try again.');
       } finally {
         setIsLoading(false);
       }
@@ -343,22 +256,12 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
                                 alt={`${item.name} at ${formatTime(item.start)}`}
                                 className="w-full h-32 object-contain rounded cursor-pointer"
                                 onClick={() => {
-                                  if (item.image_path) {
-                                    setSelectedImage(item.image_path);
-                                    setShowImageModal(true);
-                                  }
+                                  setSelectedImage(item.image_path || null);
+                                  setShowImageModal(true);
                                 }}
                                 onError={(e) => {
-                                  console.error(`Error loading image for ${item.name} from path: ${item.image_path}`);
-                                  // Instead of using a placeholder, hide the image and show a message
-                                  (e.target as HTMLImageElement).style.display = 'none';
-                                  const parent = (e.target as HTMLImageElement).parentElement;
-                                  if (parent) {
-                                    const errorMsg = document.createElement('div');
-                                    errorMsg.className = 'bg-gray-800 text-white p-4 text-center rounded';
-                                    errorMsg.innerText = 'Image unavailable';
-                                    parent.insertBefore(errorMsg, (e.target as HTMLImageElement));
-                                  }
+                                  console.error(`Error loading image: ${item.image_path}`);
+                                  (e.target as HTMLImageElement).src = '/placeholder-face.png';
                                 }}
                               />
                             </div>
@@ -439,16 +342,8 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
                 alt="Full face image" 
                 className="max-w-full max-h-full object-contain"
                 onError={(e) => {
-                  console.error(`Error loading full image from path: ${selectedImage}`);
-                  // Instead of using a placeholder, show an error message
-                  const parent = (e.target as HTMLImageElement).parentElement;
-                  if (parent) {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                    const errorMsg = document.createElement('div');
-                    errorMsg.className = 'bg-gray-800 text-white p-4 text-center rounded';
-                    errorMsg.innerText = 'Image could not be loaded';
-                    parent.appendChild(errorMsg);
-                  }
+                  console.error(`Error loading full image`);
+                  (e.target as HTMLImageElement).src = '/placeholder-face.png';
                 }}
               />
             </div>
