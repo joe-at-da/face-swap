@@ -223,7 +223,7 @@ const FileGalleryPage = () => {
           const audioFilename = filename.replace('.mp4', '.audio.mp3');
           const audioPath = path.replace('.mp4', '.audio.mp3');
           allFiles.push({
-            id: `audio-${audioPath}`,
+            id: `audio-${videoId}-${hashCode(audioPath)}`,
             type: FILE_TYPES.AUDIO,
             path: audioPath,
             filename: audioFilename,
@@ -885,6 +885,7 @@ const FileGalleryPage = () => {
                 
                 {selectedFile && selectedFile.type === FILE_TYPES.AUDIO && (
                   <audio 
+                    key={`main-audio-${selectedFile.id}`}
                     src={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile.details?.related_video || ''}?token=${token}`}
                     controls
                     className="w-full"
@@ -897,6 +898,7 @@ const FileGalleryPage = () => {
               <div className={`p-4 border-t ${showAudioPlayer ? 'block' : 'hidden'}`}>
                 <h4 className="text-lg font-medium mb-2">Audio Track</h4>
                 <audio 
+                  key={`secondary-audio-${selectedFile?.id}`}
                   src={`${API_BASE_URL}/videos/stream-audio-with-token/${selectedFile?.filename?.replace('.mp4', '.audio.mp3')}?token=${token}`}
                   controls
                   className="w-full"

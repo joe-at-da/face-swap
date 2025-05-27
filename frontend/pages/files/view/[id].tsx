@@ -125,20 +125,21 @@ const MediaViewPage: React.FC = () => {
       }
       
       try {
-        // First try to fetch using the videos endpoint (new consolidated approach)
-        console.log('Trying to fetch video with ID:', videoId);
-        const response = await api.get(`/videos/${videoId}`);
+        // Extract numeric ID if it's in the format 'file-123456'
+        let apiVideoId = videoId;
+        if (typeof videoId === 'string' && videoId.startsWith('file-')) {
+          apiVideoId = videoId.replace('file-', '');
+          console.log('Extracted numeric ID:', apiVideoId);
+        }
+        
+        // Fetch using the videos endpoint
+        console.log('Fetching video with ID:', apiVideoId);
+        const response = await api.get(`/videos/${apiVideoId}`);
         return response;
       } catch (error) {
-        // If that fails, try the parliament-tv endpoint (legacy approach)
-        try {
-          console.log('Trying to fetch video from parliament-tv with ID:', videoId);
-          const response = await api.get(`/parliament-tv/${videoId}`);
-          return response;
-        } catch (innerError) {
-          console.error('Error fetching video:', innerError);
-          throw new Error('Failed to fetch video data');
-        }
+        console.error('Error fetching video:', error);
+        throw new Error('Failed to fetch video data');
+      }
       }
     },
     enabled: !!id && id !== 'null' && id !== 'undefined' && id !== '[id]' && !!token && type === 'video',
