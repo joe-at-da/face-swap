@@ -99,43 +99,48 @@ const MediaViewPage: React.FC = () => {
       }
       if (!token) throw new Error('Authentication token required');
       
-      // Extract numeric ID if it's in the format 'file-123456'
-      let videoId = id;
-      if (typeof id === 'string' && id.startsWith('file-')) {
-        // For generated IDs, we need to use a different approach
-        // We'll try to fetch the video list and find the matching video
-        try {
-          const videosResponse = await api.get('/videos');
-          if (Array.isArray(videosResponse)) {
-            // Find the video that matches our ID
-            const matchingVideo = videosResponse.find(v => {
-              // Check if this is the video we're looking for based on ID
-              const numericId = typeof videoId === 'string' ? videoId.replace('file-', '') : videoId;
-              return v.id && v.id.toString() === numericId.toString();
-            });
-            
-            if (matchingVideo) {
-              console.log('Found matching video:', matchingVideo);
-              return matchingVideo;
-            }
-          }
-        } catch (listError) {
-          console.error('Error fetching videos list:', listError);
-        }
-      }
-      
+      // Use the approach from the dev branch that works correctly
       try {
-        // Extract numeric ID if it's in the format 'file-123456'
-        let apiVideoId = videoId;
-        if (typeof videoId === 'string' && videoId.startsWith('file-')) {
-          apiVideoId = videoId.replace('file-', '');
-          console.log('Extracted numeric ID:', apiVideoId);
+        console.log('Fetching videos list to find matching video');
+        const videosResponse = await api.get('/videos');
+        
+        if (Array.isArray(videosResponse)) {
+          // Extract numeric ID if it's in the format 'file-123456'
+          let apiVideoId = id;
+          if (typeof id === 'string' && id.startsWith('file-')) {
+            apiVideoId = id.replace('file-', '');
+            console.log('Extracted numeric ID for matching:', apiVideoId);
+          }
+          
+          // Find the video that matches our ID
+          const matchingVideo = videosResponse.find(v => {
+            return v.id && v.id.toString() === apiVideoId.toString();
+          });
+          
+          if (matchingVideo) {
+            console.log('Found matching video in list:', matchingVideo);
+            return matchingVideo;
+          }
+          
+          // Also try to match by filename if ID matching fails
+          const filenameMatchingVideo = videosResponse.find(v => {
+            if (typeof id === 'string' && id.startsWith('file-')) {
+              const filename = v.filename || (v.file_path ? v.file_path.split('/').pop() : '') || (v.path ? v.path.split('/').pop() : '');
+              return filename && filename === id.replace('file-', '');
+            }
+            return false;
+          });
+          
+          if (filenameMatchingVideo) {
+            console.log('Found matching video by filename:', filenameMatchingVideo);
+            return filenameMatchingVideo;
+          }
         }
         
-        // Fetch using the videos endpoint
-        console.log('Fetching video with ID:', apiVideoId);
-        const response = await api.get(`/videos/${apiVideoId}`);
-        return response;
+        // If we couldn't find it in the list, don't try to fetch it directly
+        // as that's causing the 422 error
+        console.log('No matching video found in list');
+        throw new Error('Video not found in list');
       } catch (error) {
         console.error('Error fetching video:', error);
         throw new Error('Failed to fetch video data');
