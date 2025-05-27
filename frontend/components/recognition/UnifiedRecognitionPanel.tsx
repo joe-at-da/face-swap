@@ -124,20 +124,31 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       setLoading(false);
       return;
     }
-    
     try {
       const response = await api.get(`/recognition/recognition-status/${captureId}`);
       const status = response.data || response;
       
       console.log('Recognition status:', status);
+      
+      // Validate the response structure
+      if (!status || typeof status !== 'object') {
+        throw new Error('Invalid response format from recognition status API');
+      }
+      
+      // Ensure the status has a valid status property
+      if (!status.status || !['not_started', 'scheduled', 'processing', 'completed', 'failed'].includes(status.status)) {
+        console.warn('Recognition status has invalid status property:', status);
+        throw new Error('Invalid recognition status format');
+      }
+      
       setRecognitionStatus(status);
       
-      // If completed, fetch transcription data
+      // If recognition is completed, fetch additional data
       if (status.status === 'completed') {
-        fetchTranscriptionData();
         fetchAudioInfo();
+        fetchTranscriptionData();
         
-        // Notify parent component if recognition is complete
+        // Call the callback if provided
         if (onProcessingComplete) {
           onProcessingComplete();
         }
@@ -177,16 +188,48 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       // Handle different response formats
       const data = response.data || response;
       
-      if (data && data.success) {
+      // Validate the response
+      if (!data) {
+        throw new Error('Empty response from transcription API');
+      }
+      
+      // Check if we have a valid success response
+      if (data.success === true) {
         // Ensure transcription data has the expected structure
-        if (data.transcription) {
+        if (data.transcription && typeof data.transcription === 'object') {
+          // Validate transcription structure
+          if (!data.transcription.segments || !Array.isArray(data.transcription.segments)) {
+            console.warn('Invalid transcription segments:', data.transcription);
+            data.transcription.segments = [];
+          }
+          
           setTranscriptionData(data.transcription);
           setIntegratedTimeline(data);
         } else {
+          console.warn('Missing or invalid transcription data:', data);
           setTranscriptionError('Invalid transcription data format');
         }
       } else {
-        setTranscriptionError(data?.error || 'Failed to fetch transcription data');
+        // Create a minimal valid structure for the UI to work with
+        console.warn('Transcription data missing success flag:', data);
+        
+        // If we have some data but missing the success flag, try to use what we have
+        if (data.transcription && typeof data.transcription === 'object') {
+          setTranscriptionData(data.transcription);
+          
+          // Create a minimal valid integrated timeline
+          const fallbackTimeline = {
+            success: true,
+            transcription: data.transcription,
+            timeline: data.timeline || [],
+            correlations: data.correlations || []
+          };
+          
+          setIntegratedTimeline(fallbackTimeline);
+          console.log('Created fallback timeline from partial data:', fallbackTimeline);
+        } else {
+          setTranscriptionError(data?.error || 'Failed to fetch transcription data');
+        }
       }
     } catch (err) {
       console.error('Error fetching transcription data:', err);

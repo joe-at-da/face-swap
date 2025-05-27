@@ -83,30 +83,56 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
         const data = response.data || response;
         console.log('Raw timeline response:', data);
         
-        // Handle the case where we only have correlations but no success flag
-        if (data && data.correlations && !data.success) {
-          // Create a valid timeline data structure with the correlations
-          const validData = {
-            success: true, // Assume success if we have correlations
+        // Validate the response
+        if (!data) {
+          throw new Error('Empty response from timeline API');
+        }
+        
+        // Create a valid timeline data structure regardless of the response format
+        let validTimelineData: TimelineData;
+        
+        if (data.success === true) {
+          // Response has the expected success flag
+          validTimelineData = {
+            success: true,
             video_id: videoId,
-            timeline: [],
+            timeline: Array.isArray(data.timeline) ? data.timeline : [],
             correlations: Array.isArray(data.correlations) ? data.correlations : []
           };
-          
-          setTimelineData(validData);
-          console.log('Timeline data loaded with correlations only:', validData);
-          return;
+        } else if (data.correlations || data.timeline) {
+          // We have some data but missing the success flag
+          console.warn('Timeline data missing success flag but has some data:', data);
+          validTimelineData = {
+            success: true, // Assume success if we have any data
+            video_id: videoId,
+            timeline: Array.isArray(data.timeline) ? data.timeline : [],
+            correlations: Array.isArray(data.correlations) ? data.correlations : []
+          };
+        } else {
+          // No valid data found
+          console.error('Invalid timeline data format:', data);
+          throw new Error(data?.error || 'Failed to fetch timeline data: Invalid format');
         }
         
-        if (!data || !data.success) {
-          throw new Error(data?.error || 'Failed to fetch timeline data');
+        // Process timeline items to ensure all required fields are present
+        if (validTimelineData.timeline) {
+          validTimelineData.timeline = validTimelineData.timeline.map(item => ({
+            ...item,
+            // Ensure required fields have default values if missing
+            type: item.type || 'unknown',
+            id: item.id || `generated-${Math.random().toString(36).substring(2, 9)}`,
+            name: item.name || 'Unknown',
+            start: typeof item.start === 'number' ? item.start : 0,
+            end: typeof item.end === 'number' ? item.end : 0,
+            confidence: typeof item.confidence === 'number' ? item.confidence : 0
+          }));
         }
         
-        setTimelineData(data);
-        console.log('Timeline data loaded:', data);
+        setTimelineData(validTimelineData);
+        console.log('Timeline data processed and loaded:', validTimelineData);
       } catch (err) {
         console.error('Error loading timeline data:', err);
-        setError('Invalid capture ID. Please check the URL and try again.');
+        setError('Error loading recognition data. Please try again.');
       } finally {
         setIsLoading(false);
       }
@@ -256,12 +282,22 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
                                 alt={`${item.name} at ${formatTime(item.start)}`}
                                 className="w-full h-32 object-contain rounded cursor-pointer"
                                 onClick={() => {
-                                  setSelectedImage(item.image_path || null);
-                                  setShowImageModal(true);
+                                  if (item.image_path) {
+                                    setSelectedImage(item.image_path);
+                                    setShowImageModal(true);
+                                  }
                                 }}
                                 onError={(e) => {
-                                  console.error(`Error loading image: ${item.image_path}`);
-                                  (e.target as HTMLImageElement).src = '/placeholder-face.png';
+                                  console.error(`Error loading image for ${item.name} from path: ${item.image_path}`);
+                                  // Instead of using a placeholder, hide the image and show a message
+                                  (e.target as HTMLImageElement).style.display = 'none';
+                                  const parent = (e.target as HTMLImageElement).parentElement;
+                                  if (parent) {
+                                    const errorMsg = document.createElement('div');
+                                    errorMsg.className = 'bg-gray-800 text-white p-4 text-center rounded';
+                                    errorMsg.innerText = 'Image unavailable';
+                                    parent.insertBefore(errorMsg, (e.target as HTMLImageElement));
+                                  }
                                 }}
                               />
                             </div>
@@ -342,8 +378,16 @@ const UnifiedRecognitionResults: React.FC<UnifiedResultsProps> = ({ videoId }) =
                 alt="Full face image" 
                 className="max-w-full max-h-full object-contain"
                 onError={(e) => {
-                  console.error(`Error loading full image`);
-                  (e.target as HTMLImageElement).src = '/placeholder-face.png';
+                  console.error(`Error loading full image from path: ${selectedImage}`);
+                  // Instead of using a placeholder, show an error message
+                  const parent = (e.target as HTMLImageElement).parentElement;
+                  if (parent) {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'bg-gray-800 text-white p-4 text-center rounded';
+                    errorMsg.innerText = 'Image could not be loaded';
+                    parent.appendChild(errorMsg);
+                  }
                 }}
               />
             </div>
