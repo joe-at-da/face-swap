@@ -111,10 +111,23 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     
     try {
       const response = await api.get(`/recognition/recognition-status/${captureId}`);
-      const status = response.data || response;
+      const responseData = response.data || response;
       
-      console.log('Recognition status:', status);
-      console.log('Recognition status type:', status.status, 'Results present:', !!status.results);
+      console.log('Recognition status response:', responseData);
+      
+      // Extract the status object - it might be nested inside a 'status' property
+      // or it might be the direct response
+      const status = responseData.status && typeof responseData.status === 'object' 
+        ? responseData.status 
+        : responseData;
+      
+      console.log('Extracted status:', status);
+      console.log('Status type:', status.status, 'Has results:', status.has_results);
+      
+      // Check if we have detailed recognition results
+      if (responseData.results) {
+        console.log('Recognition results found in response');
+      }
       
       // Ensure status is properly formatted
       if (status && typeof status === 'object') {
@@ -122,14 +135,15 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         setRecognitionStatus({
           status: status.status || 'not_started',
           progress: status.progress || 0,
-          error: status.error,
-          results: status.results,
+          error: responseData.error || status.error,
+          results: responseData.results || status.results,
           started_at: status.started_at,
           completed_at: status.completed_at
         });
         
         // If completed or has results, fetch transcription data and notify parent
-        if (status.status === 'completed' || status.results) {
+        if (status.status === 'completed' || status.has_results || responseData.results) {
+          console.log('Status is completed or has results, fetching additional data');
           fetchTranscriptionData();
           fetchAudioInfo();
           
@@ -290,8 +304,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         </div>
       )}
       
-      {/* Show results if they exist */}
-      {recognitionStatus?.results ? (
+      {/* Show results if they exist or if status is completed */}
+      {(recognitionStatus?.results || recognitionStatus?.status === 'completed') ? (
         <div>
           {/* Tab Navigation */}
           <div className="flex border-b border-gray-700 mb-6 overflow-x-auto">
@@ -330,7 +344,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
           )}
           
           {activeTab === 'faces' && (
-            <FacesView recognitionResults={recognitionStatus.results} />
+            <FacesView recognitionResults={recognitionStatus?.results || {}} />
           )}
           
           {activeTab === 'timeline' && (
