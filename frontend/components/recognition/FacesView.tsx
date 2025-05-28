@@ -2,7 +2,7 @@ import React from 'react';
 
 // Format duration in seconds to HH:MM:SS
 const formatDuration = (seconds: number): string => {
-  if (!seconds) return '00:00:00';
+  if (!seconds && seconds !== 0) return '00:00:00';
   
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -16,6 +16,8 @@ interface FacesViewProps {
 }
 
 const FacesView: React.FC<FacesViewProps> = ({ recognitionResults }) => {
+  console.log('FacesView received recognition results:', recognitionResults);
+  
   if (!recognitionResults) {
     return (
       <div className="p-6 text-center">
@@ -25,15 +27,37 @@ const FacesView: React.FC<FacesViewProps> = ({ recognitionResults }) => {
   }
   
   try {
+    // Parse the results if they're a string
     const results = typeof recognitionResults === 'string' 
       ? JSON.parse(recognitionResults) 
       : recognitionResults;
     
+    console.log('Parsed recognition results:', results);
+    
+    // Extract faces from various possible data structures
     let faces = [];
     
     if (results.facial_recognition && Array.isArray(results.facial_recognition.faces)) {
       faces = results.facial_recognition.faces;
+    } else if (results.faces && Array.isArray(results.faces)) {
+      faces = results.faces;
+    } else if (results.speakers && Array.isArray(results.speakers)) {
+      faces = results.speakers.map((speaker: any) => ({
+        name: speaker.name || 'Unknown',
+        confidence: speaker.confidence || 0,
+        timestamp: speaker.timestamp || 0,
+        image_path: speaker.image_path || null
+      }));
+    } else if (results.speaker_identification && results.speaker_identification.speakers) {
+      faces = results.speaker_identification.speakers.map((speaker: any) => ({
+        name: speaker.name || 'Unknown',
+        confidence: speaker.confidence || 0,
+        timestamp: speaker.timestamp || 0,
+        image_path: speaker.image_path || null
+      }));
     }
+    
+    console.log('Extracted faces:', faces);
     
     if (faces.length === 0) {
       return (
@@ -65,6 +89,9 @@ const FacesView: React.FC<FacesViewProps> = ({ recognitionResults }) => {
                 <h4 className="font-medium text-white">{face.name || 'Unknown'}</h4>
                 <p className="text-sm text-gray-400">Confidence: {Math.round((face.confidence || 0) * 100)}%</p>
                 <p className="text-sm text-gray-400">Time: {formatDuration(face.timestamp || 0)}</p>
+                {face.bbox && (
+                  <p className="text-sm text-gray-400">Bounding Box: [{face.bbox.map((v: number) => Math.round(v)).join(', ')}]</p>
+                )}
               </div>
             </div>
           ))}
@@ -76,6 +103,9 @@ const FacesView: React.FC<FacesViewProps> = ({ recognitionResults }) => {
     return (
       <div className="p-6 text-center">
         <p className="text-red-400">Error parsing facial recognition data.</p>
+        <pre className="mt-2 text-xs text-left bg-gray-900 p-2 rounded overflow-auto">
+          {JSON.stringify(recognitionResults, null, 2)}
+        </pre>
       </div>
     );
   }

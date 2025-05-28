@@ -202,11 +202,44 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       setIsLoadingRecognition(true);
       setRecognitionError('');
       
-      // First try to get the full recognition results
-      const response = await api.get(`/recognition/results/${validCaptureId}`);
-      const data = response.data || response;
+      // Try multiple endpoints to get the facial recognition data
+      let data;
       
-      console.log('Recognition results data:', data);
+      // First try the main recognition results endpoint
+      try {
+        const response = await api.get(`/recognition/results/${validCaptureId}`);
+        data = response.data || response;
+        console.log('Recognition results from main endpoint:', data);
+      } catch (mainError) {
+        console.warn('Error fetching from main recognition endpoint:', mainError);
+        // If that fails, try the capture endpoint which might have the data embedded
+        try {
+          const captureResponse = await api.get(`/capture/${validCaptureId}`);
+          const captureData = captureResponse.data || captureResponse;
+          console.log('Capture data:', captureData);
+          
+          // Check if recognition results are embedded in the capture data
+          if (captureData.recognition_results) {
+            data = typeof captureData.recognition_results === 'string' 
+              ? JSON.parse(captureData.recognition_results) 
+              : captureData.recognition_results;
+            console.log('Recognition results from capture data:', data);
+          }
+        } catch (captureError) {
+          console.error('Error fetching from capture endpoint:', captureError);
+          throw mainError; // Re-throw the original error
+        }
+      }
+      
+      // If we still don't have data, try the recognition status endpoint
+      if (!data && recognitionStatus) {
+        if (recognitionStatus.results) {
+          data = typeof recognitionStatus.results === 'string'
+            ? JSON.parse(recognitionStatus.results)
+            : recognitionStatus.results;
+          console.log('Recognition results from status:', data);
+        }
+      }
       
       // Create a properly structured result object for the FacesView component
       const structuredResults: RecognitionResultsData = {
@@ -218,7 +251,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       };
       
       // Check if we have facial recognition data in the response
-      if (data && data.success) {
+      if (data) {
         // If the response has facial_recognition data directly
         if (data.facial_recognition && data.facial_recognition.faces) {
           structuredResults.facial_recognition = data.facial_recognition;
@@ -235,15 +268,43 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             structuredResults.facial_recognition.faces = data.results.faces;
           }
         }
+        // Check for speakers array which might be facial recognition data
+        else if (data.speakers && Array.isArray(data.speakers)) {
+          structuredResults.facial_recognition.faces = data.speakers.map((speaker: any) => ({
+            name: speaker.name || 'Unknown',
+            confidence: speaker.confidence || 0,
+            timestamp: speaker.timestamp || 0,
+            image_path: speaker.image_path || null
+          }));
+        }
       }
       
-      // Log the data we received for debugging
-      console.log('Recognition results data structure:', structuredResults);
-      
+      console.log('Final structured recognition results:', structuredResults);
       setRecognitionResults(structuredResults);
+      
+      // If we have no faces, try to trigger facial recognition processing
+      if (structuredResults.facial_recognition.faces.length === 0) {
+        console.log('No faces found, checking if facial recognition processing is needed');
+        try {
+          const statusResponse = await api.get(`/facial-recognition/status/${validCaptureId}`);
+          const statusData = statusResponse.data || statusResponse;
+          console.log('Facial recognition status:', statusData);
+          
+          if (statusData.status !== 'completed' && statusData.status !== 'processing') {
+            console.log('Triggering facial recognition processing');
+            try {
+              await api.post(`/facial-recognition/process-video/${validCaptureId}`);
+              toast.success('Facial recognition processing started');
+            } catch (processError) {
+              console.error('Error triggering facial recognition:', processError);
+            }
+          }
+        } catch (statusError) {
+          console.warn('Error checking facial recognition status:', statusError);
+        }
+      }
     } catch (err: any) {
-      console.error('Error fetching recognition results:', err);
-      // Create a minimal structure with empty faces array
+      console.error('Error in facial recognition data retrieval flow:', err);
       setRecognitionResults({
         success: false,
         video_id: validCaptureId as number,
