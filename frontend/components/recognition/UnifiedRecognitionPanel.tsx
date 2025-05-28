@@ -194,9 +194,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     }
   };
 
-  // Helper function to simulate facial recognition processing
-  // This is a frontend-only solution that doesn't rely on the problematic backend endpoint
-  const triggerFacialRecognition = async () => {
+  // Function to trigger transcription processing
+  const triggerTranscription = async () => {
     if (!validCaptureId) {
       toast.error('Invalid capture ID');
       return;
@@ -205,65 +204,93 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
     try {
       // Start with a loading state
       setIsLoadingRecognition(true);
-      toast.info('Initializing facial recognition...');
+      toast.info('Initializing recognition process...');
       
       // First, check the current recognition status
       const statusResponse = await api.get(`/recognition/recognition-status/${validCaptureId}`);
       console.log('Current recognition status:', statusResponse);
       
       // If we already have results, just show them
-      if (statusResponse?.status?.facial_recognition_status === 'completed') {
-        toast.info('Facial recognition already completed. Showing results.');
+      if (statusResponse?.status?.status === 'completed') {
+        toast.info('Recognition already completed. Showing results.');
         fetchRecognitionResults();
         setIsLoadingRecognition(false);
         return;
       }
       
-      // Since we can't use the backend endpoint, we'll simulate the process
-      // by updating the UI to show that recognition is in progress
-      toast.info('Preparing facial recognition...');
+      // First, try to fix any potential metadata issues by accessing the capture endpoint
+      try {
+        await api.get(`/capture/${validCaptureId}`);
+        console.log('Accessed capture endpoint to initialize metadata');
+      } catch (captureError) {
+        console.warn('Error accessing capture endpoint:', captureError);
+      }
       
-      // Simulate a processing delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Create a new recognition status object that follows the RecognitionStatus interface
-      const updatedStatus: RecognitionStatus = {
-        status: 'processing',
-        progress: 0,
-        started_at: new Date().toISOString(),
-        steps: [
-          {
-            name: 'facial_recognition',
-            status: 'in_progress',
-            progress: 0
-          }
-        ]
+      // Prepare the request data for transcription only (no facial recognition)
+      const requestData = {
+        video_id: validCaptureId,
+        save_output: true,
+        options: {
+          enable_facial_recognition: false,  // Disable facial recognition
+          enable_speaker_identification: true  // Focus on transcription/speaker ID
+        }
       };
       
-      // Update the UI with the new status
-      setRecognitionStatus(updatedStatus);
+      // Call the combined recognition endpoint with facial recognition disabled
+      const response = await api.post('/recognition/combined-recognition', requestData);
+      console.log('Transcription response:', response);
       
-      toast.success('Facial recognition request submitted');
-      toast.info('The system will process your request. Results will appear when ready.');
-      
-      // Fetch results again after a delay to see if they're available
-      setTimeout(() => {
-        fetchRecognitionResults();
+      if (response.success) {
+        toast.success('Transcription process started successfully');
+        
+        // Update the UI to show that recognition is in progress
+        const updatedStatus: RecognitionStatus = {
+          status: 'processing',
+          progress: 0,
+          started_at: new Date().toISOString(),
+          steps: [
+            {
+              name: 'transcription',
+              status: 'in_progress',
+              progress: 0
+            }
+          ]
+        };
+        
+        // Update the UI with the new status
+        setRecognitionStatus(updatedStatus);
+        
+        // Fetch results after a delay to see if they're available
+        setTimeout(() => {
+          fetchRecognitionResults();
+          setIsLoadingRecognition(false);
+        }, 5000);
+      } else {
+        const errorMessage = response.error || response.message || 'Failed to start transcription process';
+        toast.error(errorMessage);
         setIsLoadingRecognition(false);
-      }, 5000);
-      
+      }
     } catch (err: any) {
-      console.error('Error in facial recognition process:', err);
+      console.error('Error in transcription process:', err);
       setIsLoadingRecognition(false);
       
-      // Provide a helpful error message
-      let errorMessage = 'Failed to process facial recognition request';
+      // Handle different error scenarios
+      let errorMessage = 'Failed to process transcription request';
       
-      if (err.response && err.response.data) {
-        const detail = err.response.data.detail;
-        if (detail) {
-          errorMessage = `Error: ${detail}`;
+      if (err.response) {
+        if (err.response.status === 400) {
+          errorMessage = 'Invalid request: ' + (err.response.data?.message || 'Bad request');
+        } else if (err.response.status === 401) {
+          errorMessage = 'Authentication error: Please log in again';
+        } else if (err.response.status === 404) {
+          errorMessage = 'Capture not found or transcription service unavailable';
+        } else if (err.response.status === 409) {
+          errorMessage = 'Transcription process is already in progress for this capture';
+        } else if (err.response.status >= 500) {
+          errorMessage = 'Server error: ' + (err.response.data?.message || 'Please try again later');
         }
+      } else if (err.request) {
+        errorMessage = 'No response from server. Please check your network connection.';
       }
       
       toast.error(errorMessage);
@@ -358,120 +385,10 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       console.log('Final structured recognition results:', structuredResults);
       setRecognitionResults(structuredResults);
       
-      // If we have no faces, try to trigger facial recognition processing
-      if (structuredResults.facial_recognition.faces.length === 0) {
-        console.log('No faces found, checking if facial recognition processing is needed');
-        try {
-          // Try to directly process the video instead of checking status first
-          // This avoids the metadata error in the status endpoint
-          console.log('Triggering facial recognition processing directly');
-          try {
-            await api.post(`/facial-recognition/process-video/${validCaptureId}`);
-            toast.success('Facial recognition processing started');
-            
-            // Update the UI to show that recognition is in progress
-            const updatedStatus: RecognitionStatus = {
-              status: 'processing',
-              progress: 0,
-              started_at: new Date().toISOString(),
-              steps: [
-                {
-                  name: 'facial_recognition',
-                  status: 'in_progress',
-                  progress: 0
-                }
-              ]
-            };
-            
-            // Update the UI with the new status
-            setRecognitionStatus(updatedStatus);
-            
-          } catch (processError: any) {
-            console.error('Error triggering facial recognition:', processError);
-            
-            // Check if this is a metadata error - handle various error formats
-            let isMetadataError = false;
-            let errorMessage = '';
-            
-            // Try to extract error details from different possible formats
-            if (processError?.response?.data?.detail) {
-              const errorDetail = processError.response.data.detail;
-              errorMessage = typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail);
-              console.log('Error detail from response.data.detail:', errorMessage);
-              isMetadataError = errorMessage.includes('MetaData') || errorMessage.includes("'get'");
-            } else if (processError?.message) {
-              errorMessage = processError.message;
-              console.log('Error detail from error.message:', errorMessage);
-              isMetadataError = errorMessage.includes('MetaData') || errorMessage.includes("'get'");
-            } else if (typeof processError === 'string') {
-              errorMessage = processError;
-              console.log('Error detail from error string:', errorMessage);
-              isMetadataError = errorMessage.includes('MetaData') || errorMessage.includes("'get'");
-            }
-            
-            // If we detect a metadata error, try to fix it
-            if (isMetadataError) {
-              toast.error('Metadata error detected. The system will try to fix this automatically.');
-              
-              // Try multiple approaches to initialize metadata
-              let metadataFixed = false;
-              
-              // First try the info endpoint
-              try {
-                await api.get(`/parliament-tv/${validCaptureId}/info`);
-                toast.info('Metadata initialized via info endpoint.');
-                metadataFixed = true;
-              } catch (infoError) {
-                console.error('Info endpoint failed:', infoError);
-              }
-              
-              // Then try the stream endpoint if info failed
-              if (!metadataFixed) {
-                try {
-                  await api.get(`/parliament-tv/${validCaptureId}/stream`);
-                  toast.info('Metadata initialized via stream endpoint.');
-                  metadataFixed = true;
-                } catch (streamError) {
-                  console.error('Stream endpoint failed:', streamError);
-                }
-              }
-              
-              // Try a direct capture endpoint as a last resort
-              if (!metadataFixed) {
-                try {
-                  await api.get(`/capture/${validCaptureId}`);
-                  toast.info('Metadata initialized via capture endpoint.');
-                  metadataFixed = true;
-                } catch (captureError) {
-                  console.error('Capture endpoint failed:', captureError);
-                }
-              }
-              
-              if (metadataFixed) {
-                toast.success('Metadata issue resolved. Please try again.');
-              } else {
-                toast.error('Failed to fix metadata. Please contact support.');
-              }
-            } else {
-              toast.error('Failed to start facial recognition process');
-            }
-          }
-        } catch (statusError) {
-          console.error('Error checking facial recognition status:', statusError);
-          toast.error('Could not process facial recognition. Please try again later.');
-        }
-      }
-    } catch (err: any) {
-      console.error('Error in facial recognition data retrieval flow:', err);
-      setRecognitionResults({
-        success: false,
-        video_id: validCaptureId as number,
-        facial_recognition: {
-          faces: []
-        },
-        error: err?.message || 'Failed to fetch recognition results'
-      } as RecognitionResultsData);
-      setRecognitionError(err?.message || 'Failed to fetch recognition results');
+      toast.info('Recognition results loaded successfully');
+    } catch (err) {
+      console.error('Error in recognition results processing:', err);
+      toast.error('Error processing recognition results. Please try again.');
     } finally {
       setIsLoadingRecognition(false);
     }
@@ -622,7 +539,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             {/* Action Buttons */}
             <div className="mt-4 md:mt-0 md:ml-auto flex space-x-2">
               <button 
-                onClick={triggerFacialRecognition}
+                onClick={triggerTranscription}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm flex items-center"
                 disabled={isLoadingRecognition}
               >
@@ -635,7 +552,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
                     Processing...
                   </>
                 ) : (
-                  <>Run Facial Recognition</>
+                  <span className="ml-1">Run Transcription</span>
                 )}
               </button>
             </div>
@@ -677,20 +594,20 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
                   <FacesView recognitionResults={recognitionResults} />
                   {(!recognitionResults || recognitionResults?.facial_recognition?.faces?.length === 0) && (
                     <div className="mt-4 p-4 bg-yellow-900/30 border border-yellow-800 rounded-md">
-                      <p className="text-yellow-300">No facial recognition data was found for this video.</p>
+                      <p className="text-yellow-300">No recognition data was found for this video.</p>
                       <p className="text-sm text-yellow-400 mt-2">This could be because:</p>
                       <ul className="list-disc list-inside text-sm text-yellow-400 mt-1">
-                        <li>The video doesn't contain any recognizable faces</li>
-                        <li>The facial recognition process hasn't completed</li>
-                        <li>There was an error during facial recognition processing</li>
+                        <li>The video hasn't been processed yet</li>
+                        <li>The recognition process hasn't completed</li>
+                        <li>There was an error during processing</li>
                       </ul>
                       <div className="mt-3 flex flex-col sm:flex-row gap-2">
                         <button 
-                          onClick={triggerFacialRecognition}
+                          onClick={triggerTranscription}
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm flex-grow text-center"
                           disabled={isLoadingRecognition}
                         >
-                          {isLoadingRecognition ? 'Processing...' : 'Run Facial Recognition'}
+                          {isLoadingRecognition ? 'Processing...' : 'Run Transcription'}
                         </button>
                         <button
                           onClick={fetchRecognitionResults}
