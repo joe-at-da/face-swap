@@ -362,21 +362,103 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
       if (structuredResults.facial_recognition.faces.length === 0) {
         console.log('No faces found, checking if facial recognition processing is needed');
         try {
-          const statusResponse = await api.get(`/facial-recognition/status/${validCaptureId}`);
-          const statusData = statusResponse.data || statusResponse;
-          console.log('Facial recognition status:', statusData);
-          
-          if (statusData.status !== 'completed' && statusData.status !== 'processing') {
-            console.log('Triggering facial recognition processing');
-            try {
-              await api.post(`/facial-recognition/process-video/${validCaptureId}`);
-              toast.success('Facial recognition processing started');
-            } catch (processError) {
-              console.error('Error triggering facial recognition:', processError);
+          // Try to directly process the video instead of checking status first
+          // This avoids the metadata error in the status endpoint
+          console.log('Triggering facial recognition processing directly');
+          try {
+            await api.post(`/facial-recognition/process-video/${validCaptureId}`);
+            toast.success('Facial recognition processing started');
+            
+            // Update the UI to show that recognition is in progress
+            const updatedStatus: RecognitionStatus = {
+              status: 'processing',
+              progress: 0,
+              started_at: new Date().toISOString(),
+              steps: [
+                {
+                  name: 'facial_recognition',
+                  status: 'in_progress',
+                  progress: 0
+                }
+              ]
+            };
+            
+            // Update the UI with the new status
+            setRecognitionStatus(updatedStatus);
+            
+          } catch (processError: any) {
+            console.error('Error triggering facial recognition:', processError);
+            
+            // Check if this is a metadata error - handle various error formats
+            let isMetadataError = false;
+            let errorMessage = '';
+            
+            // Try to extract error details from different possible formats
+            if (processError?.response?.data?.detail) {
+              const errorDetail = processError.response.data.detail;
+              errorMessage = typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail);
+              console.log('Error detail from response.data.detail:', errorMessage);
+              isMetadataError = errorMessage.includes('MetaData') || errorMessage.includes("'get'");
+            } else if (processError?.message) {
+              errorMessage = processError.message;
+              console.log('Error detail from error.message:', errorMessage);
+              isMetadataError = errorMessage.includes('MetaData') || errorMessage.includes("'get'");
+            } else if (typeof processError === 'string') {
+              errorMessage = processError;
+              console.log('Error detail from error string:', errorMessage);
+              isMetadataError = errorMessage.includes('MetaData') || errorMessage.includes("'get'");
+            }
+            
+            // If we detect a metadata error, try to fix it
+            if (isMetadataError) {
+              toast.error('Metadata error detected. The system will try to fix this automatically.');
+              
+              // Try multiple approaches to initialize metadata
+              let metadataFixed = false;
+              
+              // First try the info endpoint
+              try {
+                await api.get(`/parliament-tv/${validCaptureId}/info`);
+                toast.info('Metadata initialized via info endpoint.');
+                metadataFixed = true;
+              } catch (infoError) {
+                console.error('Info endpoint failed:', infoError);
+              }
+              
+              // Then try the stream endpoint if info failed
+              if (!metadataFixed) {
+                try {
+                  await api.get(`/parliament-tv/${validCaptureId}/stream`);
+                  toast.info('Metadata initialized via stream endpoint.');
+                  metadataFixed = true;
+                } catch (streamError) {
+                  console.error('Stream endpoint failed:', streamError);
+                }
+              }
+              
+              // Try a direct capture endpoint as a last resort
+              if (!metadataFixed) {
+                try {
+                  await api.get(`/capture/${validCaptureId}`);
+                  toast.info('Metadata initialized via capture endpoint.');
+                  metadataFixed = true;
+                } catch (captureError) {
+                  console.error('Capture endpoint failed:', captureError);
+                }
+              }
+              
+              if (metadataFixed) {
+                toast.success('Metadata issue resolved. Please try again.');
+              } else {
+                toast.error('Failed to fix metadata. Please contact support.');
+              }
+            } else {
+              toast.error('Failed to start facial recognition process');
             }
           }
         } catch (statusError) {
-          console.warn('Error checking facial recognition status:', statusError);
+          console.error('Error checking facial recognition status:', statusError);
+          toast.error('Could not process facial recognition. Please try again later.');
         }
       }
     } catch (err: any) {
