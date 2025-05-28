@@ -237,26 +237,8 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
         }
       }
       
-      // Add mock data for testing if in development mode and no real data found
-      if (process.env.NODE_ENV === 'development' && 
-          (!structuredResults.facial_recognition.faces || 
-           structuredResults.facial_recognition.faces.length === 0)) {
-        console.log('Adding mock facial recognition data for development testing');
-        structuredResults.facial_recognition.faces = [
-          {
-            name: 'Unknown Person #1',
-            confidence: 0.85,
-            timestamp: 60,
-            image_path: '/placeholder-face.png'
-          },
-          {
-            name: 'Unknown Person #2',
-            confidence: 0.78,
-            timestamp: 120,
-            image_path: '/placeholder-face.png'
-          }
-        ];
-      }
+      // Log the data we received for debugging
+      console.log('Recognition results data structure:', structuredResults);
       
       setRecognitionResults(structuredResults);
     } catch (err: any) {
@@ -393,7 +375,7 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             </button>
           </div>
         </div>
-      ) : recognitionStatus?.status === 'completed' ? (
+      ) : (
         <div>
           {/* Tab Navigation */}
           <div className="flex border-b border-gray-700 mb-6 overflow-x-auto">
@@ -494,8 +476,11 @@ const UnifiedRecognitionPanel: React.FC<UnifiedRecognitionPanelProps> = ({
             />
           )}
         </div>
-      ) : (
-        <div className="bg-red-900 border-l-4 border-red-500 p-4">
+      )}
+      
+      {/* Error message shown at the bottom if recognition failed */}
+      {recognitionStatus?.status === 'failed' && (
+        <div className="mt-4 bg-red-900 border-l-4 border-red-500 p-4">
           <div className="flex">
             <div className="flex-shrink-0">
               <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
