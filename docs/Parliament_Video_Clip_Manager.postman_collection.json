@@ -1,782 +1,1037 @@
 {
-  "info": {
-    "name": "Parliament Video Clip Manager API",
-    "description": "A comprehensive collection of API endpoints for the Parliament Video Clip Manager application",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-  },
-  "item": [
-    {
-      "name": "Authentication",
-      "description": "Authentication endpoints for login and user management",
-      "item": [
-        {
-          "name": "Login",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/x-www-form-urlencoded"
-              }
-            ],
-            "body": {
-              "mode": "urlencoded",
-              "urlencoded": [
-                {
-                  "key": "username",
-                  "value": "{{email}}",
-                  "type": "text"
-                },
-                {
-                  "key": "password",
-                  "value": "{{password}}",
-                  "type": "text"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/auth/login",
-              "host": ["{{base_url}}"],
-              "path": ["auth", "login"]
-            },
-            "description": "Login to get an access token"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Current User",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/auth/me",
-              "host": ["{{base_url}}"],
-              "path": ["auth", "me"]
-            },
-            "description": "Get information about the current user"
-          },
-          "response": []
-        },
-        {
-          "name": "Register New User",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"New User\",\n  \"role\": \"staff\",\n  \"is_active\": true\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/auth/register",
-              "host": ["{{base_url}}"],
-              "path": ["auth", "register"]
-            },
-            "description": "Register a new user (admin only)"
-          },
-          "response": []
-        },
-        {
-          "name": "List Users",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/auth/users",
-              "host": ["{{base_url}}"],
-              "path": ["auth", "users"]
-            },
-            "description": "List all users (admin only)"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Parliament TV",
-      "description": "Endpoints for Parliament TV capture and management",
-      "item": [
-        {
-          "name": "Extract Parliament TV URL",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"url\": \"https://parliamentlive.tv/event/index/12345678-1234-1234-1234-123456789012\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/extract",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "extract"]
-            },
-            "description": "Extract direct stream URLs from a Parliament TV event page"
-          },
-          "response": []
-        },
-        {
-          "name": "Test Stream URL",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/test-stream?video_url=https://streaming-url.example.com/video.mp4&audio_url=https://streaming-url.example.com/audio.mp3",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "test-stream"],
-              "query": [
-                {
-                  "key": "video_url",
-                  "value": "https://streaming-url.example.com/video.mp4"
-                },
-                {
-                  "key": "audio_url",
-                  "value": "https://streaming-url.example.com/audio.mp3"
-                }
-              ]
-            },
-            "description": "Test if a stream URL is valid"
-          },
-          "response": []
-        },
-        {
-          "name": "Start Parliament TV Capture",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"url\": \"https://parliamentlive.tv/event/index/12345678-1234-1234-1234-123456789012\",\n  \"title\": \"House of Commons - Debate on Example Bill\",\n  \"description\": \"Debate on the second reading of the Example Bill\",\n  \"video_url\": \"https://streaming-url.example.com/video.mp4\",\n  \"audio_url\": \"https://streaming-url.example.com/audio.mp3\",\n  \"duration\": 3600,\n  \"use_facial_recognition\": true,\n  \"start_at\": \"00:15:30\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/parliament-tv",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv"]
-            },
-            "description": "Start capturing a Parliament TV stream"
-          },
-          "response": []
-        },
-        {
-          "name": "Get All Parliament TV Captures",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/captures",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "captures"]
-            },
-            "description": "Get all Parliament TV captures"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Parliament TV Captures by Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/captures?status=active",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "captures"],
-              "query": [
-                {
-                  "key": "status",
-                  "value": "active"
-                }
-              ]
-            },
-            "description": "Get Parliament TV captures filtered by status"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Parliament TV Capture by ID",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123"]
-            },
-            "description": "Get a specific Parliament TV capture by ID"
-          },
-          "response": []
-        },
-        {
-          "name": "Stop Parliament TV Capture",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123/stop",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123", "stop"]
-            },
-            "description": "Stop an active Parliament TV capture"
-          },
-          "response": []
-        },
-        {
-          "name": "Delete Parliament TV Capture",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123"]
-            },
-            "description": "Delete a Parliament TV capture"
-          },
-          "response": []
-        },
-        {
-          "name": "Extract Audio for Capture",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123/extract-audio",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123", "extract-audio"]
-            },
-            "description": "Extract audio from a Parliament TV capture"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Audio Extraction Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123/audio-status",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123", "audio-status"]
-            },
-            "description": "Check the status of audio extraction for a capture"
-          },
-          "response": []
-        },
-        {
-          "name": "Transcribe Parliament TV Capture",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123/transcribe?language=en&model_size=medium&force=false",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123", "transcribe"],
-              "query": [
-                {
-                  "key": "language",
-                  "value": "en"
-                },
-                {
-                  "key": "model_size",
-                  "value": "medium"
-                },
-                {
-                  "key": "force",
-                  "value": "false"
-                }
-              ]
-            },
-            "description": "Start transcription for a Parliament TV capture"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Parliament TV Transcription",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/parliament-tv/123/transcription?language=en",
-              "host": ["{{base_url}}"],
-              "path": ["parliament-tv", "123", "transcription"],
-              "query": [
-                {
-                  "key": "language",
-                  "value": "en"
-                }
-              ]
-            },
-            "description": "Get transcription for a Parliament TV capture"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Recognition",
-      "description": "Endpoints for facial and voice recognition",
-      "item": [
-        {
-          "name": "Start Combined Recognition",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"video_id\": 123,\n  \"save_output\": true\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/recognition/combined-recognition",
-              "host": ["{{base_url}}"],
-              "path": ["recognition", "combined-recognition"]
-            },
-            "description": "Start combined facial and voice recognition for a video"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Recognition Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/recognition/status/123",
-              "host": ["{{base_url}}"],
-              "path": ["recognition", "status", "123"]
-            },
-            "description": "Get the status of the recognition process"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Detailed Recognition Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/recognition/detailed-status/123",
-              "host": ["{{base_url}}"],
-              "path": ["recognition", "detailed-status", "123"]
-            },
-            "description": "Get detailed status of the recognition process"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Recognition Results",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/recognition/results/123",
-              "host": ["{{base_url}}"],
-              "path": ["recognition", "results", "123"]
-            },
-            "description": "Get recognition results for a video"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Unidentified Speakers",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/recognition/speakers/123",
-              "host": ["{{base_url}}"],
-              "path": ["recognition", "speakers", "123"]
-            },
-            "description": "Get unidentified speakers from recognition results"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Unidentified Face Image",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/recognition/unidentified/123/face_145_3.jpg",
-              "host": ["{{base_url}}"],
-              "path": ["recognition", "unidentified", "123", "face_145_3.jpg"]
-            },
-            "description": "Get an unidentified face image by capture ID and filename"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Voice Profiles",
-      "description": "Endpoints for managing voice profiles",
-      "item": [
-        {
-          "name": "Create Voice Profile",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"John Smith\",\n  \"description\": \"MP for Example Constituency\",\n  \"mp_id\": 123\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/voice-profiles",
-              "host": ["{{base_url}}"],
-              "path": ["voice-profiles"]
-            },
-            "description": "Create a new voice profile"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Voice Profiles",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/voice-profiles",
-              "host": ["{{base_url}}"],
-              "path": ["voice-profiles"]
-            },
-            "description": "Get all voice profiles"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Voice Profile by ID",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/voice-profiles/42",
-              "host": ["{{base_url}}"],
-              "path": ["voice-profiles", "42"]
-            },
-            "description": "Get a specific voice profile by ID"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Face Profiles",
-      "description": "Endpoints for managing face profiles",
-      "item": [
-        {
-          "name": "Create Face Profile",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"John Smith\",\n  \"description\": \"MP for Example Constituency\",\n  \"mp_id\": 123\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/face-profiles",
-              "host": ["{{base_url}}"],
-              "path": ["face-profiles"]
-            },
-            "description": "Create a new face profile"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Face Profiles",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/face-profiles",
-              "host": ["{{base_url}}"],
-              "path": ["face-profiles"]
-            },
-            "description": "Get all face profiles"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Face Profile by ID",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/face-profiles/42",
-              "host": ["{{base_url}}"],
-              "path": ["face-profiles", "42"]
-            },
-            "description": "Get a specific face profile by ID"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "MP Profiles",
-      "description": "Endpoints for managing MP profiles",
-      "item": [
-        {
-          "name": "Get MP Profiles",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/mp-profiles",
-              "host": ["{{base_url}}"],
-              "path": ["mp-profiles"]
-            },
-            "description": "Get all MP profiles"
-          },
-          "response": []
-        },
-        {
-          "name": "Get MP Profile by ID",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/mp-profiles/123",
-              "host": ["{{base_url}}"],
-              "path": ["mp-profiles", "123"]
-            },
-            "description": "Get a specific MP profile by ID"
-          },
-          "response": []
-        },
-        {
-          "name": "Get MP Photo",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/mp-profiles/123/photo",
-              "host": ["{{base_url}}"],
-              "path": ["mp-profiles", "123", "photo"]
-            },
-            "description": "Get the photo for an MP profile"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Files and Media",
-      "description": "Endpoints for file and media management",
-      "item": [
-        {
-          "name": "Upload File",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": ""
-                },
-                {
-                  "key": "type",
-                  "value": "profile_image",
-                  "type": "text"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/files/upload",
-              "host": ["{{base_url}}"],
-              "path": ["files", "upload"]
-            },
-            "description": "Upload a file"
-          },
-          "response": []
-        },
-        {
-          "name": "Get File",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/files/12345678-1234-1234-1234-123456789012",
-              "host": ["{{base_url}}"],
-              "path": ["files", "12345678-1234-1234-1234-123456789012"]
-            },
-            "description": "Get a file by ID"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Dashboard",
-      "description": "Endpoints for dashboard data",
-      "item": [
-        {
-          "name": "Get Dashboard Stats",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/dashboard/stats",
-              "host": ["{{base_url}}"],
-              "path": ["dashboard", "stats"]
-            },
-            "description": "Get dashboard statistics"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Admin",
-      "description": "Admin endpoints for system management",
-      "item": [
-        {
-          "name": "Get System Info",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/admin/system/info",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "system", "info"]
-            },
-            "description": "Get system information"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Storage Info",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/admin/storage/info",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "storage", "info"]
-            },
-            "description": "Get storage information"
-          },
-          "response": []
-        }
-      ]
-    }
-  ],
-  "auth": {
-    "type": "bearer",
-    "bearer": [
-      {
-        "key": "token",
-        "value": "{{access_token}}",
-        "type": "string"
-      }
-    ]
-  },
-  "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Auto-login and set the access token for all requests",
-          "// Skip if we're already making a login request",
-          "if (!pm.request.url.toString().includes('/auth/login')) {",
-          "    // Check if we have a valid token",
-          "    if (!pm.environment.get('access_token') || pm.environment.get('token_expiry') <= new Date().getTime()) {",
-          "        console.log('No valid token found, logging in...');",
-          "        ",
-          "        pm.sendRequest({",
-          "            url: pm.environment.get('base_url') + '/auth/login',",
-          "            method: 'POST',",
-          "            header: {",
-          "                'Content-Type': 'application/x-www-form-urlencoded'",
-          "            },",
-          "            body: {",
-          "                mode: 'urlencoded',",
-          "                urlencoded: [",
-          "                    { key: 'username', value: pm.environment.get('email') },",
-          "                    { key: 'password', value: pm.environment.get('password') }",
-          "                ]",
-          "            }",
-          "        }, function (err, res) {",
-          "            if (err) {",
-          "                console.error('Error logging in:', err);",
-          "            } else if (res.code === 200) {",
-          "                const responseJson = res.json();",
-          "                if (responseJson && responseJson.access_token) {",
-          "                    console.log('Login successful, setting access token');",
-          "                    pm.environment.set('access_token', responseJson.access_token);",
-          "                    ",
-          "                    // Set token expiry to 1 hour from now",
-          "                    const expiryTime = new Date().getTime() + 60 * 60 * 1000;",
-          "                    pm.environment.set('token_expiry', expiryTime);",
-          "                } else {",
-          "                    console.error('Login response did not contain an access token');",
-          "                }",
-          "            } else {",
-          "                console.error('Login failed with status code:', res.code);",
-          "            }",
-          "        });",
-          "    } else {",
-          "        console.log('Using existing valid token');",
-          "    }",
-          "}"
-        ]
-      }
-    },
-    {
-      "listen": "test",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Handle login response",
-          "if (pm.request.url.toString().includes('/auth/login') && pm.response.code === 200) {",
-          "    const responseJson = pm.response.json();",
-          "    if (responseJson && responseJson.access_token) {",
-          "        console.log('Login successful, setting access token');",
-          "        pm.environment.set('access_token', responseJson.access_token);",
-          "        ",
-          "        // Set token expiry to 1 hour from now",
-          "        const expiryTime = new Date().getTime() + 60 * 60 * 1000;",
-          "        pm.environment.set('token_expiry', expiryTime);",
-          "    }",
-          "}"
-        ]
-      }
-    }
-  ],
-  "variable": [
-    {
-      "key": "base_url",
-      "value": "http://localhost:8000/api/v1",
-      "type": "string"
-    }
-  ]
+	"info": {
+		"_postman_id": "49b9293b-4a24-4e51-80a0-d1d87cc947a1",
+		"name": "Parliament Video Clip Manager API",
+		"description": "A comprehensive collection of API endpoints for the Parliament Video Clip Manager application",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "14949116",
+		"_collection_link": "https://solar-firefly-390083.postman.co/workspace/The-MP-Python-API~829373b1-23ab-4a11-921d-bd674123aac6/collection/14949116-49b9293b-4a24-4e51-80a0-d1d87cc947a1?action=share&source=collection_link&creator=14949116"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "username",
+									"value": "{{email}}",
+									"type": "text"
+								},
+								{
+									"key": "password",
+									"value": "{{password}}",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login to get an access token"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Current User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						},
+						"description": "Get information about the current user"
+					},
+					"response": []
+				},
+				{
+					"name": "Register New User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"New User\",\n  \"role\": \"staff\",\n  \"is_active\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						},
+						"description": "Register a new user (admin only)"
+					},
+					"response": []
+				},
+				{
+					"name": "List Users",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/users",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"users"
+							]
+						},
+						"description": "List all users (admin only)"
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoints for login and user management"
+		},
+		{
+			"name": "Parliament TV",
+			"item": [
+				{
+					"name": "Extract Parliament TV URL",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://www.parliamentlive.tv/Event/Index/b42b9aaa-3e5b-409b-97ba-a1e26ffe0649\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/extract-url",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"extract-url"
+							]
+						},
+						"description": "Extract direct stream URLs from a Parliament TV event page"
+					},
+					"response": []
+				},
+				{
+					"name": "Start Parliament TV Capture",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://www.parliamentlive.tv/Event/Index/b42b9aaa-3e5b-409b-97ba-a1e26ffe0649\",\n  \"title\": \"Sample Title\",\n  \"description\": \"Sample Description\",\n  \"duration\": 30,\n  \"enable_facial_recognition\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/parliament-tv",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv"
+							]
+						},
+						"description": "Start capturing a Parliament TV stream"
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Captures",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/capture",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"capture"
+							]
+						},
+						"description": "Get all Parliament TV captures"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Captures by Status",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/capture?status=active",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"capture"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "active"
+								}
+							]
+						},
+						"description": "Get Parliament TV captures filtered by status"
+					},
+					"response": []
+				},
+				{
+					"name": "GetCapture by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/capture/383",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"capture",
+								"383"
+							]
+						},
+						"description": "Get a specific Parliament TV capture by ID"
+					},
+					"response": []
+				},
+				{
+					"name": "Stop Parliament TV Capture",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/123/stop",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"123",
+								"stop"
+							]
+						},
+						"description": "Stop an active Parliament TV capture"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Parliament TV Capture",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/123",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"123"
+							]
+						},
+						"description": "Delete a Parliament TV capture"
+					},
+					"response": []
+				},
+				{
+					"name": "Extract Audio for Capture",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/123/extract-audio",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"123",
+								"extract-audio"
+							]
+						},
+						"description": "Extract audio from a Parliament TV capture"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Audio Extraction Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/123/audio-status",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"123",
+								"audio-status"
+							]
+						},
+						"description": "Check the status of audio extraction for a capture"
+					},
+					"response": []
+				},
+				{
+					"name": "Transcribe Parliament TV Capture",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/123/transcribe?language=en&model_size=medium&force=false",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"123",
+								"transcribe"
+							],
+							"query": [
+								{
+									"key": "language",
+									"value": "en"
+								},
+								{
+									"key": "model_size",
+									"value": "medium"
+								},
+								{
+									"key": "force",
+									"value": "false"
+								}
+							]
+						},
+						"description": "Start transcription for a Parliament TV capture"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Parliament TV Transcription",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/parliament-tv/123/transcription?language=en",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"parliament-tv",
+								"123",
+								"transcription"
+							],
+							"query": [
+								{
+									"key": "language",
+									"value": "en"
+								}
+							]
+						},
+						"description": "Get transcription for a Parliament TV capture"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for Parliament TV capture and management"
+		},
+		{
+			"name": "Recognition",
+			"item": [
+				{
+					"name": "Start Combined Recognition",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"video_id\": 387,\n  \"save_output\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/recognition/combined-recognition",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"combined-recognition"
+							]
+						},
+						"description": "Start combined facial and voice recognition for a video"
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Transcriptions and Recognitions",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/list/parliament-tv",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"list",
+								"parliament-tv"
+							]
+						},
+						"description": "Get the status of the recognition process"
+					},
+					"response": []
+				},
+				{
+					"name": "Get  Recognition List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/list/parliament-tv",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"list",
+								"parliament-tv"
+							]
+						},
+						"description": "Get the status of the recognition process"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Transcription List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/transcription/list/parliament-tv",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"transcription",
+								"list",
+								"parliament-tv"
+							]
+						},
+						"description": "Get the status of the recognition process"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Detailed Recognition Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/detailed-status/383",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"detailed-status",
+								"383"
+							]
+						},
+						"description": "Get detailed status of the recognition process"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Recognition Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/recognition-status/383",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"recognition-status",
+								"383"
+							]
+						},
+						"description": "Get detailed status of the recognition process"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Recognition Results",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/results/383",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"results",
+								"383"
+							]
+						},
+						"description": "Get recognition results for a video"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Unidentified Speakers",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/speakers/383",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"speakers",
+								"383"
+							]
+						},
+						"description": "Get unidentified speakers from recognition results"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Unidentified Face Image",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/recognition/unidentified/387/unidentified_face_fb7a28d9-00d3-48aa-b410-3470da13016e.jpg",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recognition",
+								"unidentified",
+								"387",
+								"unidentified_face_fb7a28d9-00d3-48aa-b410-3470da13016e.jpg"
+							]
+						},
+						"description": "Get an unidentified face image by capture ID and filename"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for facial and voice recognition"
+		},
+		{
+			"name": "Voice Profiles",
+			"item": [
+				{
+					"name": "Create Voice Profile",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John Smith\",\n  \"description\": \"MP for Example Constituency\",\n  \"mp_id\": 123\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/voice-profiles",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"voice-profiles"
+							]
+						},
+						"description": "Create a new voice profile"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Voice Profiles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/voice-profiles",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"voice-profiles"
+							]
+						},
+						"description": "Get all voice profiles"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Voice Profile by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/voice-profiles/42",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"voice-profiles",
+								"42"
+							]
+						},
+						"description": "Get a specific voice profile by ID"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing voice profiles"
+		},
+		{
+			"name": "Face Profiles",
+			"item": [
+				{
+					"name": "Create Face Profile",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John Smith\",\n  \"description\": \"MP for Example Constituency\",\n  \"mp_id\": 123\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/face-profiles",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"face-profiles"
+							]
+						},
+						"description": "Create a new face profile"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Face Profiles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/face-profiles",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"face-profiles"
+							]
+						},
+						"description": "Get all face profiles"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Face Profile by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/face-profiles/42",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"face-profiles",
+								"42"
+							]
+						},
+						"description": "Get a specific face profile by ID"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing face profiles"
+		},
+		{
+			"name": "MP Profiles",
+			"item": [
+				{
+					"name": "Get MP Profiles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/mp-profiles",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"mp-profiles"
+							]
+						},
+						"description": "Get all MP profiles"
+					},
+					"response": []
+				},
+				{
+					"name": "Get MP Profile by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/mp-profiles/123",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"mp-profiles",
+								"123"
+							]
+						},
+						"description": "Get a specific MP profile by ID"
+					},
+					"response": []
+				},
+				{
+					"name": "Get MP Photo",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/mp-profiles/123/photo",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"mp-profiles",
+								"123",
+								"photo"
+							]
+						},
+						"description": "Get the photo for an MP profile"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing MP profiles"
+		},
+		{
+			"name": "Files and Media",
+			"item": [
+				{
+					"name": "Upload File",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"value": "",
+									"type": "file"
+								},
+								{
+									"key": "type",
+									"value": "profile_image",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/files/upload",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"files",
+								"upload"
+							]
+						},
+						"description": "Upload a file"
+					},
+					"response": []
+				},
+				{
+					"name": "Get File",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/files/890957286",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"files",
+								"890957286"
+							]
+						},
+						"description": "Get a file by ID"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Videos",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/videos",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"videos"
+							]
+						},
+						"description": "Get a file by ID"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for file and media management"
+		},
+		{
+			"name": "Dashboard",
+			"item": [
+				{
+					"name": "Get Dashboard Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/dashboard/stats",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"dashboard",
+								"stats"
+							]
+						},
+						"description": "Get dashboard statistics"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for dashboard data"
+		},
+		{
+			"name": "Admin",
+			"item": [
+				{
+					"name": "Get System Info",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/admin/system/info",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"admin",
+								"system",
+								"info"
+							]
+						},
+						"description": "Get system information"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Storage Info",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/admin/storage/info",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"admin",
+								"storage",
+								"info"
+							]
+						},
+						"description": "Get storage information"
+					},
+					"response": []
+				}
+			],
+			"description": "Admin endpoints for system management"
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{access_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Auto-login and set the access token for all requests",
+					"// Skip if we're already making a login request",
+					"if (!pm.request.url.toString().includes('/auth/login')) {",
+					"    // Check if we have a valid token",
+					"    if (!pm.environment.get('access_token') || pm.environment.get('token_expiry') <= new Date().getTime()) {",
+					"        console.log('No valid token found, logging in...');",
+					"        ",
+					"        pm.sendRequest({",
+					"            url: pm.environment.get('base_url') + '/auth/login',",
+					"            method: 'POST',",
+					"            header: {",
+					"                'Content-Type': 'application/x-www-form-urlencoded'",
+					"            },",
+					"            body: {",
+					"                mode: 'urlencoded',",
+					"                urlencoded: [",
+					"                    { key: 'username', value: pm.environment.get('email') },",
+					"                    { key: 'password', value: pm.environment.get('password') }",
+					"                ]",
+					"            }",
+					"        }, function (err, res) {",
+					"            if (err) {",
+					"                console.error('Error logging in:', err);",
+					"            } else if (res.code === 200) {",
+					"                const responseJson = res.json();",
+					"                if (responseJson && responseJson.access_token) {",
+					"                    console.log('Login successful, setting access token');",
+					"                    pm.environment.set('access_token', responseJson.access_token);",
+					"                    ",
+					"                    // Set token expiry to 1 hour from now",
+					"                    const expiryTime = new Date().getTime() + 60 * 60 * 1000;",
+					"                    pm.environment.set('token_expiry', expiryTime);",
+					"                } else {",
+					"                    console.error('Login response did not contain an access token');",
+					"                }",
+					"            } else {",
+					"                console.error('Login failed with status code:', res.code);",
+					"            }",
+					"        });",
+					"    } else {",
+					"        console.log('Using existing valid token');",
+					"    }",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Handle login response",
+					"if (pm.request.url.toString().includes('/auth/login') && pm.response.code === 200) {",
+					"    const responseJson = pm.response.json();",
+					"    if (responseJson && responseJson.access_token) {",
+					"        console.log('Login successful, setting access token');",
+					"        pm.environment.set('access_token', responseJson.access_token);",
+					"        ",
+					"        // Set token expiry to 1 hour from now",
+					"        const expiryTime = new Date().getTime() + 60 * 60 * 1000;",
+					"        pm.environment.set('token_expiry', expiryTime);",
+					"    }",
+					"}"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000/api/v1",
+			"type": "string"
+		}
+	]
 }
