@@ -32,6 +32,80 @@ class FacialRecognitionService:
         # Create directories if they don't exist
         self.mp_photos_dir.mkdir(parents=True, exist_ok=True)
         
+    def _get_video_metadata(self, video_path: str) -> Dict[str, Any]:
+        """
+        Get metadata for a video file.
+        
+        Args:
+            video_path: Path to the video file
+            
+        Returns:
+            Dict with video metadata
+        """
+        try:
+            # Try to get metadata from the database
+            from sqlalchemy.orm import Session
+            from backend.db.session import SessionLocal
+            from backend.db.models import CaptureSession
+            
+            video_name = os.path.basename(video_path)
+            
+            db = SessionLocal()
+            try:
+                # Find the capture session for this video
+                capture = db.query(CaptureSession).filter(
+                    CaptureSession.output_file.like(f"%{video_name}%")
+                ).first()
+                
+                if capture:
+                    # Extract metadata from the capture session
+                    metadata = {
+                        "title": f"Parliament TV - {capture.title}" if capture.title else f"Parliament TV Capture {capture.id}",
+                        "description": capture.description or "",
+                        "capture_date": capture.start_time.isoformat() if capture.start_time else datetime.now().isoformat(),
+                        "duration": capture.duration or 0,
+                        "source_url": capture.url or "",
+                    }
+                    
+                    # Extract audio and video URLs from metadata if available
+                    if capture.metadata:
+                        if isinstance(capture.metadata, dict):
+                            metadata["audio_url"] = capture.metadata.get("audio_url", "")
+                            metadata["video_url"] = capture.metadata.get("video_url", "")
+                        elif isinstance(capture.metadata, str):
+                            try:
+                                meta_dict = json.loads(capture.metadata)
+                                metadata["audio_url"] = meta_dict.get("audio_url", "")
+                                metadata["video_url"] = meta_dict.get("video_url", "")
+                            except:
+                                pass
+                    
+                    return metadata
+            finally:
+                db.close()
+                
+            # If we couldn't get metadata from the database, return basic info
+            return {
+                "title": f"Parliament TV Video - {os.path.basename(video_path)}",
+                "description": "Parliament TV video capture",
+                "capture_date": datetime.now().isoformat(),
+                "duration": 0,
+                "source_url": "",
+                "audio_url": "",
+                "video_url": ""
+            }
+        except Exception as e:
+            logger.error(f"Error getting video metadata: {str(e)}")
+            return {
+                "title": f"Parliament TV Video - {os.path.basename(video_path)}",
+                "description": "Parliament TV video capture",
+                "capture_date": datetime.now().isoformat(),
+                "duration": 0,
+                "source_url": "",
+                "audio_url": "",
+                "video_url": ""
+            }
+        
     def _generate_face_encoding(self, image_path: Path) -> Dict:
         """Generate a face encoding from an image file."""
         try:
@@ -351,15 +425,42 @@ class FacialRecognitionService:
             if not mp_encodings_exist:
                 results["note"] = "Used empty MP encodings file. All faces detected are unidentified."
             
+            # Export data for Supabase integration if results are successful
+            supabase_export_info = None
+            try:
+                from backend.services.integration.supabase_export import export_recognition_results
+                
+                # Get video metadata
+                video_metadata = self._get_video_metadata(video_path)
+                
+                # Create export directory
+                video_dir = os.path.dirname(video_path)
+                video_name = os.path.splitext(os.path.basename(video_path))[0]
+                export_dir = os.path.join(video_dir, f"{video_name}_supabase_export")
+                os.makedirs(export_dir, exist_ok=True)
+                
+                # Export results for Supabase integration
+                supabase_export_info = export_recognition_results(
+                    video_path=video_path,
+                    recognition_results=results,
+                    video_metadata=video_metadata,
+                    export_dir=export_dir
+                )
+                
+                logger.info(f"Exported recognition results for Supabase integration: {supabase_export_info}")
+            except Exception as e:
+                logger.warning(f"Failed to export recognition results for Supabase integration: {str(e)}")
+                supabase_export_info = {"error": str(e)}
+            
             return {
                 "success": True,
                 "message": "Speaker identification completed successfully" + (" (with face detection only)" if not mp_encodings_exist else ""),
                 "output_file": output_file if output_file and os.path.exists(output_file) else None,
                 "results_file": results_file,
                 "unidentified_dir": unidentified_dir if store_unidentified else None,
+                "supabase_export": supabase_export_info,
                 "results": results
             }
-            
         except Exception as e:
             logger.exception(f"Error identifying speakers: {str(e)}")
             return {
