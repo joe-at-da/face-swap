@@ -108,18 +108,16 @@ class FacialRecognitionService:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         temp_file.write(chunk)
-                temp_path = temp_file.name
+                temp_file_path = temp_file.name
             
-            try:
-                # Generate face encoding from the temporary file
-                result = self._generate_face_encoding(Path(temp_path))
-                
-                # Return the result
-                return result
-            finally:
-                # Delete the temporary file
-                os.unlink(temp_path)
-                
+            # Generate face encoding from the temporary file
+            result = self._generate_face_encoding(Path(temp_file_path))
+            
+            # Clean up the temporary file
+            os.unlink(temp_file_path)
+            
+            return result
+            
         except Exception as e:
             logger.error(f"Error generating face encoding from URL: {str(e)}")
             return {
@@ -145,35 +143,30 @@ class FacialRecognitionService:
             return {
                 "success": False,
                 "error": f"Video file not found: {video_path}",
-                "output_file": None,
-                "results_file": None
+                "output_file": None
             }
         
-        # Prepare the command
+        # Prepare the script path
         script_path = self.scripts_dir / "detect_faces.py"
         
-        # Check if the script exists
-        if not script_path.exists():
+        if not os.path.exists(script_path):
             return {
                 "success": False,
                 "error": f"Face detection script not found: {script_path}",
-                "output_file": None,
-                "results_file": None
+                "output_file": None
             }
         
-        # Prepare the results file
-        results_file = f"{os.path.splitext(video_path)[0]}_face_detection_results.json"
+        # Prepare the output file if not provided
+        if not output_file:
+            output_file = f"{os.path.splitext(video_path)[0]}_faces.mp4"
         
         # Prepare the command
         cmd = [
             "python",
             str(script_path),
             "--input", video_path,
-            "--results", results_file
+            "--output", output_file
         ]
-        
-        if output_file:
-            cmd.extend(["--output", output_file])
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
@@ -193,31 +186,23 @@ class FacialRecognitionService:
                 return {
                     "success": False,
                     "error": f"Face detection failed: {stderr}",
-                    "output_file": None,
-                    "results_file": None
+                    "output_file": None
                 }
             
             logger.info(f"Face detection completed successfully")
             
-            # Check if the results file exists
-            if not os.path.exists(results_file):
+            # Check if the output file exists
+            if not os.path.exists(output_file):
                 return {
                     "success": False,
-                    "error": f"Results file not found: {results_file}",
-                    "output_file": output_file if output_file and os.path.exists(output_file) else None,
-                    "results_file": None
+                    "error": f"Output file not found: {output_file}",
+                    "output_file": None
                 }
-            
-            # Load the results
-            with open(results_file, "r") as f:
-                results = json.load(f)
             
             return {
                 "success": True,
                 "message": "Face detection completed successfully",
-                "output_file": output_file if output_file and os.path.exists(output_file) else None,
-                "results_file": results_file,
-                "results": results
+                "output_file": output_file
             }
             
         except Exception as e:
@@ -225,8 +210,7 @@ class FacialRecognitionService:
             return {
                 "success": False,
                 "error": str(e),
-                "output_file": None,
-                "results_file": None
+                "output_file": None
             }
     
     def identify_speakers(self, video_path: str, output_file: Optional[str] = None, store_unidentified: bool = True) -> Dict:
@@ -254,13 +238,30 @@ class FacialRecognitionService:
             }
         
         # Check if the MP encodings file exists
-        if not os.path.exists(self.mp_encodings_file):
-            return {
-                "success": False,
-                "error": f"MP encodings file not found: {self.mp_encodings_file}",
-                "output_file": None,
-                "results_file": None
-            }
+        mp_encodings_exist = os.path.exists(self.mp_encodings_file)
+        if not mp_encodings_exist:
+            logger.warning(f"MP encodings file not found: {self.mp_encodings_file}. Will proceed with face detection only.")
+            # Create an empty MP encodings file with the required structure
+            try:
+                # Create an empty MP encodings file with the required structure
+                empty_encodings = {
+                    "names": [],
+                    "encodings": [],
+                    "parliament_ids": [],
+                    "updated_at": datetime.now().isoformat()
+                }
+                os.makedirs(os.path.dirname(self.mp_encodings_file), exist_ok=True)
+                with open(self.mp_encodings_file, 'w') as f:
+                    json.dump(empty_encodings, f, indent=2)
+                logger.info(f"Created empty MP encodings file for face detection: {self.mp_encodings_file}")
+            except Exception as e:
+                logger.error(f"Failed to create empty MP encodings file: {str(e)}")
+                return {
+                    "success": False,
+                    "error": f"Failed to create empty MP encodings file: {str(e)}",
+                    "output_file": None,
+                    "results_file": None
+                }
         
         # Prepare the script path - use the new script that can store unidentified faces
         script_path = self.scripts_dir / "identify_and_store_faces.py"
@@ -346,9 +347,13 @@ class FacialRecognitionService:
             if store_unidentified and unidentified_dir:
                 results["unidentified_dir"] = unidentified_dir
             
+            # Add a note if we were using an empty MP encodings file
+            if not mp_encodings_exist:
+                results["note"] = "Used empty MP encodings file. All faces detected are unidentified."
+            
             return {
                 "success": True,
-                "message": "Speaker identification completed successfully",
+                "message": "Speaker identification completed successfully" + (" (with face detection only)" if not mp_encodings_exist else ""),
                 "output_file": output_file if output_file and os.path.exists(output_file) else None,
                 "results_file": results_file,
                 "unidentified_dir": unidentified_dir if store_unidentified else None,

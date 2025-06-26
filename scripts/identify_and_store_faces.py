@@ -35,8 +35,20 @@ def load_encodings(encodings_file):
             logger.error(f"Invalid encodings file format: {encodings_file}")
             return None
         
+        # Check if the encodings are empty
+        if len(data["names"]) == 0 or len(data["encodings"]) == 0:
+            logger.warning(f"MP encodings file exists but contains no encodings. Will proceed with face detection only.")
+            # Return empty data structure that's valid
+            return {
+                "names": [],
+                "encodings": [],
+                "parliament_ids": [],
+                "empty": True
+            }
+        
         # Convert encodings back to numpy arrays
         data["encodings"] = [np.array(encoding) for encoding in data["encodings"]]
+        data["empty"] = False
         
         logger.info(f"Loaded {len(data['names'])} face encodings")
         return data
@@ -158,29 +170,86 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                 # Generate face encodings for all faces in the frame
                 face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
                 
-                # Process each face
-                for i, (face_encoding, face_location) in enumerate(zip(face_encodings, face_locations)):
-                    # Check if the face matches any known faces
-                    matches = face_recognition.compare_faces(known_data["encodings"], face_encoding, tolerance=0.6)
+                # Identify faces
+                def identify_faces(frame, face_locations, known_face_encodings, known_face_names, known_parliament_ids=None):
+                    """Identify faces in a frame."""
+                    face_encodings = face_recognition.face_encodings(frame, face_locations)
+                    face_names = []
+                    face_ids = []
                     
-                    if True in matches:
-                        # Get the index of the matched face
-                        match_index = matches.index(True)
-                        name = known_data["names"][match_index]
+                    # If we have empty encodings, mark all faces as unknown
+                    if len(known_face_encodings) == 0:
+                        logger.info("No known face encodings available, marking all faces as unknown")
+                        for _ in face_encodings:
+                            face_names.append("Unknown")
+                            face_ids.append("")
+                        return face_encodings, face_names, face_ids
+                    
+                    for face_encoding in face_encodings:
+                        # Compare face with known faces
+                        matches = face_recognition.compare_faces(known_face_encodings, face_encoding, tolerance=0.6)
+                        name = "Unknown"
+                        parliament_id = ""
                         
-                        # Get the timestamp
-                        timestamp = frame_count / fps
+                        # Use the known face with the smallest distance to the new face
+                        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+                        if len(face_distances) > 0:
+                            best_match_index = np.argmin(face_distances)
+                            if matches[best_match_index]:
+                                name = known_face_names[best_match_index]
+                                if known_parliament_ids and len(known_parliament_ids) > best_match_index:
+                                    parliament_id = known_parliament_ids[best_match_index]
                         
-                        # Add to identified speakers if not already added
-                        if name not in identified_speakers:
-                            identified_speakers[name] = {
-                                "name": name,
-                                "confidence": 1.0,  # Placeholder for now
+                        face_names.append(name)
+                        face_ids.append(parliament_id)
+                    
+                    return face_encodings, face_names, face_ids
+                
+                face_encodings, face_names, face_ids = identify_faces(rgb_frame, face_locations, known_data["encodings"], known_data["names"], known_data["parliament_ids"])
+                
+                # Process each face
+                for i, (face_encoding, face_location, name) in enumerate(zip(face_encodings, face_locations, face_names)):
+                    # Get the timestamp
+                    timestamp = frame_count / fps
+                    
+                    # Add to identified speakers if not already added
+                    if name not in identified_speakers:
+                        identified_speakers[name] = {
+                            "name": name,
+                            "confidence": 1.0,  # Placeholder for now
+                            "appearances": []
+                        }
+                    
+                    # Add this appearance
+                    identified_speakers[name]["appearances"].append({
+                        "frame": frame_count,
+                        "timestamp": timestamp,
+                        "face_location": face_location
+                    })
+                    
+                    # Draw a box around the face and label it
+                    if video_writer:
+                        top, right, bottom, left = face_location
+                        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                        cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    
+                    # This is an unidentified face
+                    # Save it if unidentified_dir is specified
+                    if unidentified_dir and name == "Unknown":
+                        # Generate a unique ID for this face if we haven't seen it before
+                        # For simplicity, we're just using the face location as a key
+                        face_key = f"{face_location}"
+                        
+                        if face_key not in unidentified_faces:
+                            face_id, face_filename = save_unidentified_face(rgb_frame, face_location, unidentified_dir)
+                            unidentified_faces[face_key] = {
+                                "id": face_id,
+                                "filename": face_filename,
                                 "appearances": []
                             }
                         
-                        # Add this appearance
-                        identified_speakers[name]["appearances"].append({
+                        # Add this appearance to unidentified faces
+                        unidentified_faces[face_key]["appearances"].append({
                             "frame": frame_count,
                             "timestamp": timestamp,
                             "face_location": face_location
