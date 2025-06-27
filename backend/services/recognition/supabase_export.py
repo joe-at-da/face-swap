@@ -16,9 +16,81 @@ import subprocess
 
 from backend.core.config import settings
 from backend.services.av_combiner import combine_audio_video
+from backend.db.session import SessionLocal
+from backend.db.models import RecognitionProcess
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+def create_recognition_process(video_id: int, recognition_results: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Create or update a RecognitionProcess record for the given video and recognition results.
+    
+    Args:
+        video_id: ID of the video (CaptureSession.id)
+        recognition_results: Recognition results dictionary
+        metadata: Additional metadata (optional)
+        
+    Returns:
+        Dict with status and process ID
+    """
+    logger.info(f"Creating/updating RecognitionProcess for video ID {video_id}")
+    
+    db = SessionLocal()
+    try:
+        # Check if a RecognitionProcess already exists for this video
+        process = db.query(RecognitionProcess).filter(
+            RecognitionProcess.video_id == video_id
+        ).first()
+        
+        # Get the current time
+        now = datetime.now()
+        
+        # Extract process metadata
+        process_metadata = {}
+        if metadata:
+            process_metadata = metadata.copy()
+        
+        # If a process already exists, update it
+        if process:
+            logger.info(f"Updating existing RecognitionProcess for video ID {video_id}")
+            process.status = "completed"
+            process.end_time = now
+            process.results = json.dumps(recognition_results) if isinstance(recognition_results, dict) else recognition_results
+            process.process_metadata = json.dumps(process_metadata)
+            process.updated_at = now
+        else:
+            # Create a new RecognitionProcess
+            logger.info(f"Creating new RecognitionProcess for video ID {video_id}")
+            process = RecognitionProcess(
+                video_id=video_id,
+                status="completed",
+                start_time=now,
+                end_time=now,
+                results=json.dumps(recognition_results) if isinstance(recognition_results, dict) else recognition_results,
+                process_metadata=json.dumps(process_metadata)
+            )
+            db.add(process)
+        
+        # Commit the changes
+        db.commit()
+        
+        return {
+            "success": True,
+            "process_id": process.id,
+            "video_id": video_id,
+            "status": process.status
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating/updating RecognitionProcess: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "video_id": video_id
+        }
+    finally:
+        db.close()
 
 def export_recognition_results(
     video_id: int,
@@ -98,6 +170,17 @@ def export_recognition_results(
     if os.path.exists(combined_av_path):
         export_data["metadata"]["combined_av_path"] = combined_av_path
         export_data["metadata"]["combined_av_url"] = f"/api/v1/media/file?path={os.path.basename(combined_av_path)}"
+    
+    # Create or update RecognitionProcess record
+    process_result = create_recognition_process(
+        video_id=video_id,
+        recognition_results=recognition_results,
+        metadata=export_data["metadata"]
+    )
+    
+    if not process_result["success"]:
+        logger.warning(f"Failed to create/update RecognitionProcess: {process_result.get('error')}")
+        # Continue with export even if RecognitionProcess creation fails
     
     # Write export data to JSON file
     try:

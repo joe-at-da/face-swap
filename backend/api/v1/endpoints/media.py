@@ -19,6 +19,77 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/file", response_model=None)
+async def serve_file(
+    path: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Serve a media file by path.
+    This endpoint serves files like combined audio-video files for integration API.
+    """
+    try:
+        logger.info(f"Serving file with path: {path}")
+        
+        # Sanitize the path to prevent directory traversal
+        safe_filename = os.path.basename(path)
+        
+        # Define possible locations for the file
+        media_dir = settings.MEDIA_STORAGE_PATH
+        export_dir = os.path.join(media_dir, "exports", "supabase")
+        
+        possible_paths = [
+            os.path.join(export_dir, safe_filename),
+            os.path.join(media_dir, safe_filename),
+            os.path.join(settings.TEMP_STORAGE_PATH, safe_filename)
+        ]
+        
+        logger.info(f"Looking for file in: {possible_paths}")
+        
+        # Try to find the file
+        file_path = None
+        for p in possible_paths:
+            if os.path.exists(p) and os.path.isfile(p):
+                file_path = p
+                break
+        
+        if not file_path:
+            logger.error(f"File not found: {path}")
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        
+        # Determine content type based on file extension
+        content_type = "video/mp4"  # Default to MP4
+        if file_path.lower().endswith(".webm"):
+            content_type = "video/webm"
+        elif file_path.lower().endswith(".mov"):
+            content_type = "video/quicktime"
+        elif file_path.lower().endswith(".json"):
+            content_type = "application/json"
+        
+        logger.info(f"Serving file: {file_path} with content type: {content_type}")
+        
+        # Return the file as a streaming response with appropriate headers
+        response = FileResponse(
+            path=file_path,
+            media_type=content_type,
+            filename=os.path.basename(file_path)
+        )
+        
+        # Add headers to prevent caching
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        return response
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error serving file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
+
+
 @router.get("/stream/{video_id}", response_model=None)
 async def stream_media(
     video_id: int,

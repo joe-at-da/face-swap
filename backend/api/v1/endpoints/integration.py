@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 import os
 import logging
+import json
 from datetime import datetime
 
 from backend.db.session import get_db
@@ -65,9 +66,10 @@ def get_recognition_results(
         "duration": capture.duration,
         "status": process.status,
         "results": process.results,
-        "audio_url": capture.metadata.get("audio_url", "") if capture.metadata else "",
-        "video_url": capture.metadata.get("video_url", "") if capture.metadata else "",
-        "combined_av_url": process.process_metadata.get("combined_av_url", "") if process.process_metadata else ""
+        "audio_url": capture.capture_metadata.get("audio_url", "") if capture.capture_metadata else "",
+        "video_url": capture.capture_metadata.get("video_url", "") if capture.capture_metadata else "",
+        "combined_av_url": json.loads(process.process_metadata).get("combined_av_url", "") if process.process_metadata and isinstance(process.process_metadata, str) else \
+                          process.process_metadata.get("combined_av_url", "") if process.process_metadata else ""
     }
     
     # Make the response JSON serializable (handle datetime objects)
@@ -123,9 +125,10 @@ def list_videos(
                 "duration": capture.duration,
                 "status": process.status,
                 "has_results": process.results is not None,
-                "audio_url": capture.metadata.get("audio_url", "") if capture.metadata else "",
-                "video_url": capture.metadata.get("video_url", "") if capture.metadata else "",
-                "combined_av_url": process.process_metadata.get("combined_av_url", "") if process.process_metadata else ""
+                "audio_url": capture.capture_metadata.get("audio_url", "") if capture.capture_metadata else "",
+                "video_url": capture.capture_metadata.get("video_url", "") if capture.capture_metadata else "",
+                "combined_av_url": json.loads(process.process_metadata).get("combined_av_url", "") if process.process_metadata and isinstance(process.process_metadata, str) else \
+                                  process.process_metadata.get("combined_av_url", "") if process.process_metadata else ""
             }
             videos.append(video_data)
     
