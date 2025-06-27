@@ -10,12 +10,17 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+import numpy as np
+import cv2
+import face_recognition
 
 from backend.core.config import settings
 from backend.services.utils import make_json_serializable
-from backend.services.integration.supabase_export import export_recognition_results
+from backend.services.recognition.supabase_export import export_recognition_results
+from backend.db.session import SessionLocal
+from backend.db.models import Speaker, CaptureSession
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -443,17 +448,30 @@ class FacialRecognitionService:
                 # Get video metadata including separate audio and video URLs
                 video_metadata = self._get_video_metadata(video_path)
                 
-                # Set up export directory
-                export_dir = os.path.join(os.path.dirname(video_path), "supabase_export")
-                os.makedirs(export_dir, exist_ok=True)
+                # Get the video ID from the path
+                video_name = os.path.splitext(os.path.basename(video_path))[0]
+                video_id = None
+                if video_name.startswith("capture_"):
+                    try:
+                        video_id = int(video_name.replace("capture_", ""))
+                    except ValueError:
+                        logger.warning(f"Could not extract video ID from filename: {video_name}")
+                
+                # Find corresponding audio file if it exists
+                audio_path = None
+                video_dir = os.path.dirname(video_path)
+                potential_audio_path = os.path.join(video_dir, f"{video_name}.audio.mp3")
+                if os.path.exists(potential_audio_path):
+                    audio_path = potential_audio_path
+                    logger.info(f"Found corresponding audio file: {audio_path}")
                 
                 # Export results with combined audio-video creation
                 supabase_export_info = export_recognition_results(
-                    video_path=video_path,
+                    video_id=video_id or 0,  # Use 0 if we couldn't extract a valid ID
                     recognition_results=results,
-                    video_metadata=video_metadata,
-                    export_dir=export_dir,
-                    create_combined_av=True  # Create combined audio-video file for Supabase
+                    video_path=video_path,
+                    audio_path=audio_path,
+                    metadata=video_metadata
                 )
                 
                 logger.info(f"Exported recognition results to Supabase format: {supabase_export_info}")
@@ -471,33 +489,7 @@ class FacialRecognitionService:
             "results": results
         }
     
-        # Prepare the results file
-        results_file = f"{os.path.splitext(video_path)[0]}_speaker_identification_results.json"
-        
-        # Prepare the directory for unidentified faces
-        unidentified_dir = None
-        if store_unidentified:
-            video_dir = os.path.dirname(video_path)
-            video_name = os.path.splitext(os.path.basename(video_path))[0]
-            unidentified_dir = os.path.join(video_dir, f"{video_name}_unidentified_faces")
-            os.makedirs(unidentified_dir, exist_ok=True)
-        
-        # Prepare the command
-        cmd = [
-        "python",
-        str(script_path),
-        "--input", video_path,
-        "--encodings", str(self.mp_encodings_file),
-        "--results", results_file
-        ]
-    
-        if output_file:
-            cmd.extend(["--output", output_file])
-        
-        if store_unidentified and unidentified_dir and "identify_and_store_faces.py" in str(script_path):
-            cmd.extend(["--unidentified-dir", unidentified_dir])
-        
-        logger.info(f"Running command: {' '.join(cmd)}")
+
         
         try:
             # Execute the command

@@ -61,3 +61,4 @@ class CaptureSession(Base):
     transcriptions = relationship("ParliamentTranscription", back_populates="capture_session")
     logs = relationship("CaptureLog", back_populates="capture_session")
     recognition_events = relationship("RecognitionEvent", back_populates="capture_session", cascade="all, delete-orphan")
+    recognition_processes = relationship("RecognitionProcess", back_populates="capture_session", cascade="all, delete-orphan")

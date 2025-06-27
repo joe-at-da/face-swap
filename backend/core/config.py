@@ -64,6 +64,9 @@ class Settings(BaseSettings):
 
     # Parliament TV
     PARLIAMENT_TV_API_KEY: str
+    
+    # Integration 
+    INTEGRATION_API_KEY: str = ""  # API key for external integrations like Supabase
 
     # Development Settings
     DEBUG: bool = False

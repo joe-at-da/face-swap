@@ -2,8 +2,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, status, Security
+from fastapi.security import OAuth2PasswordBearer, APIKeyHeader
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
@@ -14,6 +14,7 @@ from backend.db.session import get_db
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
@@ -116,3 +117,27 @@ def has_permission(user, allowed_roles: list) -> bool:
         )
     
     return True
+
+
+async def get_api_key(api_key: str = Security(api_key_header)) -> str:
+    """Validate API key for external integrations."""
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    # Strip 'Bearer ' prefix if present
+    if api_key.startswith("Bearer "):
+        api_key = api_key[7:]
+    
+    # Check if the API key is valid
+    if api_key != settings.INTEGRATION_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    return api_key

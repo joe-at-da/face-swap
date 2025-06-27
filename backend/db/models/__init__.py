@@ -10,6 +10,7 @@ from .face_profile import FaceProfile, FaceSample
 from .voice_profile import VoiceProfile, VoiceSample
 from .enums import ClipStatus, SocialPlatform, PostStatus
 from .recognition_event import RecognitionEvent  # Import RecognitionEvent model
+from .recognition_process import RecognitionProcess  # Import RecognitionProcess model
 
 __all__ = [
     "User",
@@ -29,5 +30,6 @@ __all__ = [
     "Speaker",
     "SpeakerAppearance",
     "ClipStatus",
-    "RecognitionEvent"
+    "RecognitionEvent",
+    "RecognitionProcess"
 ]
