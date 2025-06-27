@@ -75,8 +75,27 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 - [Database Management](docs/database_management.md) - Database setup, rebuild, and SQL IDE connections
 - [Authentication](docs/authentication.md) - Auth system and user roles
 - [Video Capture](docs/video_capture.md) - Video capture functionality and configuration
+- [API Guide](docs/api_guide.md) - Complete API documentation including endpoints and authentication
 - [Technical Roadmap](ROADMAP.md) - Project roadmap and phases
 - [Deployment Guide](docs/deployment.md) - Production deployment
+
+### API Authentication
+
+The application supports two authentication methods:
+
+1. **JWT Authentication** - For user-facing web application and dashboard access
+   - Used for most API endpoints
+   - Requires login with username/password to obtain access token
+   - Include token in `Authorization: Bearer {token}` header
+
+2. **API Key Authentication** - For integration with external systems
+   - Used for integration API endpoints and media file access
+   - Requires API key configured in environment variable `INTEGRATION_API_KEY`
+   - Include API key in `X-API-Key: {api_key}` header
+   - All integration endpoints use the `/api/v1/` URL prefix
+   - Media files can be accessed via `/api/v1/media/file` endpoint with API key
+
+For detailed API documentation and examples, see the [API Guide](docs/api_guide.md) and Postman collections in the `docs` directory.
 
 ## Development
 

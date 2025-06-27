@@ -15,6 +15,7 @@ This document provides a comprehensive guide to the Parliament Video Clip Manage
 9. [Files and Media](#files-and-media)
 10. [Dashboard](#dashboard)
 11. [Admin](#admin)
+12. [Integration API](#integration-api)
 
 ## Base URL
 
@@ -1020,3 +1021,122 @@ The API implements rate limiting to prevent abuse. The current limits are:
 - 10 requests per minute for unauthenticated users
 
 When rate limits are exceeded, the API will return a 429 Too Many Requests response with a Retry-After header indicating how long to wait before making another request.
+
+## Integration API
+
+The Integration API provides endpoints for external systems to access recognition results and media files. These endpoints use API key authentication instead of JWT tokens.
+
+### Authentication
+
+Integration API endpoints require an API key to be provided in the `X-API-Key` header:
+
+```
+X-API-Key: your_api_key_here
+```
+
+The API key can be configured in the application's environment variables as `INTEGRATION_API_KEY`.
+
+### List Videos
+
+**Endpoint:** `GET /integration/videos`
+
+**Headers:**
+```
+X-API-Key: your_api_key_here
+```
+
+**Query Parameters:**
+```
+limit=10 (default: 10)
+offset=0 (default: 0)
+status=completed (optional, filter by status)
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "total": 25,
+  "offset": 0,
+  "limit": 10,
+  "videos": [
+    {
+      "video_id": 123,
+      "title": "Parliament TV Capture - Example Session",
+      "description": "House of Commons debate",
+      "capture_date": "2023-05-15T14:35:00Z",
+      "duration": 3600,
+      "status": "completed",
+      "has_results": true,
+      "audio_url": "https://streaming-url.example.com/audio.mp3",
+      "video_url": "https://streaming-url.example.com/video.mp4",
+      "combined_av_url": "/api/v1/media/file?path=combined_av_123_20230515_143500.mp4"
+    }
+  ]
+}
+```
+
+### Get Recognition Results
+
+**Endpoint:** `GET /integration/recognition/{video_id}`
+
+**Headers:**
+```
+X-API-Key: your_api_key_here
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "video_id": 123,
+  "title": "Parliament TV Capture - Example Session",
+  "capture_date": "2023-05-15T14:35:00Z",
+  "duration": 3600,
+  "speakers": [
+    {
+      "id": "speaker_1",
+      "name": "John Smith",
+      "profile_id": 42,
+      "segments": [
+        {
+          "start_time": 118.2,
+          "end_time": 125.7,
+          "text": "I would like to address the concerns raised by the honorable member."
+        }
+      ]
+    }
+  ],
+  "combined_av_url": "/api/v1/media/file?path=combined_av_123_20230515_143500.mp4"
+}
+```
+
+### Get Media File
+
+**Endpoint:** `GET /media/file`
+
+**Headers:**
+```
+X-API-Key: your_api_key_here
+```
+
+**Query Parameters:**
+```
+path=combined_av_123_20230515_143500.mp4
+```
+
+**Response:** Binary file data with appropriate content type headers
+
+### Integration API Postman Collection
+
+A Postman collection for the Integration API is available in the repository at `docs/integration_endpoints.postman_collection.json`. This collection includes all the Integration API endpoints with the correct authentication headers and URL formats.
+
+To use the collection:
+
+1. Import the collection into Postman
+2. Set the following variables in your environment:
+   - `base_url`: The base URL of your API (e.g., `http://localhost:8000`)
+   - `integration_api_key`: Your API key for integration endpoints
+   - `video_id`: ID of a video to retrieve recognition results for
+   - `file_path`: Path to a media file to download
+
