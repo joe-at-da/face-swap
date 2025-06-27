@@ -15,6 +15,7 @@ from datetime import datetime
 
 from backend.core.config import settings
 from backend.services.utils import make_json_serializable
+from backend.services.integration.supabase_export import export_recognition_results
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -287,15 +288,17 @@ class FacialRecognitionService:
                 "output_file": None
             }
     
-    def identify_speakers(self, video_path: str, output_file: Optional[str] = None, store_unidentified: bool = True) -> Dict:
+    def identify_speakers(self, video_path: str, output_file: Optional[str] = None, store_unidentified: bool = True, export_to_supabase: bool = True) -> Dict:
         """
         Identify speakers in a video file using facial recognition.
         Also stores unidentified faces for later identification if store_unidentified is True.
+        Can export results to Supabase format with combined audio-video if requested.
         
         Args:
             video_path: Path to the video file
             output_file: Optional path to save the output video with speaker identification
             store_unidentified: Whether to store unidentified faces for later identification
+            export_to_supabase: Whether to export results to Supabase format
             
         Returns:
             Dict with identification results including both identified and unidentified faces
@@ -382,6 +385,120 @@ class FacialRecognitionService:
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
+        # Execute the command
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0:
+                logger.error(f"Speaker identification failed: {stderr}")
+                return {
+                    "success": False,
+                    "error": f"Speaker identification failed: {stderr}",
+                    "output_file": None,
+                    "results_file": None
+                }
+        except Exception as e:
+            logger.error(f"Error executing speaker identification command: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error executing speaker identification command: {str(e)}",
+                "output_file": None,
+                "results_file": None
+            }
+        
+        logger.info(f"Speaker identification completed successfully")
+            
+        # Check if the results file exists
+        if not os.path.exists(results_file):
+            return {
+                "success": False,
+                "error": f"Results file not found: {results_file}",
+                "output_file": output_file if output_file and os.path.exists(output_file) else None,
+                "results_file": None
+            }
+        
+        # Load the results
+        with open(results_file, "r") as f:
+            results = json.load(f)
+        
+        # Add information about unidentified faces if available
+        if store_unidentified and unidentified_dir:
+            results["unidentified_dir"] = unidentified_dir
+        
+        # Add a note if we were using an empty MP encodings file
+        if not mp_encodings_exist:
+            results["note"] = "Used empty MP encodings file. All faces detected are unidentified."
+        
+        # Export results to Supabase format if requested
+        supabase_export_info = None
+        if export_to_supabase:
+            try:
+                # Get video metadata including separate audio and video URLs
+                video_metadata = self._get_video_metadata(video_path)
+                
+                # Set up export directory
+                export_dir = os.path.join(os.path.dirname(video_path), "supabase_export")
+                os.makedirs(export_dir, exist_ok=True)
+                
+                # Export results with combined audio-video creation
+                supabase_export_info = export_recognition_results(
+                    video_path=video_path,
+                    recognition_results=results,
+                    video_metadata=video_metadata,
+                    export_dir=export_dir,
+                    create_combined_av=True  # Create combined audio-video file for Supabase
+                )
+                
+                logger.info(f"Exported recognition results to Supabase format: {supabase_export_info}")
+            except Exception as e:
+                logger.error(f"Error exporting results to Supabase format: {str(e)}")
+                supabase_export_info = {"error": str(e)}
+        
+        return {
+            "success": True,
+            "message": "Speaker identification completed successfully",
+            "output_file": output_file if output_file and os.path.exists(output_file) else None,
+            "results_file": results_file,
+            "unidentified_dir": unidentified_dir if store_unidentified else None,
+            "supabase_export": supabase_export_info,
+            "results": results
+        }
+    
+        # Prepare the results file
+        results_file = f"{os.path.splitext(video_path)[0]}_speaker_identification_results.json"
+        
+        # Prepare the directory for unidentified faces
+        unidentified_dir = None
+        if store_unidentified:
+            video_dir = os.path.dirname(video_path)
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            unidentified_dir = os.path.join(video_dir, f"{video_name}_unidentified_faces")
+            os.makedirs(unidentified_dir, exist_ok=True)
+        
+        # Prepare the command
+        cmd = [
+        "python",
+        str(script_path),
+        "--input", video_path,
+        "--encodings", str(self.mp_encodings_file),
+        "--results", results_file
+        ]
+    
+        if output_file:
+            cmd.extend(["--output", output_file])
+        
+        if store_unidentified and unidentified_dir and "identify_and_store_faces.py" in str(script_path):
+            cmd.extend(["--unidentified-dir", unidentified_dir])
+        
+        logger.info(f"Running command: {' '.join(cmd)}")
+        
         try:
             # Execute the command
             process = subprocess.Popen(
@@ -390,7 +507,7 @@ class FacialRecognitionService:
                 stderr=subprocess.PIPE,
                 text=True
             )
-            
+        
             stdout, stderr = process.communicate()
             
             if process.returncode != 0:
@@ -425,36 +542,34 @@ class FacialRecognitionService:
             if not mp_encodings_exist:
                 results["note"] = "Used empty MP encodings file. All faces detected are unidentified."
             
-            # Export data for Supabase integration if results are successful
+            # Export results to Supabase format if requested
             supabase_export_info = None
-            try:
-                from backend.services.integration.supabase_export import export_recognition_results
-                
-                # Get video metadata
-                video_metadata = self._get_video_metadata(video_path)
-                
-                # Create export directory
-                video_dir = os.path.dirname(video_path)
-                video_name = os.path.splitext(os.path.basename(video_path))[0]
-                export_dir = os.path.join(video_dir, f"{video_name}_supabase_export")
-                os.makedirs(export_dir, exist_ok=True)
-                
-                # Export results for Supabase integration
-                supabase_export_info = export_recognition_results(
-                    video_path=video_path,
-                    recognition_results=results,
-                    video_metadata=video_metadata,
-                    export_dir=export_dir
-                )
-                
-                logger.info(f"Exported recognition results for Supabase integration: {supabase_export_info}")
-            except Exception as e:
-                logger.warning(f"Failed to export recognition results for Supabase integration: {str(e)}")
-                supabase_export_info = {"error": str(e)}
+            if export_to_supabase:
+                try:
+                    # Get video metadata including separate audio and video URLs
+                    video_metadata = self._get_video_metadata(video_path)
+                    
+                    # Set up export directory
+                    export_dir = os.path.join(os.path.dirname(video_path), "supabase_export")
+                    os.makedirs(export_dir, exist_ok=True)
+                    
+                    # Export results with combined audio-video creation
+                    supabase_export_info = export_recognition_results(
+                        video_path=video_path,
+                        recognition_results=results,
+                        video_metadata=video_metadata,
+                        export_dir=export_dir,
+                        create_combined_av=True  # Create combined audio-video file for Supabase
+                    )
+                    
+                    logger.info(f"Exported recognition results to Supabase format: {supabase_export_info}")
+                except Exception as e:
+                    logger.error(f"Error exporting results to Supabase format: {str(e)}")
+                    supabase_export_info = {"error": str(e)}
             
             return {
                 "success": True,
-                "message": "Speaker identification completed successfully" + (" (with face detection only)" if not mp_encodings_exist else ""),
+                "message": "Speaker identification completed successfully",
                 "output_file": output_file if output_file and os.path.exists(output_file) else None,
                 "results_file": results_file,
                 "unidentified_dir": unidentified_dir if store_unidentified else None,

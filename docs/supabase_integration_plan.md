@@ -69,6 +69,20 @@ In this phase, both systems operate independently while we prepare for future in
 
 In this phase, we establish lightweight integration points without tight coupling.
 
+### Key Differences Between Systems
+
+1. **Data Structure**:
+   - Parliament TV: Uses a relational database with complex relationships
+   - MPAI Supabase: Uses a simpler document-based structure
+
+2. **Media Handling**:
+   - Parliament TV: Works with separate audio and video streams from Parliament TV site
+   - MPAI Supabase: Requires unified audio-video files for processing
+
+3. **Stream Management**:
+   - Parliament TV: Maintains separation of audio and video streams for flexibility
+   - MPAI Supabase: Expects combined audio-video content for simplified processing
+
 ### Integration Approach
 
 1. **REST API Integration**:
@@ -204,16 +218,25 @@ In the final phase, we implement a more robust integration strategy.
    - Two files are generated: `{video_id}_video.json` and `{video_id}_clips.json`
    - These files contain the formatted data ready for Supabase queue ingestion
    - No manual action is required as the export is integrated into the recognition pipeline
+   - The system automatically combines separate audio and video streams into a unified file for Supabase
 
 2. **Accessing Exported Files**:
    - Files are stored in the same directory as the processed video
    - The path to exported files is included in the recognition results under the `supabase_export` key
    - Example: `/app/data/videos/parliament_20250626_supabase_export/parliament_20250626_video.json`
+   - Combined audio-video files are stored in `/app/data/media/combined/{video_id}_combined.mp4`
 
-3. **Troubleshooting**:
+3. **Media Handling**:
+   - Parliament TV continues to work with separate audio and video streams internally
+   - For Supabase integration, the system automatically combines audio and video using FFmpeg
+   - The combined file URL is provided in the exported JSON data
+   - Original separate URLs are preserved in the metadata
+
+4. **Troubleshooting**:
    - Check the application logs for any export errors
    - Verify that the `backend/services/integration/supabase_export.py` module is correctly imported
    - Ensure the video metadata can be retrieved from the database
+   - If audio-video combination fails, check FFmpeg installation and file permissions
 
 ### For Supabase System Developers
 
@@ -239,7 +262,13 @@ In the final phase, we implement a more robust integration strategy.
      await supabase.from('clips').upsert(clipsData.clips)
      ```
 
-2. **Queue Processing**:
+2. **Media Access**:
+   - The video_url field in the imported data now points to a combined audio-video file
+   - No separate handling of audio and video streams is required
+   - Original separate URLs are preserved in the metadata if needed
+   - The combined file is in MP4 format with AAC audio codec for maximum compatibility
+
+3. **Queue Processing**:
    - Once data is imported, it can be processed by the existing Supabase queue workers
    - No changes to queue processing logic are needed if the data format matches expectations
 

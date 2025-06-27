@@ -7,8 +7,14 @@ in a format compatible with Supabase queues.
 
 import json
 import os
+import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+from pathlib import Path
+
+from backend.services.media.av_combiner import combine_audio_video
+
+logger = logging.getLogger(__name__)
 
 
 def format_video_for_supabase(
@@ -133,7 +139,8 @@ def export_recognition_results(
     video_path: str,
     recognition_results: Dict[str, Any],
     video_metadata: Dict[str, Any],
-    export_dir: str
+    export_dir: str,
+    create_combined_av: bool = True
 ) -> Dict[str, str]:
     """
     Export recognition results for Supabase integration
@@ -143,25 +150,67 @@ def export_recognition_results(
         recognition_results: Recognition results from facial recognition
         video_metadata: Metadata about the video
         export_dir: Directory to export files to
+        create_combined_av: Whether to create a combined audio-video file for Supabase
         
     Returns:
         Dictionary with paths to exported files
     """
     video_id = os.path.basename(video_path).split('.')[0]
+    data_dir = os.environ.get("DATA_DIR", "/app/data")
+    media_dir = os.path.join(data_dir, "media")
+    combined_dir = os.path.join(media_dir, "combined")
+    os.makedirs(combined_dir, exist_ok=True)
     
-    # Format data for Supabase queues
+    # Get paths for video and audio
+    video_url = f"/media/videos/{os.path.basename(video_path)}"
+    audio_url = video_metadata.get("audio_url", "")
+    combined_url = ""
+    
+    # Create combined audio-video file if requested and both audio and video are available
+    if create_combined_av and audio_url:
+        try:
+            logger.info(f"Creating combined audio-video file for Supabase integration")
+            combined_filename = f"{video_id}_combined.mp4"
+            combined_path = os.path.join(combined_dir, combined_filename)
+            
+            # Combine audio and video
+            result = combine_audio_video(
+                video_url=video_url,
+                audio_url=audio_url,
+                output_path=combined_path,
+                video_base_path=data_dir,
+                audio_base_path=data_dir,
+                metadata={
+                    "title": video_metadata.get("title", f"Parliament TV Video {video_id}"),
+                    "source": "parliament_tv",
+                    "combined_by": "Parliament TV Supabase Integration"
+                }
+            )
+            
+            if result["success"]:
+                combined_url = result["combined_url"]
+                logger.info(f"Successfully created combined audio-video file: {combined_url}")
+            else:
+                logger.error(f"Failed to create combined audio-video file: {result.get('error', 'Unknown error')}")
+        except Exception as e:
+            logger.error(f"Error creating combined audio-video file: {str(e)}")
+    
+    # Format data for Supabase queues - use combined URL if available, otherwise keep separate URLs
     video_data = format_video_for_supabase(
         video_id=video_id,
         title=video_metadata.get("title", f"Parliament TV Video {video_id}"),
         description=video_metadata.get("description", ""),
         capture_date=video_metadata.get("capture_date", datetime.now().isoformat()),
         duration=video_metadata.get("duration", 0),
-        video_url=f"/media/videos/{os.path.basename(video_path)}",
-        audio_url=video_metadata.get("audio_url", ""),
+        video_url=combined_url if combined_url else video_url,  # Use combined URL if available
+        audio_url=audio_url if not combined_url else "",  # Only include audio URL if not using combined
         status="processed",
         metadata={
             "source": "parliament_tv",
-            "parliament_tv_url": video_metadata.get("source_url", "")
+            "parliament_tv_url": video_metadata.get("source_url", ""),
+            "has_combined_av": bool(combined_url),
+            "original_video_url": video_url,
+            "original_audio_url": audio_url
         }
     )
     
@@ -179,5 +228,6 @@ def export_recognition_results(
     
     return {
         "video_data": video_export_path,
-        "clips_data": clips_export_path
+        "clips_data": clips_export_path,
+        "combined_av": combined_url if combined_url else None
     }
