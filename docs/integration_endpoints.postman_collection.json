@@ -1,82 +1,123 @@
 {
-	"info": {
-		"_postman_id": "b3c5f4d7-e8a9-4c21-9f12-a8d6e7f9e0b1",
-		"name": "Parliament TV Integration Endpoints",
-		"description": "Integration endpoints for Supabase",
-		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-	},
-	"item": [
-		{
-			"name": "Get Recognition Results",
-			"request": {
-				"method": "GET",
-				"header": [
-					{
-						"key": "Authorization",
-						"value": "Bearer {{integration_api_key}}"
-					}
-				],
-				"url": {
-					"raw": "{{base_url}}/integration/recognition/{{video_id}}",
-					"host": [
-						"{{base_url}}"
-					],
-					"path": [
-						"integration",
-						"recognition",
-						"{{video_id}}"
-					]
-				},
-				"description": "Get recognition results for a specific video ID. Requires API key authentication."
-			},
-			"response": []
-		},
-		{
-			"name": "List Videos",
-			"request": {
-				"method": "GET",
-				"header": [
-					{
-						"key": "Authorization",
-						"value": "Bearer {{integration_api_key}}"
-					}
-				],
-				"url": {
-					"raw": "{{base_url}}/integration/videos?limit=10&offset=0&status=completed",
-					"host": [
-						"{{base_url}}"
-					],
-					"path": [
-						"integration",
-						"videos"
-					],
-					"query": [
-						{
-							"key": "limit",
-							"value": "10"
-						},
-						{
-							"key": "offset",
-							"value": "0"
-						},
-						{
-							"key": "status",
-							"value": "completed",
-							"disabled": true
-						}
-					]
-				},
-				"description": "List videos with recognition data. Supports pagination and filtering by status. Requires API key authentication."
-			},
-			"response": []
-		}
-	],
-	"event": [],
-	"variable": [
-		{
-			"key": "integration_api_key",
-			"value": "8448700525",
-			"type": "string"
-		}
-	]
+        "info": {
+                "_postman_id": "b3c5f4d7-e8a9-4c21-9f12-a8d6e7f9e0b1",
+                "name": "Parliament TV Integration Endpoints",
+                "description": "Integration endpoints for Supabase",
+                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [
+                {
+                        "name": "Get Recognition Results",
+                        "request": {
+                                "method": "GET",
+                                "header": [
+                                        {
+                                                "key": "X-API-Key",
+                                                "value": "{{integration_api_key}}"
+                                        }
+                                ],
+                                "url": {
+                                        "raw": "{{base_url}}/api/v1/integration/recognition/{{video_id}}",
+                                        "host": [
+                                                "{{base_url}}"
+                                        ],
+                                        "path": [
+                                                "api",
+                                                "v1",
+                                                "integration",
+                                                "recognition",
+                                                "{{video_id}}"
+                                        ]
+                                },
+                                "description": "Get recognition results for a specific video ID. Requires API key authentication."
+                        },
+                        "response": []
+                },
+                {
+                        "name": "List Videos",
+                        "request": {
+                                "method": "GET",
+                                "header": [
+                                        {
+                                                "key": "X-API-Key",
+                                                "value": "{{integration_api_key}}"
+                                        }
+                                ],
+                                "url": {
+                                        "raw": "{{base_url}}/api/v1/integration/videos?limit=10&offset=0&status=completed",
+                                        "host": [
+                                                "{{base_url}}"
+                                        ],
+                                        "path": [
+                                                "api",
+                                                "v1",
+                                                "integration",
+                                                "videos"
+                                        ],
+                                        "query": [
+                                                {
+                                                        "key": "limit",
+                                                        "value": "10"
+                                                },
+                                                {
+                                                        "key": "offset",
+                                                        "value": "0"
+                                                },
+                                                {
+                                                        "key": "status",
+                                                        "value": "completed",
+                                                        "disabled": true
+                                                }
+                                        ]
+                                },
+                                "description": "List videos with recognition data. Supports pagination and filtering by status. Requires API key authentication."
+                        },
+                        "response": []
+                },
+                {
+                        "name": "Get Media File",
+                        "request": {
+                                "method": "GET",
+                                "header": [
+                                        {
+                                                "key": "X-API-Key",
+                                                "value": "{{integration_api_key}}"
+                                        }
+                                ],
+                                "url": {
+                                        "raw": "{{base_url}}/api/v1/media/file?path={{file_path}}",
+                                        "host": [
+                                                "{{base_url}}"
+                                        ],
+                                        "path": [
+                                                "api",
+                                                "v1",
+                                                "media",
+                                                "file"
+                                        ],
+                                        "query": [
+                                                {
+                                                        "key": "path",
+                                                        "value": "{{file_path}}"
+                                                }
+                                        ]
+                                },
+                                "description": "Get a media file by path. Requires API key authentication."
+                        },
+                        "response": []
+                }
+        ],
+        "event": [],
+        "variable": [
+                {
+                        "key": "integration_api_key",
+                        "value": "8448700525",
+                        "type": "string"
+                },
+                {
+                        "key": "file_path",
+                        "value": "combined_av_395_20250627_220452.mp4",
+                        "type": "string"
+                }
+        ]
 }

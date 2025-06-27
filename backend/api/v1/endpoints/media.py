@@ -5,12 +5,14 @@ API endpoints for media streaming.
 import os
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Security
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
+from backend.core.config import settings
+from backend.core.security import get_api_key
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -19,11 +21,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/file", response_model=None)
+@router.get("/file", response_model=None, dependencies=[Security(get_api_key)])
 async def serve_file(
     path: str,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """
     Serve a media file by path.
