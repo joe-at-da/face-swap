@@ -5,7 +5,7 @@ from backend.api.v1.endpoints import (auth, video, capture, transcription, stora
                                        recognition_list, voice_profiles, face_profiles, multimodal_recognition, 
                                        facial_recognition, mp_profiles, files, recognition_timeline, media, system, 
                                        metrics, recognition_processor, transcription_recognition, audio_transcription,
-                                       integration)
+                                       integration, supabase_integration, supabase_webhooks)
 
 api_router = APIRouter()
 
@@ -37,6 +37,8 @@ api_router.include_router(media.router, prefix='/media', tags=['media'])
 api_router.include_router(system.router, prefix='/system', tags=['system'])
 api_router.include_router(metrics.router, prefix='/metrics', tags=['metrics'])
 api_router.include_router(integration.router, prefix='/integration', tags=['integration'])
+api_router.include_router(supabase_integration.router, prefix='/supabase', tags=['supabase'])
+api_router.include_router(supabase_webhooks.router, prefix='/supabase/webhooks', tags=['supabase', 'webhooks'])
 
 # Create a profiles router for compatibility with frontend paths
 profiles_router = APIRouter(prefix='/profiles', tags=['profiles'])

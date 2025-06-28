@@ -16,6 +16,7 @@ import subprocess
 from typing import Dict, Any, Optional
 from backend.core.config import settings
 from backend.services.av_combiner import combine_audio_video
+from backend.services.recognition.timeline_combiner import combine_recognition_and_transcription
 from backend.db.session import SessionLocal
 from backend.db.models import RecognitionProcess, ParliamentTranscription
 from sqlalchemy.orm import Session
@@ -241,6 +242,22 @@ def export_recognition_results(
     # Add transcription data to recognition results if available
     if transcription_data:
         recognition_results["transcription"] = transcription_data
+        
+        # Create combined timeline and speaker-attributed transcripts
+        try:
+            combined_data = combine_recognition_and_transcription(
+                recognition_results=recognition_results,
+                transcription_data=transcription_data
+            )
+            
+            # Add combined data to recognition results
+            recognition_results["combined_timeline"] = combined_data["combined_timeline"]
+            recognition_results["speaker_attributed_transcripts"] = combined_data["speaker_attributed_transcripts"]
+            
+            logger.info("Created combined timeline and speaker-attributed transcripts")
+        except Exception as e:
+            logger.error(f"Error creating combined timeline: {str(e)}")
+            # Continue with export even if combining fails
     
     # Export recognition results to JSON
     try:
