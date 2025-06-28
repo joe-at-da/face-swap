@@ -78,48 +78,137 @@ def get_recognition_results(
     if not transcription_data and capture.recognition_results:
         try:
             recognition_results = json.loads(capture.recognition_results)
+            
+            # Check for transcript in different possible locations in the recognition_results
+            transcript_text = None
+            
+            # Option 1: Direct transcript_text field
             if "transcript_text" in recognition_results:
+                transcript_text = recognition_results.get("transcript_text")
+                logger.info("Found transcript_text in recognition_results")
+                
+            # Option 2: In the transcription field
+            elif "transcription" in recognition_results and recognition_results["transcription"]:
+                transcription_info = recognition_results["transcription"]
+                if isinstance(transcription_info, dict) and "transcript" in transcription_info:
+                    transcript_text = transcription_info.get("transcript")
+                    logger.info("Found transcript in recognition_results.transcription")
+                    
+            # Option 3: In the results_summary field
+            elif "results_summary" in recognition_results and recognition_results["results_summary"]:
+                results_summary = recognition_results["results_summary"]
+                if isinstance(results_summary, dict) and "transcript_text" in results_summary:
+                    transcript_text = results_summary.get("transcript_text")
+                    logger.info("Found transcript_text in recognition_results.results_summary")
+            
+            # Create transcription data if we found a transcript
+            if transcript_text and transcript_text != "No transcript available." and \
+               transcript_text != "No transcript available due to processing error.":
                 # Create a simple transcription data structure
                 transcription_data = {
                     "video_id": video_id,
                     "language": "en",
-                    "transcript": recognition_results.get("transcript_text", ""),
+                    "transcript": transcript_text,
                     "segments": [
                         {
                             "start": 0,
                             "end": capture.duration if capture.duration else 60,
-                            "text": recognition_results.get("transcript_text", "")
+                            "text": transcript_text
                         }
                     ]
                 }
-                logger.info(f"Created transcription data from recognition_results")
+                logger.info(f"Created transcription data from recognition_results with transcript length: {len(transcript_text)}")
         except Exception as e:
             logger.error(f"Error parsing recognition_results: {str(e)}")
+            
+    # If we still don't have transcription data but we have an audio file, try to create it
+    if not transcription_data and capture.audio_path and os.path.exists(capture.audio_path):
+        try:
+            # Create a simple transcription data structure with a placeholder
+            # This ensures the frontend knows transcription is available but needs to be processed
+            transcription_data = {
+                "video_id": video_id,
+                "language": "en",
+                "transcript": "Audio available for transcription. Please run the transcription process.",
+                "segments": []
+            }
+            logger.info(f"Created placeholder transcription data because audio file exists")
+        except Exception as e:
+            logger.error(f"Error creating placeholder transcription data: {str(e)}")
     
     # Generate a combined timeline from recognition and transcription data
     timeline_data = []
     
-    # Add speaker recognition events to timeline if available
+    # Try to get recognition results from the process or capture session
+    recognition_data = None
     if process.results and isinstance(process.results, dict):
-        speakers_data = process.results.get("speakers", [])
+        recognition_data = process.results
+    elif capture.recognition_results:
+        try:
+            recognition_data = json.loads(capture.recognition_results)
+        except Exception as e:
+            logger.error(f"Error parsing recognition_results from capture session: {str(e)}")
+    
+    # Add speaker recognition events to timeline if available
+    if recognition_data:
+        # Check different possible structures for speaker data
+        speakers_data = []
+        
+        # Option 1: Direct speakers list
+        if "speakers" in recognition_data and isinstance(recognition_data["speakers"], list):
+            speakers_data = recognition_data["speakers"]
+            logger.info(f"Found {len(speakers_data)} speakers in recognition_data.speakers list")
+        
+        # Option 2: Nested in results
+        elif "results" in recognition_data and isinstance(recognition_data["results"], dict) and "speakers" in recognition_data["results"]:
+            speakers_data = recognition_data["results"]["speakers"]
+            logger.info(f"Found {len(speakers_data)} speakers in recognition_data.results.speakers")
+        
+        # Option 3: Speaker identification results
+        elif "speaker_identification" in recognition_data and isinstance(recognition_data["speaker_identification"], dict) and "results" in recognition_data["speaker_identification"]:
+            speaker_results = recognition_data["speaker_identification"]["results"]
+            if isinstance(speaker_results, dict) and "speakers" in speaker_results:
+                speakers_data = speaker_results["speakers"]
+                logger.info(f"Found {len(speakers_data)} speakers in speaker_identification.results.speakers")
+        
+        # Process speakers data
         for speaker in speakers_data:
-            appearances = speaker.get("appearances", [])
-            for appearance in appearances:
-                if "start_time" in appearance and "end_time" in appearance:
-                    timeline_data.append({
-                        "type": "speaker",
-                        "start": appearance.get("start_time"),
-                        "end": appearance.get("end_time"),
-                        "speaker_name": speaker.get("name", "Unknown"),
-                        "speaker_id": speaker.get("id"),
-                        "confidence": appearance.get("confidence", 0)
-                    })
+            # Handle different speaker data structures
+            appearances = []
+            if isinstance(speaker, dict):
+                if "appearances" in speaker and isinstance(speaker["appearances"], list):
+                    appearances = speaker["appearances"]
+                elif "segments" in speaker and isinstance(speaker["segments"], list):
+                    appearances = speaker["segments"]
+                
+                speaker_name = speaker.get("name", "Unknown")
+                speaker_id = speaker.get("id", None)
+                
+                for appearance in appearances:
+                    if isinstance(appearance, dict) and "start_time" in appearance and "end_time" in appearance:
+                        timeline_data.append({
+                            "type": "speaker",
+                            "start": appearance.get("start_time"),
+                            "end": appearance.get("end_time"),
+                            "speaker_name": speaker_name,
+                            "speaker_id": speaker_id,
+                            "confidence": appearance.get("confidence", 0)
+                        })
     
     # Add transcription segments to timeline if available
     if transcription_data and isinstance(transcription_data, dict):
         segments = transcription_data.get("segments", [])
+        
+        # If we have a transcript but no segments, create a single segment with the full transcript
+        if not segments and transcription_data.get("transcript"):
+            segments = [{
+                "start": 0,
+                "end": capture.duration if capture.duration else 60,
+                "text": transcription_data.get("transcript")
+            }]
+        
         for segment in segments:
-            if "start" in segment and "end" in segment and "text" in segment:
+            if isinstance(segment, dict) and "start" in segment and "end" in segment and "text" in segment:
                 timeline_data.append({
                     "type": "transcription",
                     "start": segment.get("start"),
@@ -133,8 +222,19 @@ def get_recognition_results(
         timeline_data.sort(key=lambda x: x.get("start", 0))
         logger.info(f"Generated combined timeline with {len(timeline_data)} events")
     else:
-        logger.info("No timeline data available")
-        timeline_data = None
+        # Create a minimal timeline with the placeholder transcription if we have it
+        if transcription_data and transcription_data.get("transcript"):
+            timeline_data = [{
+                "type": "transcription",
+                "start": 0,
+                "end": capture.duration if capture.duration else 60,
+                "text": transcription_data.get("transcript"),
+                "language": transcription_data.get("language", "en")
+            }]
+            logger.info("Created minimal timeline with transcription data")
+        else:
+            logger.info("No timeline data available")
+            timeline_data = None
     
     # Prepare the response with recognition results, transcription, and metadata
     response = {

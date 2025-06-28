@@ -38,7 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger("parliament_transcription")
 
 # Constants
-WHISPER_MODEL_SIZE = "medium"  # tiny, base, small, medium, large
+WHISPER_MODEL_SIZE = "small"  # tiny, base, small, medium, large
 LANGUAGE = "en"
 SEGMENT_LENGTH = 30  # seconds
 OUTPUT_FORMATS = ["txt", "srt", "json", "docx"]

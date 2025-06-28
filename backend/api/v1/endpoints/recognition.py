@@ -8,7 +8,7 @@ import time
 import logging
 import datetime
 from typing import Dict, List, Optional, Any, Union
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, BackgroundTasks, Body, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, BackgroundTasks, Body, Request, Security
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -18,6 +18,7 @@ import threading
 import shutil
 
 from backend.api.deps import get_db, get_current_user
+from backend.core.security import get_api_key
 from backend.db import models
 from backend.schemas import recognition as schemas
 from backend.services.recognition import FacialRecognitionService, VoiceRecognitionService
@@ -92,9 +93,38 @@ async def process_combined_recognition(
     Process combined facial and voice recognition for a video.
     This endpoint starts the recognition process in the background and returns immediately.
     """
+    return await _process_combined_recognition(video_id, save_output, db, current_user.id if current_user else None)
+
+
+@router.post("/api/combined-recognition", dependencies=[Security(get_api_key)])
+async def process_combined_recognition_api(
+    video_id: int = Body(..., description="ID of the video to process"),
+    save_output: bool = Body(True, description="Whether to save output files"),
+    db: Session = Depends(get_db)
+):
+    """
+    Process combined facial and voice recognition for a video using API key authentication.
+    This endpoint starts the recognition process in the background and returns immediately.
+    
+    Authentication is required via API key.
+    """
+    return await _process_combined_recognition(video_id, save_output, db, None)
+
+
+async def _process_combined_recognition(
+    video_id: int,
+    save_output: bool,
+    db: Session,
+    user_id: Optional[int] = None
+):
+    """
+    Process combined facial and voice recognition for a video.
+    This endpoint starts the recognition process in the background and returns immediately.
+    """
     try:
         logger.info(f"Processing combined recognition for video ID: {video_id}")
-        logger.info(f"Current user: {current_user.email if current_user else 'None'}")
+        logger.info(f"User ID: {user_id if user_id else 'None (API key authentication)'}")
+        
         
         # Get the video from the database
         video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
@@ -135,7 +165,7 @@ async def process_combined_recognition(
         # This will return immediately and let the process run in the background
         recognition_thread = threading.Thread(
             target=run_recognition_process,
-            args=(video_id, save_output, current_user.id if current_user else None)
+            args=(video_id, save_output, user_id)
         )
         recognition_thread.daemon = True
         recognition_thread.start()
@@ -517,7 +547,6 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 }
                 
                 # Try to parse segments from the transcript if available
-                # This is a simplified example - in a real implementation, you'd parse the actual segments
                 if transcript_result.get("transcript"):
                     # Create a simple segment with the full transcript
                     transcription_json["segments"] = [
@@ -530,10 +559,13 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
                 
                 # Save the transcription data to a JSON file
                 json_output_file = os.path.join(transcription_dir, f"transcription_{video_id}.json")
-                with open(json_output_file, 'w') as f:
-                    json.dump(transcription_json, f, indent=2, default=str)
-                
-                logger.info(f"Saved transcription data to {json_output_file}")
+                try:
+                    with open(json_output_file, 'w') as f:
+                        json.dump(transcription_json, f, indent=2, default=str)
+                    logger.info(f"Saved transcription data to {json_output_file}")
+                except Exception as e:
+                    logger.error(f"Error saving transcription JSON file: {str(e)}")
+                    json_output_file = None
                 
                 if not existing_transcription:
                     # Create a new transcription record
