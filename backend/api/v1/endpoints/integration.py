@@ -64,6 +64,8 @@ def get_recognition_results(
     
     # Load transcription data from file if available
     transcription_data = None
+    
+    # First try to load from the output_file if it exists
     if transcription and transcription.output_file and os.path.exists(transcription.output_file):
         try:
             with open(transcription.output_file, 'r') as f:
@@ -72,14 +74,67 @@ def get_recognition_results(
         except Exception as e:
             logger.error(f"Error loading transcription file: {str(e)}")
     
-    # Check if there's timeline data in the capture session
-    timeline_data = None
-    if capture.timeline_data:
+    # If we couldn't load from file, try to get it from the recognition_results
+    if not transcription_data and capture.recognition_results:
         try:
-            timeline_data = json.loads(capture.timeline_data)
-            logger.info("Loaded timeline data from capture session")
+            recognition_results = json.loads(capture.recognition_results)
+            if "transcript_text" in recognition_results:
+                # Create a simple transcription data structure
+                transcription_data = {
+                    "video_id": video_id,
+                    "language": "en",
+                    "transcript": recognition_results.get("transcript_text", ""),
+                    "segments": [
+                        {
+                            "start": 0,
+                            "end": capture.duration if capture.duration else 60,
+                            "text": recognition_results.get("transcript_text", "")
+                        }
+                    ]
+                }
+                logger.info(f"Created transcription data from recognition_results")
         except Exception as e:
-            logger.error(f"Error parsing timeline data: {str(e)}")
+            logger.error(f"Error parsing recognition_results: {str(e)}")
+    
+    # Generate a combined timeline from recognition and transcription data
+    timeline_data = []
+    
+    # Add speaker recognition events to timeline if available
+    if process.results and isinstance(process.results, dict):
+        speakers_data = process.results.get("speakers", [])
+        for speaker in speakers_data:
+            appearances = speaker.get("appearances", [])
+            for appearance in appearances:
+                if "start_time" in appearance and "end_time" in appearance:
+                    timeline_data.append({
+                        "type": "speaker",
+                        "start": appearance.get("start_time"),
+                        "end": appearance.get("end_time"),
+                        "speaker_name": speaker.get("name", "Unknown"),
+                        "speaker_id": speaker.get("id"),
+                        "confidence": appearance.get("confidence", 0)
+                    })
+    
+    # Add transcription segments to timeline if available
+    if transcription_data and isinstance(transcription_data, dict):
+        segments = transcription_data.get("segments", [])
+        for segment in segments:
+            if "start" in segment and "end" in segment and "text" in segment:
+                timeline_data.append({
+                    "type": "transcription",
+                    "start": segment.get("start"),
+                    "end": segment.get("end"),
+                    "text": segment.get("text"),
+                    "language": transcription_data.get("language", "en")
+                })
+    
+    # Sort the timeline by start time
+    if timeline_data:
+        timeline_data.sort(key=lambda x: x.get("start", 0))
+        logger.info(f"Generated combined timeline with {len(timeline_data)} events")
+    else:
+        logger.info("No timeline data available")
+        timeline_data = None
     
     # Prepare the response with recognition results, transcription, and metadata
     response = {

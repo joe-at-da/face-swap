@@ -15,6 +15,7 @@ from datetime import datetime
 import sqlalchemy as sa
 from pathlib import Path
 import threading
+import shutil
 
 from backend.api.deps import get_db, get_current_user
 from backend.db import models
@@ -491,6 +492,70 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             video.recognition_results = json.dumps(combined_result)
             video.recognition_status = "completed"
             video.recognition_completed_at = datetime.now()
+            
+            # Create a ParliamentTranscription record if transcription was successful
+            if has_transcription and transcript_result:
+                # Check if a transcription record already exists for this video
+                existing_transcription = db.query(models.ParliamentTranscription).filter(
+                    models.ParliamentTranscription.capture_session_id == video_id
+                ).first()
+                
+                # Create a proper JSON file with the transcription data
+                from backend.core.config import settings
+                media_storage_path = settings.MEDIA_STORAGE_PATH
+                transcription_dir = os.path.join(media_storage_path, "transcriptions")
+                os.makedirs(transcription_dir, exist_ok=True)
+                
+                # Create a structured transcription data object
+                transcription_json = {
+                    "video_id": video_id,
+                    "language": "en",
+                    "transcript": transcript_result.get("transcript", ""),
+                    "segments": [],  # We'll populate this with time-aligned segments if available
+                    "created_at": datetime.now().isoformat(),
+                    "model": "medium"
+                }
+                
+                # Try to parse segments from the transcript if available
+                # This is a simplified example - in a real implementation, you'd parse the actual segments
+                if transcript_result.get("transcript"):
+                    # Create a simple segment with the full transcript
+                    transcription_json["segments"] = [
+                        {
+                            "start": 0,
+                            "end": video.duration if video.duration else 60,
+                            "text": transcript_result.get("transcript", "")
+                        }
+                    ]
+                
+                # Save the transcription data to a JSON file
+                json_output_file = os.path.join(transcription_dir, f"transcription_{video_id}.json")
+                with open(json_output_file, 'w') as f:
+                    json.dump(transcription_json, f, indent=2, default=str)
+                
+                logger.info(f"Saved transcription data to {json_output_file}")
+                
+                if not existing_transcription:
+                    # Create a new transcription record
+                    logger.info(f"Creating new ParliamentTranscription record for video ID: {video_id}")
+                    transcription = models.ParliamentTranscription(
+                        capture_session_id=video_id,
+                        speaker_identification_id=None,  # Will be updated if speaker identification is linked
+                        language="en",
+                        format="json",
+                        model="medium",
+                        status="completed",
+                        output_file=json_output_file,
+                        created_by_id=user_id if user_id else None
+                    )
+                    db.add(transcription)
+                    logger.info(f"Added new ParliamentTranscription record for video ID: {video_id}")
+                else:
+                    # Update existing transcription record
+                    logger.info(f"Updating existing ParliamentTranscription record for video ID: {video_id}")
+                    existing_transcription.status = "completed"
+                    existing_transcription.output_file = json_output_file
+                    existing_transcription.updated_at = datetime.now()
             
             db.commit()
             logger.info(f"Database updated with recognition results for video ID: {video_id}")
