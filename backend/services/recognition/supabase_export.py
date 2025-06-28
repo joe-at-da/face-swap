@@ -17,7 +17,8 @@ from typing import Dict, Any, Optional
 from backend.core.config import settings
 from backend.services.av_combiner import combine_audio_video
 from backend.db.session import SessionLocal
-from backend.db.models import RecognitionProcess
+from backend.db.models import RecognitionProcess, ParliamentTranscription
+from sqlalchemy.orm import Session
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -97,7 +98,8 @@ def export_recognition_results(
     recognition_results: Dict[str, Any],
     video_path: str,
     audio_path: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    db_session: Optional[Session] = None
 ) -> Dict[str, Any]:
     """
     Export recognition results for Supabase integration.
@@ -220,16 +222,36 @@ def export_recognition_results(
         logger.warning(f"Failed to create/update RecognitionProcess: {process_result.get('error')}")
         # Continue with export even if RecognitionProcess creation fails
     
-    # Write export data to JSON file
+    # Get transcription data if available and db_session is provided
+    transcription_data = None
+    if db_session:
+        transcription = db_session.query(ParliamentTranscription).filter(
+            ParliamentTranscription.capture_session_id == video_id,
+            ParliamentTranscription.status == "completed"
+        ).order_by(ParliamentTranscription.created_at.desc()).first()
+        
+        if transcription and transcription.output_file and os.path.exists(transcription.output_file):
+            try:
+                with open(transcription.output_file, 'r') as f:
+                    transcription_data = json.load(f)
+                logger.info(f"Loaded transcription data from {transcription.output_file}")
+            except Exception as e:
+                logger.error(f"Error loading transcription file: {str(e)}")
+    
+    # Add transcription data to recognition results if available
+    if transcription_data:
+        recognition_results["transcription"] = transcription_data
+    
+    # Export recognition results to JSON
     try:
         with open(export_path, 'w') as f:
-            json.dump(export_data, f, indent=2)
-        logger.info(f"Successfully exported recognition results to {export_path}")
+            json.dump(recognition_results, f, indent=2)
+        logger.info(f"Exported recognition results to {export_path}")
     except Exception as e:
-        logger.error(f"Error writing export file: {str(e)}")
+        logger.error(f"Error exporting recognition results: {str(e)}")
         return {
             "success": False,
-            "error": f"Error writing export file: {str(e)}",
+            "error": f"Error exporting recognition results: {str(e)}",
             "export_path": None,
             "combined_av_path": combined_av_path if os.path.exists(combined_av_path) else None
         }
@@ -238,5 +260,6 @@ def export_recognition_results(
         "success": True,
         "export_path": export_path,
         "combined_av_path": combined_av_path if os.path.exists(combined_av_path) else None,
-        "combined_av_url": f"/api/v1/media/file?path={os.path.basename(combined_av_path)}" if os.path.exists(combined_av_path) else None
+        "combined_av_url": f"/api/v1/media/file?path={os.path.basename(combined_av_path)}" if os.path.exists(combined_av_path) else None,
+        "has_transcription": transcription_data is not None
     }

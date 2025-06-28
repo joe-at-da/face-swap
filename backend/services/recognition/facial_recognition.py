@@ -293,7 +293,7 @@ class FacialRecognitionService:
                 "output_file": None
             }
     
-    def identify_speakers(self, video_path: str, output_file: Optional[str] = None, store_unidentified: bool = True, export_to_supabase: bool = True) -> Dict:
+    def identify_speakers(self, video_path: str, db_session=None, output_file: Optional[str] = None, store_unidentified: bool = True, export_to_supabase: bool = True) -> Dict:
         """
         Identify speakers in a video file using facial recognition.
         Also stores unidentified faces for later identification if store_unidentified is True.
@@ -471,7 +471,8 @@ class FacialRecognitionService:
                     recognition_results=results,
                     video_path=video_path,
                     audio_path=audio_path,
-                    metadata=video_metadata
+                    metadata=video_metadata,
+                    db_session=db_session  # Pass the database session for transcription lookup
                 )
                 
                 logger.info(f"Exported recognition results to Supabase format: {supabase_export_info}")

@@ -4,7 +4,7 @@ from .user import User, UserRole
 from .capture import CaptureSession
 from .capture_log import CaptureLog
 from .social import SocialPost, SocialPlatform, PostStatus
-from .transcription import Transcription
+from .transcription import Transcription, ParliamentTranscription
 from .video import VideoClip  # Import VideoClip from video.py
 from .face_profile import FaceProfile, FaceSample
 from .voice_profile import VoiceProfile, VoiceSample
@@ -22,6 +22,7 @@ __all__ = [
     "SocialPlatform",
     "PostStatus",
     "Transcription",
+    "ParliamentTranscription",
     "FaceProfile",
     "FaceSample",
     "VoiceProfile",

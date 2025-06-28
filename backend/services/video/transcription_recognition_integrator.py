@@ -57,8 +57,8 @@ class TranscriptionRecognitionIntegrator:
             # Step 1: Run transcription with speaker diarization
             transcription_result = self.transcription_service.transcribe_video(video_path)
             
-            # Step 2: Run face recognition
-            face_result = self.facial_recognition.identify_speakers(video_path)
+            # Step 2: Run face recognition with database session for transcription integration
+            face_result = self.facial_recognition.identify_speakers(video_path, db_session=db_session)
             
             if not face_result.get("success", False):
                 logger.error(f"Face recognition failed: {face_result.get('error', 'Unknown error')}")

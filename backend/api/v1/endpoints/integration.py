@@ -13,7 +13,7 @@ import json
 from datetime import datetime
 
 from backend.db.session import get_db
-from backend.db.models import CaptureSession, RecognitionProcess
+from backend.db.models import CaptureSession, RecognitionProcess, ParliamentTranscription
 from backend.core.security import get_api_key
 from backend.services.utils import make_json_serializable
 
@@ -56,7 +56,32 @@ def get_recognition_results(
         logger.warning(f"Integration API: Capture session not found for video ID {video_id}")
         raise HTTPException(status_code=404, detail="Capture session not found")
     
-    # Prepare the response with recognition results and metadata
+    # Get transcription data if available
+    transcription = db.query(ParliamentTranscription).filter(
+        ParliamentTranscription.capture_session_id == video_id,
+        ParliamentTranscription.status == "completed"
+    ).order_by(ParliamentTranscription.created_at.desc()).first()
+    
+    # Load transcription data from file if available
+    transcription_data = None
+    if transcription and transcription.output_file and os.path.exists(transcription.output_file):
+        try:
+            with open(transcription.output_file, 'r') as f:
+                transcription_data = json.load(f)
+            logger.info(f"Loaded transcription data from {transcription.output_file}")
+        except Exception as e:
+            logger.error(f"Error loading transcription file: {str(e)}")
+    
+    # Check if there's timeline data in the capture session
+    timeline_data = None
+    if capture.timeline_data:
+        try:
+            timeline_data = json.loads(capture.timeline_data)
+            logger.info("Loaded timeline data from capture session")
+        except Exception as e:
+            logger.error(f"Error parsing timeline data: {str(e)}")
+    
+    # Prepare the response with recognition results, transcription, and metadata
     response = {
         "success": True,
         "video_id": video_id,
@@ -69,7 +94,14 @@ def get_recognition_results(
         "audio_url": capture.capture_metadata.get("audio_url", "") if capture.capture_metadata else "",
         "video_url": capture.capture_metadata.get("video_url", "") if capture.capture_metadata else "",
         "combined_av_url": json.loads(process.process_metadata).get("combined_av_url", "") if process.process_metadata and isinstance(process.process_metadata, str) else \
-                          process.process_metadata.get("combined_av_url", "") if process.process_metadata else ""
+                           process.process_metadata.get("combined_av_url", "") if process.process_metadata else "",
+        "transcription": {
+            "available": transcription is not None,
+            "status": transcription.status if transcription else "not_found",
+            "language": transcription.language if transcription else "en",
+            "data": transcription_data
+        },
+        "timeline": timeline_data
     }
     
     # Make the response JSON serializable (handle datetime objects)

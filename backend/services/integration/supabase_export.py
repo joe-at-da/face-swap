@@ -14,6 +14,8 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 
 from backend.services.media.av_combiner import combine_audio_video
+from backend.db.models import ParliamentTranscription
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +143,9 @@ def export_recognition_results(
     recognition_results: Dict[str, Any],
     video_metadata: Dict[str, Any],
     export_dir: str,
-    create_combined_av: bool = True
+    create_combined_av: bool = True,
+    db_session: Optional[Session] = None,
+    video_id: Optional[int] = None
 ) -> Dict[str, str]:
     """
     Export recognition results for Supabase integration
@@ -156,7 +160,7 @@ def export_recognition_results(
     Returns:
         Dictionary with paths to exported files
     """
-    video_id = os.path.basename(video_path).split('.')[0]
+    video_file_id = os.path.basename(video_path).split('.')[0]
     data_dir = os.environ.get("DATA_DIR", "/app/data")
     media_dir = os.path.join(data_dir, "media")
     combined_dir = os.path.join(media_dir, "combined")
@@ -228,39 +232,80 @@ def export_recognition_results(
         except Exception as e:
             logger.error(f"Error creating combined audio-video file: {str(e)}")
     
+    # Get transcription data if available and db_session is provided
+    transcription_data = None
+    if db_session and video_id:
+        transcription = db_session.query(ParliamentTranscription).filter(
+            ParliamentTranscription.capture_session_id == video_id,
+            ParliamentTranscription.status == "completed"
+        ).order_by(ParliamentTranscription.created_at.desc()).first()
+        
+        if transcription and transcription.output_file and os.path.exists(transcription.output_file):
+            try:
+                with open(transcription.output_file, 'r') as f:
+                    transcription_data = json.load(f)
+                logger.info(f"Loaded transcription data from {transcription.output_file}")
+            except Exception as e:
+                logger.error(f"Error loading transcription file: {str(e)}")
+    
     # Format data for Supabase queues - use combined URL if available, otherwise keep separate URLs
-    video_data = format_video_for_supabase(
-        video_id=video_id,
-        title=video_metadata.get("title", f"Parliament TV Video {video_id}"),
-        description=video_metadata.get("description", ""),
+    formatted_video = format_video_for_supabase(
+        video_id=video_file_id,
+        title=video_metadata.get("title", f"Parliament TV Capture {video_file_id}"),
+        description=video_metadata.get("description", "Parliament TV video capture"),
         capture_date=video_metadata.get("capture_date", datetime.now().isoformat()),
-        duration=video_metadata.get("duration", 0),
-        video_url=combined_url if combined_url else video_url,  # Use combined URL if available
-        audio_url=audio_url if not combined_url else "",  # Only include audio URL if not using combined
+        duration=video_metadata.get("duration", 0.0),
+        video_url=video_url,
+        audio_url=audio_url,
+        thumbnail_url=video_metadata.get("thumbnail_url", ""),
         status="processed",
         metadata={
             "source": "parliament_tv",
-            "parliament_tv_url": video_metadata.get("source_url", ""),
-            "has_combined_av": bool(combined_url),
-            "original_video_url": video_url,
-            "original_audio_url": audio_url
+            "combined_av_url": combined_url,
+            "has_transcription": transcription_data is not None
         }
     )
     
-    clips_data = format_clips_for_supabase(video_id, recognition_results)
+    formatted_clips = format_clips_for_supabase(video_file_id, recognition_results)
     
-    # Create export directory if it doesn't exist
-    os.makedirs(export_dir, exist_ok=True)
+    # Add transcription data to recognition results if available
+    if transcription_data:
+        recognition_results["transcription"] = transcription_data
+        
+        # Add transcript text to clips for better searchability
+        if "segments" in transcription_data:
+            for clip in formatted_clips:
+                # Find transcript segments that overlap with this clip
+                clip_start = clip.get("start_time", 0)
+                clip_end = clip.get("end_time", 0)
+                
+                matching_segments = []
+                for segment in transcription_data["segments"]:
+                    seg_start = segment.get("start", 0)
+                    seg_end = segment.get("end", 0)
+                    
+                    # Check for overlap
+                    if (seg_start <= clip_end and seg_end >= clip_start):
+                        matching_segments.append(segment["text"])
+                
+                if matching_segments:
+                    clip["transcript"] = " ".join(matching_segments)
     
-    # Export to JSON files for Supabase integration
-    video_export_path = os.path.join(export_dir, f"{video_id}_video.json")
-    clips_export_path = os.path.join(export_dir, f"{video_id}_clips.json")
+    # Export to JSON files
+    video_export_path = os.path.join(export_dir, f"{video_file_id}_video.json")
+    clips_export_path = os.path.join(export_dir, f"{video_file_id}_clips.json")
+    recognition_export_path = os.path.join(export_dir, f"{video_file_id}_recognition.json")
     
-    export_to_json(video_data, video_export_path)
-    export_to_json({"clips": clips_data}, clips_export_path)
+    export_to_json(formatted_video, video_export_path)
+    export_to_json(formatted_clips, clips_export_path)
+    export_to_json(recognition_results, recognition_export_path)
+    
+    logger.info(f"Exported recognition results for video {video_file_id} to {export_dir}")
     
     return {
-        "video_data": video_export_path,
-        "clips_data": clips_export_path,
-        "combined_av": combined_url if combined_url else None
+        "video_export_path": video_export_path,
+        "clips_export_path": clips_export_path,
+        "recognition_export_path": recognition_export_path,
+        "combined_av_url": combined_url,
+        "has_transcription": transcription_data is not None
     }
