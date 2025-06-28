@@ -38,6 +38,31 @@ class FacialRecognitionService:
         # Create directories if they don't exist
         self.mp_photos_dir.mkdir(parents=True, exist_ok=True)
         
+    def _extract_video_id_from_path(self, video_path: str) -> Optional[int]:
+        """
+        Extract video ID from the video file path.
+        
+        Args:
+            video_path: Path to the video file
+            
+        Returns:
+            Video ID as an integer, or None if extraction fails
+        """
+        try:
+            # Try to extract video ID from the path
+            filename = os.path.basename(video_path)
+            if filename.startswith("capture_"):
+                # Format: capture_XXXX.mp4
+                video_id_str = filename.replace("capture_", "").split(".")[0]
+                try:
+                    return int(video_id_str)
+                except ValueError:
+                    pass
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting video ID from path: {str(e)}")
+            return None
+    
     def _get_video_metadata(self, video_path: str) -> Dict[str, Any]:
         """
         Get metadata for a video file.
@@ -466,14 +491,28 @@ class FacialRecognitionService:
                     logger.info(f"Found corresponding audio file: {audio_path}")
                 
                 # Export results with combined audio-video creation
-                supabase_export_info = export_recognition_results(
-                    video_id=video_id or 0,  # Use 0 if we couldn't extract a valid ID
-                    recognition_results=results,
-                    video_path=video_path,
-                    audio_path=audio_path,
-                    metadata=video_metadata,
-                    db_session=db_session  # Pass the database session for transcription lookup
-                )
+                # Ensure we have a proper SQLAlchemy session
+                local_db_session = None
+                if db_session is None or not hasattr(db_session, 'query'):
+                    # Create a new session if none provided or if it's not a valid SQLAlchemy session
+                    local_db_session = SessionLocal()
+                    use_session = local_db_session
+                else:
+                    use_session = db_session
+                
+                try:
+                    supabase_export_info = export_recognition_results(
+                        video_id=video_id or 0,  # Use 0 if we couldn't extract a valid ID
+                        recognition_results=results,
+                        video_path=video_path,
+                        audio_path=audio_path,
+                        metadata=video_metadata,
+                        db_session=use_session  # Pass the proper SQLAlchemy session
+                    )
+                finally:
+                    # Close the local session if we created one
+                    if local_db_session:
+                        local_db_session.close()
                 
                 logger.info(f"Exported recognition results to Supabase format: {supabase_export_info}")
             except Exception as e:
@@ -547,13 +586,30 @@ class FacialRecognitionService:
                     os.makedirs(export_dir, exist_ok=True)
                     
                     # Export results with combined audio-video creation
-                    supabase_export_info = export_recognition_results(
-                        video_path=video_path,
-                        recognition_results=results,
-                        video_metadata=video_metadata,
-                        export_dir=export_dir,
-                        create_combined_av=True  # Create combined audio-video file for Supabase
-                    )
+                    # Ensure we have a proper SQLAlchemy session
+                    local_db_session = None
+                    if db_session is None or not hasattr(db_session, 'query'):
+                        # Create a new session if none provided or if it's not a valid SQLAlchemy session
+                        local_db_session = SessionLocal()
+                        use_session = local_db_session
+                    else:
+                        use_session = db_session
+                    
+                    try:
+                        # Extract video ID from the path if possible
+                        video_id = self._extract_video_id_from_path(video_path)
+                        
+                        supabase_export_info = export_recognition_results(
+                            video_id=video_id or 0,  # Use 0 if we couldn't extract a valid ID
+                            recognition_results=results,
+                            video_path=video_path,
+                            metadata=video_metadata,
+                            db_session=use_session  # Pass the proper SQLAlchemy session
+                        )
+                    finally:
+                        # Close the local session if we created one
+                        if local_db_session:
+                            local_db_session.close()
                     
                     logger.info(f"Exported recognition results to Supabase format: {supabase_export_info}")
                 except Exception as e:
