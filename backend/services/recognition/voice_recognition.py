@@ -146,7 +146,7 @@ class VoiceRecognitionService:
             )
             
             try:
-                stdout, stderr = process.communicate(timeout=600)  # 10 minute timeout (increased from 5)
+                stdout, stderr = process.communicate(timeout=1200)  # 20 minute timeout
                 logger.info(f"Transcription process stdout: {stdout}")
                 if stderr:
                     logger.warning(f"Transcription process stderr: {stderr}")
