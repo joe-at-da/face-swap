@@ -39,11 +39,13 @@ async def serve_file(
         # Define possible locations for the file
         media_dir = settings.MEDIA_STORAGE_PATH
         export_dir = os.path.join(media_dir, "exports", "supabase")
+        audio_extracts_dir = os.path.join(settings.TEMP_STORAGE_PATH, "audio_extracts")
         
         possible_paths = [
             os.path.join(export_dir, safe_filename),
             os.path.join(media_dir, safe_filename),
-            os.path.join(settings.TEMP_STORAGE_PATH, safe_filename)
+            os.path.join(settings.TEMP_STORAGE_PATH, safe_filename),
+            os.path.join(audio_extracts_dir, safe_filename)
         ]
         
         logger.info(f"Looking for file in: {possible_paths}")

@@ -8,12 +8,12 @@ audio-video files while maintaining separate streams internally.
 
 import os
 import json
-import logging
 import shutil
-from typing import Dict, Any, Optional
+import logging
 from datetime import datetime
 import subprocess
 
+from typing import Dict, Any, Optional
 from backend.core.config import settings
 from backend.services.av_combiner import combine_audio_video
 from backend.db.session import SessionLocal
@@ -146,17 +146,55 @@ def export_recognition_results(
         if audio_path and os.path.exists(audio_path):
             logger.info(f"Creating combined audio-video file using separate audio: {audio_path}")
             combine_result = combine_audio_video(video_path, audio_path, combined_av_path)
-            
-            if not combine_result.get("success", False):
-                logger.error(f"Failed to create combined audio-video file: {combine_result.get('error')}")
-                # Continue with export even if combining fails
         else:
-            logger.info(f"No separate audio file provided, copying video file as combined file")
-            # Just copy the video file if no separate audio file is provided
-            shutil.copy2(video_path, combined_av_path)
+            # Try to find the audio file using common patterns
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            data_dir = os.environ.get("DATA_DIR", "/app/data")
+            audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+            
+            # Try common naming patterns for audio files
+            potential_audio_files = [
+                os.path.join(audio_extracts_dir, f"{video_name}.audio.mp3"),
+                os.path.join(audio_extracts_dir, f"{video_name}.mp3"),
+                os.path.join(audio_extracts_dir, f"capture_{video_name}.audio.mp3"),
+                os.path.join(audio_extracts_dir, f"capture_{video_name}.mp3"),
+                os.path.join(audio_extracts_dir, f"{video_name}_audio.mp3"),
+                os.path.join(audio_extracts_dir, f"{video_name}.audio.m4a"),
+                os.path.join(audio_extracts_dir, f"{video_name}.m4a"),
+                os.path.join(audio_extracts_dir, f"{video_name}_audio.m4a"),
+                os.path.join(audio_extracts_dir, f"{video_name}.audio.aac"),
+                os.path.join(audio_extracts_dir, f"{video_name}.aac"),
+                os.path.join(audio_extracts_dir, f"{video_name}_audio.aac"),
+            ]
+            
+            found_audio = None
+            for audio_file in potential_audio_files:
+                if os.path.exists(audio_file):
+                    logger.info(f"Found audio file: {audio_file}")
+                    found_audio = audio_file
+                    break
+            
+            if found_audio:
+                logger.info(f"Creating combined audio-video file using discovered audio: {found_audio}")
+                combine_result = combine_audio_video(video_path, found_audio, combined_av_path)
+            else:
+                logger.warning(f"No audio file found for video: {video_path}, copying video only")
+                # Copy video file as combined AV file if no audio is found
+                shutil.copy(video_path, combined_av_path)
+                combine_result = {
+                    "success": True,
+                    "combined_path": combined_av_path,
+                    "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
+                }
     except Exception as e:
         logger.error(f"Error creating combined audio-video file: {str(e)}")
         # Continue with export even if combining fails
+        shutil.copy(video_path, combined_av_path)
+        combine_result = {
+            "success": True,
+            "combined_path": combined_av_path,
+            "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
+        }
     
     # Prepare export data
     export_data = {

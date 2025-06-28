@@ -7,6 +7,7 @@ in a format compatible with Supabase queues.
 
 import json
 import os
+import shutil
 import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -165,6 +166,38 @@ def export_recognition_results(
     video_url = f"/media/videos/{os.path.basename(video_path)}"
     audio_url = video_metadata.get("audio_url", "")
     combined_url = ""
+    
+    # If audio_url is not provided, try to find the audio file using common patterns
+    if not audio_url:
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+        audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+        
+        # Try common naming patterns for audio files
+        potential_audio_files = [
+            os.path.join(audio_extracts_dir, f"{video_name}.audio.mp3"),
+            os.path.join(audio_extracts_dir, f"{video_name}.mp3"),
+            os.path.join(audio_extracts_dir, f"capture_{video_name}.audio.mp3"),
+            os.path.join(audio_extracts_dir, f"capture_{video_name}.mp3"),
+            os.path.join(audio_extracts_dir, f"{video_name}_audio.mp3"),
+            os.path.join(audio_extracts_dir, f"{video_name}.audio.m4a"),
+            os.path.join(audio_extracts_dir, f"{video_name}.m4a"),
+            os.path.join(audio_extracts_dir, f"{video_name}_audio.m4a"),
+            os.path.join(audio_extracts_dir, f"{video_name}.audio.aac"),
+            os.path.join(audio_extracts_dir, f"{video_name}.aac"),
+            os.path.join(audio_extracts_dir, f"{video_name}_audio.aac"),
+        ]
+        
+        for audio_file in potential_audio_files:
+            if os.path.exists(audio_file):
+                logger.info(f"Found audio file: {audio_file}")
+                # Convert to URL format for the combine_audio_video function
+                audio_url = f"/temp/audio_extracts/{os.path.basename(audio_file)}"
+                break
+        
+        if not audio_url:
+            logger.warning(f"No audio file found for video: {video_path}")
+    
+    logger.info(f"Using audio URL: {audio_url}")
     
     # Create combined audio-video file if requested and both audio and video are available
     if create_combined_av and audio_url:
