@@ -195,15 +195,32 @@ async def process_parliament_tv_to_supabase(
                 recognition_completed = False
                 
                 while time.time() - start_time < max_wait_time:
-                    # Check recognition status
-                    status = recognition_service.get_recognition_status(capture_id)
-                    
-                    if status.get("status") == "completed":
-                        recognition_completed = True
-                        break
-                    elif status.get("status") == "failed":
-                        logger.error(f"Recognition failed: {status.get('error_message', 'Unknown error')}")
-                        return
+                    try:
+                        # Check recognition status directly from the database
+                        db.refresh(capture)
+                        status_value = capture.recognition_status
+                        
+                        logger.info(f"Recognition status: {status_value}")
+                        
+                        if status_value == "completed":
+                            recognition_completed = True
+                            break
+                        elif status_value == "failed":
+                            error_message = capture.error_message if hasattr(capture, 'error_message') else "Unknown error"
+                            logger.error(f"Recognition failed: {error_message}")
+                            return
+                        elif status_value is None:
+                            # Check if the recognition process has started
+                            if not capture.recognition_started_at:
+                                # If recognition hasn't started yet, try to start it
+                                if time.time() - start_time > 300:  # Wait 5 minutes before retrying
+                                    logger.info("Recognition hasn't started yet, retrying...")
+                                    recognition_result = recognition_service.start_combined_recognition(capture_id)
+                                    if not recognition_result.get("success", False):
+                                        logger.error(f"Failed to start recognition: {recognition_result.get('error', 'Unknown error')}")
+                    except Exception as e:
+                        logger.error(f"Error checking recognition status: {str(e)}")
+                        # Continue the loop and try again after waiting
                     
                     # Wait before checking again
                     time.sleep(60)

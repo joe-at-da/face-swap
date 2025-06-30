@@ -114,6 +114,11 @@ class MultimodalRecognitionService:
                 process_metadata={"type": "multimodal"}
             )
             db.add(recognition_process)
+            
+            # Update the CaptureSession record with recognition status
+            video.recognition_status = "processing"
+            video.recognition_started_at = datetime.now()
+            
             db.commit()
             db.refresh(recognition_process)
             
@@ -125,12 +130,18 @@ class MultimodalRecognitionService:
                 # Transcribe the audio
                 transcription_result = voice_service.transcribe_audio(audio_path)
                 if not transcription_result.get("success", False):
-                    logger.error(f"Transcription failed: {transcription_result.get('error', 'Unknown error')}")
+                    error_msg = f"Transcription failed: {transcription_result.get('error', 'Unknown error')}"
+                    logger.error(error_msg)
                     recognition_process.status = "failed"
                     recognition_process.end_time = datetime.now()
-                    recognition_process.error_message = f"Transcription failed: {transcription_result.get('error', 'Unknown error')}"
+                    recognition_process.error_message = error_msg
+                    
+                    # Update the CaptureSession record with failed status
+                    video.recognition_status = "failed"
+                    video.error_message = error_msg
+                    
                     db.commit()
-                    return {"success": False, "error": f"Transcription failed: {transcription_result.get('error', 'Unknown error')}"}
+                    return {"success": False, "error": error_msg}
                 
                 # Save transcription results
                 video.transcription_results = json.dumps(transcription_result.get("transcript", {}))
@@ -155,21 +166,33 @@ class MultimodalRecognitionService:
             # Process video with transcription to extract and identify faces
             multimodal_result = self.process_video_with_transcription(db, video_id)
             if not multimodal_result.get("success", False):
-                logger.error(f"Multimodal processing failed: {multimodal_result.get('error', 'Unknown error')}")
+                error_msg = f"Multimodal processing failed: {multimodal_result.get('error', 'Unknown error')}"
+                logger.error(error_msg)
                 recognition_process.status = "failed"
                 recognition_process.end_time = datetime.now()
-                recognition_process.error_message = f"Multimodal processing failed: {multimodal_result.get('error', 'Unknown error')}"
+                recognition_process.error_message = error_msg
+                
+                # Update the CaptureSession record with failed status
+                video.recognition_status = "failed"
+                video.error_message = error_msg
+                
                 db.commit()
-                return {"success": False, "error": f"Multimodal processing failed: {multimodal_result.get('error', 'Unknown error')}"}
+                return {"success": False, "error": error_msg}
             
             # Update recognition process record
             recognition_process.status = "completed"
             recognition_process.end_time = datetime.now()
             
+            # Update the CaptureSession record with recognition status
+            video.recognition_status = "completed"
+            video.recognition_completed_at = datetime.now()
+            
             # Serialize the results with our improved function that handles circular references
             try:
                 serialized_results = make_json_serializable(multimodal_result)
                 recognition_process.results = json.dumps(serialized_results)
+                # Also save the results to the video record
+                video.recognition_results = json.dumps(serialized_results)
             except Exception as serialize_error:
                 logger.error(f"Error serializing multimodal results: {str(serialize_error)}")
                 # Fallback to a simpler representation if serialization fails
@@ -178,6 +201,7 @@ class MultimodalRecognitionService:
                     "summary": str(multimodal_result)[:1000]  # Include a truncated summary
                 }
                 recognition_process.results = json.dumps(simplified_results)
+                video.recognition_results = json.dumps(simplified_results)
             
             db.commit()
             
@@ -185,8 +209,36 @@ class MultimodalRecognitionService:
             return {"success": True, "recognition_id": recognition_process.id, "results": multimodal_result}
             
         except Exception as e:
-            logger.exception(f"Error in start_combined_recognition: {str(e)}")
-            return {"success": False, "error": f"Error in start_combined_recognition: {str(e)}"}
+            error_msg = f"Error in start_combined_recognition: {str(e)}"
+            logger.exception(error_msg)
+            
+            try:
+                # Try to update the database records if possible
+                db_generator = get_db()
+                db: Session = next(db_generator)
+                
+                # Get the video from the database
+                video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+                if video:
+                    video.recognition_status = "failed"
+                    video.error_message = error_msg
+                    
+                    # Check if we have a recognition process record
+                    recognition_process = db.query(models.RecognitionProcess).filter(
+                        models.RecognitionProcess.video_id == video_id,
+                        models.RecognitionProcess.status == "processing"
+                    ).first()
+                    
+                    if recognition_process:
+                        recognition_process.status = "failed"
+                        recognition_process.end_time = datetime.now()
+                        recognition_process.error_message = error_msg
+                    
+                    db.commit()
+            except Exception as db_error:
+                logger.exception(f"Failed to update database after recognition error: {str(db_error)}")
+                
+            return {"success": False, "error": error_msg}
 
     
     def process_video_with_transcription(self, db: Session, video_id: int) -> Dict[str, Any]:
@@ -200,6 +252,12 @@ class MultimodalRecognitionService:
         Returns:
             Dictionary with processing results
         """
+        # Initialize key variables at the beginning to ensure they're always defined
+        recognition_events = []
+        all_faces = []
+        speaker_to_face_profile = {}
+        segments = []
+        correlations = []
         try:
             logger.info(f"Processing video with transcription: {video_id}")
             
@@ -246,10 +304,38 @@ class MultimodalRecognitionService:
                     try:
                         # First try to parse as JSON
                         logger.info("Attempting to parse transcription as JSON")
-                        transcription = json.loads(video.transcription_results)
+                        
+                        # Clean up the JSON string before parsing
+                        # Remove any BOM characters or other potential issues
+                        cleaned_json = video.transcription_results.strip()
+                        if cleaned_json.startswith('\ufeff'):  # Remove BOM if present
+                            cleaned_json = cleaned_json[1:]
+                            
+                        # Try to fix common JSON issues
+                        if cleaned_json.startswith("'") and cleaned_json.endswith("'"):
+                            cleaned_json = cleaned_json[1:-1]
+                        if cleaned_json.startswith('"') and cleaned_json.endswith('"'):
+                            cleaned_json = cleaned_json[1:-1]
+                            
+                        # Log the cleaned JSON for debugging
+                        logger.info(f"Cleaned JSON (first 100 chars): {cleaned_json[:100]}...")
+                        
+                        # Try parsing the cleaned JSON
+                        transcription = json.loads(cleaned_json)
                         logger.info("Successfully parsed transcription as JSON")
                     except json.JSONDecodeError as json_err:
-                        logger.error(f"Error loading transcription as JSON: {str(json_err)}")
+                        logger.error(f"Error loading transcription: {str(json_err)}")
+                        
+                        # Try to fix common JSON issues and retry
+                        try:
+                            # Sometimes the JSON might have single quotes instead of double quotes
+                            import ast
+                            logger.info("Attempting to parse with ast.literal_eval")
+                            transcription = ast.literal_eval(video.transcription_results)
+                            logger.info("Successfully parsed transcription with ast.literal_eval")
+                        except Exception as ast_err:
+                            logger.error(f"Error parsing with ast: {str(ast_err)}")
+                            # Continue with the fallback parsing
                         
                         # Check if it's a plain text format with timestamps [HH:MM:SS - HH:MM:SS]
                         if "[" in video.transcription_results and "]" in video.transcription_results:
@@ -614,17 +700,175 @@ class MultimodalRecognitionService:
             timeline_events = self.timeline_service.get_timeline_events(db, video_id)
             
             # Prepare the recognition data structure expected by find_correlations
-            recognition_data = {
-                "face_events": [event for event in timeline_events.get("timeline", []) if event.get("type") == "face"],
-                "speaker_events": [event for event in timeline_events.get("timeline", []) if event.get("type") == "speaker"]
-            }
+            # First check if timeline_events is successful
+            if not timeline_events.get("success", False):
+                logger.error(f"Failed to get timeline events: {timeline_events.get('error', 'Unknown error')}")
+                recognition_data = {"face_events": [], "speaker_events": []}
+            else:
+                # Get the timeline data which is a list of events
+                timeline_data = timeline_events.get("timeline", [])
+                
+                # Filter events by type and ensure they have the required fields
+                face_events = []
+                speaker_events = []
+                
+                for event in timeline_data:
+                    # Check if event is a dictionary
+                    if not isinstance(event, dict):
+                        logger.warning(f"Skipping non-dictionary event: {event}")
+                        continue
+                        
+                    event_type = event.get("type")
+                    
+                    # Make sure events have start_time and end_time fields
+                    # The timeline_service.find_correlations method expects these fields
+                    if event_type == "face":
+                        # For face events, 'start' should be mapped to 'start_time'
+                        face_event = event.copy()
+                        if "start" in face_event and "start_time" not in face_event:
+                            face_event["start_time"] = face_event["start"]
+                        if "end" in face_event and "end_time" not in face_event:
+                            face_event["end_time"] = face_event["end"]
+                        # Ensure required fields exist
+                        if "start_time" not in face_event:
+                            face_event["start_time"] = 0
+                        if "end_time" not in face_event:
+                            face_event["end_time"] = face_event["start_time"] + 1
+                        if "confidence" not in face_event:
+                            face_event["confidence"] = 0.5
+                        if "person_id" not in face_event and "id" in face_event:
+                            face_event["person_id"] = face_event["id"]
+                        if "person_name" not in face_event and "name" in face_event:
+                            face_event["person_name"] = face_event["name"]
+                        face_events.append(face_event)
+                    elif event_type == "speaker":
+                        # For speaker events, 'start' should be mapped to 'start_time'
+                        speaker_event = event.copy()
+                        if "start" in speaker_event and "start_time" not in speaker_event:
+                            speaker_event["start_time"] = speaker_event["start"]
+                        if "end" in speaker_event and "end_time" not in speaker_event:
+                            speaker_event["end_time"] = speaker_event["end"]
+                        # Ensure required fields exist
+                        if "start_time" not in speaker_event:
+                            speaker_event["start_time"] = 0
+                        if "end_time" not in speaker_event:
+                            speaker_event["end_time"] = speaker_event["start_time"] + 10
+                        if "confidence" not in speaker_event:
+                            speaker_event["confidence"] = 0.5
+                        if "person_id" not in speaker_event and "id" in speaker_event:
+                            speaker_event["person_id"] = speaker_event["id"]
+                        if "person_name" not in speaker_event and "name" in speaker_event:
+                            speaker_event["person_name"] = speaker_event["name"]
+                        speaker_events.append(speaker_event)
+                
+                logger.info(f"Prepared {len(face_events)} face events and {len(speaker_events)} speaker events for correlation")
+                
+                recognition_data = {
+                    "face_events": face_events,
+                    "speaker_events": speaker_events
+                }
             
-            # Call find_correlations with the correct signature
-            correlations_result = self.timeline_service.find_correlations(recognition_data)
+            # Call find_correlations with the correct signature and proper error handling
+            try:
+                # Ensure recognition_data is properly formatted
+                if not isinstance(recognition_data, dict):
+                    logger.error(f"Recognition data is not a dictionary: {type(recognition_data)}")
+                    recognition_data = {"face_events": [], "speaker_events": []}
+                    
+                # Ensure face_events and speaker_events are lists
+                if not isinstance(recognition_data.get("face_events"), list):
+                    logger.error(f"Face events is not a list: {type(recognition_data.get('face_events'))}")
+                    recognition_data["face_events"] = []
+                if not isinstance(recognition_data.get("speaker_events"), list):
+                    logger.error(f"Speaker events is not a list: {type(recognition_data.get('speaker_events'))}")
+                    recognition_data["speaker_events"] = []
+                    
+                # Validate all events have required fields
+                for event_list in [recognition_data["face_events"], recognition_data["speaker_events"]]:
+                    for i, event in enumerate(event_list):
+                        if not isinstance(event, dict):
+                            logger.warning(f"Event at index {i} is not a dictionary, removing")
+                            event_list[i] = None
+                            continue
+                            
+                        # Ensure required fields
+                        for field in ["start_time", "end_time", "confidence"]:
+                            if field not in event:
+                                logger.warning(f"Event at index {i} missing {field}, adding default")
+                                if field == "start_time":
+                                    event[field] = event.get("start", 0)
+                                elif field == "end_time":
+                                    event[field] = event.get("end", event.get("start_time", 0) + 5)
+                                else:  # confidence
+                                    event[field] = 0.5
+                                    
+                        # Ensure person identification
+                        if "person_id" not in event and "id" in event:
+                            event["person_id"] = event["id"]
+                        if "person_id" not in event:
+                            event["person_id"] = "unknown"
+                            
+                        if "person_name" not in event and "name" in event:
+                            event["person_name"] = event["name"]
+                        if "person_name" not in event:
+                            event["person_name"] = "Unknown"
+                
+                # Remove None events
+                recognition_data["face_events"] = [e for e in recognition_data["face_events"] if e is not None]
+                recognition_data["speaker_events"] = [e for e in recognition_data["speaker_events"] if e is not None]
+                
+                logger.info(f"Calling find_correlations with validated data: {len(recognition_data['face_events'])} face events, {len(recognition_data['speaker_events'])} speaker events")
+                correlations_result = self.timeline_service.find_correlations(recognition_data)
+                logger.info(f"Correlations found: {len(correlations_result) if isinstance(correlations_result, list) else 'non-list result'}")
+            except Exception as e:
+                logger.error(f"Error finding correlations: {str(e)}")
+                correlations_result = []
             
-            # Add timeline data to the integrated results
-            integrated_results["timeline"] = timeline_result.get("timeline", [])
-            integrated_results["correlations"] = correlations_result.get("correlations", [])
+            # Add timeline data to the integrated results with detailed type checking and logging
+            logger.info(f"Timeline result type: {type(timeline_result)}")
+            
+            # Initialize recognition_events at the beginning to ensure it's always defined
+            recognition_events = []
+            
+            # Handle different types of timeline_result safely
+            if isinstance(timeline_result, dict):
+                timeline_events_list = timeline_result.get("timeline", [])
+                integrated_results["timeline"] = timeline_events_list
+                recognition_events = timeline_events_list
+                logger.info(f"Added timeline data from dictionary: {len(integrated_results['timeline'])} items")
+            elif isinstance(timeline_result, list):
+                integrated_results["timeline"] = timeline_result
+                recognition_events = timeline_result
+                logger.info(f"Added timeline data from list: {len(integrated_results['timeline'])} items")
+            else:
+                logger.warning(f"Unexpected timeline_result type: {type(timeline_result)}, using empty list")
+                integrated_results["timeline"] = []
+                # recognition_events already initialized as []
+            
+            # Handle correlations result safely
+            logger.info(f"Correlations result type: {type(correlations_result)}")
+            integrated_results["correlations"] = correlations_result
+            logger.info(f"Added correlations data: {len(correlations_result) if isinstance(correlations_result, list) else 'non-list type'}")
+            
+            # Log the full integrated results structure
+            logger.info(f"Integrated results keys: {integrated_results.keys()}")
+            for key in integrated_results:
+                if isinstance(integrated_results[key], list):
+                    logger.info(f"Integrated results[{key}] has {len(integrated_results[key])} items")
+                elif isinstance(integrated_results[key], dict):
+                    logger.info(f"Integrated results[{key}] has {len(integrated_results[key].keys())} keys")
+                else:
+                    logger.info(f"Integrated results[{key}] has type {type(integrated_results[key])}")
+                    
+            # Make sure we have the variables needed for the return value
+            if 'all_faces' not in locals():
+                all_faces = []
+            if 'speaker_to_face_profile' not in locals():
+                speaker_to_face_profile = {}
+            if 'segments' not in locals():
+                segments = []
+            if 'correlations' not in locals():
+                correlations = []
             
             # Save the results to the database
             video.recognition_results = json.dumps(make_json_serializable(integrated_results))
@@ -633,16 +877,21 @@ class MultimodalRecognitionService:
             
             logger.info(f"Completed multimodal processing for video {video_id}")
             
+            # Create a safe return structure with proper defaults
+            timeline_preview = []
+            if recognition_events and isinstance(recognition_events, list):
+                timeline_preview = recognition_events[:10]  # Return just the first 10 events to avoid large response
+            
             return {
                 "success": True,
                 "video_id": video_id,
-                "faces_count": len(all_faces),
-                "speakers_count": len(speaker_to_face_profile),
-                "segments_count": len(segments),
-                "events_count": len(recognition_events),
-                "correlations_count": len(correlations),
-                "timeline": recognition_events[:10],  # Return just the first 10 events to avoid large response
-                "speaker_face_mapping": speaker_to_face_profile
+                "faces_count": len(all_faces) if isinstance(all_faces, list) else 0,
+                "speakers_count": len(speaker_to_face_profile) if isinstance(speaker_to_face_profile, dict) else 0,
+                "segments_count": len(segments) if isinstance(segments, list) else 0,
+                "events_count": len(recognition_events) if isinstance(recognition_events, list) else 0,
+                "correlations_count": len(correlations) if isinstance(correlations, list) else 0,
+                "timeline": timeline_preview,
+                "speaker_face_mapping": speaker_to_face_profile if isinstance(speaker_to_face_profile, dict) else {}
             }
             
         except Exception as e:
@@ -706,8 +955,20 @@ class MultimodalRecognitionService:
                 logger.error(f"Error identifying faces: {face_results.get('error', 'Unknown error')}")
                 return {"success": False, "error": f"Error identifying faces: {face_results.get('error', 'Unknown error')}"}
             
-            # The identify_speakers method returns detections, not faces
-            detections = face_results.get("detections", [])
+            # The identify_speakers method returns results in the 'results' key
+            # Let's extract the detections from the results
+            results_data = face_results.get("results", {})
+            
+            # Check if results_data is a dictionary or a list
+            if isinstance(results_data, dict):
+                # If it's a dictionary, look for detections key
+                detections = results_data.get("detections", [])
+            elif isinstance(results_data, list):
+                # If it's a list, it might be the detections directly
+                detections = results_data
+            else:
+                # If it's neither, use an empty list
+                detections = []
             
             # If no detections found, return empty result
             if len(detections) == 0:
@@ -893,8 +1154,49 @@ class MultimodalRecognitionService:
                     "final": max(face_data.get("confidence", 0.0), voice_data.get("confidence", 0.0))
                 }
             }
-    def combine_recognition_results(self, voice_results: Dict[str, Any], 
-                                  face_results: Dict[str, Any]) -> Dict[str, Any]:
+    def get_recognition_status(self, video_id: int) -> Dict[str, Any]:
+        """
+        Get the status of the recognition process for a video.
+        
+        Args:
+            video_id: ID of the video to check
+            
+        Returns:
+            Dictionary with recognition status information
+        """
+        # Added comment to trigger file reload
+        try:
+            # Get database session
+            from backend.db.session import get_db
+            from sqlalchemy.orm import Session
+            
+            db_generator = get_db()
+            db: Session = next(db_generator)
+            
+            # Get the video from the database
+            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+            
+            if not video:
+                logger.error(f"Video not found: {video_id}")
+                return {"success": False, "error": f"Video not found: {video_id}"}
+            
+            return {
+                "success": True,
+                "status": {
+                    "status": video.recognition_status or "not_started",
+                    "video_id": video_id,
+                    "started_at": video.recognition_started_at,
+                    "completed_at": video.recognition_completed_at,
+                    "has_results": bool(video.recognition_results),
+                    "error_message": video.error_message if hasattr(video, 'error_message') else None
+                }
+            }
+            
+        except Exception as e:
+            logger.exception(f"Error getting recognition status: {str(e)}")
+            return {"success": False, "error": str(e)}
+    
+    def combine_recognition_results(self, voice_results: Dict[str, Any], face_results: Dict[str, Any]) -> Dict[str, Any]:
         """
         Combine voice and face recognition results for improved speaker identification.
         
