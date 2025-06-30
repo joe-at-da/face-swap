@@ -121,6 +121,56 @@ class SupabaseService:
             Public URL for the file
         """
         return self.client.storage.from_(bucket).get_public_url(path)
+        
+    def upload_full_video(self, file_path: str, destination_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Upload a full video to the full_videos bucket in Supabase Storage.
+        Uses service role key for admin access.
+        
+        Args:
+            file_path: Local path to the video file
+            destination_path: Path in the bucket where the file should be stored
+                             If None, uses the basename of the file_path
+                             
+        Returns:
+            Response from Supabase Storage with upload details
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Video file not found: {file_path}")
+            
+        # Use the file's basename if no destination path is provided
+        if destination_path is None:
+            destination_path = os.path.basename(file_path)
+            
+        # Ensure we're using the service role key for admin access
+        if not self.client.auth.get_session():
+            # Re-initialize with service role if needed
+            self.client = get_supabase_client(use_service_role=True)
+            
+        try:
+            with open(file_path, 'rb') as f:
+                # Use file_options to set cache control and upsert behavior
+                response = self.client.storage.from_(self.full_videos_bucket).upload(
+                    path=destination_path,
+                    file=f,
+                    file_options={"cache-control": "3600", "upsert": "true"}
+                )
+                
+            # Get the public URL for the uploaded file
+            public_url = self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
+            
+            return {
+                "success": True,
+                "path": destination_path,
+                "public_url": public_url,
+                "response": response
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "file_path": file_path
+            }
     
     # Queue operations
     
