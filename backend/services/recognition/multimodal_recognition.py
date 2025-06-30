@@ -286,14 +286,35 @@ class MultimodalRecognitionService:
                 
                 # Check if transcription results exists in a file
                 transcript_path = None
+                transcription_content = None
+                
+                # First check if we have a transcription path
                 if hasattr(video, 'transcription_path') and video.transcription_path:
                     transcript_path = video.transcription_path
                     logger.info(f"Found transcription path: {transcript_path}")
                     if os.path.exists(transcript_path):
                         logger.info(f"Reading transcription from file: {transcript_path}")
                         with open(transcript_path, 'r') as f:
-                            file_content = f.read()
-                            logger.info(f"Transcription file content (first 200 chars): {file_content[:200]}...")
+                            transcription_content = f.read()
+                            logger.info(f"Transcription file content (first 200 chars): {transcription_content[:200]}...")
+                
+                # If we couldn't find a transcription file, look for the latest transcript in the audio_extracts folder
+                if not transcription_content:
+                    # Look for transcript files matching the pattern transcript_{video_id}_*.txt
+                    audio_extracts_dir = Path("/app/data/temp/audio_extracts")
+                    if audio_extracts_dir.exists():
+                        transcript_files = list(audio_extracts_dir.glob(f"transcript_{video_id}_*.txt"))
+                        if transcript_files:
+                            # Sort by modification time to get the latest
+                            latest_transcript = max(transcript_files, key=lambda p: p.stat().st_mtime)
+                            logger.info(f"Found latest transcript file: {latest_transcript}")
+                            with open(latest_transcript, 'r') as f:
+                                transcription_content = f.read()
+                                logger.info(f"Latest transcript content (first 200 chars): {transcription_content[:200]}...")
+                
+                # If we found transcription content in a file, use it instead of the database content
+                if transcription_content:
+                    video.transcription_results = transcription_content
                 
                 # Handle different formats of transcription results
                 if isinstance(video.transcription_results, str):
@@ -301,6 +322,12 @@ class MultimodalRecognitionService:
                     sample = video.transcription_results[:200] + '...' if len(video.transcription_results) > 200 else video.transcription_results
                     logger.info(f"Transcription results (sample): {sample}")
                     
+                    # First check if the transcription looks like a timestamp format [HH:MM:SS - HH:MM:SS]
+                    if "[" in video.transcription_results and "]" in video.transcription_results:
+                        logger.info("Detected timestamp format in transcription, skipping JSON parsing attempt")
+                        # Skip to the timestamp parsing section
+                        raise json.JSONDecodeError("Skipping JSON parsing for timestamp format", "", 0)
+                        
                     try:
                         # First try to parse as JSON
                         logger.info("Attempting to parse transcription as JSON")
