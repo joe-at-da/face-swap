@@ -241,699 +241,389 @@ class MultimodalRecognitionService:
             return {"success": False, "error": error_msg}
 
     
-    def process_video_with_transcription(self, db: Session, video_id: int) -> Dict[str, Any]:
-        """
-        Process a video with existing transcription to extract faces and link them to speakers.
+def process_video_with_transcription(self, video_id: int, transcription_file_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Process a video with transcription results
+    """
+    # Initialize key variables at the beginning to ensure they're always defined
+    recognition_events = []
+    all_faces = []
+    speaker_to_face_profile = {}
+    segments = []
+    correlations = []
+    
+    try:
+        logger.info(f"Processing video with transcription: {video_id}")
         
-        Args:
-            db: Database session
-            video_id: ID of the video to process
-            
-        Returns:
-            Dictionary with processing results
-        """
-        # Initialize key variables at the beginning to ensure they're always defined
-        recognition_events = []
-        all_faces = []
-        speaker_to_face_profile = {}
-        segments = []
-        correlations = []
-        try:
-            logger.info(f"Processing video with transcription: {video_id}")
-            
-            # Get the video from the database
-            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
-            if not video:
-                logger.error(f"Video not found: {video_id}")
-                return {"success": False, "error": f"Video not found: {video_id}"}
-            
-            # Check if the video file exists
-            video_path = video.video_path
-            if not video_path or not os.path.exists(video_path):
-                logger.error(f"Video file not found: {video_path}")
-                return {"success": False, "error": f"Video file not found: {video_path}"}
-            
-            # Check if transcription with speaker diarization exists
-            if not video.transcription_results:
-                logger.error("Transcription results not found")
-                return {"success": False, "error": "Transcription results not found"}
-            
-            # Parse transcription results
+        # Get database session
+        db_generator = get_db()
+        db: Session = next(db_generator)
+        
+        # Get the video from the database
+        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+        if not video:
+            logger.error(f"Video not found: {video_id}")
+            return {"success": False, "error": f"Video not found: {video_id}"}
+        
+        # Check if the video file exists
+        video_path = video.video_path
+        if not video_path or not os.path.exists(video_path):
+            logger.error(f"Video file not found: {video_path}")
+            return {"success": False, "error": f"Video file not found: {video_path}"}
+        
+        # Check if we have transcription results
+        if not video.transcription_results and not transcription_file_path:
+            logger.error("Transcription results not found")
+            return {"success": False, "error": f"No transcription results found for video {video_id}"}
+        
+        # If a transcription file path is provided, read from it
+        transcription_content = None
+        if transcription_file_path:
             try:
-                # Add debug logging to see the raw transcription results
-                logger.info(f"Processing transcription for video {video_id}")
-                logger.info(f"Transcription type: {type(video.transcription_results)}")
-                
-                # Check if transcription results exists in a file
-                transcript_path = None
-                transcription_content = None
-                
-                # First check if we have a transcription path
-                if hasattr(video, 'transcription_path') and video.transcription_path:
-                    transcript_path = video.transcription_path
-                    logger.info(f"Found transcription path: {transcript_path}")
-                    if os.path.exists(transcript_path):
-                        logger.info(f"Reading transcription from file: {transcript_path}")
-                        with open(transcript_path, 'r') as f:
+                with open(transcription_file_path, 'r') as f:
+                    transcription_content = f.read()
+                    logger.info(f"Read transcription from file: {transcription_file_path}")
+            except Exception as e:
+                logger.error(f"Error reading transcription file: {str(e)}")
+        
+        # If we couldn't find a transcription file, look for the latest transcript in the audio_extracts folder
+        if not transcription_content:
+            # Look for transcript files matching the pattern transcript_{video_id}_*.txt
+            audio_extracts_dir = Path("/app/data/temp/audio_extracts")
+            if audio_extracts_dir.exists():
+                transcript_files = list(audio_extracts_dir.glob(f"transcript_{video_id}_*.txt"))
+                if transcript_files:
+                    # Sort by modification time to get the latest
+                    latest_transcript = max(transcript_files, key=lambda p: p.stat().st_mtime)
+                    logger.info(f"Found latest transcript file: {latest_transcript}")
+                    try:
+                        with open(latest_transcript, 'r') as f:
                             transcription_content = f.read()
-                            logger.info(f"Transcription file content (first 200 chars): {transcription_content[:200]}...")
+                            logger.info(f"Latest transcript content (first 200 chars): {transcription_content[:200]}...")
+                    except Exception as e:
+                        logger.error(f"Error reading latest transcript file: {str(e)}")
+        
+        # If we found transcription content in a file, use it instead of the database content
+        if transcription_content:
+            video.transcription_results = transcription_content
+        
+        # Handle different formats of transcription results
+        transcription = None
+        if isinstance(video.transcription_results, str):
+            # Log a sample of the transcription string
+            sample = video.transcription_results[:200] + '...' if len(video.transcription_results) > 200 else video.transcription_results
+            logger.info(f"Transcription results (sample): {sample}")
+            
+            # First check if the transcription looks like a timestamp format [HH:MM:SS - HH:MM:SS]
+            is_timestamp_format = "[" in video.transcription_results and "]" in video.transcription_results
+            
+            if is_timestamp_format:
+                # Process timestamp format
+                logger.info("Processing as timestamp format transcription")
+                segments = []
                 
-                # If we couldn't find a transcription file, look for the latest transcript in the audio_extracts folder
-                if not transcription_content:
-                    # Look for transcript files matching the pattern transcript_{video_id}_*.txt
-                    audio_extracts_dir = Path("/app/data/temp/audio_extracts")
-                    if audio_extracts_dir.exists():
-                        transcript_files = list(audio_extracts_dir.glob(f"transcript_{video_id}_*.txt"))
-                        if transcript_files:
-                            # Sort by modification time to get the latest
-                            latest_transcript = max(transcript_files, key=lambda p: p.stat().st_mtime)
-                            logger.info(f"Found latest transcript file: {latest_transcript}")
-                            with open(latest_transcript, 'r') as f:
-                                transcription_content = f.read()
-                                logger.info(f"Latest transcript content (first 200 chars): {transcription_content[:200]}...")
+                # Split by lines
+                lines = video.transcription_results.strip().split('\n')
+                logger.info(f"Found {len(lines)} lines in transcription")
                 
-                # If we found transcription content in a file, use it instead of the database content
-                if transcription_content:
-                    video.transcription_results = transcription_content
+                for i, line in enumerate(lines[:10]):  # Log first 10 lines for debugging
+                    logger.info(f"Line {i}: {line}")
                 
-                # Handle different formats of transcription results
-                if isinstance(video.transcription_results, str):
-                    # Log a sample of the transcription string
-                    sample = video.transcription_results[:200] + '...' if len(video.transcription_results) > 200 else video.transcription_results
-                    logger.info(f"Transcription results (sample): {sample}")
-                    
-                    # First check if the transcription looks like a timestamp format [HH:MM:SS - HH:MM:SS]
-                    if "[" in video.transcription_results and "]" in video.transcription_results:
-                        logger.info("Detected timestamp format in transcription, skipping JSON parsing attempt")
-                        # Set a flag to skip JSON parsing and go directly to timestamp parsing
-                        is_timestamp_format = True
-                    else:
-                        is_timestamp_format = False
-                        
-                    # Process based on the detected format
-                    if is_timestamp_format:
-                        # Skip JSON parsing and go directly to timestamp parsing
-                        logger.info("Processing as timestamp format transcription")
-                        transcription = None  # Will be set in the timestamp parsing section
-                    else:
+                for line in lines:
+                    # Try to parse timestamp format [HH:MM:SS - HH:MM:SS] Text
+                    if line.startswith('[') and ']' in line:
                         try:
-                            # First try to parse as JSON
-                            logger.info("Attempting to parse transcription as JSON")
+                            timestamp_part = line[1:line.index(']')]
+                            text_part = line[line.index(']')+1:].strip()
                             
-                            # Clean up the JSON string before parsing
-                            # Remove any BOM characters or other potential issues
-                            cleaned_json = video.transcription_results.strip()
-                            if cleaned_json.startswith('\ufeff'):  # Remove BOM if present
-                                cleaned_json = cleaned_json[1:]
+                            # Parse timestamps
+                            times = timestamp_part.split(' - ')
+                            if len(times) == 2:
+                                start_time = self._parse_timestamp(times[0])
+                                end_time = self._parse_timestamp(times[1])
                                 
-                            # Try to fix common JSON issues
-                            if cleaned_json.startswith("'") and cleaned_json.endswith("'"):
-                                cleaned_json = cleaned_json[1:-1]
-                            if cleaned_json.startswith('"') and cleaned_json.endswith('"'):
-                                cleaned_json = cleaned_json[1:-1]
+                                logger.info(f"Parsed times: start={start_time}, end={end_time}")
                                 
-                            # Log the cleaned JSON for debugging
-                            logger.info(f"Cleaned JSON (first 100 chars): {cleaned_json[:100]}...")
-                            
-                            # Try parsing the cleaned JSON
-                            transcription = json.loads(cleaned_json)
-                            logger.info("Successfully parsed transcription as JSON")
-                        except json.JSONDecodeError as json_err:
-                            logger.error(f"Error loading transcription: {str(json_err)}")
-                            
-                            # Try to fix common JSON issues and retry
-                            try:
-                                # Sometimes the JSON might have single quotes instead of double quotes
-                                import ast
-                                logger.info("Attempting to parse with ast.literal_eval")
-                                transcription = ast.literal_eval(video.transcription_results)
-                                logger.info("Successfully parsed transcription with ast.literal_eval")
-                            except Exception as ast_err:
-                                logger.error(f"Error parsing with ast: {str(ast_err)}")
-                                # Set is_timestamp_format to true to try the timestamp parsing as fallback
-                                is_timestamp_format = True
-                    
-                    # Process timestamp format if needed
-                    if is_timestamp_format:
-                        logger.info("Detected plain text format with timestamps, parsing segments")
-                        segments = []
-                        
-                        # Split by lines
-                        lines = video.transcription_results.strip().split('\n')
-                        logger.info(f"Found {len(lines)} lines in transcription")
-                        
-                        for i, line in enumerate(lines[:10]):  # Log first 10 lines for debugging
-                            logger.info(f"Line {i}: {line}")
-                        
-                        for line in lines:
-                            # Try to parse timestamp format [HH:MM:SS - HH:MM:SS] Text
-                            if line.startswith('[') and ']' in line:
-                                try:
-                                    timestamp_part = line[1:line.index(']')]
-                                    text_part = line[line.index(']')+1:].strip()
-                                    
-                                    # Parse timestamps
-                                    times = timestamp_part.split(' - ')
-                                    if len(times) == 2:
-                                        start_time = self._parse_timestamp(times[0])
-                                        end_time = self._parse_timestamp(times[1])
-                                        
-                                        logger.info(f"Parsed times: start={start_time}, end={end_time}")
-                                        
-                                        segments.append({
-                                            "start": start_time,
-                                            "end": end_time,
-                                            "text": text_part,
-                                            "speaker": "Unknown",
-                                            "speaker_id": "unknown"
-                                        })
-                                except Exception as e:
-                                    logger.warning(f"Error parsing timestamp line: {line}, error: {str(e)}")
-                        
-                        logger.info(f"Parsed {len(segments)} segments from transcription")
-                        
-                        if segments:
-                            transcription = {"segments": segments}
-                            logger.info("Created transcription with parsed segments")
-                        else:
-                            # If parsing failed, fall back to simple format
-                            logger.warning("No segments parsed, falling back to simple format")
-                            transcription = {
-                                "segments": [{
-                                    "start": 0,
-                                    "end": 60,  # Assume 60 seconds for the whole content
-                                    "text": video.transcription_results,
+                                segments.append({
+                                    "start": start_time,
+                                    "end": end_time,
+                                    "text": text_part,
                                     "speaker": "Unknown",
                                     "speaker_id": "unknown"
-                                }]
-                            }
-                    else:
-                        # If it's not timestamp format, create a simple structure with the text
-                        logger.info("No timestamp format detected, using simple format")
-                        transcription = {
-                            "segments": [{
-                                "start": 0,
-                                "end": 60,  # Assume 60 seconds for the whole content
-                                "text": video.transcription_results,
-                                "speaker": "Unknown",
-                                "speaker_id": "unknown"
-                            }]
-                        }
+                                })
+                        except Exception as e:
+                            logger.warning(f"Error parsing timestamp line: {line}, error: {str(e)}")
+                
+                logger.info(f"Parsed {len(segments)} segments from transcription")
+                
+                if segments:
+                    transcription = {"segments": segments}
+                    logger.info("Created transcription with parsed segments")
                 else:
-                    # If it's already a dict or other object, use it directly
-                    transcription = video.transcription_results
-                
-                # Ensure transcription is a dictionary
-                if not isinstance(transcription, dict):
-                    transcription = {"segments": [], "text": str(transcription)}
-                
-                # Get segments or create an empty list
-                segments = transcription.get("segments", [])
-                if not segments and isinstance(transcription.get("text"), str):
-                    # If there are no segments but there is text, create a simple segment
-                    segments = [{
-                        "start": 0,
-                        "end": 60,  # Assume 60 seconds for the whole content
-                        "text": transcription.get("text"),
-                        "speaker": "Unknown",
-                        "speaker_id": "unknown"
-                    }]
-                
-                # Check if segments have speaker information
-                has_speakers = False
-                for segment in segments:
-                    if segment.get("speaker") or segment.get("speaker_id") or segment.get("speaker_name"):
-                        has_speakers = True
-                        break
-                
-                if not has_speakers and segments:
-                    # If no speaker information, add default speaker to all segments
-                    logger.warning("No speaker information found in transcription, using default")
-                    for segment in segments:
-                        segment["speaker"] = "Unknown"
-                        segment["speaker_id"] = "unknown"
-                    has_speakers = True
-                
-                if not segments:
-                    logger.error("No segments found in transcription")
-                    return {"success": False, "error": "No segments found in transcription"}
-                
-            except Exception as e:
-                logger.error(f"Error parsing transcription: {str(e)}")
-                return {"success": False, "error": f"Error parsing transcription: {str(e)}"}
-            
-            # Create output directory for this video
-            output_dir = str(self.output_dir / str(video_id))
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Extract faces from speaker segments
-            faces_by_speaker = {}
-            faces_by_time = {}
-            all_faces = []
-            
-            # Process each segment to extract faces
-            for segment in segments:
-                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
-                start_time = segment.get("start", 0)
-                end_time = segment.get("end", 0)
-                
-                if end_time <= start_time:
-                    continue
-                
-                # Calculate segment duration and adjust sampling rate based on duration
-                duration = end_time - start_time
-                
-                # For short segments (< 5s), extract 1-2 frames
-                # For medium segments (5-15s), extract a frame every 2-3 seconds
-                # For long segments (> 15s), extract a frame every 3-5 seconds
-                if duration < 5:
-                    interval = max(1.0, duration / 2)  # 1-2 frames for short segments
-                elif duration < 15:
-                    interval = 2.5  # Frame every 2-3 seconds for medium segments
-                else:
-                    interval = 4.0  # Frame every 3-5 seconds for long segments
-                
-                # Extract frames at calculated intervals within this segment
-                for timestamp in np.arange(start_time, end_time, interval):
-                    # Extract frame at this timestamp
-                    frame_filename = f"frame_{video_id}_{timestamp:.2f}.jpg"
-                    frame_path = os.path.join(output_dir, frame_filename)
-                    
-                    # Extract the frame using ffmpeg if it doesn't exist
-                    if not os.path.exists(frame_path):
-                        try:
-                            cmd = [
-                                "ffmpeg",
-                                "-ss", str(timestamp),
-                                "-i", video_path,
-                                "-vframes", "1",
-                                "-q:v", "2",
-                                frame_path,
-                                "-y"
-                            ]
-                            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        except subprocess.CalledProcessError as e:
-                            logger.error(f"Error extracting frame at {timestamp}: {str(e)}")
-                            continue
-                    
-                    # Identify speaker in this frame
-                    result = self.identify_speaker_in_frame(db, frame_path)
-                    
-                    if result.get("success", False):
-                        # Store the face detection result
-                        face_profile = result.get("face_profile", {})
-                        confidence = result.get("confidence_score", 0.0)
-                        
-                        # Create face detection entry
-                        face_detection = {
-                            "timestamp": timestamp,
-                            "frame_path": frame_path,
-                            "frame_url": f"/api/v1/media/frames/{os.path.basename(frame_path)}",
-                            "face_profile": face_profile,
-                            "confidence": confidence,
-                            "speaker": speaker,
-                            "text": segment.get("text", ""),
-                            "segment_id": segment.get("id"),
-                            "segment_start": start_time,
-                            "segment_end": end_time
-                        }
-                        
-                        # Add to all faces list
-                        all_faces.append(face_detection)
-                        
-                        # Add to faces by speaker
-                        if speaker not in faces_by_speaker:
-                            faces_by_speaker[speaker] = []
-                        
-                        faces_by_speaker[speaker].append(face_detection)
-                        
-                        # Add to faces by time
-                        faces_by_time[timestamp] = face_detection
-            
-            # Create a timeline of speakers with face detections
-            timeline = []
-            for timestamp, data in sorted(faces_by_time.items()):
-                timeline.append({
-                    "timestamp": timestamp,
-                    "speaker": data["speaker"],
-                    "face_profile": data["face_profile"],
-                    "confidence": data["confidence"],
-                    "frame_path": data["frame_path"],
-                    "frame_url": data["frame_url"],
-                    "text": data["text"]
-                })
-            
-            # Create a mapping of speakers to face profiles using a more sophisticated algorithm
-            speaker_to_face_profile = {}
-            for speaker, faces in faces_by_speaker.items():
-                if not faces:
-                    continue
-                
-                # Group faces by profile ID
-                profiles = {}
-                for face in faces:
-                    profile_id = face.get("face_profile", {}).get("id")
-                    if not profile_id:
-                        continue
-                    
-                    if profile_id not in profiles:
-                        profiles[profile_id] = {
-                            "profile": face.get("face_profile", {}),
-                            "count": 0,
-                            "total_confidence": 0.0,
-                            "frames": [],
-                            "timestamps": []
-                        }
-                    
-                    profiles[profile_id]["count"] += 1
-                    profiles[profile_id]["total_confidence"] += face.get("confidence", 0.0)
-                    profiles[profile_id]["frames"].append(face.get("frame_path"))
-                    profiles[profile_id]["timestamps"].append(face.get("timestamp"))
-                
-                # Calculate weighted scores for each profile
-                for profile_id, data in profiles.items():
-                    # Calculate average confidence
-                    avg_confidence = data["total_confidence"] / data["count"] if data["count"] > 0 else 0.0
-                    
-                    # Calculate temporal consistency (how well distributed the detections are)
-                    timestamps = sorted(data["timestamps"])
-                    if len(timestamps) > 1:
-                        time_span = max(timestamps) - min(timestamps)
-                        time_consistency = min(1.0, time_span / 60.0)  # Normalize to max of 1.0 for spans of 60s or more
-                    else:
-                        time_consistency = 0.0
-                    
-                    # Calculate final weighted score
-                    # Weight: 60% count, 30% confidence, 10% temporal consistency
-                    data["weighted_score"] = (
-                        0.6 * (data["count"] / len(faces)) + 
-                        0.3 * avg_confidence + 
-                        0.1 * time_consistency
-                    )
-                    data["avg_confidence"] = avg_confidence
-                    data["time_consistency"] = time_consistency
-                
-                # Find the profile with the highest weighted score
-                best_profile_id = None
-                best_score = 0.0
-                
-                for profile_id, data in profiles.items():
-                    if data["weighted_score"] > best_score:
-                        best_profile_id = profile_id
-                        best_score = data["weighted_score"]
-                
-                if best_profile_id:
-                    best_data = profiles[best_profile_id]
-                    speaker_to_face_profile[speaker] = {
-                        "profile": best_data["profile"],
-                        "count": best_data["count"],
-                        "confidence": best_data["avg_confidence"],
-                        "time_consistency": best_data["time_consistency"],
-                        "weighted_score": best_data["weighted_score"],
-                        "best_frames": best_data["frames"][:5]  # Include up to 5 best frames
+                    # If parsing failed, fall back to simple format
+                    logger.warning("No segments parsed, falling back to simple format")
+                    transcription = {
+                        "segments": [{
+                            "start": 0,
+                            "end": 60,  # Assume 60 seconds for the whole content
+                            "text": video.transcription_results,
+                            "speaker": "Unknown",
+                            "speaker_id": "unknown"
+                        }]
                     }
-            
-            # Create voice recognition data from transcription segments
-            voice_segments = []
-            for segment in segments:
-                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
-                start_time = segment.get("start", 0)
-                end_time = segment.get("end", 0)
-                
-                voice_segment = {
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "speaker": speaker,
-                    "text": segment.get("text", ""),
-                    "confidence": segment.get("confidence", 0.5),
-                    "segment_id": segment.get("id")
-                }
-                
-                # Add face profile information if available
-                if speaker in speaker_to_face_profile:
-                    voice_segment["face_profile"] = speaker_to_face_profile[speaker]["profile"]
-                    voice_segment["face_confidence"] = speaker_to_face_profile[speaker]["confidence"]
-                
-                voice_segments.append(voice_segment)
-            
-            # Update the transcription segments with face profile information
-            for segment in segments:
-                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
-                
-                if speaker in speaker_to_face_profile:
-                    segment["face_profile"] = speaker_to_face_profile[speaker]["profile"]
-                    segment["face_confidence"] = speaker_to_face_profile[speaker]["confidence"]
-                    segment["face_detection_count"] = speaker_to_face_profile[speaker]["count"]
-            
-            # Create integrated recognition results
-            integrated_results = {
-                "faces": all_faces,  # All individual face detections
-                "voices": voice_segments,  # All voice segments with speaker info
-                "speaker_face_mapping": speaker_to_face_profile,  # Mapping of speakers to their best face profile
-                "timeline": timeline,  # Timeline of face detections
-                "transcription": transcription,  # Original transcription with added face info
-                "metadata": {
-                    "video_id": video_id,
-                    "processed_at": datetime.now().isoformat(),
-                    "faces_count": len(all_faces),
-                    "speakers_count": len(speaker_to_face_profile),
-                    "segments_count": len(segments)
-                }
-            }
-            
-            # Store face detections in the timeline service
-            for face in all_faces:
-                face_detection = {
-                    "timestamp": face["timestamp"],
-                    "confidence": face["confidence"],
-                    "name": face["face_profile"].get("name", "Unknown"),
-                    "person_id": face["face_profile"].get("id"),
-                    "frame_path": face["frame_path"],
-                    "frame_url": face["frame_url"],
-                    "speaker": face["speaker"],
-                    "text": face["text"]
-                }
-                self.timeline_service.store_face_detection(db, video_id, face_detection)
-            
-            # Store speaker segments in the timeline service
-            for voice in voice_segments:
-                speaker_segment = {
-                    "start": voice["start_time"],
-                    "end": voice["end_time"],
-                    "speaker": voice["speaker"],
-                    "speaker_id": voice.get("face_profile", {}).get("id"),
-                    "confidence": voice["confidence"],
-                    "text": voice["text"],
-                    "segment_id": voice["segment_id"]
-                }
-                self.timeline_service.store_speaker_segment(db, video_id, speaker_segment)
-            
-            # Update the timeline data using the timeline service
-            timeline_result = self.timeline_service.update_timeline_data(db, video_id)
-            
-            # Find correlations between face and voice events
-            # First get the timeline events
-            timeline_events = self.timeline_service.get_timeline_events(db, video_id)
-            
-            # Prepare the recognition data structure expected by find_correlations
-            # First check if timeline_events is successful
-            if not timeline_events.get("success", False):
-                logger.error(f"Failed to get timeline events: {timeline_events.get('error', 'Unknown error')}")
-                recognition_data = {"face_events": [], "speaker_events": []}
             else:
-                # Get the timeline data which is a list of events
-                timeline_data = timeline_events.get("timeline", [])
-                
-                # Filter events by type and ensure they have the required fields
-                face_events = []
-                speaker_events = []
-                
-                for event in timeline_data:
-                    # Check if event is a dictionary
-                    if not isinstance(event, dict):
-                        logger.warning(f"Skipping non-dictionary event: {event}")
-                        continue
+                # Try to parse as JSON
+                try:
+                    logger.info("Attempting to parse transcription as JSON")
+                    
+                    # Clean up the JSON string before parsing
+                    cleaned_json = video.transcription_results.strip()
+                    if cleaned_json.startswith('\ufeff'):  # Remove BOM if present
+                        cleaned_json = cleaned_json[1:]
                         
-                    event_type = event.get("type")
+                    # Try to fix common JSON issues
+                    if cleaned_json.startswith("'") and cleaned_json.endswith("'"):
+                        cleaned_json = cleaned_json[1:-1]
+                    if cleaned_json.startswith('"') and cleaned_json.endswith('"'):
+                        cleaned_json = cleaned_json[1:-1]
+                        
+                    # Try parsing the cleaned JSON
+                    transcription = json.loads(cleaned_json)
+                    logger.info("Successfully parsed transcription as JSON")
+                except json.JSONDecodeError as json_err:
+                    logger.error(f"Error loading transcription: {str(json_err)}")
                     
-                    # Make sure events have start_time and end_time fields
-                    # The timeline_service.find_correlations method expects these fields
-                    if event_type == "face":
-                        # For face events, 'start' should be mapped to 'start_time'
-                        face_event = event.copy()
-                        if "start" in face_event and "start_time" not in face_event:
-                            face_event["start_time"] = face_event["start"]
-                        if "end" in face_event and "end_time" not in face_event:
-                            face_event["end_time"] = face_event["end"]
-                        # Ensure required fields exist
-                        if "start_time" not in face_event:
-                            face_event["start_time"] = 0
-                        if "end_time" not in face_event:
-                            face_event["end_time"] = face_event["start_time"] + 1
-                        if "confidence" not in face_event:
-                            face_event["confidence"] = 0.5
-                        if "person_id" not in face_event and "id" in face_event:
-                            face_event["person_id"] = face_event["id"]
-                        if "person_name" not in face_event and "name" in face_event:
-                            face_event["person_name"] = face_event["name"]
-                        face_events.append(face_event)
-                    elif event_type == "speaker":
-                        # For speaker events, 'start' should be mapped to 'start_time'
-                        speaker_event = event.copy()
-                        if "start" in speaker_event and "start_time" not in speaker_event:
-                            speaker_event["start_time"] = speaker_event["start"]
-                        if "end" in speaker_event and "end_time" not in speaker_event:
-                            speaker_event["end_time"] = speaker_event["end"]
-                        # Ensure required fields exist
-                        if "start_time" not in speaker_event:
-                            speaker_event["start_time"] = 0
-                        if "end_time" not in speaker_event:
-                            speaker_event["end_time"] = speaker_event["start_time"] + 10
-                        if "confidence" not in speaker_event:
-                            speaker_event["confidence"] = 0.5
-                        if "person_id" not in speaker_event and "id" in speaker_event:
-                            speaker_event["person_id"] = speaker_event["id"]
-                        if "person_name" not in speaker_event and "name" in speaker_event:
-                            speaker_event["person_name"] = speaker_event["name"]
-                        speaker_events.append(speaker_event)
-                
-                logger.info(f"Prepared {len(face_events)} face events and {len(speaker_events)} speaker events for correlation")
-                
-                recognition_data = {
-                    "face_events": face_events,
-                    "speaker_events": speaker_events
-                }
+                    # Create a simple structure with the text
+                    logger.info("JSON parsing failed, using simple format")
+                    transcription = {
+                        "segments": [{
+                            "start": 0,
+                            "end": 60,  # Assume 60 seconds for the whole content
+                            "text": video.transcription_results,
+                            "speaker": "Unknown",
+                            "speaker_id": "unknown"
+                        }]
+                    }
+        elif isinstance(video.transcription_results, dict):
+            # If it's already a dict, use it directly
+            transcription = video.transcription_results
+        else:
+            # Handle unexpected type
+            logger.warning(f"Unexpected transcription type: {type(video.transcription_results)}")
+            transcription = {"segments": [], "text": str(video.transcription_results)}
+        
+        # Ensure transcription is a dictionary
+        if not isinstance(transcription, dict):
+            transcription = {"segments": [], "text": str(transcription)}
+        
+        # Get segments or create an empty list
+        segments = transcription.get("segments", [])
+        if not segments and isinstance(transcription.get("text"), str):
+            # If there are no segments but there is text, create a simple segment
+            segments = [{
+                "start": 0,
+                "end": 60,  # Assume 60 seconds for the whole content
+                "text": transcription.get("text"),
+                "speaker": "Unknown",
+                "speaker_id": "unknown"
+            }]
+        
+        # Check if segments have speaker information
+        has_speakers = False
+        for segment in segments:
+            if segment.get("speaker") or segment.get("speaker_id") or segment.get("speaker_name"):
+                has_speakers = True
+                break
+        
+        # Update the video with the processed transcription
+        video.transcription_results = json.dumps(transcription)
+        db.commit()
+        
+        # If there are no segments, return an error
+        if not segments:
+            logger.error("No segments found in transcription")
+            return {"success": False, "error": "No segments found in transcription"}
+        
+        # Extract frames for each segment
+        output_dir = os.path.join(self.output_dir, f"video_{video_id}")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Extract faces from speaker segments
+        faces_by_speaker = {}
+        faces_by_time = {}
+        all_faces = []
+        
+        # Process each segment to extract faces
+        for segment in segments:
+            speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
+            start_time = segment.get("start", 0)
+            end_time = segment.get("end", 0)
             
-            # Call find_correlations with the correct signature and proper error handling
-            try:
-                # Ensure recognition_data is properly formatted
-                if not isinstance(recognition_data, dict):
-                    logger.error(f"Recognition data is not a dictionary: {type(recognition_data)}")
-                    recognition_data = {"face_events": [], "speaker_events": []}
-                    
-                # Ensure face_events and speaker_events are lists
-                if not isinstance(recognition_data.get("face_events"), list):
-                    logger.error(f"Face events is not a list: {type(recognition_data.get('face_events'))}")
-                    recognition_data["face_events"] = []
-                if not isinstance(recognition_data.get("speaker_events"), list):
-                    logger.error(f"Speaker events is not a list: {type(recognition_data.get('speaker_events'))}")
-                    recognition_data["speaker_events"] = []
-                    
-                # Validate all events have required fields
-                for event_list in [recognition_data["face_events"], recognition_data["speaker_events"]]:
-                    for i, event in enumerate(event_list):
-                        if not isinstance(event, dict):
-                            logger.warning(f"Event at index {i} is not a dictionary, removing")
-                            event_list[i] = None
-                            continue
-                            
-                        # Ensure required fields
-                        for field in ["start_time", "end_time", "confidence"]:
-                            if field not in event:
-                                logger.warning(f"Event at index {i} missing {field}, adding default")
-                                if field == "start_time":
-                                    event[field] = event.get("start", 0)
-                                elif field == "end_time":
-                                    event[field] = event.get("end", event.get("start_time", 0) + 5)
-                                else:  # confidence
-                                    event[field] = 0.5
-                                    
-                        # Ensure person identification
-                        if "person_id" not in event and "id" in event:
-                            event["person_id"] = event["id"]
-                        if "person_id" not in event:
-                            event["person_id"] = "unknown"
-                            
-                        if "person_name" not in event and "name" in event:
-                            event["person_name"] = event["name"]
-                        if "person_name" not in event:
-                            event["person_name"] = "Unknown"
-                
-                # Remove None events
-                recognition_data["face_events"] = [e for e in recognition_data["face_events"] if e is not None]
-                recognition_data["speaker_events"] = [e for e in recognition_data["speaker_events"] if e is not None]
-                
-                logger.info(f"Calling find_correlations with validated data: {len(recognition_data['face_events'])} face events, {len(recognition_data['speaker_events'])} speaker events")
-                correlations_result = self.timeline_service.find_correlations(recognition_data)
-                logger.info(f"Correlations found: {len(correlations_result) if isinstance(correlations_result, list) else 'non-list result'}")
-            except Exception as e:
-                logger.error(f"Error finding correlations: {str(e)}")
-                correlations_result = []
+            if end_time <= start_time:
+                continue
             
-            # Add timeline data to the integrated results with detailed type checking and logging
-            logger.info(f"Timeline result type: {type(timeline_result)}")
+            # Calculate segment duration and adjust sampling rate based on duration
+            duration = end_time - start_time
             
-            # Initialize recognition_events at the beginning to ensure it's always defined
-            recognition_events = []
-            
-            # Handle different types of timeline_result safely
-            if isinstance(timeline_result, dict):
-                timeline_events_list = timeline_result.get("timeline", [])
-                integrated_results["timeline"] = timeline_events_list
-                recognition_events = timeline_events_list
-                logger.info(f"Added timeline data from dictionary: {len(integrated_results['timeline'])} items")
-            elif isinstance(timeline_result, list):
-                integrated_results["timeline"] = timeline_result
-                recognition_events = timeline_result
-                logger.info(f"Added timeline data from list: {len(integrated_results['timeline'])} items")
+            # For short segments (< 5s), extract 1-2 frames
+            # For medium segments (5-15s), extract a frame every 2-3 seconds
+            # For long segments (> 15s), extract a frame every 3-5 seconds
+            if duration < 5:
+                interval = max(1.0, duration / 2)  # 1-2 frames for short segments
+            elif duration < 15:
+                interval = 2.5  # Frame every 2-3 seconds for medium segments
             else:
-                logger.warning(f"Unexpected timeline_result type: {type(timeline_result)}, using empty list")
-                integrated_results["timeline"] = []
-                # recognition_events already initialized as []
+                interval = 4.0  # Frame every 3-5 seconds for long segments
             
-            # Handle correlations result safely
-            logger.info(f"Correlations result type: {type(correlations_result)}")
-            integrated_results["correlations"] = correlations_result
-            logger.info(f"Added correlations data: {len(correlations_result) if isinstance(correlations_result, list) else 'non-list type'}")
+            # Extract frames at regular intervals
+            current_time = start_time
+            while current_time < end_time:
+                # Extract frame at current time
+                frame_time = current_time
+                frame_path = os.path.join(output_dir, f"frame_{video_id}_{int(frame_time * 100):08d}.jpg")
+                
+                # Skip if frame already exists
+                if not os.path.exists(frame_path):
+                    try:
+                        # Use ffmpeg to extract the frame
+                        ffmpeg_cmd = [
+                            "ffmpeg", "-y", "-ss", str(frame_time), "-i", video_path,
+                            "-vframes", "1", "-q:v", "2", frame_path
+                        ]
+                        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        logger.info(f"Extracted frame at {frame_time:.2f}s: {frame_path}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Error extracting frame at {frame_time:.2f}s: {str(e)}")
+                        continue
+                
+                # Identify speaker in the frame
+                if os.path.exists(frame_path):
+                    try:
+                        face_result = self.identify_speaker_in_frame(db, frame_path)
+                        if face_result["success"]:
+                            face_data = face_result["data"]
+                            face_data["frame_path"] = frame_path
+                            face_data["frame_time"] = frame_time
+                            face_data["segment_text"] = segment.get("text", "")
+                            face_data["segment_speaker"] = speaker
+                            
+                            # Add to all faces list
+                            all_faces.append(face_data)
+                            
+                            # Add to faces by time
+                            time_key = int(frame_time)
+                            if time_key not in faces_by_time:
+                                faces_by_time[time_key] = []
+                            faces_by_time[time_key].append(face_data)
+                            
+                            # Add to faces by speaker
+                            if speaker not in faces_by_speaker:
+                                faces_by_speaker[speaker] = []
+                            faces_by_speaker[speaker].append(face_data)
+                            
+                            # Create a recognition event
+                            recognition_event = {
+                                "time": frame_time,
+                                "speaker": face_data.get("name", "Unknown"),
+                                "confidence": face_data.get("confidence", 0),
+                                "text": segment.get("text", ""),
+                                "face_profile_id": face_data.get("face_profile_id"),
+                                "frame_path": frame_path
+                            }
+                            recognition_events.append(recognition_event)
+                            
+                            logger.info(f"Identified speaker in frame at {frame_time:.2f}s: {face_data.get('name', 'Unknown')}")
+                    except Exception as e:
+                        logger.error(f"Error identifying speaker in frame at {frame_time:.2f}s: {str(e)}")
+                
+                # Move to next interval
+                current_time += interval
+        
+        # Create correlations between speakers and face profiles
+        for speaker, faces in faces_by_speaker.items():
+            # Count occurrences of each face profile
+            profile_counts = {}
+            for face in faces:
+                profile_id = face.get("face_profile_id")
+                if profile_id:
+                    if profile_id not in profile_counts:
+                        profile_counts[profile_id] = 0
+                    profile_counts[profile_id] += 1
             
-            # Log the full integrated results structure
-            logger.info(f"Integrated results keys: {integrated_results.keys()}")
-            for key in integrated_results:
-                if isinstance(integrated_results[key], list):
-                    logger.info(f"Integrated results[{key}] has {len(integrated_results[key])} items")
-                elif isinstance(integrated_results[key], dict):
-                    logger.info(f"Integrated results[{key}] has {len(integrated_results[key].keys())} keys")
-                else:
-                    logger.info(f"Integrated results[{key}] has type {type(integrated_results[key])}")
+            # Find the most common face profile for this speaker
+            if profile_counts:
+                most_common_profile_id = max(profile_counts.items(), key=lambda x: x[1])[0]
+                most_common_count = profile_counts[most_common_profile_id]
+                total_faces = len(faces)
+                confidence = most_common_count / total_faces if total_faces > 0 else 0
+                
+                # Get the face profile
+                face_profile = self.face_profile_service.get_face_profile(db, most_common_profile_id)
+                if face_profile:
+                    speaker_to_face_profile[speaker] = {
+                        "face_profile_id": most_common_profile_id,
+                        "name": face_profile.get("name", "Unknown"),
+                        "confidence": confidence,
+                        "count": most_common_count,
+                        "total": total_faces
+                    }
                     
-            # Make sure we have the variables needed for the return value
-            if 'all_faces' not in locals():
-                all_faces = []
-            if 'speaker_to_face_profile' not in locals():
-                speaker_to_face_profile = {}
-            if 'segments' not in locals():
-                segments = []
-            if 'correlations' not in locals():
-                correlations = []
-            
-            # Save the results to the database
-            video.recognition_results = json.dumps(make_json_serializable(integrated_results))
-            
-            db.commit()
-            
-            logger.info(f"Completed multimodal processing for video {video_id}")
-            
-            # Create a safe return structure with proper defaults
-            timeline_preview = []
-            if recognition_events and isinstance(recognition_events, list):
-                timeline_preview = recognition_events[:10]  # Return just the first 10 events to avoid large response
-            
-            return {
-                "success": True,
-                "video_id": video_id,
-                "faces_count": len(all_faces) if isinstance(all_faces, list) else 0,
-                "speakers_count": len(speaker_to_face_profile) if isinstance(speaker_to_face_profile, dict) else 0,
-                "segments_count": len(segments) if isinstance(segments, list) else 0,
-                "events_count": len(recognition_events) if isinstance(recognition_events, list) else 0,
-                "correlations_count": len(correlations) if isinstance(correlations, list) else 0,
-                "timeline": timeline_preview,
-                "speaker_face_mapping": speaker_to_face_profile if isinstance(speaker_to_face_profile, dict) else {}
-            }
-            
-        except Exception as e:
-            logger.exception(f"Error in multimodal processing: {str(e)}")
-            return {"success": False, "error": str(e)}
+                    # Add to correlations
+                    correlations.append({
+                        "speaker": speaker,
+                        "face_profile_id": most_common_profile_id,
+                        "name": face_profile.get("name", "Unknown"),
+                        "confidence": confidence,
+                        "count": most_common_count,
+                        "total": total_faces
+                    })
+        
+        # Create a timeline of recognition events
+        timeline = self.timeline_service.create_timeline(recognition_events)
+        
+        # Update the video with recognition results
+        recognition_results = {
+            "timeline": timeline,
+            "correlations": correlations,
+            "speaker_to_face_profile": speaker_to_face_profile,
+            "faces_count": len(all_faces),
+            "segments_count": len(segments),
+            "has_speakers": has_speakers
+        }
+        
+        # Update the video in the database
+        video.recognition_results = json.dumps(recognition_results)
+        video.recognition_completed_at = datetime.now()
+        video.recognition_status = "completed"
+        db.commit()
+        
+        return {
+            "success": True,
+            "video_id": video_id,
+            "timeline": timeline,
+            "correlations": correlations,
+            "faces_count": len(all_faces),
+            "segments_count": len(segments)
+        }
     
+    except Exception as e:
+        logger.exception(f"Error processing video with transcription: {str(e)}")
+        
+        # Update the video with error status
+        try:
+            db_generator = get_db()
+            db: Session = next(db_generator)
+            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+            if video:
+                video.recognition_status = "error"
+                video.error_message = str(e)
+                db.commit()
+        except Exception as db_err:
+            logger.error(f"Error updating video status: {str(db_err)}")
+        
+        return {"success": False, "error": str(e)}
+
+
     def _parse_timestamp(self, timestamp: str) -> float:
         """
         Parse a timestamp in HH:MM:SS format to seconds.
