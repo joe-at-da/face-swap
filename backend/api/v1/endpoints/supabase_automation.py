@@ -13,6 +13,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional, List
+from services.utils import make_json_serializable
 from fastapi import APIRouter, Depends, HTTPException, Security, status, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 
@@ -223,6 +224,20 @@ async def process_parliament_tv_to_supabase(
                 
                 # Get video metadata
                 db.refresh(capture)
+                
+                # Handle capture_metadata properly - it might be a string or a dict
+                capture_metadata = {}
+                if capture.capture_metadata:
+                    if isinstance(capture.capture_metadata, dict):
+                        capture_metadata = capture.capture_metadata
+                    elif isinstance(capture.capture_metadata, str):
+                        try:
+                            capture_metadata = json.loads(capture.capture_metadata)
+                        except json.JSONDecodeError:
+                            logger.error(f"Error parsing capture metadata JSON for capture {capture_id}")
+                    else:
+                        logger.error(f"Unexpected metadata type: {type(capture.capture_metadata)}")
+                
                 video_metadata = {
                     "video_id": capture_id,
                     "title": capture.title,
@@ -230,17 +245,24 @@ async def process_parliament_tv_to_supabase(
                     "duration": capture.duration,
                     "file_path": capture.file_path,
                     "audio_path": os.path.join(os.path.dirname(capture.file_path), f"audio_{capture_id}.mp3"),
-                    "video_url": capture.capture_metadata.get("video_url"),
-                    "audio_url": capture.capture_metadata.get("audio_url"),
-                    "original_url": capture.capture_metadata.get("original_url")
+                    "video_url": capture_metadata.get("video_url"),
+                    "audio_url": capture_metadata.get("audio_url"),
+                    "original_url": capture_metadata.get("original_url")
                 }
                 
                 # Export to Supabase
                 supabase = SupabaseIntegration()
+                
+                # Ensure all metadata is properly serializable using the utility function
+                # This handles SQLAlchemy MetaData objects, datetime objects, and other non-serializable types
+                serializable_recognition_data = make_json_serializable(recognition_data)
+                serializable_video_metadata = make_json_serializable(video_metadata)
+                
+                logger.info(f"Exporting recognition results to Supabase for session {capture_id}")
                 export_result = supabase.export_and_upload_recognition(
                     video_path=capture.file_path,
-                    recognition_results=recognition_data,
-                    video_metadata=video_metadata,
+                    recognition_results=serializable_recognition_data,
+                    video_metadata=serializable_video_metadata,
                     db_session=db,
                     video_id=capture_id,
                     upload_media=True
@@ -256,16 +278,27 @@ async def process_parliament_tv_to_supabase(
                 process = db.query(RecognitionProcess).filter(RecognitionProcess.video_id == capture_id).first()
                 
                 if process and process.process_metadata:
-                    import json
-                    if isinstance(process.process_metadata, str):
-                        try:
-                            metadata = json.loads(process.process_metadata)
-                            if "combined_av_path" in metadata:
-                                video_path = metadata["combined_av_path"]
-                        except:
-                            pass
-                    elif isinstance(process.process_metadata, dict) and "combined_av_path" in process.process_metadata:
-                        video_path = process.process_metadata["combined_av_path"]
+                    # Handle process_metadata properly - it might be a string, dict, or other type
+                    try:
+                        metadata = {}
+                        if isinstance(process.process_metadata, str):
+                            try:
+                                metadata = json.loads(process.process_metadata)
+                            except json.JSONDecodeError:
+                                logger.error(f"Error parsing process metadata JSON for process {process.id}")
+                        elif isinstance(process.process_metadata, dict):
+                            metadata = process.process_metadata
+                        else:
+                            logger.error(f"Unexpected process metadata type: {type(process.process_metadata)}")
+                        
+                        # Check for combined_av_path in the parsed metadata
+                        if metadata and "combined_av_path" in metadata:
+                            video_path = metadata["combined_av_path"]
+                            logger.info(f"Using combined AV path from metadata: {video_path}")
+                    except Exception as e:
+                        logger.error(f"Error processing metadata for combined AV path: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 # Upload the full video
                 destination_path = f"full_videos/parliament_tv_{capture_id}.mp4"
@@ -521,8 +554,12 @@ def save_member_clips_to_supabase(
     
     for clip in member_clips:
         try:
+            # Ensure clip data is serializable before inserting
+            # Use the make_json_serializable utility function to handle all non-serializable types
+            serializable_clip = make_json_serializable(clip)
+                    
             # Insert clip into parliament_member_clips table
-            response = supabase_service.client.table('parliament_member_clips').insert(clip).execute()
+            response = supabase_service.client.table('parliament_member_clips').insert(serializable_clip).execute()
             
             if response.data:
                 saved_clips.append(clip["id"])

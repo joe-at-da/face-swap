@@ -12,6 +12,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
+from services.utils import make_json_serializable
 from sqlalchemy.orm import Session
 
 from backend.db import models
@@ -71,10 +72,27 @@ class MultimodalRecognitionService:
             metadata = {}
             if video.metadata:
                 try:
-                    metadata = json.loads(video.metadata)
+                    # Use the make_json_serializable function to handle all metadata types
+                    # including SQLAlchemy MetaData objects
+                    metadata = make_json_serializable(video.metadata)
+                    
+                    # If metadata is still a string after serialization, parse it as JSON
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except json.JSONDecodeError as json_error:
+                            logger.error(f"Error parsing metadata JSON string: {str(json_error)}")
+                            # If it's not valid JSON, use it as a simple value
+                            metadata = {"value": metadata}
+                    
+                    # Ensure metadata is a dictionary
+                    if not isinstance(metadata, dict):
+                        metadata = {"value": str(metadata)}
+                        
+                    logger.info(f"Successfully processed metadata for video {video_id}")
                 except Exception as e:
-                    logger.error(f"Error parsing video metadata: {str(e)}")
-                    return {"success": False, "error": f"Error parsing video metadata: {str(e)}"}
+                    logger.error(f"Error processing video metadata: {str(e)}")
+                    return {"success": False, "error": f"Error processing video metadata: {str(e)}"}
             
             # Check if we have both audio and video files
             video_path = video.video_path
