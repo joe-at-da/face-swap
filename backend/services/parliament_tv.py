@@ -1593,12 +1593,12 @@ class ParliamentTVCapture:
                 return {"success": False, "error": "No audio URL found"}
             
             # Determine output paths
-            video_file = os.path.join(CAPTURE_DIR, f"{capture_id}.mp4")
-            audio_file = os.path.join(CAPTURE_DIR, f"{capture_id}.mp3")
+            video_file = os.path.join(str(self.media_dir), f"{capture_id}.mp4")
+            audio_file = os.path.join(str(self.media_dir), f"{capture_id}.mp3")
             
             # Create progress log files
-            video_log = os.path.join(CAPTURE_DIR, f"{capture_id}_video_progress.log")
-            audio_log = os.path.join(CAPTURE_DIR, f"{capture_id}_audio_progress.log")
+            video_log = os.path.join(str(self.temp_dir), f"{capture_id}_video_progress.log")
+            audio_log = os.path.join(str(self.temp_dir), f"{capture_id}_audio_progress.log")
             
             # Ensure the output directory exists
             os.makedirs(os.path.dirname(video_file), exist_ok=True)
