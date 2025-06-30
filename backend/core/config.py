@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class Settings(BaseSettings):
     # Base settings
@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     
     # Integration 
     INTEGRATION_API_KEY: str = ""  # API key for external integrations like Supabase
+    
+    # Supabase Integration
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_API_KEY: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    SUPABASE_MEDIA_BUCKET: str = "parliament-tv-media"
+    SUPABASE_EXPORT_BUCKET: str = "parliament-tv-exports"
+    SUPABASE_WEBHOOK_SECRET: Optional[str] = None
+    SUPABASE_INTEGRATION_ENABLED: bool = False
 
     # Development Settings
     DEBUG: bool = False
