@@ -222,23 +222,101 @@ class MultimodalRecognitionService:
             
             # Parse transcription results
             try:
+                # Add debug logging to see the raw transcription results
+                logger.info(f"Processing transcription for video {video_id}")
+                logger.info(f"Transcription type: {type(video.transcription_results)}")
+                
+                # Check if transcription results exists in a file
+                transcript_path = None
+                if hasattr(video, 'transcription_path') and video.transcription_path:
+                    transcript_path = video.transcription_path
+                    logger.info(f"Found transcription path: {transcript_path}")
+                    if os.path.exists(transcript_path):
+                        logger.info(f"Reading transcription from file: {transcript_path}")
+                        with open(transcript_path, 'r') as f:
+                            file_content = f.read()
+                            logger.info(f"Transcription file content (first 200 chars): {file_content[:200]}...")
+                
                 # Handle different formats of transcription results
                 if isinstance(video.transcription_results, str):
+                    # Log a sample of the transcription string
+                    sample = video.transcription_results[:200] + '...' if len(video.transcription_results) > 200 else video.transcription_results
+                    logger.info(f"Transcription results (sample): {sample}")
+                    
                     try:
+                        # First try to parse as JSON
+                        logger.info("Attempting to parse transcription as JSON")
                         transcription = json.loads(video.transcription_results)
+                        logger.info("Successfully parsed transcription as JSON")
                     except json.JSONDecodeError as json_err:
-                        logger.error(f"Error loading transcription: {str(json_err)}")
-                        # If it's not valid JSON, try to handle it as a raw string
-                        # Create a simple structure with the text
-                        transcription = {
-                            "segments": [{
-                                "start": 0,
-                                "end": 60,  # Assume 60 seconds for the whole content
-                                "text": video.transcription_results,
-                                "speaker": "Unknown",
-                                "speaker_id": "unknown"
-                            }]
-                        }
+                        logger.error(f"Error loading transcription as JSON: {str(json_err)}")
+                        
+                        # Check if it's a plain text format with timestamps [HH:MM:SS - HH:MM:SS]
+                        if "[" in video.transcription_results and "]" in video.transcription_results:
+                            logger.info("Detected plain text format with timestamps, parsing segments")
+                            segments = []
+                            
+                            # Split by lines
+                            lines = video.transcription_results.strip().split('\n')
+                            logger.info(f"Found {len(lines)} lines in transcription")
+                            
+                            for i, line in enumerate(lines[:10]):  # Log first 10 lines for debugging
+                                logger.info(f"Line {i}: {line}")
+                            
+                            for line in lines:
+                                # Try to parse timestamp format [HH:MM:SS - HH:MM:SS] Text
+                                if line.startswith('[') and ']' in line:
+                                    try:
+                                        timestamp_part = line[1:line.index(']')]
+                                        text_part = line[line.index(']')+1:].strip()
+                                        
+                                        # Parse timestamps
+                                        times = timestamp_part.split(' - ')
+                                        if len(times) == 2:
+                                            start_time = self._parse_timestamp(times[0])
+                                            end_time = self._parse_timestamp(times[1])
+                                            
+                                            logger.info(f"Parsed times: start={start_time}, end={end_time}")
+                                            
+                                            segments.append({
+                                                "start": start_time,
+                                                "end": end_time,
+                                                "text": text_part,
+                                                "speaker": "Unknown",
+                                                "speaker_id": "unknown"
+                                            })
+                                    except Exception as e:
+                                        logger.warning(f"Error parsing timestamp line: {line}, error: {str(e)}")
+                            
+                            logger.info(f"Parsed {len(segments)} segments from transcription")
+                            
+                            if segments:
+                                transcription = {"segments": segments}
+                                logger.info("Created transcription with parsed segments")
+                            else:
+                                # If parsing failed, fall back to simple format
+                                logger.warning("No segments parsed, falling back to simple format")
+                                transcription = {
+                                    "segments": [{
+                                        "start": 0,
+                                        "end": 60,  # Assume 60 seconds for the whole content
+                                        "text": video.transcription_results,
+                                        "speaker": "Unknown",
+                                        "speaker_id": "unknown"
+                                    }]
+                                }
+                        else:
+                            # If it's not timestamp format, create a simple structure with the text
+                            logger.info("No timestamp format detected, using simple format")
+                            transcription = {
+                                "segments": [{
+                                    "start": 0,
+                                    "end": 60,  # Assume 60 seconds for the whole content
+                                    "text": video.transcription_results,
+                                    "speaker": "Unknown",
+                                    "speaker_id": "unknown"
+                                }]
+                            }
                 else:
                     # If it's already a dict or other object, use it directly
                     transcription = video.transcription_results
@@ -532,7 +610,17 @@ class MultimodalRecognitionService:
             timeline_result = self.timeline_service.update_timeline_data(db, video_id)
             
             # Find correlations between face and voice events
-            correlations_result = self.timeline_service.find_correlations(db, video_id)
+            # First get the timeline events
+            timeline_events = self.timeline_service.get_timeline_events(db, video_id)
+            
+            # Prepare the recognition data structure expected by find_correlations
+            recognition_data = {
+                "face_events": [event for event in timeline_events.get("timeline", []) if event.get("type") == "face"],
+                "speaker_events": [event for event in timeline_events.get("timeline", []) if event.get("type") == "speaker"]
+            }
+            
+            # Call find_correlations with the correct signature
+            correlations_result = self.timeline_service.find_correlations(recognition_data)
             
             # Add timeline data to the integrated results
             integrated_results["timeline"] = timeline_result.get("timeline", [])
@@ -561,6 +649,30 @@ class MultimodalRecognitionService:
             logger.exception(f"Error in multimodal processing: {str(e)}")
             return {"success": False, "error": str(e)}
     
+    def _parse_timestamp(self, timestamp: str) -> float:
+        """
+        Parse a timestamp in HH:MM:SS format to seconds.
+        
+        Args:
+            timestamp: String in HH:MM:SS format
+            
+        Returns:
+            Float representing seconds
+        """
+        try:
+            parts = timestamp.split(':') 
+            if len(parts) == 3:  # HH:MM:SS
+                hours, minutes, seconds = map(float, parts)
+                return hours * 3600 + minutes * 60 + seconds
+            elif len(parts) == 2:  # MM:SS
+                minutes, seconds = map(float, parts)
+                return minutes * 60 + seconds
+            else:  # Just seconds
+                return float(timestamp)
+        except Exception as e:
+            logger.warning(f"Error parsing timestamp {timestamp}: {str(e)}")
+            return 0.0
+    
     def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.6) -> Dict[str, Any]:
         """
         Identify a speaker in a video frame using facial recognition.
@@ -581,40 +693,54 @@ class MultimodalRecognitionService:
                 logger.error(f"Frame file not found: {frame_path}")
                 return {"success": False, "error": f"Frame file not found: {frame_path}"}
             
-            # Detect and identify faces in the frame
-            face_results = self.facial_recognition.identify_faces_in_image(
-                image_path=frame_path,
-                threshold=threshold,
-                db=db
+            # Detect and identify faces in the frame using identify_speakers method
+            face_results = self.facial_recognition.identify_speakers(
+                video_path=frame_path,  # Using the frame path as the video path
+                db_session=db,
+                output_file=None,  # No output file needed
+                store_unidentified=False,  # Don't store unidentified faces
+                export_to_supabase=False  # Don't export to Supabase
             )
             
-            if not face_results["success"]:
+            if not face_results.get("success", False):
                 logger.error(f"Error identifying faces: {face_results.get('error', 'Unknown error')}")
                 return {"success": False, "error": f"Error identifying faces: {face_results.get('error', 'Unknown error')}"}
             
-            # If no faces found, return empty result
-            if len(face_results["faces"]) == 0:
-                logger.info("No faces found in the frame")
+            # The identify_speakers method returns detections, not faces
+            detections = face_results.get("detections", [])
+            
+            # If no detections found, return empty result
+            if len(detections) == 0:
+                logger.info("No faces detected in the frame")
                 return {"success": True, "faces_found": 0}
             
-            # Get the face with the highest confidence
-            best_face = None
+            # Get the detection with the highest confidence
+            best_detection = None
             best_confidence = 0.0
             
-            for face in face_results["faces"]:
-                confidence = face.get("confidence", 0.0)
+            for detection in detections:
+                confidence = detection.get("confidence", 0.0)
                 if confidence > best_confidence:
-                    best_face = face
+                    best_detection = detection
                     best_confidence = confidence
             
-            # Get the face profile
-            face_profile = best_face.get("face_profile", {})
+            # Get the speaker information from the detection
+            speaker_id = best_detection.get("person_id", "unknown")
+            speaker_name = best_detection.get("name", "Unknown")
             
-            # Check if the face profile has a linked voice profile
+            # Create a simplified face profile structure
+            face_profile = {
+                "id": speaker_id,
+                "name": speaker_name,
+                "confidence": best_confidence
+            }
+            
+            # Check if there's a linked voice profile in the database
             voice_profile = None
-            if face_profile and face_profile.get("id"):
+            if speaker_id and speaker_id != "unknown":
+                # Try to find a face profile in the database
                 face_profile_obj = db.query(models.FaceProfile).filter(
-                    models.FaceProfile.id == face_profile.get("id")
+                    models.FaceProfile.id == speaker_id
                 ).first()
                 
                 if face_profile_obj and face_profile_obj.voice_profile_id:
@@ -624,7 +750,7 @@ class MultimodalRecognitionService:
             
             return {
                 "success": True,
-                "faces_found": len(face_results["faces"]),
+                "faces_found": len(detections),
                 "face_profile": face_profile,
                 "voice_profile": voice_profile.to_dict() if voice_profile else None,
                 "confidence_score": best_confidence
