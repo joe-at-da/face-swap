@@ -325,102 +325,99 @@ class MultimodalRecognitionService:
                     # First check if the transcription looks like a timestamp format [HH:MM:SS - HH:MM:SS]
                     if "[" in video.transcription_results and "]" in video.transcription_results:
                         logger.info("Detected timestamp format in transcription, skipping JSON parsing attempt")
-                        # Skip to the timestamp parsing section
-                        raise json.JSONDecodeError("Skipping JSON parsing for timestamp format", "", 0)
+                        # Set a flag to skip JSON parsing and go directly to timestamp parsing
+                        is_timestamp_format = True
+                    else:
+                        is_timestamp_format = False
                         
-                    try:
-                        # First try to parse as JSON
-                        logger.info("Attempting to parse transcription as JSON")
-                        
-                        # Clean up the JSON string before parsing
-                        # Remove any BOM characters or other potential issues
-                        cleaned_json = video.transcription_results.strip()
-                        if cleaned_json.startswith('\ufeff'):  # Remove BOM if present
-                            cleaned_json = cleaned_json[1:]
-                            
-                        # Try to fix common JSON issues
-                        if cleaned_json.startswith("'") and cleaned_json.endswith("'"):
-                            cleaned_json = cleaned_json[1:-1]
-                        if cleaned_json.startswith('"') and cleaned_json.endswith('"'):
-                            cleaned_json = cleaned_json[1:-1]
-                            
-                        # Log the cleaned JSON for debugging
-                        logger.info(f"Cleaned JSON (first 100 chars): {cleaned_json[:100]}...")
-                        
-                        # Try parsing the cleaned JSON
-                        transcription = json.loads(cleaned_json)
-                        logger.info("Successfully parsed transcription as JSON")
-                    except json.JSONDecodeError as json_err:
-                        logger.error(f"Error loading transcription: {str(json_err)}")
-                        
-                        # Try to fix common JSON issues and retry
+                    # Process based on the detected format
+                    if is_timestamp_format:
+                        # Skip JSON parsing and go directly to timestamp parsing
+                        logger.info("Processing as timestamp format transcription")
+                        transcription = None  # Will be set in the timestamp parsing section
+                    else:
                         try:
-                            # Sometimes the JSON might have single quotes instead of double quotes
-                            import ast
-                            logger.info("Attempting to parse with ast.literal_eval")
-                            transcription = ast.literal_eval(video.transcription_results)
-                            logger.info("Successfully parsed transcription with ast.literal_eval")
-                        except Exception as ast_err:
-                            logger.error(f"Error parsing with ast: {str(ast_err)}")
-                            # Continue with the fallback parsing
+                            # First try to parse as JSON
+                            logger.info("Attempting to parse transcription as JSON")
+                            
+                            # Clean up the JSON string before parsing
+                            # Remove any BOM characters or other potential issues
+                            cleaned_json = video.transcription_results.strip()
+                            if cleaned_json.startswith('\ufeff'):  # Remove BOM if present
+                                cleaned_json = cleaned_json[1:]
+                                
+                            # Try to fix common JSON issues
+                            if cleaned_json.startswith("'") and cleaned_json.endswith("'"):
+                                cleaned_json = cleaned_json[1:-1]
+                            if cleaned_json.startswith('"') and cleaned_json.endswith('"'):
+                                cleaned_json = cleaned_json[1:-1]
+                                
+                            # Log the cleaned JSON for debugging
+                            logger.info(f"Cleaned JSON (first 100 chars): {cleaned_json[:100]}...")
+                            
+                            # Try parsing the cleaned JSON
+                            transcription = json.loads(cleaned_json)
+                            logger.info("Successfully parsed transcription as JSON")
+                        except json.JSONDecodeError as json_err:
+                            logger.error(f"Error loading transcription: {str(json_err)}")
+                            
+                            # Try to fix common JSON issues and retry
+                            try:
+                                # Sometimes the JSON might have single quotes instead of double quotes
+                                import ast
+                                logger.info("Attempting to parse with ast.literal_eval")
+                                transcription = ast.literal_eval(video.transcription_results)
+                                logger.info("Successfully parsed transcription with ast.literal_eval")
+                            except Exception as ast_err:
+                                logger.error(f"Error parsing with ast: {str(ast_err)}")
+                                # Set is_timestamp_format to true to try the timestamp parsing as fallback
+                                is_timestamp_format = True
+                    
+                    # Process timestamp format if needed
+                    if is_timestamp_format:
+                        logger.info("Detected plain text format with timestamps, parsing segments")
+                        segments = []
                         
-                        # Check if it's a plain text format with timestamps [HH:MM:SS - HH:MM:SS]
-                        if "[" in video.transcription_results and "]" in video.transcription_results:
-                            logger.info("Detected plain text format with timestamps, parsing segments")
-                            segments = []
-                            
-                            # Split by lines
-                            lines = video.transcription_results.strip().split('\n')
-                            logger.info(f"Found {len(lines)} lines in transcription")
-                            
-                            for i, line in enumerate(lines[:10]):  # Log first 10 lines for debugging
-                                logger.info(f"Line {i}: {line}")
-                            
-                            for line in lines:
-                                # Try to parse timestamp format [HH:MM:SS - HH:MM:SS] Text
-                                if line.startswith('[') and ']' in line:
-                                    try:
-                                        timestamp_part = line[1:line.index(']')]
-                                        text_part = line[line.index(']')+1:].strip()
+                        # Split by lines
+                        lines = video.transcription_results.strip().split('\n')
+                        logger.info(f"Found {len(lines)} lines in transcription")
+                        
+                        for i, line in enumerate(lines[:10]):  # Log first 10 lines for debugging
+                            logger.info(f"Line {i}: {line}")
+                        
+                        for line in lines:
+                            # Try to parse timestamp format [HH:MM:SS - HH:MM:SS] Text
+                            if line.startswith('[') and ']' in line:
+                                try:
+                                    timestamp_part = line[1:line.index(']')]
+                                    text_part = line[line.index(']')+1:].strip()
+                                    
+                                    # Parse timestamps
+                                    times = timestamp_part.split(' - ')
+                                    if len(times) == 2:
+                                        start_time = self._parse_timestamp(times[0])
+                                        end_time = self._parse_timestamp(times[1])
                                         
-                                        # Parse timestamps
-                                        times = timestamp_part.split(' - ')
-                                        if len(times) == 2:
-                                            start_time = self._parse_timestamp(times[0])
-                                            end_time = self._parse_timestamp(times[1])
-                                            
-                                            logger.info(f"Parsed times: start={start_time}, end={end_time}")
-                                            
-                                            segments.append({
-                                                "start": start_time,
-                                                "end": end_time,
-                                                "text": text_part,
-                                                "speaker": "Unknown",
-                                                "speaker_id": "unknown"
-                                            })
-                                    except Exception as e:
-                                        logger.warning(f"Error parsing timestamp line: {line}, error: {str(e)}")
-                            
-                            logger.info(f"Parsed {len(segments)} segments from transcription")
-                            
-                            if segments:
-                                transcription = {"segments": segments}
-                                logger.info("Created transcription with parsed segments")
-                            else:
-                                # If parsing failed, fall back to simple format
-                                logger.warning("No segments parsed, falling back to simple format")
-                                transcription = {
-                                    "segments": [{
-                                        "start": 0,
-                                        "end": 60,  # Assume 60 seconds for the whole content
-                                        "text": video.transcription_results,
-                                        "speaker": "Unknown",
-                                        "speaker_id": "unknown"
-                                    }]
-                                }
+                                        logger.info(f"Parsed times: start={start_time}, end={end_time}")
+                                        
+                                        segments.append({
+                                            "start": start_time,
+                                            "end": end_time,
+                                            "text": text_part,
+                                            "speaker": "Unknown",
+                                            "speaker_id": "unknown"
+                                        })
+                                except Exception as e:
+                                    logger.warning(f"Error parsing timestamp line: {line}, error: {str(e)}")
+                        
+                        logger.info(f"Parsed {len(segments)} segments from transcription")
+                        
+                        if segments:
+                            transcription = {"segments": segments}
+                            logger.info("Created transcription with parsed segments")
                         else:
-                            # If it's not timestamp format, create a simple structure with the text
-                            logger.info("No timestamp format detected, using simple format")
+                            # If parsing failed, fall back to simple format
+                            logger.warning("No segments parsed, falling back to simple format")
                             transcription = {
                                 "segments": [{
                                     "start": 0,
@@ -430,6 +427,18 @@ class MultimodalRecognitionService:
                                     "speaker_id": "unknown"
                                 }]
                             }
+                    else:
+                        # If it's not timestamp format, create a simple structure with the text
+                        logger.info("No timestamp format detected, using simple format")
+                        transcription = {
+                            "segments": [{
+                                "start": 0,
+                                "end": 60,  # Assume 60 seconds for the whole content
+                                "text": video.transcription_results,
+                                "speaker": "Unknown",
+                                "speaker_id": "unknown"
+                            }]
+                        }
                 else:
                     # If it's already a dict or other object, use it directly
                     transcription = video.transcription_results
@@ -1221,6 +1230,78 @@ class MultimodalRecognitionService:
             
         except Exception as e:
             logger.exception(f"Error getting recognition status: {str(e)}")
+            return {"success": False, "error": str(e)}
+            
+    def get_recognition_results(self, video_id: int) -> Dict[str, Any]:
+        """
+        Get the recognition results for a video.
+        
+        Args:
+            video_id: ID of the video to get results for
+            
+        Returns:
+            Dictionary with recognition results
+        """
+        try:
+            # Get database session
+            from backend.db.session import get_db
+            from sqlalchemy.orm import Session
+            
+            db_generator = get_db()
+            db: Session = next(db_generator)
+            
+            # Get the video from the database
+            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+            
+            if not video:
+                logger.error(f"Video not found: {video_id}")
+                return {"success": False, "error": f"Video not found: {video_id}"}
+                
+            # Check if recognition is completed
+            if video.recognition_status != "completed":
+                return {
+                    "success": False, 
+                    "error": f"Recognition not completed for video {video_id}. Current status: {video.recognition_status or 'not_started'}"
+                }
+                
+            # Get recognition results
+            results = {}
+            if video.recognition_results:
+                try:
+                    if isinstance(video.recognition_results, str):
+                        results = json.loads(video.recognition_results)
+                    else:
+                        results = video.recognition_results
+                except json.JSONDecodeError:
+                    return {"success": False, "error": f"Invalid recognition results format for video {video_id}"}
+                    
+            # Get recognition process records
+            recognition_processes = db.query(models.RecognitionProcess).filter(
+                models.RecognitionProcess.video_id == video_id
+            ).all()
+            
+            # Combine all results
+            combined_results = {
+                "video_id": video_id,
+                "recognition_status": video.recognition_status,
+                "started_at": video.recognition_started_at,
+                "completed_at": video.recognition_completed_at,
+                "results": results,
+                "processes": [
+                    {
+                        "id": process.id,
+                        "status": process.status,
+                        "start_time": process.start_time,
+                        "end_time": process.end_time,
+                        "process_type": process.process_metadata.get("type", "unknown") if process.process_metadata else "unknown",
+                        "error_message": process.error_message if hasattr(process, 'error_message') else None
+                    } for process in recognition_processes
+                ]
+            }
+            
+            return {"success": True, "results": combined_results}
+        except Exception as e:
+            logger.exception(f"Error in get_recognition_results: {str(e)}")
             return {"success": False, "error": str(e)}
     
     def combine_recognition_results(self, voice_results: Dict[str, Any], face_results: Dict[str, Any]) -> Dict[str, Any]:
