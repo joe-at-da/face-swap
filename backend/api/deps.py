@@ -1,6 +1,6 @@
-from typing import Generator
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from typing import Generator, Optional
+from fastapi import Depends, HTTPException, status, Security, Request
+from fastapi.security import OAuth2PasswordBearer, APIKeyHeader
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from backend.db.session import SessionLocal
 from backend.db.models.user import User as UserModel, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def get_db() -> Generator:
     """Get database session."""
@@ -116,3 +117,44 @@ async def get_current_user_optional(request = None, db: Session = Depends(get_db
     except (ValueError, AttributeError, HTTPException):
         # Any error in parsing the token or headers, return None
         return None
+
+
+def get_api_key(api_key: str = Security(api_key_header)) -> str:
+    """Validate API key for Supabase integration endpoints.
+    
+    This dependency will be used to secure Supabase integration endpoints with API key authentication.
+    The API key should be provided in the X-API-Key header.
+    
+    Args:
+        api_key: The API key from the X-API-Key header
+        
+    Returns:
+        The validated API key
+        
+    Raises:
+        HTTPException: If the API key is invalid or missing
+    """
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is missing",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    
+    # Get the valid API key from settings
+    valid_api_key = settings.INTEGRATION_API_KEY
+    
+    if not valid_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="API key authentication is not configured",
+        )
+    
+    if api_key != valid_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    
+    return api_key
