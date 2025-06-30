@@ -7,6 +7,150 @@
         },
         "item": [
                 {
+                        "name": "Supabase Integration",
+                        "item": [
+                                {
+                                        "name": "Export to Supabase",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "X-API-Key",
+                                                                "value": "{{integration_api_key}}"
+                                                        }
+                                                ],
+                                                "url": {
+                                                        "raw": "{{base_url}}/api/v1/supabase/export-to-supabase/{{video_id}}",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "api",
+                                                                "v1",
+                                                                "supabase",
+                                                                "export-to-supabase",
+                                                                "{{video_id}}"
+                                                        ]
+                                                },
+                                                "description": "Export recognition and transcription data to Supabase format for a specific video. Requires API key authentication."
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Get Supabase Integration Status",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [
+                                                        {
+                                                                "key": "X-API-Key",
+                                                                "value": "{{integration_api_key}}"
+                                                        }
+                                                ],
+                                                "url": {
+                                                        "raw": "{{base_url}}/api/v1/supabase/status/{{video_id}}",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "api",
+                                                                "v1",
+                                                                "supabase",
+                                                                "status",
+                                                                "{{video_id}}"
+                                                        ]
+                                                },
+                                                "description": "Check the status of Supabase integration for a specific video. Requires API key authentication."
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Supabase Webhooks",
+                        "item": [
+                                {
+                                        "name": "Process Video Webhook",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "X-API-Key",
+                                                                "value": "{{integration_api_key}}"
+                                                        },
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n    \"video_id\": {{video_id}},\n    \"save_output\": true,\n    \"user_id\": \"supabase\"\n}",
+                                                        "options": {
+                                                                "raw": {
+                                                                        "language": "json"
+                                                                }
+                                                        }
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/api/v1/supabase/webhooks/process-video",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "api",
+                                                                "v1",
+                                                                "supabase",
+                                                                "webhooks",
+                                                                "process-video"
+                                                        ]
+                                                },
+                                                "description": "Webhook handler for processing a video from Supabase. Requires API key authentication."
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Transcription Status Webhook",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "X-API-Key",
+                                                                "value": "{{integration_api_key}}"
+                                                        },
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n    \"video_id\": {{video_id}},\n    \"status\": \"completed\",\n    \"metadata\": {\n        \"transcription_id\": \"supabase-transcription-123\",\n        \"duration\": 3600\n    }\n}",
+                                                        "options": {
+                                                                "raw": {
+                                                                        "language": "json"
+                                                                }
+                                                        }
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/api/v1/supabase/webhooks/transcription-status",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "api",
+                                                                "v1",
+                                                                "supabase",
+                                                                "webhooks",
+                                                                "transcription-status"
+                                                        ]
+                                                },
+                                                "description": "Webhook handler for receiving transcription status updates from Supabase. Requires API key authentication."
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
                         "name": "Get Recognition Results",
                         "request": {
                                 "method": "GET",
