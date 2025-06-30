@@ -111,7 +111,7 @@ class MultimodalRecognitionService:
                 video_id=video_id,
                 status="processing",
                 start_time=datetime.now(),
-                process_type="multimodal"
+                process_metadata={"type": "multimodal"}
             )
             db.add(recognition_process)
             db.commit()
@@ -222,8 +222,42 @@ class MultimodalRecognitionService:
             
             # Parse transcription results
             try:
-                transcription = json.loads(video.transcription_results)
+                # Handle different formats of transcription results
+                if isinstance(video.transcription_results, str):
+                    try:
+                        transcription = json.loads(video.transcription_results)
+                    except json.JSONDecodeError as json_err:
+                        logger.error(f"Error loading transcription: {str(json_err)}")
+                        # If it's not valid JSON, try to handle it as a raw string
+                        # Create a simple structure with the text
+                        transcription = {
+                            "segments": [{
+                                "start": 0,
+                                "end": 60,  # Assume 60 seconds for the whole content
+                                "text": video.transcription_results,
+                                "speaker": "Unknown",
+                                "speaker_id": "unknown"
+                            }]
+                        }
+                else:
+                    # If it's already a dict or other object, use it directly
+                    transcription = video.transcription_results
+                
+                # Ensure transcription is a dictionary
+                if not isinstance(transcription, dict):
+                    transcription = {"segments": [], "text": str(transcription)}
+                
+                # Get segments or create an empty list
                 segments = transcription.get("segments", [])
+                if not segments and isinstance(transcription.get("text"), str):
+                    # If there are no segments but there is text, create a simple segment
+                    segments = [{
+                        "start": 0,
+                        "end": 60,  # Assume 60 seconds for the whole content
+                        "text": transcription.get("text"),
+                        "speaker": "Unknown",
+                        "speaker_id": "unknown"
+                    }]
                 
                 # Check if segments have speaker information
                 has_speakers = False
@@ -232,9 +266,17 @@ class MultimodalRecognitionService:
                         has_speakers = True
                         break
                 
-                if not has_speakers:
-                    logger.error("No speaker information found in transcription")
-                    return {"success": False, "error": "No speaker information found in transcription"}
+                if not has_speakers and segments:
+                    # If no speaker information, add default speaker to all segments
+                    logger.warning("No speaker information found in transcription, using default")
+                    for segment in segments:
+                        segment["speaker"] = "Unknown"
+                        segment["speaker_id"] = "unknown"
+                    has_speakers = True
+                
+                if not segments:
+                    logger.error("No segments found in transcription")
+                    return {"success": False, "error": "No segments found in transcription"}
                 
             except Exception as e:
                 logger.error(f"Error parsing transcription: {str(e)}")
