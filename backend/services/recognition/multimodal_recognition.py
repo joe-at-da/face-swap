@@ -12,7 +12,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
-from services.utils import make_json_serializable
+from backend.services.utils import make_json_serializable
 from sqlalchemy.orm import Session
 
 from backend.db import models

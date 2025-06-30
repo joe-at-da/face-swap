@@ -13,7 +13,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional, List
-from services.utils import make_json_serializable
+from backend.services.utils import make_json_serializable
 from fastapi import APIRouter, Depends, HTTPException, Security, status, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 
