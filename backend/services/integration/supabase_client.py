@@ -10,18 +10,23 @@ from typing import Dict, Any, Optional
 from supabase import create_client, Client
 from backend.core.config import settings
 
-def get_supabase_client() -> Client:
+def get_supabase_client(use_service_role: bool = False) -> Client:
     """
     Create and return a configured Supabase client.
     Uses SUPABASE_URL and SUPABASE_API_KEY from environment variables.
+    
+    Args:
+        use_service_role: If True, use the service role key instead of the anon key
+                         Service role has admin privileges and should be used for
+                         server-side operations only.
     """
     url = settings.SUPABASE_URL
-    key = settings.SUPABASE_API_KEY
+    key = settings.SUPABASE_SERVICE_ROLE_KEY if use_service_role else settings.SUPABASE_API_KEY
     
     if not url or not key:
         raise ValueError(
             "Supabase URL and API key must be set in environment variables "
-            "(SUPABASE_URL and SUPABASE_API_KEY)"
+            "(SUPABASE_URL and SUPABASE_API_KEY or SUPABASE_SERVICE_ROLE_KEY)"
         )
     
     return create_client(url, key)
@@ -30,8 +35,19 @@ def get_supabase_client() -> Client:
 class SupabaseService:
     """Service for interacting with Supabase."""
     
-    def __init__(self):
-        self.client = get_supabase_client()
+    def __init__(self, use_service_role: bool = True):
+        """
+        Initialize the Supabase service.
+        
+        Args:
+            use_service_role: If True, use the service role key for admin privileges
+                             This is required for storage operations and should be
+                             used for server-side operations only.
+        """
+        self.client = get_supabase_client(use_service_role=use_service_role)
+        self.media_bucket = settings.SUPABASE_MEDIA_BUCKET
+        self.export_bucket = settings.SUPABASE_EXPORT_BUCKET
+        self.full_videos_bucket = settings.SUPABASE_FULL_VIDEOS_BUCKET
     
     # Database operations
     
