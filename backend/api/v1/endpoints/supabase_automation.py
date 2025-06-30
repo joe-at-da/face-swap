@@ -555,9 +555,28 @@ def save_member_clips_to_supabase(
     for clip in member_clips:
         try:
             # Ensure clip data is serializable before inserting
-            # Use the make_json_serializable utility function to handle all non-serializable types
-            serializable_clip = make_json_serializable(clip)
-                    
+            # Use the make_json_serializable utility function with explicit parameters to handle circular references
+            try:
+                serializable_clip = make_json_serializable(clip, None, 0)
+            except Exception as serialize_error:
+                logger.error(f"Error serializing clip {clip.get('id', 'unknown')}: {str(serialize_error)}")
+                # Create a simplified version of the clip with essential data
+                serializable_clip = {
+                    "id": clip.get("id"),
+                    "video_id": clip.get("video_id"),
+                    "member_id": clip.get("member_id"),
+                    "member_name": clip.get("member_name"),
+                    "start_time": clip.get("start_time"),
+                    "end_time": clip.get("end_time"),
+                    "duration": clip.get("duration"),
+                    "transcript": clip.get("transcript", "")[:1000],  # Truncate long transcripts
+                    "confidence": clip.get("confidence"),
+                    "recognition_method": clip.get("recognition_method"),
+                    "video_url": clip.get("video_url"),
+                    "created_at": datetime.now().isoformat(),
+                    "error_info": "Serialization error - some data may be missing"
+                }
+            
             # Insert clip into parliament_member_clips table
             response = supabase_service.client.table('parliament_member_clips').insert(serializable_clip).execute()
             

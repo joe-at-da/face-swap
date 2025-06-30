@@ -165,7 +165,20 @@ class MultimodalRecognitionService:
             # Update recognition process record
             recognition_process.status = "completed"
             recognition_process.end_time = datetime.now()
-            recognition_process.results = json.dumps(make_json_serializable(multimodal_result))
+            
+            # Serialize the results with our improved function that handles circular references
+            try:
+                serialized_results = make_json_serializable(multimodal_result)
+                recognition_process.results = json.dumps(serialized_results)
+            except Exception as serialize_error:
+                logger.error(f"Error serializing multimodal results: {str(serialize_error)}")
+                # Fallback to a simpler representation if serialization fails
+                simplified_results = {
+                    "message": "Results available but could not be fully serialized",
+                    "summary": str(multimodal_result)[:1000]  # Include a truncated summary
+                }
+                recognition_process.results = json.dumps(simplified_results)
+            
             db.commit()
             
             logger.info(f"Combined recognition completed for video {video_id}")

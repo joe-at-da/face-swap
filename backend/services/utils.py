@@ -3,50 +3,97 @@ Utility functions for services
 """
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, Set, Optional
 
 
-def make_json_serializable(obj: Any) -> Any:
+def make_json_serializable(obj: Any, _visited: Optional[Set[int]]=None, _depth: int=0) -> Any:
     """
     Convert objects to JSON serializable format
     
     Args:
         obj: The object to convert
+        _visited: Set of object ids already visited (to prevent circular references)
+        _depth: Current recursion depth
         
     Returns:
         JSON serializable version of the object
     """
+    # Initialize visited set on first call
+    if _visited is None:
+        _visited = set()
+    
+    # Prevent infinite recursion
+    if _depth > 10:  # Limit recursion depth
+        return str(obj)
+    
+    # Handle circular references
+    obj_id = id(obj)
+    if obj_id in _visited:
+        return "[Circular Reference]"
+    
     try:
-        if isinstance(obj, datetime):
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, datetime):
             return obj.isoformat()
         elif isinstance(obj, Path):
             # Handle Path objects by converting to string
             return str(obj)
         elif isinstance(obj, dict):
-            return {k: make_json_serializable(v) for k, v in obj.items()}
+            _visited.add(obj_id)
+            result = {}
+            for k, v in obj.items():
+                if isinstance(k, (str, int, float, bool)):
+                    key = k
+                else:
+                    try:
+                        key = str(k)
+                    except:
+                        key = f"[Key-{id(k)}]"
+                result[key] = make_json_serializable(v, _visited, _depth + 1)
+            return result
         elif isinstance(obj, list):
-            return [make_json_serializable(item) for item in obj]
+            _visited.add(obj_id)
+            return [make_json_serializable(item, _visited, _depth + 1) for item in obj]
         elif hasattr(obj, '__dict__'):
             # Handle objects with __dict__ attribute (like MetaData)
-            return make_json_serializable(obj.__dict__)
+            _visited.add(obj_id)
+            try:
+                # Filter out private attributes and methods
+                filtered_dict = {k: v for k, v in obj.__dict__.items() 
+                               if not k.startswith('_') and not callable(v)}
+                return make_json_serializable(filtered_dict, _visited, _depth + 1)
+            except Exception as e:
+                return f"[Object: {type(obj).__name__}]"
         elif hasattr(obj, 'keys') and callable(getattr(obj, 'keys', None)):
             # Handle dictionary-like objects
+            _visited.add(obj_id)
             try:
-                return {k: make_json_serializable(obj[k]) for k in obj.keys()}
+                result = {}
+                for k in obj.keys():
+                    if isinstance(k, (str, int, float, bool)):
+                        key = k
+                    else:
+                        try:
+                            key = str(k)
+                        except:
+                            key = f"[Key-{id(k)}]"
+                    result[key] = make_json_serializable(obj[k], _visited, _depth + 1)
+                return result
             except Exception as e:
-                print(f"Error serializing dictionary-like object: {str(e)}")
-                return str(obj)
+                return f"[Dict-like: {type(obj).__name__}]"
         elif hasattr(obj, '__iter__') and callable(getattr(obj, '__iter__', None)) and not isinstance(obj, (str, bytes)):
             # Handle iterable objects
+            _visited.add(obj_id)
             try:
-                return [make_json_serializable(item) for item in obj]
+                return [make_json_serializable(item, _visited, _depth + 1) for item in obj]
             except Exception as e:
-                print(f"Error serializing iterable object: {str(e)}")
-                return str(obj)
-        return obj
+                return f"[Iterable: {type(obj).__name__}]"
+        
+        # Default case - convert to string
+        return str(obj)
     except Exception as e:
-        print(f"Error serializing object: {str(e)}")
-        return str(obj)  # Fallback to string representation
+        return f"[Error: {str(e)[:50]}...]"  # Truncate long error messages
 
 
 def format_timestamp(seconds: float) -> str:
