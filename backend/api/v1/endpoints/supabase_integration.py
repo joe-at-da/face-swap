@@ -115,6 +115,10 @@ async def export_to_supabase(
     2. Retrieves transcription data from the database
     3. Combines them into a unified format
     4. Exports the combined data to Supabase
+    5. Uploads the full video to Supabase storage
+    6. Identifies speaking segments using the 60-second pause rule
+    7. Creates and uploads clips for each speaking segment
+    8. Inserts clip metadata into Supabase database
     
     Args:
         video_id: ID of the video to export
@@ -156,12 +160,6 @@ async def export_to_supabase(
             detail=f"Error parsing recognition results: {str(e)}"
         )
     
-    # Get transcription data
-    transcription = db.query(ParliamentTranscription).filter(
-        ParliamentTranscription.capture_session_id == video_id,
-        ParliamentTranscription.status == "completed"
-    ).order_by(ParliamentTranscription.created_at.desc()).first()
-    
     # Get video path
     video_path = video.output_file if video.output_file else None
     if not video_path or not os.path.exists(video_path):
@@ -181,21 +179,36 @@ async def export_to_supabase(
             except:
                 pass
     
+    # Add video information to metadata
+    metadata.update({
+        "video_title": video.title,
+        "video_description": video.description,
+        "video_source_url": video.source_url,
+        "video_created_at": video.created_at.isoformat() if video.created_at else None,
+        "video_updated_at": video.updated_at.isoformat() if video.updated_at else None,
+    })
+    
     # Export to Supabase format
     try:
+        # Use the enhanced export_recognition_results function that handles:
+        # - Exporting recognition results
+        # - Uploading full video
+        # - Speaker segmentation
+        # - Clip generation
+        # - Clip uploads
+        # - Metadata insertion
         export_result = export_recognition_results(
             video_id=video_id,
             recognition_results=recognition_results,
             video_path=video_path,
             metadata=metadata,
-            db_session=db  # Pass the database session for transcription lookup
+            db_session=db  # Pass the database session for transcription lookup and MP info
         )
         
         return {
             "success": True,
             "message": "Data exported to Supabase successfully",
-            "export_details": export_result,
-            "has_transcription": transcription is not None
+            "export_details": export_result
         }
     except Exception as e:
         logger.error(f"Error exporting data to Supabase: {str(e)}")
