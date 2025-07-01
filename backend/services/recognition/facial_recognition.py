@@ -38,6 +38,80 @@ class FacialRecognitionService:
         # Create directories if they don't exist
         self.mp_photos_dir.mkdir(parents=True, exist_ok=True)
         
+    def detect_faces_in_image(self, image_path: str) -> Dict[str, Any]:
+        """
+        Detect faces in an image file.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            Dict with detection results including faces found
+        """
+        try:
+            logger.info(f"Detecting faces in image: {image_path}")
+            
+            # Check if the image file exists
+            if not os.path.exists(image_path):
+                logger.error(f"Image file not found: {image_path}")
+                return {
+                    "success": False,
+                    "error": f"Image file not found: {image_path}",
+                    "detections": []
+                }
+                
+            # Load the image
+            image = face_recognition.load_image_file(image_path)
+            
+            # Find all faces in the image
+            face_locations = face_recognition.face_locations(image)
+            
+            if not face_locations:
+                logger.warning(f"No faces detected in {image_path}")
+                return {
+                    "success": False,
+                    "error": "No faces detected in the image",
+                    "detections": []
+                }
+                
+            # Generate face encodings
+            face_encodings = face_recognition.face_encodings(image, face_locations)
+            
+            # Create detection results
+            detections = []
+            for i, (face_location, face_encoding) in enumerate(zip(face_locations, face_encodings)):
+                top, right, bottom, left = face_location
+                face_width = right - left
+                face_height = bottom - top
+                
+                detections.append({
+                    "id": f"face_{i}",
+                    "confidence": 1.0,  # Default confidence
+                    "face_location": {
+                        "top": top,
+                        "right": right,
+                        "bottom": bottom,
+                        "left": left
+                    },
+                    "face_encoding": face_encoding.tolist(),
+                    "face_width": face_width,
+                    "face_height": face_height
+                })
+                
+            return {
+                "success": True,
+                "message": f"Detected {len(detections)} faces",
+                "detections": detections
+            }
+            
+        except Exception as e:
+            logger.exception(f"Error detecting faces in image: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "detections": []
+            }
+    
     def _extract_video_id_from_path(self, video_path: str) -> Optional[int]:
         """
         Extract video ID from the video file path.
