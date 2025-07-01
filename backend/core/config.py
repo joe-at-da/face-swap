@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     SUPABASE_URL: Optional[str] = None
     SUPABASE_API_KEY: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
-    SUPABASE_MEDIA_BUCKET: str = "parliament-tv-media"
-    SUPABASE_EXPORT_BUCKET: str = "parliament-tv-exports"
+    SUPABASE_MEDIA_BUCKET: str = "full_videos"
+    SUPABASE_EXPORT_BUCKET: str = "full_videos"
     SUPABASE_FULL_VIDEOS_BUCKET: str = "full_videos"
     SUPABASE_WEBHOOK_SECRET: Optional[str] = None
     SUPABASE_INTEGRATION_ENABLED: bool = False
