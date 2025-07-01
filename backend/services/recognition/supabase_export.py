@@ -109,6 +109,10 @@ def export_recognition_results(
     1. Creates a combined audio-video file for Supabase
     2. Exports recognition results to a JSON file
     3. Updates the metadata with export information
+    4. Uploads the full video to Supabase storage
+    5. Identifies speaking segments using the 60-second pause rule
+    6. Creates and uploads clips for each speaking segment
+    7. Inserts clip metadata into Supabase database
     
     Args:
         video_id: ID of the video
@@ -116,6 +120,7 @@ def export_recognition_results(
         video_path: Path to the video file
         audio_path: Path to the audio file (optional)
         metadata: Additional metadata (optional)
+        db_session: SQLAlchemy database session (optional)
         
     Returns:
         Dict with export status and paths
