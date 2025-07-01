@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.db.models import RecognitionProcess, ParliamentTranscription, CaptureSession
-from backend.services.recognition.av_utils import combine_audio_video
 from backend.db.session import SessionLocal
+from backend.services.av_combiner import combine_audio_video
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
