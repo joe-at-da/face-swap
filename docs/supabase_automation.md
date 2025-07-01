@@ -145,10 +145,19 @@ The system respects the separation of audio and video streams from Parliament TV
 
 The system implements the following logic to segment clips by speaker:
 
-1. Segments from the same speaker that are less than 60 seconds apart are merged
-2. Transcripts from merged segments are concatenated
-3. For overlapping segments, the highest confidence score is used
-4. Each speaker segment becomes a separate clip in the `parliament_member_clips` table
+1. **Speaker Identification**: The system combines facial recognition and voice recognition results to identify speakers in the video.
+
+2. **Segment Merging**: Segments from the same speaker that are less than 60 seconds apart are merged into a single clip. This handles cases where an MP briefly pauses during their speech.
+
+3. **Clip Boundaries**: A new clip is created when:
+   - A different MP starts speaking
+   - The same MP resumes speaking after a pause of more than 60 seconds
+
+4. **Transcript Extraction**: For each clip, the system extracts the relevant portion of the transcript based on the start and end timestamps.
+
+5. **Confidence Scoring**: Each clip includes a confidence score derived from the recognition results, indicating the system's confidence in the speaker identification.
+
+6. **Face-Voice Matching**: When both facial and voice recognition identify the same MP, the confidence score is increased. In cases of conflict, the system uses the recognition method with the higher confidence score.
 
 ## Usage Examples
 

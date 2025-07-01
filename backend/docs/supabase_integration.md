@@ -10,6 +10,9 @@ The following environment variables need to be configured for Supabase integrati
 SUPABASE_URL=your_supabase_url
 SUPABASE_API_KEY=your_supabase_api_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+SUPABASE_MEDIA_BUCKET=media
+SUPABASE_EXPORT_BUCKET=exports
+SUPABASE_FULL_VIDEOS_BUCKET=full_videos
 SUPABASE_INTEGRATION_ENABLED=true
 INTEGRATION_API_KEY=8448700525
 ```
@@ -95,6 +98,59 @@ The automated Parliament TV processing pipeline includes:
 3. Running combined facial and voice recognition
 4. Exporting recognition and transcription data to Supabase
 5. Uploading the full combined video to Supabase storage
+6. Processing recognition results to identify speaking segments
+7. Creating and uploading clips for each speaking segment
+
+## Speaker Segmentation Logic
+
+The system implements the following logic to identify speaking segments and create clips:
+
+1. **Speaker Identification**: The system combines facial recognition and voice recognition results to identify speakers in the video.
+
+2. **Segment Merging**: Segments from the same speaker that are less than 60 seconds apart are merged into a single clip. This handles cases where an MP briefly pauses during their speech.
+
+3. **Clip Boundaries**: A new clip is created when:
+   - A different MP starts speaking
+   - The same MP resumes speaking after a pause of more than 60 seconds
+
+4. **Transcript Extraction**: For each clip, the system extracts the relevant portion of the transcript based on the start and end timestamps.
+
+5. **Confidence Scoring**: Each clip includes a confidence score derived from the recognition results, indicating the system's confidence in the speaker identification.
+
+## Supabase Integration Components
+
+### SupabaseService Class
+
+The `SupabaseService` class in `backend/services/integration/supabase_client.py` provides the following functionality:
+
+- Authentication with Supabase using service role key
+- Uploading files to Supabase Storage buckets
+- Inserting data into Supabase tables
+- Getting public URLs for uploaded files
+
+### Recognition Export
+
+The `export_recognition_results` function in `backend/services/recognition/supabase_export.py` handles:
+
+- Creating a combined audio-video file for Supabase
+- Exporting recognition results to a JSON file
+- Combining recognition and transcription data
+- Creating speaker-attributed transcripts
+
+### Parliament Member Clips Table
+
+The `parliament_member_clips` table in Supabase stores the following information for each clip:
+
+- **member_id**: ID of the MP speaking
+- **transcript**: Text for the MP speaking
+- **full_video_path**: Path to the full video with audio
+- **start_timestamp**: When MP starts speaking (e.g., "00:10:53")
+- **end_timestamp**: When MP stops speaking (e.g., "00:11:43")
+- **duration_seconds**: Duration of the clip in seconds
+- **session_date**: Date of the parliamentary session
+- **session_type**: Type of parliamentary session
+- **debate_topic**: Topic of debate
+- **status**: Status of the clip (e.g., "pending_review", "approved", "rejected")
 
 ## Important Notes
 
@@ -102,3 +158,39 @@ The automated Parliament TV processing pipeline includes:
 - No derivation of audio URLs from video URLs; audio URLs are used as provided
 - The system uses real Parliament TV URLs, not test streams
 - Full video upload uses Supabase service role key for privileged storage access
+- All file paths within the Docker container use the `/app/` prefix (e.g., `/app/data/temp/`)
+- Transcription files are stored in `/app/data/temp/transcriptions/`
+- Audio files are stored in `/app/data/temp/audio_extracts/`
+- The system prefers to read transcription from files rather than database fields when available
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Authentication Errors**: Ensure the SUPABASE_SERVICE_ROLE_KEY is correctly set and has the necessary permissions.
+
+2. **File Access Issues**: Verify that file paths use the Docker container paths (`/app/data/...`) rather than local paths.
+
+3. **Transcription Parsing Errors**: The system expects Parliament TV transcriptions in the format `[HH:MM:SS - HH:MM:SS] Text`. If parsing fails, check the transcription format.
+
+4. **Missing Clips**: If clips are not being created, check that the recognition results contain both facial and voice recognition data, and that the speaker segmentation logic is correctly identifying speaking segments.
+
+### Logs and Debugging
+
+Detailed logs are available in the Docker container logs. To view them:
+
+```bash
+docker-compose -f docker-compose.dev.yml logs --tail=100 app
+```
+
+For more detailed logging, you can temporarily increase the log level in `backend/core/config.py`.
+
+## Future Enhancements
+
+1. **Webhook Notifications**: Implement webhook notifications for completed processing.
+
+2. **Batch Processing**: Add support for batch processing multiple Parliament TV URLs.
+
+3. **Advanced Speaker Identification**: Enhance speaker identification with additional ML models.
+
+4. **Automatic Clip Publishing**: Integrate with social media platforms for automatic clip publishing.
