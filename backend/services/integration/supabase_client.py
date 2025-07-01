@@ -5,7 +5,7 @@ for working with Supabase storage, database, and queues.
 """
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from supabase import create_client, Client
 from backend.core.config import settings
