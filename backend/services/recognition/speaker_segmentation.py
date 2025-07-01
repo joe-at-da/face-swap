@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from backend.db import models
-from backend.services.recognition.face_profile import FaceProfileService
+from backend.services.recognition.face_profile_service import FaceProfileService
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

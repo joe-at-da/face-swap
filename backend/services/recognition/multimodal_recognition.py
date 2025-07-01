@@ -658,3 +658,69 @@ class MultimodalRecognitionService:
         except Exception as e:
             logger.exception(f"Error identifying speaker in frame: {str(e)}")
             return {"success": False, "error": str(e), "supabase_export": {"enabled": False, "error": str(e)}}
+            
+    def get_recognition_results(self, video_id: int) -> Dict[str, Any]:
+        """
+        Get recognition results for a video.
+        
+        Args:
+            video_id: ID of the video to get results for
+            
+        Returns:
+            Dictionary with recognition results
+        """
+        try:
+            logger.info(f"Getting recognition results for video {video_id}")
+            
+            # Get database session
+            from backend.db.session import get_db
+            from sqlalchemy.orm import Session
+            
+            db_generator = get_db()
+            db: Session = next(db_generator)
+            
+            # Get the recognition process from the database
+            recognition_process = db.query(models.RecognitionProcess).filter(
+                models.RecognitionProcess.video_id == video_id,
+                models.RecognitionProcess.process_type == "multimodal"
+            ).order_by(models.RecognitionProcess.created_at.desc()).first()
+            
+            if not recognition_process:
+                logger.error(f"No recognition process found for video {video_id}")
+                return {}
+            
+            # Get the recognition results
+            results = {}
+            if recognition_process.results:
+                try:
+                    # Use the make_json_serializable function to handle all result types
+                    results = make_json_serializable(recognition_process.results)
+                    
+                    # If results is still a string after serialization, parse it as JSON
+                    if isinstance(results, str):
+                        try:
+                            results = json.loads(results)
+                        except json.JSONDecodeError as json_error:
+                            logger.error(f"Error parsing results JSON string: {str(json_error)}")
+                            # If it's not valid JSON, use it as a simple value
+                            results = {"value": results}
+                    
+                    # Ensure results is a dictionary
+                    if not isinstance(results, dict):
+                        results = {"value": str(results)}
+                        
+                    logger.info(f"Successfully processed results for video {video_id}")
+                except Exception as e:
+                    logger.error(f"Error processing recognition results: {str(e)}")
+                    return {}
+            
+            # Get the timeline data
+            timeline_data = self.timeline_service.get_timeline_data(db, video_id)
+            if timeline_data:
+                results["timeline"] = timeline_data
+            
+            return results
+            
+        except Exception as e:
+            logger.exception(f"Error getting recognition results: {str(e)}")
+            return {}
