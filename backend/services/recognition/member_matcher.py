@@ -2,13 +2,13 @@
 Module for matching unidentified speakers with parliament members based on facial recognition
 """
 import os
-import json
 import logging
+import json
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
-
 from sqlalchemy.orm import Session
+
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.recognition.face_recognition import FaceRecognitionService
 
@@ -20,19 +20,39 @@ class ParliamentMemberMatcher:
     based on facial recognition and other available data.
     """
     
-    def __init__(self, db: Session, supabase_service: SupabaseService):
+    def __init__(self, supabase_service: SupabaseService = None, db_session=None):
         """
-        Initialize the matcher with database session and Supabase service
+        Initialize the parliament member matcher
         
         Args:
-            db: Database session
-            supabase_service: Initialized Supabase service with appropriate permissions
+            supabase_service: Supabase service for database operations
+            db_session: SQLAlchemy database session for local database operations
         """
-        self.db = db
-        self.supabase = supabase_service
+        self.supabase = supabase_service or SupabaseService()
         self.face_recognition = FaceRecognitionService()
-        self.member_embeddings = {}
+        
+        # Get database session if not provided
+        if db_session is None:
+            from backend.db.session import get_db
+            db_gen = get_db()
+            self.db = next(db_gen)
+            self._close_db = lambda: next(db_gen, None)
+        else:
+            self.db = db_session
+            self._close_db = lambda: None
+        
+        # Import json for handling face embeddings
+        import json
+        
+        # Store member data and embeddings
         self.member_data = {}
+        self.member_embeddings = {}
+        
+        # Default confidence threshold for face matching
+        self.confidence_threshold = 0.6
+        
+        # Load parliament members
+        self.load_parliament_members()
         
     def load_parliament_members(self) -> bool:
         """
@@ -51,10 +71,18 @@ class ParliamentMemberMatcher:
                 
             logger.info(f"Loaded {len(response.data)} parliament members from Supabase")
             
+            members_with_embeddings = 0
+            members_with_photos = 0
+            members_without_photos = 0
+            
             # Process each member
             for member in response.data:
                 member_id = member.get('id')
                 if not member_id:
+                    continue
+                    
+                # Skip default members (unidentified speakers)
+                if member.get('is_default_member'):
                     continue
                     
                 # Store member data for reference
@@ -65,12 +93,26 @@ class ParliamentMemberMatcher:
                     'image_url': member.get('image_url')
                 }
                 
-                # If member has an image URL, process it for face embedding
+                # Check if member already has face embedding
+                face_embedding = member.get('face_embedding')
+                if face_embedding:
+                    # Store the embedding directly
+                    self.member_embeddings[member_id] = face_embedding
+                    members_with_embeddings += 1
+                    continue
+                
+                # If no embedding but has image URL, process it
                 image_url = member.get('image_url')
                 if image_url:
+                    members_with_photos += 1
                     self._process_member_image(member_id, image_url)
+                else:
+                    members_without_photos += 1
             
-            logger.info(f"Processed {len(self.member_embeddings)} member images for face matching")
+            logger.info(f"Members with embeddings: {members_with_embeddings}")
+            logger.info(f"Members with photos but no embeddings: {members_with_photos}")
+            logger.info(f"Members without photos: {members_without_photos}")
+            logger.info(f"Total members with embeddings after processing: {len(self.member_embeddings)}")
             return True
             
         except Exception as e:
@@ -86,8 +128,12 @@ class ParliamentMemberMatcher:
             image_url: URL to the member's image
         """
         try:
-            # Download image if it's a remote URL
-            if image_url.startswith('http'):
+            # Check if the image path exists
+            if not image_url.startswith('http') and os.path.exists(image_url):
+                # Use existing local path
+                image_path = image_url
+            elif image_url.startswith('http'):
+                # Download image if it's a remote URL
                 import requests
                 from io import BytesIO
                 from PIL import Image
@@ -98,24 +144,63 @@ class ParliamentMemberMatcher:
                     return
                     
                 image = Image.open(BytesIO(response.content))
-                image_path = f"/app/data/temp/member_images/{member_id}.jpg"
+                image_path = f"/app/data/mp_photos/{member_id}.jpg"
                 os.makedirs(os.path.dirname(image_path), exist_ok=True)
                 image.save(image_path)
             else:
-                # Use local path if it's not a remote URL
-                image_path = image_url
+                # Path doesn't exist
+                logger.warning(f"Image path does not exist for member {member_id}: {image_url}")
+                return
                 
             # Extract face embedding using the face recognition service
             face_data = self.face_recognition.extract_face_embedding(image_path)
             
             if face_data and 'embedding' in face_data:
+                # Store the embedding for matching
                 self.member_embeddings[member_id] = face_data['embedding']
-                logger.info(f"Successfully extracted face embedding for member {member_id}")
+                
+                # Update the member in Supabase with the embedding if it's not already there
+                try:
+                    response = self.supabase.client.table('parliament_members').select('face_embedding').eq('id', member_id).execute()
+                    if response.data and not response.data[0].get('face_embedding'):
+                        update_data = {
+                            'face_embedding': face_data['embedding'],
+                            'image_url': image_path  # Ensure image_url is updated to the local path
+                        }
+                        self.supabase.client.table('parliament_members').update(update_data).eq('id', member_id).execute()
+                        logger.info(f"Updated face embedding and image URL for member {member_id} in Supabase")
+                except Exception as e:
+                    logger.warning(f"Failed to update face embedding in Supabase: {str(e)}")
+                    
+                # Also update the local database if it exists
+                try:
+                    from sqlalchemy import text
+                    # Check if speakers table exists
+                    result = self.db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='speakers'")).fetchone()
+                    if result:
+                        # Get member name
+                        member_name = self.member_data.get(member_id, {}).get('name', 'Unknown')
+                        # Update or insert into speakers table
+                        self.db.execute(
+                            text("INSERT OR REPLACE INTO speakers (parliament_id, name, photo_url, face_encoding) VALUES (:parliament_id, :name, :photo_url, :face_encoding)"),
+                            {
+                                "parliament_id": member_id,
+                                "name": member_name,
+                                "photo_url": image_path,
+                                "face_encoding": json.dumps(face_data['embedding'])
+                            }
+                        )
+                        self.db.commit()
+                        logger.info(f"Updated local database record for member {member_id}")
+                except Exception as e:
+                    logger.warning(f"Could not update local database: {str(e)}")
             else:
                 logger.warning(f"No face detected in image for member {member_id}")
                 
         except Exception as e:
             logger.error(f"Error processing image for member {member_id}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             
     def match_unidentified_speakers(self, video_id: int, save_unmatched: bool = True) -> Dict[str, Any]:
         """
@@ -279,59 +364,34 @@ class ParliamentMemberMatcher:
         Returns:
             Dictionary with match results
         """
-        # Check if we have face data
-        if not face_data:
+        # Check if we have face embedding
+        if not face_data or 'embedding' not in face_data:
             return {
                 "matched": False,
-                "reason": "No face data available"
+                "reason": "No face embedding provided"
             }
             
-        # Check if we have an embedding
-        face_embedding = face_data.get('embedding')
-        if not face_embedding:
-            return {
-                "matched": False,
-                "reason": "No face embedding available"
-            }
-            
-        # Find the best matching member
+        # Get the face embedding
+        face_embedding = face_data['embedding']
+        
+        # Find the best match
         best_match_id = None
-        best_match_score = 0
+        best_match_score = 0.0
         
-        # If we don't have any member embeddings, we can't match
-        if not self.member_embeddings:
-            return {
-                "matched": False,
-                "reason": "No member embeddings available for matching"
-            }
-        
-        # Normalize house name for comparison
-        normalized_house = house.lower() if house else 'unknown'
-        
+        # Iterate through all member embeddings
         for member_id, member_embedding in self.member_embeddings.items():
-            # Skip members from different house if house is known and not 'unknown'
-            if normalized_house != 'unknown':
-                member_house = self.member_data.get(member_id, {}).get('house', '')
-                if member_house and member_house.lower() != normalized_house:
-                    continue
-                    
-            # Convert member embedding to numpy array if it's not already
-            if isinstance(member_embedding, list):
-                member_embedding = np.array(member_embedding)
+            # Skip members from different houses if house is specified
+            if house != 'unknown' and self.member_data.get(member_id, {}).get('house') != house:
+                continue
                 
-            # Calculate similarity score (cosine similarity)
             try:
-                # Ensure both embeddings are normalized
-                norm_face = np.linalg.norm(face_embedding)
-                norm_member = np.linalg.norm(member_embedding)
+                # Calculate similarity
+                similarity = self._compute_similarity(face_embedding, member_embedding)
                 
-                if norm_face > 0 and norm_member > 0:
-                    similarity = np.dot(face_embedding, member_embedding) / (norm_face * norm_member)
-                    
-                    # Update best match if this is better
-                    if similarity > best_match_score:
-                        best_match_score = similarity
-                        best_match_id = member_id
+                # Update best match if this is better
+                if similarity > best_match_score:
+                    best_match_score = similarity
+                    best_match_id = member_id
             except Exception as e:
                 logger.error(f"Error calculating similarity for member {member_id}: {str(e)}")
                 
@@ -349,19 +409,43 @@ class ParliamentMemberMatcher:
                 "reason": f"No match found with sufficient confidence (best: {best_match_score:.2f}, threshold: {confidence_threshold})"
             }
             
-    def _get_default_member_for_house(self, house: str) -> Optional[Dict[str, Any]]:
+    def _compute_similarity(self, embedding1, embedding2):
+        """
+        Compute similarity between two face embeddings
+        
+        Args:
+            embedding1: First face embedding
+            embedding2: Second face embedding
+            
+        Returns:
+            Similarity score (0.0-1.0)
+        """
+        # Convert to numpy arrays
+        emb1 = np.array(embedding1)
+        emb2 = np.array(embedding2)
+        
+        # Normalize embeddings
+        emb1 = emb1 / np.linalg.norm(emb1)
+        emb2 = emb2 / np.linalg.norm(emb2)
+        
+        # Compute cosine similarity
+        similarity = np.dot(emb1, emb2)
+        
+        return float(similarity)
+            
+    def _get_default_member_for_house(self, house_id: str) -> Optional[str]:
         """
         Get or create a default member for unidentified speakers in a specific house
         
         Args:
-            house: House (commons or lords) to get default member for
+            house_id: ID of the house (commons, lords, etc.)
             
         Returns:
-            Dictionary with default member data or None if not found/created
+            ID of the default member or None if failed
         """
         try:
-            # Normalize house name
-            normalized_house = house.lower() if house else 'unknown'
+            # Normalize house ID
+            normalized_house = house_id.lower() if house_id else 'unknown'
             
             # Define default member names based on house
             default_member_names = {
@@ -373,42 +457,80 @@ class ParliamentMemberMatcher:
             # Get the appropriate default member name
             default_name = default_member_names.get(normalized_house, default_member_names['unknown'])
             
-            # Check if we already have a default member for this house
-            response = self.supabase.client.table('parliament_members') \
-                .select('*') \
-                .eq('name', default_name) \
-                .execute()
+            # First, get all members and check if we have an unidentified member already
+            # This is less efficient but avoids issues with UUID and LIKE operator
+            response = self.supabase.client.table('parliament_members').select('*').execute()
+            
+            if response.data:
+                # Check for existing unidentified members for this house
+                for member in response.data:
+                    member_id = member.get('id', '')
+                    member_display_name = member.get('display_name', '')
+                    member_house = member.get('house_id', '')
+                    
+                    # Check if this looks like an unidentified member for our house
+                    if (member_display_name and default_name in member_display_name and 
+                            member_house == normalized_house):
+                        logger.info(f"Found existing default member for house {house_id}: {member_id}")
+                        return member_id
+            
+            # If no default member exists for this house, create one with a UUID
+            import uuid
+            member_id = str(uuid.uuid4())
+            
+            # Create a new default member with available columns
+            # First, let's check the available columns
+            columns_response = self.supabase.client.table('parliament_members').select('*').limit(1).execute()
+            
+            if columns_response.data:
+                # Get the column names from the first record
+                sample_record = columns_response.data[0]
+                column_names = list(sample_record.keys())
+                logger.info(f"Available columns in parliament_members: {column_names}")
                 
-            if response.data and len(response.data) > 0:
-                # Return existing default member
-                return {
-                    'id': response.data[0]['id'],
-                    'name': response.data[0]['name'],
-                    'house': normalized_house
-                }
-            
-            # If no default member exists, create one
-            new_member = {
-                'name': default_name,
-                'house_id': normalized_house if normalized_house in ['commons', 'lords'] else None,
-                'is_default_member': True,
-                'created_at': datetime.now().isoformat()
-            }
-            
-            # Insert the new default member
-            response = self.supabase.client.table('parliament_members').insert(new_member).execute()
-            
-            if response.data and len(response.data) > 0:
-                return {
-                    'id': response.data[0]['id'],
-                    'name': response.data[0]['name'],
-                    'house': normalized_house
+                # Create a new member with appropriate columns
+                # Generate a random integer for member_id (since it's an integer type)
+                import random
+                random_member_id = random.randint(9000000, 9999999)  # Use a high range to avoid conflicts
+                
+                new_member = {
+                    'id': member_id,
+                    'member_id': random_member_id  # This must be an integer
                 }
                 
+                # Add display_name if available
+                if 'display_name' in column_names:
+                    new_member['display_name'] = default_name
+                elif 'full_name' in column_names:
+                    new_member['full_name'] = default_name
+                elif 'family_name' in column_names:
+                    new_member['family_name'] = default_name
+                
+                # Add house_id if available
+                if 'house_id' in column_names:
+                    new_member['house_id'] = normalized_house if normalized_house in ['commons', 'lords'] else None
+                
+                # Add other required fields
+                if 'is_current_member' in column_names:
+                    new_member['is_current_member'] = True
+                
+                if 'created_at' in column_names:
+                    new_member['created_at'] = datetime.now().isoformat()
+                
+                # Insert the new default member
+                logger.info(f"Creating default member with data: {new_member}")
+                response = self.supabase.client.table('parliament_members').insert(new_member).execute()
+                
+                if response.data and len(response.data) > 0:
+                    logger.info(f"Created default member for house {house_id} with ID {member_id}")
+                    return member_id
+            
             return None
             
         except Exception as e:
-            logger.error(f"Error getting/creating default member for house {house}: {str(e)}")
+            logger.error(f"Error getting/creating default member for house {house_id}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
             
     def process_all_unidentified_videos(self) -> Dict[str, Any]:
