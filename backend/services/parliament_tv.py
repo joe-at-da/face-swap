@@ -630,8 +630,10 @@ class ParliamentTVCapture:
             # Store the output file path in the database
             # Make sure we're using a consistent output path
             output_file = str(output_path)  # Use the same output path throughout
-            db_capture.file_path = output_file
+            db_capture.file_path = output_file  # Legacy field
+            db_capture.video_path = output_file  # Current field used by recognition process
             db.commit()
+            logger.info(f"Updated capture {capture_id} with file_path and video_path: {output_file}")
             
             # Add duration limit - place it BEFORE the output file but AFTER input options
             # For recorded streams with a time marker, this is the exact duration to capture
