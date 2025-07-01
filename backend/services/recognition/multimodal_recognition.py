@@ -612,7 +612,7 @@ class MultimodalRecognitionService:
                     
                     # Get all speaker appearances for this video
                     speaker_identifications = db.query(models.SpeakerIdentification).filter(
-                        models.SpeakerIdentification.video_id == video_id
+                        models.SpeakerIdentification.capture_session_id == video_id
                     ).all()
                     
                     for identification in speaker_identifications:
