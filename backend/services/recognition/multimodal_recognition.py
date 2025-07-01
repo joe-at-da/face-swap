@@ -609,7 +609,7 @@ class MultimodalRecognitionService:
             
             # Use the facial recognition service to identify speakers
             face_results = self.facial_recognition.identify_speakers(
-                image_path=frame_path,
+                video_path=frame_path,
                 threshold=threshold
             )
             
