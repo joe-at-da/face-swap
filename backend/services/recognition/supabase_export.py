@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.db.models import RecognitionProcess, ParliamentTranscription, CaptureSession, models
+from backend.db.models import RecognitionProcess, ParliamentTranscription, CaptureSession
 from backend.services.recognition.av_utils import combine_audio_video
 from backend.db.session import SessionLocal
 
@@ -321,15 +321,16 @@ def export_recognition_results(
             )
             
             # Get MP information
-            mp = db_session.query(models.ParliamentMember).filter(
-                models.ParliamentMember.id == segment["speaker_id"]
+            from backend.db.models import ParliamentMember
+            mp = db_session.query(ParliamentMember).filter(
+                ParliamentMember.id == segment["speaker_id"]
             ).first() if db_session else None
             
             mp_name = mp.name if mp else "Unknown MP"
             
             # Get video information
-            video = db_session.query(models.CaptureSession).filter(
-                models.CaptureSession.id == video_id
+            video = db_session.query(CaptureSession).filter(
+                CaptureSession.id == video_id
             ).first() if db_session else None
             
             # Create clip metadata
