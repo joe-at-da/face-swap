@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session
 from backend.core.config import settings
 from backend.db.models import RecognitionProcess, ParliamentTranscription, CaptureSession
 from backend.db.session import SessionLocal
+# TODO: There are multiple implementations of combine_audio_video in the codebase
+#       (in av_combiner.py, media/av_combiner.py, and video/processor.py).
+#       These should be consolidated into a single implementation in a future refactoring.
 from backend.services.av_combiner import combine_audio_video
 
 # Set up logging
