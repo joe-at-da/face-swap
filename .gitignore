@@ -48,6 +48,8 @@ Thumbs.db
 uploads/
 temp/
 *.mp4
+*.onnx
+models/face_recognition/*.onnx
 *.avi
 *.mov
 data

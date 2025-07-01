@@ -29,8 +29,15 @@ RUN pip install --no-cache-dir yt-dlp
 # Copy project files
 COPY . .
 
-# Create media directory
-RUN mkdir -p /app/media/clips /app/media/captures /app/media/thumbnails
+# Create required directories
+RUN mkdir -p /app/media/clips /app/media/captures /app/media/thumbnails \
+    /app/data/mp_photos \
+    /app/data/temp/recognition \
+    /app/data/temp/audio_extracts \
+    /app/data/temp/transcriptions \
+    /app/data/media \
+    /app/data/voice_profiles \
+    /app/models/face_recognition
 
 # Expose port
 EXPOSE 8000
