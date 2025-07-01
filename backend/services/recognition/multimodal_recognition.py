@@ -457,20 +457,24 @@ class MultimodalRecognitionService:
             # Ensure member matcher has loaded parliament members
             if not hasattr(self, 'member_matcher') or self.member_matcher is None:
                 self.member_matcher = ParliamentMemberMatcher(db)
-                logger.info(f"Initialized ParliamentMemberMatcher for video {video_id}")
             
-            # Process each segment from the transcription
+            # Initialize data structures for tracking faces and recognition events
+            faces_by_speaker = {}
+            faces_by_time = {}
+            recognition_events = []
+            correlations = []
+            speaker_to_face_profile = {}
+            
+            # Process each segment
             for segment in segments:
-                # Get start and end time from segment
-                start_time = segment.get("start")
-                end_time = segment.get("end")
-                speaker = segment.get("speaker", "Unknown")
+                speaker = segment.get("speaker", "unknown")
+                start_time = segment.get("start", 0)
+                end_time = segment.get("end", 0)
                 
-                # Skip segments with no start or end time
-                if start_time is None or end_time is None:
-                    logger.warning(f"Skipping segment with missing timing information: {segment}")
+                # Skip segments that are too short
+                if end_time - start_time < 1.0:
                     continue
-                
+                    
                 # Determine frame extraction interval based on segment duration
                 segment_duration = end_time - start_time
                 if segment_duration < 10:
