@@ -20,13 +20,11 @@
                                                         }
                                                 ],
                                                 "url": {
-                                                        "raw": "{{base_url}}/api/v1/supabase/export-to-supabase/{{video_id}}",
+                                                        "raw": "{{base_url}}/supabase/export-to-supabase/{{video_id}}",
                                                         "host": [
                                                                 "{{base_url}}"
                                                         ],
                                                         "path": [
-                                                                "api",
-                                                                "v1",
                                                                 "supabase",
                                                                 "export-to-supabase",
                                                                 "{{video_id}}"
@@ -47,13 +45,11 @@
                                                         }
                                                 ],
                                                 "url": {
-                                                        "raw": "{{base_url}}/api/v1/supabase/status/{{video_id}}",
+                                                        "raw": "{{base_url}}/supabase/status/{{video_id}}",
                                                         "host": [
                                                                 "{{base_url}}"
                                                         ],
                                                         "path": [
-                                                                "api",
-                                                                "v1",
                                                                 "supabase",
                                                                 "status",
                                                                 "{{video_id}}"
@@ -92,13 +88,11 @@
                                                         }
                                                 },
                                                 "url": {
-                                                        "raw": "{{base_url}}/api/v1/supabase-automation/process-parliament-tv",
+                                                        "raw": "{{base_url}}/supabase-automation/process-parliament-tv",
                                                         "host": [
                                                                 "{{base_url}}"
                                                         ],
                                                         "path": [
-                                                                "api",
-                                                                "v1",
                                                                 "supabase-automation",
                                                                 "process-parliament-tv"
                                                         ]
@@ -136,13 +130,11 @@
                                                         }
                                                 },
                                                 "url": {
-                                                        "raw": "{{base_url}}/api/v1/supabase/webhooks/process-video",
+                                                        "raw": "{{base_url}}/supabase/webhooks/process-video",
                                                         "host": [
                                                                 "{{base_url}}"
                                                         ],
                                                         "path": [
-                                                                "api",
-                                                                "v1",
                                                                 "supabase",
                                                                 "webhooks",
                                                                 "process-video"
@@ -176,13 +168,11 @@
                                                         }
                                                 },
                                                 "url": {
-                                                        "raw": "{{base_url}}/api/v1/supabase/webhooks/transcription-status",
+                                                        "raw": "{{base_url}}/supabase/webhooks/transcription-status",
                                                         "host": [
                                                                 "{{base_url}}"
                                                         ],
                                                         "path": [
-                                                                "api",
-                                                                "v1",
                                                                 "supabase",
                                                                 "webhooks",
                                                                 "transcription-status"
@@ -205,13 +195,11 @@
                                         }
                                 ],
                                 "url": {
-                                        "raw": "{{base_url}}/api/v1/integration/recognition/{{video_id}}",
+                                        "raw": "{{base_url}}/integration/recognition/{{video_id}}",
                                         "host": [
                                                 "{{base_url}}"
                                         ],
                                         "path": [
-                                                "api",
-                                                "v1",
                                                 "integration",
                                                 "recognition",
                                                 "{{video_id}}"
@@ -232,13 +220,11 @@
                                         }
                                 ],
                                 "url": {
-                                        "raw": "{{base_url}}/api/v1/integration/videos?limit=10&offset=0&status=completed",
+                                        "raw": "{{base_url}}/integration/videos?limit=10&offset=0&status=completed",
                                         "host": [
                                                 "{{base_url}}"
                                         ],
                                         "path": [
-                                                "api",
-                                                "v1",
                                                 "integration",
                                                 "videos"
                                         ],
@@ -273,13 +259,11 @@
                                         }
                                 ],
                                 "url": {
-                                        "raw": "{{base_url}}/api/v1/media/file?path={{file_path}}",
+                                        "raw": "{{base_url}}/media/file?path={{file_path}}",
                                         "host": [
                                                 "{{base_url}}"
                                         ],
                                         "path": [
-                                                "api",
-                                                "v1",
                                                 "media",
                                                 "file"
                                         ],

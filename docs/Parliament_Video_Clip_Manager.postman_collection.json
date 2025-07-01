@@ -912,13 +912,11 @@
 							}
 						],
 						"url": {
-							"raw": "{{base_url}}/api/v1/supabase/export-to-supabase/{{video_id}}",
+							"raw": "{{base_url}}/supabase/export-to-supabase/{{video_id}}",
 							"host": [
 								"{{base_url}}"
 							],
 							"path": [
-								"api",
-								"v1",
 								"supabase",
 								"export-to-supabase",
 								"{{video_id}}"
@@ -940,13 +938,11 @@
 							}
 						],
 						"url": {
-							"raw": "{{base_url}}/api/v1/supabase/status/{{video_id}}",
+							"raw": "{{base_url}}/supabase/status/{{video_id}}",
 							"host": [
 								"{{base_url}}"
 							],
 							"path": [
-								"api",
-								"v1",
 								"supabase",
 								"status",
 								"{{video_id}}"
@@ -988,13 +984,11 @@
 							}
 						},
 						"url": {
-							"raw": "{{base_url}}/api/v1/supabase-automation/process-parliament-tv",
+							"raw": "{{base_url}}/supabase-automation/process-parliament-tv",
 							"host": [
 								"{{base_url}}"
 							],
 							"path": [
-								"api",
-								"v1",
 								"supabase-automation",
 								"process-parliament-tv"
 							]
@@ -1034,13 +1028,11 @@
 							}
 						},
 						"url": {
-							"raw": "{{base_url}}/api/v1/supabase/webhooks/process-video",
+							"raw": "{{base_url}}/supabase/webhooks/process-video",
 							"host": [
 								"{{base_url}}"
 							],
 							"path": [
-								"api",
-								"v1",
 								"supabase",
 								"webhooks",
 								"process-video"
@@ -1076,13 +1068,11 @@
 							}
 						},
 						"url": {
-							"raw": "{{base_url}}/api/v1/supabase/webhooks/transcription-status",
+							"raw": "{{base_url}}/supabase/webhooks/transcription-status",
 							"host": [
 								"{{base_url}}"
 							],
 							"path": [
-								"api",
-								"v1",
 								"supabase",
 								"webhooks",
 								"transcription-status"
