@@ -5,10 +5,13 @@ for working with Supabase storage, database, and queues.
 """
 
 import os
+import logging
 from typing import Dict, Any, Optional, List
 
 from supabase import create_client, Client
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 def get_supabase_client(use_service_role: bool = False) -> Client:
     """
