@@ -125,26 +125,28 @@ class SupabaseService:
         """
         return self.client.storage.from_(bucket).get_public_url(path)
         
-    def upload_full_video(self, file_path: str, destination_path: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Upload a full video to the full_videos bucket in Supabase Storage.
-        Uses service role key for admin access.
-        
-        Args:
-            file_path: Local path to the video file
-            destination_path: Path in the bucket where the file should be stored
-                             If None, uses the basename of the file_path
-                             
-        Returns:
-            Response from Supabase Storage with upload details
-        """
-        if file_path is None:
-            logger.warning("No video file path provided for upload")
-            return {"success": False, "error": "No file path provided"}
+    def upload_full_video(self, file_path: str, destination_path: str) -> Dict[str, Any]:
+        """Upload a full video file to Supabase storage."""
+        if not file_path:
+            logger.warning("Video file path is None")
+            return {"success": False, "error": "File path is None"}
             
+        # Check if the file exists with the provided path
         if not os.path.exists(file_path):
-            logger.warning(f"Video file not found: {file_path}")
-            return {"success": False, "error": f"File not found: {file_path}"}
+            # Try alternative naming pattern
+            # If the path is like /app/data/media/parliament_tv_467.mp4, try /app/data/media/467.mp4
+            if 'parliament_tv_' in file_path:
+                capture_id = file_path.split('parliament_tv_')[-1].split('.')[0]
+                alternative_path = os.path.join(os.path.dirname(file_path), f"{capture_id}.mp4")
+                if os.path.exists(alternative_path):
+                    logger.info(f"Using alternative file path: {alternative_path}")
+                    file_path = alternative_path
+                else:
+                    logger.warning(f"Video file not found at either path: {file_path} or {alternative_path}")
+                    return {"success": False, "error": f"File not found: {file_path}"}
+            else:
+                logger.warning(f"Video file not found: {file_path}")
+                return {"success": False, "error": f"File not found: {file_path}"}
             
         # Use the file's basename if no destination path is provided
         if destination_path is None:

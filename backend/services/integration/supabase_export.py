@@ -236,6 +236,17 @@ def export_recognition_results(
     combined_dir = os.path.join(media_dir, "combined")
     os.makedirs(combined_dir, exist_ok=True)
     
+    # Check if the video file exists with the provided path
+    if not os.path.exists(video_path):
+        # Try alternative naming pattern
+        # If the path is like /app/data/media/parliament_tv_467.mp4, try /app/data/media/467.mp4
+        if 'parliament_tv_' in video_path:
+            capture_id = video_path.split('parliament_tv_')[-1].split('.')[0]
+            alternative_path = os.path.join(os.path.dirname(video_path), f"{capture_id}.mp4")
+            if os.path.exists(alternative_path):
+                logger.info(f"Using alternative video file path: {alternative_path}")
+                video_path = alternative_path
+    
     # Get paths for video and audio using Docker container paths
     video_url = video_path  # Use the full path directly
     audio_url = video_metadata.get("audio_url", "")
