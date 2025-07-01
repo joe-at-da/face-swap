@@ -7,13 +7,15 @@ This document provides instructions for setting up and using the Supabase integr
 The following environment variables need to be configured for Supabase integration:
 
 ```
-SUPABASE_URL=your_supabase_url
-SUPABASE_API_KEY=your_supabase_api_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-SUPABASE_MEDIA_BUCKET=media
-SUPABASE_EXPORT_BUCKET=exports
-SUPABASE_FULL_VIDEOS_BUCKET=full_videos
+SUPABASE_URL="http://127.0.0.1:54321"
+SUPABASE_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+SUPABASE_MEDIA_BUCKET="parliament-tv-media"
+SUPABASE_EXPORT_BUCKET="parliament-tv-exports"
+SUPABASE_FULL_VIDEOS_BUCKET="full_videos"
+SUPABASE_WEBHOOK_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
 SUPABASE_INTEGRATION_ENABLED=true
+SUPABASE_STORAGE_URL="http://127.0.0.1:54321/storage/v1/s3"
 INTEGRATION_API_KEY=8448700525
 ```
 

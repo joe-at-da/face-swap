@@ -18,11 +18,16 @@ The Parliament TV Supabase Automation feature provides a unified API endpoint th
 To use this feature, ensure the following environment variables are configured:
 
 ```
-SUPABASE_URL=your-supabase-url
-SUPABASE_API_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+SUPABASE_URL="http://127.0.0.1:54321"
+SUPABASE_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+SUPABASE_MEDIA_BUCKET="parliament-tv-media"
+SUPABASE_EXPORT_BUCKET="parliament-tv-exports"
+SUPABASE_FULL_VIDEOS_BUCKET="full_videos"
+SUPABASE_WEBHOOK_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
 SUPABASE_INTEGRATION_ENABLED=true
-INTEGRATION_API_KEY=your-api-key-for-authentication
+SUPABASE_STORAGE_URL="http://127.0.0.1:54321/storage/v1/s3"
+INTEGRATION_API_KEY=8448700525
 ```
 
 The `SUPABASE_SERVICE_ROLE_KEY` is used server-side only for privileged operations like uploading full videos.
