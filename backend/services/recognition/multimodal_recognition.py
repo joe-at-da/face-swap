@@ -548,8 +548,15 @@ class MultimodalRecognitionService:
                         correlations.append(correlation)
                         speaker_to_face_profile[speaker] = correlation
             
-            # Create a timeline of recognition events
-            timeline = self.timeline_service.create_timeline(db, video_id, recognition_events)
+            # Store recognition events in the timeline
+            for event in recognition_events:
+                if event.get("type") == "face":
+                    self.timeline_service.store_face_detection(db, video_id, event)
+                elif event.get("type") == "speaker":
+                    self.timeline_service.store_speaker_segment(db, video_id, event)
+                    
+            # Update the timeline data with correlations
+            timeline = self.timeline_service.update_timeline_data(db, video_id)
             
             # Update the recognition process status
             recognition_process = db.query(models.RecognitionProcess).filter(
@@ -602,7 +609,6 @@ class MultimodalRecognitionService:
             
             # Use the facial recognition service to identify speakers
             face_results = self.facial_recognition.identify_speakers(
-                db=db,
                 image_path=frame_path,
                 threshold=threshold
             )
