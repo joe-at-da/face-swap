@@ -203,8 +203,7 @@ class ParliamentMemberMatcher:
             logger.error(traceback.format_exc())
             
     def match_unidentified_speakers(self, video_id: int, save_unmatched: bool = True) -> Dict[str, Any]:
-        """
-        Match unidentified speakers from a video with parliament members
+        """Match unidentified speakers from a video with parliament members
         
         Args:
             video_id: ID of the video with unidentified speakers
@@ -213,6 +212,52 @@ class ParliamentMemberMatcher:
         Returns:
             Dictionary with results of the matching process
         """
+        # Import models here to avoid circular imports
+        from backend.db.models import SpeakerIdentification, SpeakerAppearance, Speaker
+        from datetime import datetime
+        
+        # Create a SpeakerIdentification record for this video if it doesn't exist
+        try:
+            # First check if the record exists
+            speaker_identification = self.db.query(SpeakerIdentification).filter(SpeakerIdentification.id == video_id).first()
+            
+            if not speaker_identification:
+                # Get the capture session ID from the video clip
+                from backend.db.models import VideoClip
+                video_clip = self.db.query(VideoClip).filter(VideoClip.id == video_id).first()
+                capture_session_id = video_clip.capture_session_id if video_clip else None
+                
+                # If we can't find a capture session, create one
+                if not capture_session_id:
+                    from backend.db.models import CaptureSession
+                    capture_session = CaptureSession(
+                        user_id=1,  # Default to user ID 1
+                        status='completed',
+                        created_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow()
+                    )
+                    self.db.add(capture_session)
+                    self.db.commit()
+                    self.db.refresh(capture_session)
+                    capture_session_id = capture_session.id
+                    logger.info(f"Created CaptureSession with ID {capture_session_id}")
+                
+                # Create a new SpeakerIdentification record with explicit ID
+                self.db.execute(
+                    f"INSERT INTO speaker_identifications (id, capture_session_id, status, created_by_id, created_at, updated_at) "
+                    f"VALUES ({video_id}, {capture_session_id}, 'completed', 1, NOW(), NOW())"
+                )
+                self.db.commit()
+                logger.info(f"Created SpeakerIdentification record for video {video_id}")
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to create SpeakerIdentification record: {str(e)}")
+            # Return an error since we can't proceed without this record
+            return {
+                "success": False,
+                "error": f"Failed to create SpeakerIdentification record: {str(e)}"
+            }
+        
         # Ensure we have member data loaded
         if not self.member_embeddings:
             success = self.load_parliament_members()
@@ -272,57 +317,106 @@ class ParliamentMemberMatcher:
             
             if match_result['matched']:
                 # Add matched member information
-                clip_data['member_id'] = match_result['member_id']
-                clip_data['match_confidence'] = match_result['confidence']
+                member_id = match_result['member_id']
+                confidence = match_result['confidence']
                 
                 try:
-                    # Insert the clip into Supabase
-                    response = self.supabase.client.table('parliament_member_clips').insert(clip_data).execute()
+                    # Create a speaker appearance in the local database
+                    from backend.db.models import SpeakerAppearance, Speaker
                     
-                    if response.data:
-                        matched_clips.append({
-                            'clip_id': clip_id,
-                            'member_id': match_result['member_id'],
-                            'member_name': match_result['member_name'],
-                            'confidence': match_result['confidence']
-                        })
-                    else:
-                        failed_clips.append({
-                            'clip_id': clip_id,
-                            'reason': 'Failed to insert matched clip into Supabase'
-                        })
+                    # Check if we have a speaker for this member
+                    speaker = self.db.query(Speaker).filter(Speaker.parliament_id == member_id).first()
+                    
+                    # If not, create one
+                    if not speaker:
+                        speaker = Speaker(
+                            name=match_result['member_name'],
+                            parliament_id=member_id,
+                            is_active=True
+                        )
+                        self.db.add(speaker)
+                        self.db.commit()
+                        self.db.refresh(speaker)
+                    
+                    # Create the speaker appearance
+                    appearance = SpeakerAppearance(
+                        speaker_id=speaker.id,
+                        identification_id=video_id,  # Using video_id as identification_id for now
+                        start_time=float(segment.get('start_time', 0)),
+                        end_time=float(segment.get('end_time', 0)),
+                        duration=float(segment.get('duration', 0)),
+                        confidence=confidence
+                    )
+                    
+                    self.db.add(appearance)
+                    self.db.commit()
+                    
+                    matched_clips.append({
+                        'clip_id': clip_id,
+                        'member_id': member_id,
+                        'member_name': match_result['member_name'],
+                        'confidence': confidence
+                    })
                 except Exception as e:
+                    self.db.rollback()
                     failed_clips.append({
                         'clip_id': clip_id,
-                        'reason': f"Error inserting matched clip into Supabase: {str(e)}"
+                        'reason': f"Error inserting matched clip into local database: {str(e)}"
                     })
             elif save_unmatched:
-                # For unmatched speakers, try to get a default member ID for unidentified speakers
                 try:
                     # Get or create a default member for unidentified speakers
-                    default_member = self._get_default_member_for_house(house)
+                    default_member_id = self._get_default_member_for_house(house)
                     
-                    if default_member:
+                    if default_member_id:
                         # Add default member information
-                        clip_data['member_id'] = default_member['id']
+                        clip_data['member_id'] = default_member_id
                         clip_data['match_confidence'] = 0.0
                         clip_data['is_unidentified'] = True
                         
-                        # Insert the clip into Supabase
-                        response = self.supabase.client.table('parliament_member_clips').insert(clip_data).execute()
+                        # Create a speaker appearance in the local database instead of using Supabase
+                        from backend.db.models import SpeakerAppearance, Speaker
                         
-                        if response.data:
+                        # Check if we have a speaker for this default member
+                        speaker = self.db.query(Speaker).filter(Speaker.parliament_id == default_member_id).first()
+                        
+                        # If not, create one
+                        if not speaker:
+                            speaker = Speaker(
+                                name='Unidentified Speaker',
+                                parliament_id=default_member_id,
+                                is_active=True
+                            )
+                            self.db.add(speaker)
+                            self.db.commit()
+                            self.db.refresh(speaker)
+                        
+                        # Create the speaker appearance
+                        appearance = SpeakerAppearance(
+                            speaker_id=speaker.id,
+                            identification_id=video_id,  # Using video_id as identification_id for now
+                            start_time=float(segment.get('start_time', 0)),
+                            end_time=float(segment.get('end_time', 0)),
+                            duration=float(segment.get('duration', 0)),
+                            confidence=0.0
+                        )
+                        
+                        try:
+                            self.db.add(appearance)
+                            self.db.commit()
+                            
                             unmatched_clips.append({
                                 'clip_id': clip_id,
-                                'member_id': default_member['id'],
-                                'member_name': default_member['name'],
+                                'member_id': default_member_id,
+                                'member_name': 'Unidentified Speaker',
                                 'reason': match_result['reason']
                             })
-                        else:
+                        except Exception as e:
+                            self.db.rollback()
                             failed_clips.append({
                                 'clip_id': clip_id,
-                                'reason': 'Failed to insert unmatched clip into Supabase'
-                            })
+                                'reason': f'Failed to insert unmatched clip into local database: {str(e)}'
+                                })
                     else:
                         failed_clips.append({
                             'clip_id': clip_id,
