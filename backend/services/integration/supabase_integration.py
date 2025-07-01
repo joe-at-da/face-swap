@@ -116,8 +116,9 @@ class SupabaseIntegration:
                 storage_path = f"exports/{filename}"
                 
                 try:
-                    self.supabase.upload_file(self.export_bucket, storage_path, path)
-                    url = self.supabase.get_public_url(self.export_bucket, storage_path)
+                    # Always use the full_videos bucket since that's the only one that exists
+                    self.supabase.upload_file("full_videos", storage_path, path)
+                    url = self.supabase.get_public_url("full_videos", storage_path)
                     result[key] = url
                     logger.info(f"Uploaded {key} to Supabase: {url}")
                 except Exception as e:
