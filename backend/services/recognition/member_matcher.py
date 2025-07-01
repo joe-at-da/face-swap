@@ -117,134 +117,176 @@ class ParliamentMemberMatcher:
         except Exception as e:
             logger.error(f"Error processing image for member {member_id}: {str(e)}")
             
-    def match_unidentified_speakers(self, video_id: int) -> Dict[str, Any]:
+    def match_unidentified_speakers(self, video_id: int, save_unmatched: bool = True) -> Dict[str, Any]:
         """
         Match unidentified speakers from a video with parliament members
         
         Args:
             video_id: ID of the video with unidentified speakers
+            save_unmatched: If True, save clips even when face matching fails
             
         Returns:
             Dictionary with results of the matching process
         """
+        # Ensure we have member data loaded
+        if not self.member_embeddings:
+            success = self.load_parliament_members()
+            if not success:
+                return {
+                    "success": False,
+                    "error": "Failed to load parliament members"
+                }
+                
         # Load unidentified speaker metadata
         metadata_file = f"/app/data/temp/unidentified_speakers/unidentified_{video_id}.json"
-        
         if not os.path.exists(metadata_file):
-            logger.error(f"Unidentified speaker metadata file not found: {metadata_file}")
             return {
                 "success": False,
-                "error": "Metadata file not found"
+                "error": f"Metadata file not found: {metadata_file}"
             }
-        
+            
         try:
             with open(metadata_file, 'r') as f:
                 metadata = json.load(f)
         except Exception as e:
-            logger.error(f"Error loading unidentified speaker metadata: {str(e)}")
             return {
                 "success": False,
-                "error": f"Error loading metadata: {str(e)}"
+                "error": f"Error loading metadata file: {str(e)}"
             }
             
-        # Get the house from session info to narrow down potential matches
-        house = metadata.get('session_info', {}).get('house', 'unknown')
+        # Get video metadata
         full_video_url = metadata.get('full_video_url', '')
-        
-        # Initialize results
-        matched_clips = []
-        failed_matches = []
+        session_info = metadata.get('session_info', {})
+        house = session_info.get('house', 'unknown')
         
         # Process each segment
-        for segment in metadata.get('segments', []):
+        segments = metadata.get('segments', [])
+        matched_clips = []
+        unmatched_clips = []
+        failed_clips = []
+        
+        for segment in segments:
             clip_id = segment.get('clip_id')
             face_data = segment.get('face_data', {})
             
-            # Try to match the face with a parliament member
+            # Try to match the face to a member
             match_result = self._match_face_to_member(face_data, house)
             
-            if match_result and match_result.get('matched'):
-                # We found a match! Create a clip in the parliament_member_clips table
+            # Prepare base clip data regardless of match result
+            clip_data = {
+                'video_id': video_id,
+                'start_time': segment.get('start_time'),
+                'end_time': segment.get('end_time'),
+                'start_timestamp': segment.get('start_timestamp'),
+                'end_timestamp': segment.get('end_timestamp'),
+                'duration': segment.get('duration'),
+                'transcript': segment.get('transcript', ''),
+                'clip_url': f"{full_video_url}#t={segment.get('start_time')},{segment.get('end_time')}",
+                'created_at': datetime.now().isoformat()
+            }
+            
+            if match_result['matched']:
+                # Add matched member information
+                clip_data['member_id'] = match_result['member_id']
+                clip_data['match_confidence'] = match_result['confidence']
+                
                 try:
-                    member_id = match_result['member_id']
-                    confidence = match_result['confidence']
-                    
-                    # Create clip data
-                    clip_data = {
-                        "id": clip_id,
-                        "member_id": member_id,
-                        "transcript": segment.get('transcript', 'No transcript available'),
-                        "full_video_path": full_video_url,
-                        "session_date": metadata.get('session_info', {}).get('date', datetime.now().date().isoformat()),
-                        "session_type": "parliament_tv",
-                        "debate_topic": metadata.get('session_info', {}).get('title', f"Parliament TV Session {video_id}"),
-                        "status": "pending_review",
-                        "confidence_score": float(confidence),
-                        "start_timestamp": segment.get('start_timestamp', '00:00:00'),
-                        "end_timestamp": segment.get('end_timestamp', '00:00:00'),
-                        "duration_seconds": float(segment.get('duration', 0)),
-                        "processing_notes": f"Matched with confidence {confidence:.2f}",
-                        "is_deleted": False
-                    }
-                    
-                    # Insert clip into parliament_member_clips table
+                    # Insert the clip into Supabase
                     response = self.supabase.client.table('parliament_member_clips').insert(clip_data).execute()
                     
-                    if response and hasattr(response, 'data') and response.data:
+                    if response.data:
                         matched_clips.append({
-                            "clip_id": clip_id,
-                            "member_id": member_id,
-                            "confidence": confidence,
-                            "member_name": self.member_data.get(member_id, {}).get('name', 'Unknown')
+                            'clip_id': clip_id,
+                            'member_id': match_result['member_id'],
+                            'member_name': match_result['member_name'],
+                            'confidence': match_result['confidence']
                         })
-                        logger.info(f"Saved matched clip {clip_id} for member {member_id} to Supabase")
                     else:
-                        failed_matches.append({
-                            "clip_id": clip_id,
-                            "reason": "Failed to insert clip into Supabase"
+                        failed_clips.append({
+                            'clip_id': clip_id,
+                            'reason': 'Failed to insert matched clip into Supabase'
                         })
-                        
                 except Exception as e:
-                    logger.error(f"Error saving matched clip {clip_id}: {str(e)}")
-                    failed_matches.append({
-                        "clip_id": clip_id,
-                        "reason": f"Error: {str(e)}"
+                    failed_clips.append({
+                        'clip_id': clip_id,
+                        'reason': f"Error inserting matched clip into Supabase: {str(e)}"
+                    })
+            elif save_unmatched:
+                # For unmatched speakers, try to get a default member ID for unidentified speakers
+                try:
+                    # Get or create a default member for unidentified speakers
+                    default_member = self._get_default_member_for_house(house)
+                    
+                    if default_member:
+                        # Add default member information
+                        clip_data['member_id'] = default_member['id']
+                        clip_data['match_confidence'] = 0.0
+                        clip_data['is_unidentified'] = True
+                        
+                        # Insert the clip into Supabase
+                        response = self.supabase.client.table('parliament_member_clips').insert(clip_data).execute()
+                        
+                        if response.data:
+                            unmatched_clips.append({
+                                'clip_id': clip_id,
+                                'member_id': default_member['id'],
+                                'member_name': default_member['name'],
+                                'reason': match_result['reason']
+                            })
+                        else:
+                            failed_clips.append({
+                                'clip_id': clip_id,
+                                'reason': 'Failed to insert unmatched clip into Supabase'
+                            })
+                    else:
+                        failed_clips.append({
+                            'clip_id': clip_id,
+                            'reason': f"No default member found for house: {house}"
+                        })
+                except Exception as e:
+                    failed_clips.append({
+                        'clip_id': clip_id,
+                        'reason': f"Error inserting unmatched clip into Supabase: {str(e)}"
                     })
             else:
-                # No match found
-                failed_matches.append({
-                    "clip_id": clip_id,
-                    "reason": match_result.get('reason', 'No match found')
+                # Skip saving unmatched clips if save_unmatched is False
+                failed_clips.append({
+                    'clip_id': clip_id,
+                    'reason': match_result['reason']
                 })
-                
-        # Return results
+        
+        # Return the results
         return {
             "success": True,
             "video_id": video_id,
             "matched_count": len(matched_clips),
-            "failed_count": len(failed_matches),
+            "unmatched_count": len(unmatched_clips),
+            "failed_count": len(failed_clips),
             "matched_clips": matched_clips,
-            "failed_matches": failed_matches
+            "unmatched_clips": unmatched_clips,
+            "failed_clips": failed_clips
         }
         
-    def _match_face_to_member(self, face_data: Dict[str, Any], house: str = 'unknown') -> Dict[str, Any]:
+    def _match_face_to_member(self, face_data: Dict[str, Any], house: str = 'unknown', confidence_threshold: float = 0.7) -> Dict[str, Any]:
         """
         Match a face to a parliament member
         
         Args:
             face_data: Face data from recognition results
             house: House (commons or lords) to filter potential matches
+            confidence_threshold: Minimum confidence score for a match (0.0-1.0)
             
         Returns:
             Dictionary with match results
         """
-        if not face_data or not isinstance(face_data, dict):
+        # Check if we have face data
+        if not face_data:
             return {
                 "matched": False,
                 "reason": "No face data available"
             }
             
-        # Extract face embedding from face data
+        # Check if we have an embedding
         face_embedding = face_data.get('embedding')
         if not face_embedding:
             return {
@@ -252,19 +294,25 @@ class ParliamentMemberMatcher:
                 "reason": "No face embedding available"
             }
             
-        # Convert embedding to numpy array if it's not already
-        if isinstance(face_embedding, list):
-            face_embedding = np.array(face_embedding)
-            
         # Find the best matching member
         best_match_id = None
         best_match_score = 0
         
+        # If we don't have any member embeddings, we can't match
+        if not self.member_embeddings:
+            return {
+                "matched": False,
+                "reason": "No member embeddings available for matching"
+            }
+        
+        # Normalize house name for comparison
+        normalized_house = house.lower() if house else 'unknown'
+        
         for member_id, member_embedding in self.member_embeddings.items():
-            # Skip members from different house if house is known
-            if house != 'unknown':
+            # Skip members from different house if house is known and not 'unknown'
+            if normalized_house != 'unknown':
                 member_house = self.member_data.get(member_id, {}).get('house', '')
-                if member_house and member_house.lower() != house.lower():
+                if member_house and member_house.lower() != normalized_house:
                     continue
                     
             # Convert member embedding to numpy array if it's not already
@@ -273,19 +321,22 @@ class ParliamentMemberMatcher:
                 
             # Calculate similarity score (cosine similarity)
             try:
-                similarity = np.dot(face_embedding, member_embedding) / (
-                    np.linalg.norm(face_embedding) * np.linalg.norm(member_embedding)
-                )
+                # Ensure both embeddings are normalized
+                norm_face = np.linalg.norm(face_embedding)
+                norm_member = np.linalg.norm(member_embedding)
                 
-                # Update best match if this is better
-                if similarity > best_match_score:
-                    best_match_score = similarity
-                    best_match_id = member_id
+                if norm_face > 0 and norm_member > 0:
+                    similarity = np.dot(face_embedding, member_embedding) / (norm_face * norm_member)
+                    
+                    # Update best match if this is better
+                    if similarity > best_match_score:
+                        best_match_score = similarity
+                        best_match_id = member_id
             except Exception as e:
                 logger.error(f"Error calculating similarity for member {member_id}: {str(e)}")
                 
         # Check if we found a good match
-        if best_match_id and best_match_score > 0.7:  # Threshold for a good match
+        if best_match_id and best_match_score > confidence_threshold:
             return {
                 "matched": True,
                 "member_id": best_match_id,
@@ -295,8 +346,70 @@ class ParliamentMemberMatcher:
         else:
             return {
                 "matched": False,
-                "reason": f"No match found with sufficient confidence (best: {best_match_score:.2f})"
+                "reason": f"No match found with sufficient confidence (best: {best_match_score:.2f}, threshold: {confidence_threshold})"
             }
+            
+    def _get_default_member_for_house(self, house: str) -> Optional[Dict[str, Any]]:
+        """
+        Get or create a default member for unidentified speakers in a specific house
+        
+        Args:
+            house: House (commons or lords) to get default member for
+            
+        Returns:
+            Dictionary with default member data or None if not found/created
+        """
+        try:
+            # Normalize house name
+            normalized_house = house.lower() if house else 'unknown'
+            
+            # Define default member names based on house
+            default_member_names = {
+                'commons': 'Unidentified MP (Commons)',
+                'lords': 'Unidentified Peer (Lords)',
+                'unknown': 'Unidentified Speaker'
+            }
+            
+            # Get the appropriate default member name
+            default_name = default_member_names.get(normalized_house, default_member_names['unknown'])
+            
+            # Check if we already have a default member for this house
+            response = self.supabase.client.table('parliament_members') \
+                .select('*') \
+                .eq('name', default_name) \
+                .execute()
+                
+            if response.data and len(response.data) > 0:
+                # Return existing default member
+                return {
+                    'id': response.data[0]['id'],
+                    'name': response.data[0]['name'],
+                    'house': normalized_house
+                }
+            
+            # If no default member exists, create one
+            new_member = {
+                'name': default_name,
+                'house_id': normalized_house if normalized_house in ['commons', 'lords'] else None,
+                'is_default_member': True,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            # Insert the new default member
+            response = self.supabase.client.table('parliament_members').insert(new_member).execute()
+            
+            if response.data and len(response.data) > 0:
+                return {
+                    'id': response.data[0]['id'],
+                    'name': response.data[0]['name'],
+                    'house': normalized_house
+                }
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting/creating default member for house {house}: {str(e)}")
+            return None
             
     def process_all_unidentified_videos(self) -> Dict[str, Any]:
         """
@@ -317,17 +430,17 @@ class ParliamentMemberMatcher:
         # Find all unidentified speaker metadata files
         unidentified_dir = "/app/data/temp/unidentified_speakers"
         if not os.path.exists(unidentified_dir):
-            return {
-                "success": False,
-                "error": f"Unidentified speakers directory not found: {unidentified_dir}"
-            }
+            os.makedirs(unidentified_dir, exist_ok=True)
+            logger.info(f"Created unidentified speakers directory: {unidentified_dir}")
             
         metadata_files = [f for f in os.listdir(unidentified_dir) if f.startswith("unidentified_") and f.endswith(".json")]
         
         if not metadata_files:
+            logger.warning("No unidentified speaker metadata files found")
             return {
-                "success": False,
-                "error": "No unidentified speaker metadata files found"
+                "success": True,
+                "processed_count": 0,
+                "results": []
             }
             
         # Process each file
@@ -335,10 +448,13 @@ class ParliamentMemberMatcher:
         for file in metadata_files:
             try:
                 video_id = int(file.replace("unidentified_", "").replace(".json", ""))
-                result = self.match_unidentified_speakers(video_id)
+                logger.info(f"Processing unidentified speakers for video {video_id}")
+                result = self.match_unidentified_speakers(video_id, save_unmatched=True)
                 results.append(result)
             except Exception as e:
                 logger.error(f"Error processing file {file}: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
                 
         # Return overall results
         return {
