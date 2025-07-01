@@ -653,6 +653,24 @@ class MultimodalRecognitionService:
                     "speaker_appearances": speaker_appearances
                 })
                 db.commit()
+            else:
+                # Create a new recognition process record if one doesn't exist
+                logger.info(f"Creating new RecognitionProcess record for video {video_id}")
+                recognition_process = models.RecognitionProcess(
+                    video_id=video_id,
+                    process_type="multimodal",
+                    status="completed",
+                    results=json.dumps({
+                        "timeline": timeline,
+                        "correlations": correlations,
+                        "recognition_events": recognition_events,
+                        "speaker_appearances": speaker_appearances
+                    }),
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                db.add(recognition_process)
+                db.commit()
             
             return {
                 "success": True,
