@@ -236,8 +236,8 @@ def export_recognition_results(
     combined_dir = os.path.join(media_dir, "combined")
     os.makedirs(combined_dir, exist_ok=True)
     
-    # Get paths for video and audio
-    video_url = f"/media/videos/{os.path.basename(video_path)}"
+    # Get paths for video and audio using Docker container paths
+    video_url = video_path  # Use the full path directly
     audio_url = video_metadata.get("audio_url", "")
     combined_url = ""
     

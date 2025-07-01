@@ -92,7 +92,7 @@ def verify_mp_clips_in_supabase(
             
         # Check if the video has speaker appearances in the database
         speaker_identifications = db_session.query(models.SpeakerIdentification).filter(
-            models.SpeakerIdentification.video_id == video_id
+            models.SpeakerIdentification.capture_session_id == video_id
         ).all()
         
         speaker_appearances = []

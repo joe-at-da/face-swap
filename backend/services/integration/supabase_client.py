@@ -135,8 +135,13 @@ class SupabaseService:
         Returns:
             Response from Supabase Storage with upload details
         """
+        if file_path is None:
+            logger.warning("No video file path provided for upload")
+            return {"success": False, "error": "No file path provided"}
+            
         if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Video file not found: {file_path}")
+            logger.warning(f"Video file not found: {file_path}")
+            return {"success": False, "error": f"File not found: {file_path}"}
             
         # Use the file's basename if no destination path is provided
         if destination_path is None:

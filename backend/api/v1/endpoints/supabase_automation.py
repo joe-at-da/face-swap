@@ -342,7 +342,7 @@ async def process_parliament_tv_to_supabase(
                 
                 # Upload the full video
                 destination_path = f"full_videos/parliament_tv_{capture_id}.mp4"
-                upload_result = supabase_service.upload_full_video(video_path, destination_path)
+                upload_result = supabase_service.upload_full_video(video_file_path, destination_path)
                 
                 if upload_result.get("success", False):
                     logger.info(f"Uploaded full video to Supabase: {upload_result.get('public_url')}")
