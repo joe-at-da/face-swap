@@ -16,6 +16,7 @@ class RecognitionProcess(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     video_id = Column(Integer, ForeignKey("capture_sessions.id", ondelete="CASCADE"), index=True)
+    process_type = Column(String(50), index=True, default="facial")  # facial, voice, multimodal
     status = Column(String(50), index=True)  # pending, processing, completed, failed
     start_time = Column(DateTime, default=datetime.utcnow)
     end_time = Column(DateTime, nullable=True)
