@@ -19,6 +19,7 @@ from backend.db.session import get_db
 from backend.services.recognition.facial_recognition import FacialRecognitionService
 from backend.services.recognition.face_profile_service import FaceProfileService
 from backend.services.recognition.timeline_service import TimelineService
+from backend.services.recognition.member_matcher import ParliamentMemberMatcher
 from backend.services.utils import make_json_serializable
 
 # Set up logging
@@ -29,9 +30,15 @@ class MultimodalRecognitionService:
     
     def __init__(self):
         """Initialize the multimodal recognition service."""
+        # Get database session for member matcher
+        from backend.db.session import get_db
+        db_generator = get_db()
+        db = next(db_generator)
+        
         self.facial_recognition = FacialRecognitionService()
         self.face_profile_service = FaceProfileService()
         self.timeline_service = TimelineService()
+        self.member_matcher = ParliamentMemberMatcher(db)
         
         # Use Docker container paths as per user preference
         self.base_dir = Path("/app/data")
@@ -39,6 +46,10 @@ class MultimodalRecognitionService:
         
         # Create directories if they don't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Ensure MP photos directory exists
+        mp_photos_dir = Path("/app/data/mp_photos")
+        mp_photos_dir.mkdir(parents=True, exist_ok=True)
         
     def start_combined_recognition(self, video_id: int) -> Dict[str, Any]:
         """
@@ -447,29 +458,12 @@ class MultimodalRecognitionService:
             output_dir = os.path.join(self.output_dir, f"video_{video_id}")
             os.makedirs(output_dir, exist_ok=True)
             
-            # Extract faces from speaker segments
-            faces_by_speaker = {}
-            faces_by_time = {}
-            all_faces = []
-            
-            # Process each segment to extract faces
-            for segment in segments:
-                speaker = segment.get("speaker", segment.get("speaker_name", f"Speaker {segment.get('speaker_id', 'Unknown')}"))
-                start_time = segment.get("start", 0)
-                end_time = segment.get("end", 0)
                 
-                # Skip segments without a valid time range
-                if end_time <= start_time:
-                    continue
+            # Skip segments with no start or end time
+            if start_time is None or end_time is None:
+                continue
                 
-                # Determine interval for frame extraction
-                duration = end_time - start_time
-                if duration < 3.0:
-                    # For very short segments, extract just one frame
-                    interval = duration
-                elif duration < 10.0:
-                    # For short segments, extract frames more frequently
-                    interval = 2.0  # Frame every 2 seconds
+            # Ensure member matcher has loaded parliament members
                 else:
                     interval = 4.0  # Frame every 3-5 seconds for long segments
                 
@@ -620,27 +614,24 @@ class MultimodalRecognitionService:
             return 0.0
             
     def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.6) -> Dict[str, Any]:
-        """Identify speakers in a frame using facial recognition."""
+        """Identify speakers in a frame using facial recognition and ParliamentMemberMatcher."""
         try:
             logger.info(f"Identifying speaker in frame: {frame_path}")
             
-            # For individual frames, we never want to export to Supabase
-            # This prevents uploading individual frame JPGs to Supabase storage
+            # Default to not exporting to Supabase
             export_to_supabase = False
             
-            # Use the facial recognition service to identify speakers
-            face_results = self.facial_recognition.identify_speakers(
-                video_path=frame_path,
-                store_unidentified=True,
-                export_to_supabase=export_to_supabase
-            )
+            # First, ensure member matcher has loaded parliament members
+            if not hasattr(self.member_matcher, 'members') or not self.member_matcher.members:
+                self.member_matcher.load_parliament_members()
             
-            # Check if we got any results
-            if not face_results["success"]:
-                logger.warning(f"No faces identified in frame: {frame_path}")
-                return {"success": False, "error": "No faces identified", "supabase_export": {"enabled": export_to_supabase}}
+            # Run facial recognition on the frame
+            face_results = self.facial_recognition.detect_faces_in_image(frame_path)
             
-            # Get the best detection (highest confidence)
+            if not face_results.get("success", False):
+                logger.warning(f"No faces detected in frame: {frame_path}")
+                return {"success": False, "error": "No faces detected", "supabase_export": {"enabled": export_to_supabase}}
+                
             detections = face_results.get("detections", [])
             if not detections:
                 logger.warning(f"No detections in frame: {frame_path}")
@@ -650,13 +641,43 @@ class MultimodalRecognitionService:
             detections.sort(key=lambda x: x.get("confidence", 0), reverse=True)
             best_detection = detections[0]
             
-            # Get the profile information
-            profile_id = best_detection.get("profile_id")
-            if profile_id:
-                profile = self.face_profile_service.get_profile_by_id(db, profile_id)
-                if profile:
-                    best_detection["name"] = profile.get("name", "Unknown")
-                    best_detection["profile"] = profile
+            # Try to match with our improved ParliamentMemberMatcher
+            face_embedding = best_detection.get("embedding")
+            if face_embedding is not None:
+                # Get the house from the video metadata if available
+                house = "unknown"  # Default house
+                
+                # Match the face to a parliament member
+                match_result = self.member_matcher.match_face_to_member(face_embedding, threshold)
+                
+                if match_result and match_result.get("matched"):
+                    # Use the matched member information
+                    member_id = match_result.get("member_id")
+                    member_name = match_result.get("member_name")
+                    confidence = match_result.get("confidence")
+                    
+                    best_detection["member_id"] = member_id
+                    best_detection["name"] = member_name
+                    best_detection["confidence"] = confidence
+                    best_detection["matched_by"] = "parliament_member_matcher"
+                    
+                    logger.info(f"Matched face to member {member_name} with confidence {confidence}")
+                else:
+                    # Fallback to the original method if no match found
+                    profile_id = best_detection.get("profile_id")
+                    if profile_id:
+                        profile = self.face_profile_service.get_profile_by_id(db, profile_id)
+                        if profile:
+                            best_detection["name"] = profile.get("name", "Unknown")
+                            best_detection["profile"] = profile
+                            best_detection["matched_by"] = "face_profile_service"
+                    else:
+                        # If no match found, use default unidentified member
+                        default_member_id = self.member_matcher._get_default_member_for_house(house)
+                        if default_member_id:
+                            best_detection["member_id"] = default_member_id
+                            best_detection["name"] = "Unidentified Speaker"
+                            best_detection["matched_by"] = "default_unidentified"
             
             return {
                 "success": True, 
@@ -669,8 +690,7 @@ class MultimodalRecognitionService:
             return {"success": False, "error": str(e), "supabase_export": {"enabled": False, "error": str(e)}}
             
     def get_recognition_results(self, video_id: int) -> Dict[str, Any]:
-        """
-        Get recognition results for a video.
+        """Get recognition results for a video.
         
         Args:
             video_id: ID of the video to get results for
