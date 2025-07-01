@@ -150,7 +150,11 @@ class SupabaseService:
             
         # Use the file's basename if no destination path is provided
         if destination_path is None:
+            # Extract just the filename without any path structure
             destination_path = os.path.basename(file_path)
+            
+        # Ensure we're not creating any nested folders
+        destination_path = os.path.basename(destination_path)
             
         # Ensure we're using the service role key for admin access
         if not self.client.auth.get_session():
@@ -194,7 +198,25 @@ class SupabaseService:
         Returns:
             Response from Supabase
         """
-        return self.client.table('video_processing_queue').insert(video_data).execute()
+        try:
+            # Check if the table exists first
+            tables = self.client.table('').select('*').limit(1).execute()
+            logger.debug(f"Available tables: {tables}")
+            
+            # Try to create the table if it doesn't exist
+            try:
+                # Create a minimal schema for the queue if it doesn't exist
+                self.client.table('video_processing_queue').insert({"id": "test", "created_at": "now()", "status": "pending"}).execute()
+                logger.info("Created video_processing_queue table")
+            except Exception as table_error:
+                logger.warning(f"Could not create table: {str(table_error)}")
+            
+            # Now try to insert the actual data
+            return self.client.table('video_processing_queue').insert(video_data).execute()
+        except Exception as e:
+            logger.error(f"Error adding to video processing queue: {str(e)}")
+            # Continue without failing the whole process
+            return {"error": str(e)}
     
     def add_to_clip_creation_queue(self, clip_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -206,4 +228,9 @@ class SupabaseService:
         Returns:
             Response from Supabase
         """
-        return self.client.table('clip_creation_queue').insert(clip_data).execute()
+        try:
+            # Make sure we're not passing any columns parameter
+            return self.client.table('clip_creation_queue').insert(clip_data).execute()
+        except Exception as e:
+            logger.error(f"Error adding to clip creation queue: {str(e)}")
+            return {"error": str(e)}

@@ -233,7 +233,8 @@ def export_recognition_results(
     video_file_id = os.path.basename(video_path).split('.')[0]
     data_dir = os.environ.get("DATA_DIR", "/app/data")
     media_dir = os.path.join(data_dir, "media")
-    combined_dir = os.path.join(media_dir, "combined")
+    # Store combined files directly in the media directory
+    combined_dir = media_dir
     os.makedirs(combined_dir, exist_ok=True)
     
     # Check if the video file exists with the provided path
