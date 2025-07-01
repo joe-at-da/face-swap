@@ -66,6 +66,50 @@
                         ]
                 },
                 {
+                        "name": "Supabase Automation",
+                        "item": [
+                                {
+                                        "name": "Process Parliament TV",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "X-API-Key",
+                                                                "value": "{{integration_api_key}}"
+                                                        },
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n    \"url\": \"https://parliamentlive.tv/event/index/97c409d6-cd51-4596-9921-96e0bfeb7677\",\n    \"title\": \"Test Capture\",\n    \"description\": \"Test description\",\n    \"duration\": 90\n}",
+                                                        "options": {
+                                                                "raw": {
+                                                                        "language": "json"
+                                                                }
+                                                        }
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/api/v1/supabase-automation/process-parliament-tv",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "api",
+                                                                "v1",
+                                                                "supabase-automation",
+                                                                "process-parliament-tv"
+                                                        ]
+                                                },
+                                                "description": "Process a Parliament TV event by capturing the video, running recognition, and exporting results to Supabase. Requires API key authentication."
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
                         "name": "Supabase Webhooks",
                         "item": [
                                 {

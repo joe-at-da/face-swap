@@ -63,13 +63,16 @@ The collections use two different authentication methods:
 
 ## Testing the Supabase Integration Endpoints
 
-The Supabase integration endpoints are organized in two folders:
+The Supabase integration endpoints are organized in three folders:
 
 1. **Supabase Integration**:
    - `Export to Supabase`: Export recognition and transcription data to Supabase format
    - `Get Supabase Integration Status`: Check the status of Supabase integration for a video
 
-2. **Supabase Webhooks**:
+2. **Supabase Automation**:
+   - `Process Parliament TV`: Automated workflow to capture Parliament TV, run recognition, and export to Supabase
+
+3. **Supabase Webhooks**:
    - `Process Video Webhook`: Trigger video processing from Supabase
    - `Transcription Status Webhook`: Receive transcription status updates from Supabase
 
@@ -86,3 +89,38 @@ To test these endpoints:
 - The Parliament TV system handles audio and video streams separately. When testing endpoints that process media, ensure you're using the correct audio URLs directly rather than trying to derive them from video URLs.
 - All Supabase integration endpoints require API key authentication via the `X-API-Key` header.
 - The API key must match the `INTEGRATION_API_KEY` environment variable set in your backend.
+
+## Example API Calls
+
+### Process Parliament TV (Automated Workflow)
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/supabase-automation/process-parliament-tv" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://parliamentlive.tv/event/index/97c409d6-cd51-4596-9921-96e0bfeb7677", 
+    "title": "Test Capture", 
+    "description": "Test description", 
+    "duration": 90
+  }'
+```
+
+This endpoint combines Parliament TV capture, recognition, and Supabase export into a single workflow:
+
+- **Parameters**:
+  - `url` (required): URL of the Parliament TV event to process
+  - `title` (required): Title for the capture
+  - `description` (optional): Description of the capture
+  - `duration` (optional): Maximum duration to capture in seconds
+
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Parliament TV processing started",
+    "capture_id": 123,
+    "recognition_id": 456,
+    "export_id": 789
+  }
+  ```
