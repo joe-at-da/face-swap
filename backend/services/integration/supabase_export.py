@@ -82,7 +82,7 @@ def format_clips_for_supabase(
     """
     clips = []
     
-    # Process identified speakers
+    # Process identified speakers from the traditional format
     for speaker in recognition_results.get("identified_speakers", []):
         for segment in speaker.get("segments", []):
             clips.append({
@@ -96,8 +96,53 @@ def format_clips_for_supabase(
                 "face_image_url": segment.get("face_image_url", ""),
                 "metadata": {
                     "recognition_method": "facial",
+                    "matched_by": "traditional"
                 }
             })
+    
+    # Process speaker appearances from our improved local database format
+    for appearance in recognition_results.get("speaker_appearances", []):
+        clips.append({
+            "video_id": video_id,
+            "start_time": appearance.get("start_time", 0),
+            "end_time": appearance.get("end_time", 0),
+            "speaker_id": appearance.get("member_id"),
+            "speaker_name": appearance.get("member_name", "Unknown"),
+            "confidence": appearance.get("confidence", 0.0),
+            "transcript": appearance.get("transcript", ""),
+            "face_image_url": appearance.get("face_image_url", ""),
+            "metadata": {
+                "recognition_method": "facial",
+                "matched_by": appearance.get("matched_by", "parliament_member_matcher"),
+                "appearance_id": appearance.get("id"),
+                "identification_id": appearance.get("identification_id")
+            }
+        })
+    
+    # Process timeline data which may contain both identified and unidentified speakers
+    if "timeline" in recognition_results:
+        for event in recognition_results.get("timeline", []):
+            if event.get("type") == "speaker":
+                # Skip if we don't have timing information
+                if "start_time" not in event or "end_time" not in event:
+                    continue
+                    
+                # Create clip for this timeline event
+                clips.append({
+                    "video_id": video_id,
+                    "start_time": event.get("start_time", 0),
+                    "end_time": event.get("end_time", 0),
+                    "speaker_id": event.get("member_id"),
+                    "speaker_name": event.get("name", "Unknown"),
+                    "confidence": event.get("confidence", 0.0),
+                    "transcript": event.get("text", ""),
+                    "face_image_url": event.get("face_image_url", ""),
+                    "metadata": {
+                        "recognition_method": event.get("recognition_method", "multimodal"),
+                        "matched_by": event.get("matched_by", "timeline"),
+                        "timeline_event_id": event.get("id")
+                    }
+                })
     
     # Process unidentified faces
     for face in recognition_results.get("unidentified_faces", []):
@@ -118,11 +163,23 @@ def format_clips_for_supabase(
                 "face_image_url": face.get("filename", ""),
                 "metadata": {
                     "recognition_method": "facial",
+                    "matched_by": "unidentified",
                     "unidentified_face_id": face.get("id", "")
                 }
             })
     
-    return clips
+    # Remove duplicate clips based on time ranges and speaker_id
+    # This prevents multiple entries for the same speaker in the same time segment
+    unique_clips = {}
+    for clip in clips:
+        # Create a key based on time range and speaker_id
+        key = f"{clip['start_time']:.2f}_{clip['end_time']:.2f}_{clip['speaker_id']}"
+        
+        # If this is a new unique clip or has higher confidence than existing one, keep it
+        if key not in unique_clips or clip['confidence'] > unique_clips[key]['confidence']:
+            unique_clips[key] = clip
+    
+    return list(unique_clips.values())
 
 
 def export_to_json(data: Dict[str, Any], output_path: str) -> None:

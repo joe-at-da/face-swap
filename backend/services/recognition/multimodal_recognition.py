@@ -29,27 +29,23 @@ class MultimodalRecognitionService:
     """Service for combining voice and face recognition for improved speaker identification."""
     
     def __init__(self):
-        """Initialize the multimodal recognition service."""
-        # Get database session for member matcher
+        """
+        Initialize the multimodal recognition service
+        """
         from backend.db.session import get_db
-        db_generator = get_db()
-        db = next(db_generator)
         
         self.facial_recognition = FacialRecognitionService()
         self.face_profile_service = FaceProfileService()
         self.timeline_service = TimelineService()
-        self.member_matcher = ParliamentMemberMatcher(db)
+        self.member_matcher = None  # Will be initialized when needed with DB session
         
-        # Use Docker container paths as per user preference
-        self.base_dir = Path("/app/data")
-        self.output_dir = self.base_dir / "multimodal_recognition"
+        # Set up directories using Docker container paths as per user preference
+        self.output_dir = "/app/data/temp/recognition"
+        os.makedirs(self.output_dir, exist_ok=True)
         
-        # Create directories if they don't exist
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Ensure MP photos directory exists
-        mp_photos_dir = Path("/app/data/mp_photos")
-        mp_photos_dir.mkdir(parents=True, exist_ok=True)
+        # Set up MP photos directory
+        self.mp_photos_dir = "/app/data/mp_photos"
+        os.makedirs(self.mp_photos_dir, exist_ok=True)
         
     def start_combined_recognition(self, video_id: int) -> Dict[str, Any]:
         """
@@ -458,12 +454,27 @@ class MultimodalRecognitionService:
             output_dir = os.path.join(self.output_dir, f"video_{video_id}")
             os.makedirs(output_dir, exist_ok=True)
             
-                
-            # Skip segments with no start or end time
-            if start_time is None or end_time is None:
-                continue
-                
             # Ensure member matcher has loaded parliament members
+            if not hasattr(self, 'member_matcher') or self.member_matcher is None:
+                self.member_matcher = ParliamentMemberMatcher(db)
+                logger.info(f"Initialized ParliamentMemberMatcher for video {video_id}")
+            
+            # Process each segment from the transcription
+            for segment in segments:
+                # Get start and end time from segment
+                start_time = segment.get("start")
+                end_time = segment.get("end")
+                speaker = segment.get("speaker", "Unknown")
+                
+                # Skip segments with no start or end time
+                if start_time is None or end_time is None:
+                    logger.warning(f"Skipping segment with missing timing information: {segment}")
+                    continue
+                
+                # Determine frame extraction interval based on segment duration
+                segment_duration = end_time - start_time
+                if segment_duration < 10:
+                    interval = 1.0  # Frame every second for short segments
                 else:
                     interval = 4.0  # Frame every 3-5 seconds for long segments
                 
@@ -498,6 +509,21 @@ class MultimodalRecognitionService:
                                 face_data["frame_path"] = frame_path
                                 face_data["frame_time"] = frame_time
                                 face_data["segment_speaker"] = speaker
+                                
+                                # Add to recognition events
+                                recognition_event = {
+                                    "type": "speaker",
+                                    "start_time": frame_time,
+                                    "end_time": min(frame_time + 5, end_time),  # Assume 5 seconds or until segment end
+                                    "member_id": face_data.get("member_id"),
+                                    "name": face_data.get("name", "Unknown"),
+                                    "confidence": face_data.get("confidence", 0.0),
+                                    "face_image_url": frame_path,
+                                    "text": segment.get("text", ""),
+                                    "recognition_method": "facial",
+                                    "matched_by": face_data.get("matched_by", "unknown")
+                                }
+                                recognition_events.append(recognition_event)
                                 face_data["segment_start"] = start_time
                                 face_data["segment_end"] = end_time
                                 face_data["segment_text"] = segment.get("text", "")
@@ -568,6 +594,46 @@ class MultimodalRecognitionService:
             # Update the timeline data with correlations
             timeline = self.timeline_service.update_timeline_data(db, video_id)
             
+            # Use ParliamentMemberMatcher to match unidentified speakers
+            speaker_appearances = []
+            try:
+                if not hasattr(self, 'member_matcher') or self.member_matcher is None:
+                    self.member_matcher = ParliamentMemberMatcher(db)
+                
+                # Match unidentified speakers using our improved matcher
+                match_result = self.member_matcher.match_unidentified_speakers(video_id, save_unmatched=True)
+                
+                if match_result:
+                    logger.info(f"Matched {match_result.get('matched_count', 0)} speakers using ParliamentMemberMatcher")
+                    
+                    # Get all speaker appearances for this video
+                    speaker_identifications = db.query(models.SpeakerIdentification).filter(
+                        models.SpeakerIdentification.video_id == video_id
+                    ).all()
+                    
+                    for identification in speaker_identifications:
+                        # Get all appearances for this identification
+                        appearances = db.query(models.SpeakerAppearance).filter(
+                            models.SpeakerAppearance.identification_id == identification.id
+                        ).all()
+                        
+                        for appearance in appearances:
+                            # Convert to dict for JSON serialization
+                            appearance_dict = {
+                                "id": appearance.id,
+                                "identification_id": appearance.identification_id,
+                                "member_id": appearance.member_id,
+                                "member_name": identification.member_name,
+                                "start_time": appearance.start_time,
+                                "end_time": appearance.end_time,
+                                "confidence": appearance.confidence,
+                                "matched_by": "parliament_member_matcher",
+                                "face_image_url": appearance.face_image_url
+                            }
+                            speaker_appearances.append(appearance_dict)
+            except Exception as e:
+                logger.error(f"Error matching unidentified speakers: {str(e)}")
+            
             # Update the recognition process status
             recognition_process = db.query(models.RecognitionProcess).filter(
                 models.RecognitionProcess.video_id == video_id,
@@ -579,7 +645,8 @@ class MultimodalRecognitionService:
                 recognition_process.results = json.dumps({
                     "timeline": timeline,
                     "correlations": correlations,
-                    "recognition_events": recognition_events
+                    "recognition_events": recognition_events,
+                    "speaker_appearances": speaker_appearances
                 })
                 db.commit()
             
@@ -589,7 +656,8 @@ class MultimodalRecognitionService:
                 "segments_count": len(segments),
                 "recognition_events": len(recognition_events),
                 "correlations": correlations,
-                "timeline": timeline
+                "timeline": timeline,
+                "speaker_appearances": speaker_appearances
             }
             
         except Exception as e:

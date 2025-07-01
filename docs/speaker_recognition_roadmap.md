@@ -21,6 +21,15 @@
    - ✅ Support for the `/supabase-automation/process-parliament-tv` endpoint
    - ✅ Docker container path compliance
 
+### Completed Recently
+
+1. **Multimodal Recognition Integration**
+   - ✅ Full integration of ParliamentMemberMatcher into MultimodalRecognitionService
+   - ✅ Proper handling of speaker appearances in recognition results
+   - ✅ Enhanced clip formatting for Supabase export with MP associations
+   - ✅ End-to-end test script for validating the full pipeline
+   - ✅ Comprehensive MP photo management documentation
+
 ### In Progress
 
 1. **Multimodal Recognition Enhancements**
