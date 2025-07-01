@@ -182,6 +182,22 @@ class MultimodalRecognitionService:
             recognition_process.status = "completed"
             recognition_process.end_time = datetime.now()
             
+            # Check if combined audio-video file exists and add to process metadata
+            combined_av_path = os.path.join(os.path.dirname(video_path), f"combined_{video_id}.mp4")
+            if os.path.exists(combined_av_path):
+                logger.info(f"Found combined audio-video file: {combined_av_path}")
+                # Get existing metadata or initialize empty dict
+                process_metadata = recognition_process.process_metadata or {}
+                if isinstance(process_metadata, str):
+                    try:
+                        process_metadata = json.loads(process_metadata)
+                    except json.JSONDecodeError:
+                        process_metadata = {}
+                
+                # Add combined_av_path to metadata
+                process_metadata["combined_av_path"] = combined_av_path
+                recognition_process.process_metadata = process_metadata
+            
             # Update the CaptureSession record with recognition status
             video.recognition_status = "completed"
             video.recognition_completed_at = datetime.now()
@@ -589,13 +605,14 @@ class MultimodalRecognitionService:
     def _parse_timestamp(self, timestamp: str) -> float:
         """Parse a timestamp string into seconds."""
         try:
-            parts = timestamp.split(':')
-            if len(parts) == 3:  # HH:MM:SS
-                hours, minutes, seconds = map(float, parts)
-                return hours * 3600 + minutes * 60 + seconds
-            elif len(parts) == 2:  # MM:SS
-                minutes, seconds = map(float, parts)
-                return minutes * 60 + seconds
+            if ':' in timestamp:
+                parts = timestamp.split(':')
+                if len(parts) == 3:  # HH:MM:SS
+                    hours, minutes, seconds = map(float, parts)
+                    return hours * 3600 + minutes * 60 + seconds
+                elif len(parts) == 2:  # MM:SS
+                    minutes, seconds = map(float, parts)
+                    return minutes * 60 + seconds
             else:  # Just seconds
                 return float(timestamp)
         except Exception as e:
@@ -607,17 +624,9 @@ class MultimodalRecognitionService:
         try:
             logger.info(f"Identifying speaker in frame: {frame_path}")
             
-            # Check if Supabase integration is enabled and properly configured
-            from backend.core.config import settings
-            supabase_enabled = settings.SUPABASE_INTEGRATION_ENABLED
-            supabase_url = settings.SUPABASE_URL
-            supabase_api_key = settings.SUPABASE_API_KEY or settings.SUPABASE_SERVICE_ROLE_KEY
-            
-            # If Supabase is not properly configured, disable it for this call
-            export_to_supabase = supabase_enabled and supabase_url and supabase_api_key and 'your_supabase' not in supabase_url
-            
-            if not export_to_supabase:
-                logger.warning("Supabase integration is disabled or not properly configured. Continuing without Supabase export.")
+            # For individual frames, we never want to export to Supabase
+            # This prevents uploading individual frame JPGs to Supabase storage
+            export_to_supabase = False
             
             # Use the facial recognition service to identify speakers
             face_results = self.facial_recognition.identify_speakers(

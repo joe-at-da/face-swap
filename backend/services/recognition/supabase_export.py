@@ -220,15 +220,34 @@ def export_recognition_results(
     from backend.services.integration.supabase_client import SupabaseService
     supabase = SupabaseService(use_service_role=True)
     
-    # Upload the full video to Supabase storage
-    video_filename = os.path.basename(video_path)
-    upload_result = supabase.upload_full_video(file_path=video_path)
-    
-    if not upload_result.get("success", False):
-        logger.error(f"Failed to upload video to Supabase: {upload_result.get('error')}")
-        # Continue with export even if upload fails
+    # Upload the combined video to Supabase storage (this is the full video)
+    # Use the combined_av_path instead of the original video_path
+    if os.path.exists(combined_av_path):
+        logger.info(f"Uploading combined video to Supabase full_videos bucket: {combined_av_path}")
+        video_filename = os.path.basename(combined_av_path)
+        upload_result = supabase.upload_full_video(file_path=combined_av_path)
+        
+        if not upload_result.get("success", False):
+            logger.error(f"Failed to upload combined video to Supabase: {upload_result.get('error')}")
+            # Try uploading the original video as a fallback
+            logger.info(f"Trying to upload original video as fallback: {video_path}")
+            upload_result = supabase.upload_full_video(file_path=video_path)
+            if not upload_result.get("success", False):
+                logger.error(f"Failed to upload original video to Supabase: {upload_result.get('error')}")
+            else:
+                logger.info(f"Uploaded original video to Supabase: {upload_result.get('public_url')}")
+        else:
+            logger.info(f"Successfully uploaded combined video to Supabase: {upload_result.get('public_url')}")
     else:
-        logger.info(f"Uploaded video to Supabase: {upload_result.get('public_url')}")
+        # If combined video doesn't exist, upload the original video
+        logger.warning(f"Combined video not found at {combined_av_path}, uploading original video instead")
+        upload_result = supabase.upload_full_video(file_path=video_path)
+        
+        if not upload_result.get("success", False):
+            logger.error(f"Failed to upload original video to Supabase: {upload_result.get('error')}")
+        else:
+            logger.info(f"Uploaded original video to Supabase: {upload_result.get('public_url')}")
+
         
         # Update video record with Supabase URL if db_session is provided
         if db_session:
