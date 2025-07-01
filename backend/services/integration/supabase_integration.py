@@ -186,8 +186,8 @@ class SupabaseIntegration:
         Returns:
             Dictionary with results of the export and upload
         """
-        # Create temporary export directory
-        export_dir = os.path.join(settings.TEMP_DIR, "supabase_export", Path(video_path).stem)
+        # Create temporary export directory using Docker container paths
+        export_dir = os.path.join("/app/data/temp", "supabase_export", Path(video_path).stem)
         os.makedirs(export_dir, exist_ok=True)
         
         # Export recognition results to JSON files
