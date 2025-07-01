@@ -607,22 +607,35 @@ class MultimodalRecognitionService:
         try:
             logger.info(f"Identifying speaker in frame: {frame_path}")
             
+            # Check if Supabase integration is enabled and properly configured
+            from backend.core.config import settings
+            supabase_enabled = settings.SUPABASE_INTEGRATION_ENABLED
+            supabase_url = settings.SUPABASE_URL
+            supabase_api_key = settings.SUPABASE_API_KEY or settings.SUPABASE_SERVICE_ROLE_KEY
+            
+            # If Supabase is not properly configured, disable it for this call
+            export_to_supabase = supabase_enabled and supabase_url and supabase_api_key and 'your_supabase' not in supabase_url
+            
+            if not export_to_supabase:
+                logger.warning("Supabase integration is disabled or not properly configured. Continuing without Supabase export.")
+            
             # Use the facial recognition service to identify speakers
             face_results = self.facial_recognition.identify_speakers(
                 video_path=frame_path,
-                store_unidentified=True
+                store_unidentified=True,
+                export_to_supabase=export_to_supabase
             )
             
             # Check if we got any results
             if not face_results["success"]:
                 logger.warning(f"No faces identified in frame: {frame_path}")
-                return {"success": False, "error": "No faces identified"}
+                return {"success": False, "error": "No faces identified", "supabase_export": {"enabled": export_to_supabase}}
             
             # Get the best detection (highest confidence)
             detections = face_results.get("detections", [])
             if not detections:
                 logger.warning(f"No detections in frame: {frame_path}")
-                return {"success": False, "error": "No detections"}
+                return {"success": False, "error": "No detections", "supabase_export": {"enabled": export_to_supabase}}
             
             # Sort by confidence (highest first)
             detections.sort(key=lambda x: x.get("confidence", 0), reverse=True)
@@ -636,8 +649,12 @@ class MultimodalRecognitionService:
                     best_detection["name"] = profile.get("name", "Unknown")
                     best_detection["profile"] = profile
             
-            return {"success": True, "data": best_detection}
+            return {
+                "success": True, 
+                "data": best_detection,
+                "supabase_export": face_results.get("supabase_export", {"enabled": export_to_supabase})
+            }
             
         except Exception as e:
             logger.exception(f"Error identifying speaker in frame: {str(e)}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "supabase_export": {"enabled": False, "error": str(e)}}
