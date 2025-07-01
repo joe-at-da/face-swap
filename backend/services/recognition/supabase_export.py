@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.db.models import RecognitionProcess, ParliamentTranscription, models
+from backend.db.models import RecognitionProcess, ParliamentTranscription, CaptureSession, models
 from backend.services.recognition.av_utils import combine_audio_video
 from backend.db.session import SessionLocal
 
@@ -230,14 +230,27 @@ def export_recognition_results(
         # Update video record with Supabase URL if db_session is provided
         if db_session:
             try:
-                video = db_session.query(RecognitionProcess.video).filter(
-                    RecognitionProcess.id == video_id
+                # First try to update the CaptureSession record
+                video = db_session.query(CaptureSession).filter(
+                    CaptureSession.id == video_id
                 ).first()
                 
                 if video:
                     video.supabase_url = upload_result.get('public_url')
                     db_session.commit()
-                    logger.info(f"Updated video record with Supabase URL: {upload_result.get('public_url')}")
+                    logger.info(f"Updated CaptureSession record with Supabase URL: {upload_result.get('public_url')}")
+                else:
+                    # If no CaptureSession record, try to update RecognitionProcess record
+                    rec_process = db_session.query(RecognitionProcess).filter(
+                        RecognitionProcess.video_id == video_id
+                    ).first()
+                    
+                    if rec_process:
+                        rec_process.supabase_url = upload_result.get('public_url')
+                        db_session.commit()
+                        logger.info(f"Updated RecognitionProcess record with Supabase URL: {upload_result.get('public_url')}")
+                    else:
+                        logger.warning(f"No video or recognition process record found for video ID {video_id}")
             except Exception as e:
                 logger.error(f"Error updating video record: {str(e)}")
                 # Continue with export even if update fails
