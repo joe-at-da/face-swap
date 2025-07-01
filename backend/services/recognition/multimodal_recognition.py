@@ -834,9 +834,9 @@ class MultimodalRecognitionService:
                     return {}
             
             # Get the timeline data
-            timeline_data = self.timeline_service.get_timeline_data(db, video_id)
-            if timeline_data:
-                results["timeline"] = timeline_data
+            timeline_result = self.timeline_service.get_timeline_events(db, video_id)
+            if timeline_result and "timeline" in timeline_result:
+                results["timeline"] = timeline_result["timeline"]
             
             return results
             

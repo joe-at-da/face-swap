@@ -255,13 +255,21 @@ async def process_parliament_tv_to_supabase(
                     else:
                         logger.error(f"Unexpected metadata type: {type(capture.capture_metadata)}")
                 
+                # Use default Docker container paths if file_path is None
+                if capture.file_path is None:
+                    video_file_path = f"/app/data/media/parliament_tv_{capture_id}.mp4"
+                    audio_file_path = f"/app/data/temp/audio_extracts/audio_{capture_id}.mp3"
+                else:
+                    video_file_path = capture.file_path
+                    audio_file_path = os.path.join(os.path.dirname(capture.file_path), f"audio_{capture_id}.mp3")
+                
                 video_metadata = {
                     "video_id": capture_id,
                     "title": capture.title,
                     "description": capture.description,
                     "duration": capture.duration,
-                    "file_path": capture.file_path,
-                    "audio_path": os.path.join(os.path.dirname(capture.file_path), f"audio_{capture_id}.mp3"),
+                    "file_path": video_file_path,
+                    "audio_path": audio_file_path,
                     "video_url": capture_metadata.get("video_url"),
                     "audio_url": capture_metadata.get("audio_url"),
                     "original_url": capture_metadata.get("original_url")
@@ -277,7 +285,7 @@ async def process_parliament_tv_to_supabase(
                 
                 logger.info(f"Exporting recognition results to Supabase for session {capture_id}")
                 export_result = supabase.export_and_upload_recognition(
-                    video_path=capture.file_path,
+                    video_path=video_file_path,
                     recognition_results=serializable_recognition_data,
                     video_metadata=serializable_video_metadata,
                     db_session=db,
