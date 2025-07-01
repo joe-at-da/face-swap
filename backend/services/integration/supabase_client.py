@@ -186,12 +186,12 @@ class SupabaseService:
         """
         return self.client.table('video_processing_queue').insert(video_data).execute()
     
-    def add_to_clip_creation_queue(self, clip_data: Dict[str, Any]) -> Dict[str, Any]:
+    def add_to_clip_creation_queue(self, clip_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Add a job to the clip_creation queue.
+        Add jobs to the clip_creation queue.
         
         Args:
-            clip_data: Clip data to process
+            clip_data: List of clip data to process
             
         Returns:
             Response from Supabase

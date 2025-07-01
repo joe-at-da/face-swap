@@ -287,6 +287,21 @@ async def process_parliament_tv_to_supabase(
                 
                 logger.info(f"Exported recognition results to Supabase for session {capture_id}")
                 
+                # Verify MP clips in Supabase export
+                try:
+                    from backend.services.integration.mp_clip_verification import verify_mp_clips_in_supabase
+                    verification_result = verify_mp_clips_in_supabase(capture_id, db, export_result)
+                    
+                    if verification_result.get("success", False):
+                        logger.info(f"Successfully verified {verification_result.get('mp_clips_count', 0)} MP clips in Supabase export")
+                        logger.info(f"MP IDs found: {verification_result.get('mp_ids_found', [])}")
+                        logger.info(f"MP names found: {verification_result.get('mp_names_found', [])}")
+                    else:
+                        logger.warning(f"MP clip verification failed: {verification_result.get('error', 'Unknown error')}")
+                        logger.warning(f"MP clips count: {verification_result.get('mp_clips_count', 0)}, Total clips: {verification_result.get('total_clips_count', 0)}")
+                except Exception as e:
+                    logger.error(f"Error verifying MP clips: {str(e)}")
+                
                 # Step 6: Upload full video to Supabase using service role key
                 supabase_service = SupabaseService(use_service_role=True)
                 

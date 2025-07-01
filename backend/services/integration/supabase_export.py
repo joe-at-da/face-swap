@@ -175,9 +175,22 @@ def format_clips_for_supabase(
         # Create a key based on time range and speaker_id
         key = f"{clip['start_time']:.2f}_{clip['end_time']:.2f}_{clip['speaker_id']}"
         
-        # If this is a new unique clip or has higher confidence than existing one, keep it
-        if key not in unique_clips or clip['confidence'] > unique_clips[key]['confidence']:
+        # Prioritize clips with MP associations (non-None speaker_id)
+        has_mp_association = clip['speaker_id'] is not None
+        existing_has_mp = key in unique_clips and unique_clips[key]['speaker_id'] is not None
+        
+        # Logic for deciding which clip to keep:
+        # 1. If this is a new unique clip, keep it
+        # 2. If this clip has an MP association and existing doesn't, replace it
+        # 3. If both have MP associations or both don't, use the one with higher confidence
+        if (key not in unique_clips or 
+            (has_mp_association and not existing_has_mp) or
+            (has_mp_association == existing_has_mp and clip['confidence'] > unique_clips[key]['confidence'])):
             unique_clips[key] = clip
+    
+    # Log the number of clips with MP associations
+    mp_clips = [clip for clip in unique_clips.values() if clip['speaker_id'] is not None]
+    logger.info(f"Formatted {len(unique_clips)} unique clips for Supabase, {len(mp_clips)} with MP associations")
     
     return list(unique_clips.values())
 
