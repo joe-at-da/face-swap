@@ -241,67 +241,68 @@ class MultimodalRecognitionService:
             return {"success": False, "error": error_msg}
 
     
-def process_video_with_transcription(self, video_id: int, transcription_file_path: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Process a video with transcription results
-    """
-    # Initialize key variables at the beginning to ensure they're always defined
-    recognition_events = []
-    all_faces = []
-    speaker_to_face_profile = {}
-    segments = []
-    correlations = []
+    def process_video_with_transcription(self, db: Session, video_id: int, transcription_file_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Process a video with transcription results
+        """
+        # Initialize key variables at the beginning to ensure they're always defined
+        recognition_events = []
+        all_faces = []
+        speaker_to_face_profile = {}
+        segments = []
+        correlations = []
     
-    try:
-        logger.info(f"Processing video with transcription: {video_id}")
+        try:
+            logger.info(f"Processing video with transcription: {video_id}")
+            
+            # Get database session if not provided
+            if db is None:
+                db_generator = get_db()
+                db: Session = next(db_generator)
+            
+            # Get the video from the database
+            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+            if not video:
+                logger.error(f"Video not found: {video_id}")
+                return {"success": False, "error": f"Video not found: {video_id}"}
         
-        # Get database session
-        db_generator = get_db()
-        db: Session = next(db_generator)
+            # Check if the video file exists
+            video_path = video.video_path
+            if not video_path or not os.path.exists(video_path):
+                logger.error(f"Video file not found: {video_path}")
+                return {"success": False, "error": f"Video file not found: {video_path}"}
         
-        # Get the video from the database
-        video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
-        if not video:
-            logger.error(f"Video not found: {video_id}")
-            return {"success": False, "error": f"Video not found: {video_id}"}
+            # Check if we have transcription results
+            if not video.transcription_results and not transcription_file_path:
+                logger.error("Transcription results not found")
+                return {"success": False, "error": f"No transcription results found for video {video_id}"}
         
-        # Check if the video file exists
-        video_path = video.video_path
-        if not video_path or not os.path.exists(video_path):
-            logger.error(f"Video file not found: {video_path}")
-            return {"success": False, "error": f"Video file not found: {video_path}"}
+            # If a transcription file path is provided, read from it
+            transcription_content = None
+            if transcription_file_path:
+                try:
+                    with open(transcription_file_path, 'r') as f:
+                        transcription_content = f.read()
+                        logger.info(f"Read transcription from file: {transcription_file_path}")
+                except Exception as e:
+                    logger.error(f"Error reading transcription file: {str(e)}")
         
-        # Check if we have transcription results
-        if not video.transcription_results and not transcription_file_path:
-            logger.error("Transcription results not found")
-            return {"success": False, "error": f"No transcription results found for video {video_id}"}
-        
-        # If a transcription file path is provided, read from it
-        transcription_content = None
-        if transcription_file_path:
-            try:
-                with open(transcription_file_path, 'r') as f:
-                    transcription_content = f.read()
-                    logger.info(f"Read transcription from file: {transcription_file_path}")
-            except Exception as e:
-                logger.error(f"Error reading transcription file: {str(e)}")
-        
-        # If we couldn't find a transcription file, look for the latest transcript in the audio_extracts folder
-        if not transcription_content:
-            # Look for transcript files matching the pattern transcript_{video_id}_*.txt
-            audio_extracts_dir = Path("/app/data/temp/audio_extracts")
-            if audio_extracts_dir.exists():
-                transcript_files = list(audio_extracts_dir.glob(f"transcript_{video_id}_*.txt"))
-                if transcript_files:
-                    # Sort by modification time to get the latest
-                    latest_transcript = max(transcript_files, key=lambda p: p.stat().st_mtime)
-                    logger.info(f"Found latest transcript file: {latest_transcript}")
-                    try:
-                        with open(latest_transcript, 'r') as f:
-                            transcription_content = f.read()
-                            logger.info(f"Latest transcript content (first 200 chars): {transcription_content[:200]}...")
-                    except Exception as e:
-                        logger.error(f"Error reading latest transcript file: {str(e)}")
+            # If we couldn't find a transcription file, look for the latest transcript in the audio_extracts folder
+            if not transcription_content:
+                # Look for transcript files matching the pattern transcript_{video_id}_*.txt
+                audio_extracts_dir = Path("/app/data/temp/audio_extracts")
+                if audio_extracts_dir.exists():
+                    transcript_files = list(audio_extracts_dir.glob(f"transcript_{video_id}_*.txt"))
+                    if transcript_files:
+                        # Sort by modification time to get the latest
+                        latest_transcript = max(transcript_files, key=lambda p: p.stat().st_mtime)
+                        logger.info(f"Found latest transcript file: {latest_transcript}")
+                        try:
+                            with open(latest_transcript, 'r') as f:
+                                transcription_content = f.read()
+                                logger.info(f"Latest transcript content (first 200 chars): {transcription_content[:200]}...")
+                        except Exception as e:
+                            logger.error(f"Error reading latest transcript file: {str(e)}")
         
         # If we found transcription content in a file, use it instead of the database content
         if transcription_content:
@@ -349,33 +350,30 @@ def process_video_with_transcription(self, video_id: int, transcription_file_pat
                                     "end": end_time,
                                     "text": text_part,
                                     "speaker": "Unknown",
-                                    "speaker_id": "unknown"
-                                })
-                        except Exception as e:
-                            logger.warning(f"Error parsing timestamp line: {line}, error: {str(e)}")
-                
-                logger.info(f"Parsed {len(segments)} segments from transcription")
-                
-                if segments:
-                    transcription = {"segments": segments}
-                    logger.info("Created transcription with parsed segments")
-                else:
-                    # If parsing failed, fall back to simple format
-                    logger.warning("No segments parsed, falling back to simple format")
-                    transcription = {
-                        "segments": [{
-                            "start": 0,
-                            "end": 60,  # Assume 60 seconds for the whole content
-                            "text": video.transcription_results,
-                            "speaker": "Unknown",
-                            "speaker_id": "unknown"
-                        }]
-                    }
-            else:
-                # Try to parse as JSON
                 try:
-                    logger.info("Attempting to parse transcription as JSON")
-                    
+                    # Try to parse as JSON
+                    segments = json.loads(transcription_content)
+                    if isinstance(segments, list) and len(segments) > 0:
+                        logger.info(f"Parsed {len(segments)} segments from transcription file")
+                    else:
+                        logger.warning("Transcription file does not contain a valid segments list")
+                        segments = []
+                except json.JSONDecodeError:
+                    # If not JSON, assume it's a plain text transcript
+                    logger.warning("Transcription is not in JSON format, treating as plain text")
+                    segments = [{"text": transcription_content, "start": 0, "end": 0}]
+            else:
+                # Use the transcription results from the database
+                try:
+                    segments = json.loads(video.transcription_results)
+                    if isinstance(segments, list) and len(segments) > 0:
+                        logger.info(f"Parsed {len(segments)} segments from database transcription")
+                    else:
+                        logger.warning("Database transcription does not contain a valid segments list")
+                        segments = []
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Database transcription is not in JSON format or is None")
+                    segments = []
                     # Clean up the JSON string before parsing
                     cleaned_json = video.transcription_results.strip()
                     if cleaned_json.startswith('\ufeff'):  # Remove BOM if present
