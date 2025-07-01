@@ -9,6 +9,7 @@ import os
 import json
 import logging
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from sqlalchemy.orm import Session
@@ -38,6 +39,205 @@ class MultimodalRecognitionService:
         
         # Create directories if they don't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+    def start_combined_recognition(self, video_id: int) -> Dict[str, Any]:
+        """
+        Start the combined recognition process for a Parliament TV video.
+        This method handles separate audio and video streams as per user preference.
+        
+        Args:
+            video_id: ID of the video to process
+            
+        Returns:
+            Dictionary with recognition results and status
+        """
+        try:
+            logger.info(f"Starting combined recognition for video {video_id}")
+            
+            # Get database session
+            from backend.db.session import get_db
+            from sqlalchemy.orm import Session
+            
+            db_generator = get_db()
+            db: Session = next(db_generator)
+            
+            # Get the video from the database
+            video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+            if not video:
+                logger.error(f"Video not found: {video_id}")
+                return {"success": False, "error": f"Video not found: {video_id}"}
+            
+            # Check if the video has metadata with separate audio and video URLs
+            metadata = {}
+            if video.metadata:
+                try:
+                    # Use the make_json_serializable function to handle all metadata types
+                    # including SQLAlchemy MetaData objects
+                    metadata = make_json_serializable(video.metadata)
+                    
+                    # If metadata is still a string after serialization, parse it as JSON
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except json.JSONDecodeError as json_error:
+                            logger.error(f"Error parsing metadata JSON string: {str(json_error)}")
+                            # If it's not valid JSON, use it as a simple value
+                            metadata = {"value": metadata}
+                    
+                    # Ensure metadata is a dictionary
+                    if not isinstance(metadata, dict):
+                        metadata = {"value": str(metadata)}
+                        
+                    logger.info(f"Successfully processed metadata for video {video_id}")
+                except Exception as e:
+                    logger.error(f"Error processing video metadata: {str(e)}")
+                    return {"success": False, "error": f"Error processing video metadata: {str(e)}"}
+            
+            # Check if we have both audio and video files
+            video_path = video.video_path
+            audio_path = metadata.get("audio_path") or video.audio_path
+            
+            if not video_path or not os.path.exists(video_path):
+                logger.error(f"Video file not found: {video_path}")
+                return {"success": False, "error": f"Video file not found: {video_path}"}
+            
+            if not audio_path or not os.path.exists(audio_path):
+                logger.error(f"Audio file not found: {audio_path}")
+                return {"success": False, "error": f"Audio file not found: {audio_path}"}
+            
+            # Create a recognition process record
+            recognition_process = models.RecognitionProcess(
+                video_id=video_id,
+                status="processing",
+                start_time=datetime.now(),
+                process_metadata={"type": "multimodal"}
+            )
+            db.add(recognition_process)
+            
+            # Update the CaptureSession record with recognition status
+            video.recognition_status = "processing"
+            video.recognition_started_at = datetime.now()
+            
+            db.commit()
+            db.refresh(recognition_process)
+            
+            # Process transcription first if not already done
+            if not video.transcription_results:
+                from backend.services.recognition.voice_recognition import VoiceRecognitionService
+                voice_service = VoiceRecognitionService()
+                
+                # Transcribe the audio
+                transcription_result = voice_service.transcribe_audio(audio_path)
+                if not transcription_result.get("success", False):
+                    error_msg = f"Transcription failed: {transcription_result.get('error', 'Unknown error')}"
+                    logger.error(error_msg)
+                    recognition_process.status = "failed"
+                    recognition_process.end_time = datetime.now()
+                    recognition_process.error_message = error_msg
+                    
+                    # Update the CaptureSession record with failed status
+                    video.recognition_status = "failed"
+                    video.error_message = error_msg
+                    
+                    db.commit()
+                    return {"success": False, "error": error_msg}
+                
+                # Save transcription results
+                video.transcription_results = json.dumps(transcription_result.get("transcript", {}))
+                db.commit()
+                
+                # Identify speakers in the audio
+                speaker_result = voice_service.identify_speakers_in_audio(audio_path)
+                if not speaker_result.get("success", False):
+                    logger.error(f"Speaker identification failed: {speaker_result.get('error', 'Unknown error')}")
+                    # Continue anyway, as we can still do face recognition
+                
+                # Combine transcription with speaker identification
+                if speaker_result.get("success", True):
+                    combined_result = voice_service.combine_transcription_with_speakers(
+                        transcription_result.get("output_file", ""),
+                        speaker_result.get("output_file", "")
+                    )
+                    if combined_result.get("success", False):
+                        video.transcription_results = json.dumps(combined_result.get("combined_results", {}))
+                        db.commit()
+            
+            # Process video with transcription to extract and identify faces
+            multimodal_result = self.process_video_with_transcription(db, video_id)
+            if not multimodal_result.get("success", False):
+                error_msg = f"Multimodal processing failed: {multimodal_result.get('error', 'Unknown error')}"
+                logger.error(error_msg)
+                recognition_process.status = "failed"
+                recognition_process.end_time = datetime.now()
+                recognition_process.error_message = error_msg
+                
+                # Update the CaptureSession record with failed status
+                video.recognition_status = "failed"
+                video.error_message = error_msg
+                
+                db.commit()
+                return {"success": False, "error": error_msg}
+            
+            # Update recognition process record
+            recognition_process.status = "completed"
+            recognition_process.end_time = datetime.now()
+            
+            # Update the CaptureSession record with recognition status
+            video.recognition_status = "completed"
+            video.recognition_completed_at = datetime.now()
+            
+            # Serialize the results with our improved function that handles circular references
+            try:
+                serialized_results = make_json_serializable(multimodal_result)
+                recognition_process.results = json.dumps(serialized_results)
+                # Also save the results to the video record
+                video.recognition_results = json.dumps(serialized_results)
+            except Exception as serialize_error:
+                logger.error(f"Error serializing multimodal results: {str(serialize_error)}")
+                # Fallback to a simpler representation if serialization fails
+                simplified_results = {
+                    "message": "Results available but could not be fully serialized",
+                    "summary": str(multimodal_result)[:1000]  # Include a truncated summary
+                }
+                recognition_process.results = json.dumps(simplified_results)
+                video.recognition_results = json.dumps(simplified_results)
+            
+            db.commit()
+            
+            logger.info(f"Combined recognition completed for video {video_id}")
+            return {"success": True, "recognition_id": recognition_process.id, "results": multimodal_result}
+            
+        except Exception as e:
+            error_msg = f"Error in start_combined_recognition: {str(e)}"
+            logger.exception(error_msg)
+            
+            try:
+                # Try to update the database records if possible
+                db_generator = get_db()
+                db: Session = next(db_generator)
+                
+                # Get the video from the database
+                video = db.query(models.CaptureSession).filter(models.CaptureSession.id == video_id).first()
+                if video:
+                    video.recognition_status = "failed"
+                    video.error_message = error_msg
+                    
+                    # Check if we have a recognition process record
+                    recognition_process = db.query(models.RecognitionProcess).filter(
+                        models.RecognitionProcess.video_id == video_id,
+                        models.RecognitionProcess.status == "processing"
+                    ).first()
+                    
+                    if recognition_process:
+                        recognition_process.status = "failed"
+                        recognition_process.end_time = datetime.now()
+                        recognition_process.error_message = error_msg
+                    
+                    db.commit()
+            except Exception as db_error:
+                logger.exception(f"Failed to update database after recognition error: {str(db_error)}")
+                
+            return {"success": False, "error": error_msg}
         
     def process_video_with_transcription(self, db: Session, video_id: int, transcription_file_path: Optional[str] = None) -> Dict[str, Any]:
         """
