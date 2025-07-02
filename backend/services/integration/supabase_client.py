@@ -327,6 +327,13 @@ class SupabaseService:
             # Get the public URL for the uploaded file
             logger.info(f"Getting public URL for {destination_path} from bucket {self.full_videos_bucket}")
             public_url = self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
+            
+            # Replace host.docker.internal with localhost for external access
+            if public_url and 'host.docker.internal' in public_url:
+                original_url = public_url
+                public_url = public_url.replace('host.docker.internal', 'localhost')
+                logger.info(f"Converted Docker internal URL '{original_url}' to external URL: '{public_url}'")
+            
             logger.info(f"Public URL: {public_url}")
             
             # Update file metadata to ensure it has the correct content-type
