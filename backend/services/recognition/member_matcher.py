@@ -107,127 +107,105 @@ class ParliamentMemberMatcher:
                         {"id": "test-member-1", "display_name": "Test Member 1", "house_id": "commons"},
                         {"id": "test-member-2", "display_name": "Test Member 2", "house_id": "lords"}
                     ]
-                    logger.info("Created minimal test member data")
             
-            if not self.members:
-                logger.warning("No parliament members data available")
+            if not members:
+                logger.warning("No parliament members found in Supabase")
                 return False
-                
-            logger.info(f"Loaded {len(self.members)} parliament members")
             
-            # Save to cache for future use
-            try:
-                import os
-                import json
-                os.makedirs("/app/data/temp", exist_ok=True)
-                cache_file = "/app/data/temp/parliament_members_cache.json"
-                with open(cache_file, 'w') as f:
-                    json.dump(self.members, f)
-                logger.info(f"Saved {len(self.members)} parliament members to cache")
-            except Exception as e:
-                logger.warning(f"Failed to save parliament members to cache: {str(e)}")
+            # Store members
+            self.members = members
             
+            # Count of members with embeddings
             members_with_embeddings = 0
             members_with_photos = 0
-            members_without_photos = 0
+            members_missing_data = 0
+            
+            # Create directory for MP photos if it doesn't exist
+            os.makedirs("/app/data/mp_photos", exist_ok=True)
             
             # Process each member
-            for member in self.members:
+            for member in members:
                 member_id = member.get('id')
-                if not member_id:
-                    continue
-                    
-                # Skip default members (unidentified speakers)
-                if member.get('is_default_member'):
-                    continue
-                    
-                # Store member data for reference
-                self.member_data[member_id] = {
-                    'name': member.get('display_name'),  # Use display_name instead of name
-                    'party': member.get('party_id'),
-                    'house': member.get('house_id'),
-                    'image_url': member.get('image_url', None)  # Handle absence of image_url
-                }
+                display_name = member.get('display_name')
                 
-                # Check if we have a local photo for this member
+                if not member_id:
+                    logger.warning(f"Member has no ID: {member}")
+                    continue
+                
+                # Check for local cached photo
                 local_photo_path = f"/app/data/mp_photos/{member_id}.jpg"
                 if os.path.exists(local_photo_path):
-                    # We have a local photo, check if we have a local embedding
+                    # Use local photo
+                    members_with_photos += 1
+                    
+                    # Check for local cached embedding
                     local_embedding_path = f"/app/data/mp_photos/{member_id}.json"
                     if os.path.exists(local_embedding_path):
                         try:
                             with open(local_embedding_path, 'r') as f:
                                 face_embedding = json.load(f)
+                            
+                            # Store the embedding for matching
                             self.member_embeddings[member_id] = face_embedding
                             members_with_embeddings += 1
-                            # Update member data with local photo path
-                            self.member_data[member_id]['image_url'] = local_photo_path
-                            continue
+                            
+                            # Store member data for reference
+                            self.member_data[member_id] = {
+                                'name': display_name,
+                                'photo_path': local_photo_path
+                            }
                         except Exception as e:
-                            logger.warning(f"Error loading local embedding for {member_id}: {str(e)}")
-                    
-                    # We have a photo but no embedding, process it
-                    members_with_photos += 1
-                    self._process_member_image(member_id, local_photo_path)
-                    continue
-                
-                # Try to get embedding from Supabase if available
-                try:
-                    # Check if face_embedding column exists by trying to select it
-                    try:
-                        response = self.supabase.client.table('parliament_members').select('face_embedding').eq('id', member_id).limit(1).execute()
-                        if response.data and response.data[0].get('face_embedding'):
-                            face_embedding = response.data[0].get('face_embedding')
-                            self.member_embeddings[member_id] = face_embedding
+                            logger.warning(f"Failed to load local embedding for member {member_id}: {str(e)}")
+                            members_missing_data += 1
+                    else:
+                        # Generate embedding from local photo
+                        self._process_member_image(member_id, local_photo_path)
+                        if member_id in self.member_embeddings:
                             members_with_embeddings += 1
-                            continue
-                    except Exception:
-                        # Column might not exist, continue with other methods
-                        pass
-                except Exception as e:
-                    logger.warning(f"Error checking for face embedding in Supabase: {str(e)}")
-                
-                # If we have an image URL in Supabase, try to use it
-                try:
-                    # Check if image_url column exists
-                    try:
-                        response = self.supabase.client.table('parliament_members').select('image_url').eq('id', member_id).limit(1).execute()
-                        if response.data and response.data[0].get('image_url'):
-                            image_url = response.data[0].get('image_url')
-                            members_with_photos += 1
-                            self._process_member_image(member_id, image_url)
-                            continue
-                    except Exception:
-                        # Column might not exist
-                        pass
-                except Exception as e:
-                    logger.warning(f"Error checking for image URL in Supabase: {str(e)}")
-                
-                # If we get here, we need to try to download a photo from the UK Parliament website
-                try:
-                    # Try to find the member on the UK Parliament website
-                    display_name = self.member_data[member_id].get('name')
+                            
+                            # Store member data for reference
+                            self.member_data[member_id] = {
+                                'name': display_name,
+                                'photo_path': local_photo_path
+                            }
+                        else:
+                            members_missing_data += 1
+                else:
+                    # No local photo, try to download from UK Parliament website
                     if display_name:
                         logger.info(f"Trying to find photo for {display_name} from UK Parliament website")
-                        self._download_mp_photo_from_parliament(member_id, display_name)
-                        # Check if download was successful
-                        if os.path.exists(local_photo_path):
-                            members_with_photos += 1
+                        if self._download_mp_photo_from_parliament(member_id, display_name):
+                            # Process the downloaded image
                             self._process_member_image(member_id, local_photo_path)
-                            continue
-                except Exception as e:
-                    logger.warning(f"Error downloading photo from UK Parliament website: {str(e)}")
-                
-                members_without_photos += 1
+                            if member_id in self.member_embeddings:
+                                members_with_embeddings += 1
+                                members_with_photos += 1
+                                
+                                # Store member data for reference
+                                self.member_data[member_id] = {
+                                    'name': display_name,
+                                    'photo_path': local_photo_path
+                                }
+                            else:
+                                members_missing_data += 1
+                        else:
+                            members_missing_data += 1
+                            logger.warning(f"Could not find photo for {display_name} from UK Parliament website")
+                    else:
+                        members_missing_data += 1
+                        logger.warning(f"Member {member_id} has no display name, cannot download photo")
             
+            logger.info(f"Loaded {len(members)} parliament members from Supabase")
             logger.info(f"Members with embeddings: {members_with_embeddings}")
-            logger.info(f"Members with photos but no embeddings: {members_with_photos}")
-            logger.info(f"Members without photos: {members_without_photos}")
-            logger.info(f"Total members with embeddings after processing: {len(self.member_embeddings)}")
+            logger.info(f"Members with photos: {members_with_photos}")
+            logger.info(f"Members missing data: {members_missing_data}")
+            
             return True
             
         except Exception as e:
             logger.error(f"Error loading parliament members: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
             
     def _download_mp_photo_from_parliament(self, member_id: str, name: str) -> bool:
@@ -320,15 +298,13 @@ class ParliamentMemberMatcher:
         
         Args:
             member_id: ID of the parliament member
-            image_url: URL to the member's image
+            image_url: URL or path to the member's image
         """
         try:
-            # Check if the image path exists
-            if not image_url.startswith('http') and os.path.exists(image_url):
-                # Use existing local path
-                image_path = image_url
-            elif image_url.startswith('http'):
-                # Download image if it's a remote URL
+            # Get the image path
+            image_path = image_url
+            if image_url.startswith('http'):
+                # Download the image
                 import requests
                 from io import BytesIO
                 from PIL import Image
@@ -337,16 +313,14 @@ class ParliamentMemberMatcher:
                 if response.status_code != 200:
                     logger.warning(f"Failed to download image for member {member_id}: {response.status_code}")
                     return
-                    
+                
+                # Save the image locally
                 image = Image.open(BytesIO(response.content))
                 image_path = f"/app/data/mp_photos/{member_id}.jpg"
                 os.makedirs(os.path.dirname(image_path), exist_ok=True)
                 image.save(image_path)
-            else:
-                # Path doesn't exist
-                logger.warning(f"Image path does not exist for member {member_id}: {image_url}")
-                return
-                
+                logger.info(f"Downloaded image for member {member_id} to {image_path}")
+            
             # Extract face embedding using the face recognition service
             face_data = self.face_recognition.extract_face_embedding(image_path)
             
@@ -363,58 +337,10 @@ class ParliamentMemberMatcher:
                     logger.info(f"Saved face embedding for member {member_id} to {local_embedding_path}")
                 except Exception as e:
                     logger.warning(f"Failed to save face embedding locally: {str(e)}")
-                
-                # Try to update the member in Supabase with the embedding if the column exists
-                try:
-                    # First check if the face_embedding column exists
-                    try:
-                        # Try to select the column to see if it exists
-                        self.supabase.client.table('parliament_members').select('face_embedding').limit(1).execute()
-                        
-                        # If we get here, the column exists, so try to update it
-                        update_data = {
-                            'face_embedding': face_data['embedding']
-                        }
-                        
-                        # Check if image_url column exists
-                        try:
-                            self.supabase.client.table('parliament_members').select('image_url').limit(1).execute()
-                            # If we get here, the column exists, so include it in the update
-                            update_data['image_url'] = image_path
-                        except Exception:
-                            # Column doesn't exist, skip it
-                            pass
-                            
-                        self.supabase.client.table('parliament_members').update(update_data).eq('id', member_id).execute()
-                        logger.info(f"Updated face embedding and image URL for member {member_id} in Supabase")
-                    except Exception as column_error:
-                        logger.warning(f"face_embedding column might not exist in Supabase: {str(column_error)}")
-                except Exception as e:
-                    logger.warning(f"Failed to update face embedding in Supabase: {str(e)}")
-                    logger.info("Continuing with local embedding only")
                     
-                # Also update the local database if it exists
-                try:
-                    from sqlalchemy import text
-                    # Check if speakers table exists
-                    result = self.db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='speakers'")).fetchone()
-                    if result:
-                        # Get member name
-                        member_name = self.member_data.get(member_id, {}).get('name', 'Unknown')
-                        # Update or insert into speakers table
-                        self.db.execute(
-                            text("INSERT OR REPLACE INTO speakers (parliament_id, name, photo_url, face_encoding) VALUES (:parliament_id, :name, :photo_url, :face_encoding)"),
-                            {
-                                "parliament_id": member_id,
-                                "name": member_name,
-                                "photo_url": image_path,
-                                "face_encoding": json.dumps(face_data['embedding'])
-                            }
-                        )
-                        self.db.commit()
-                        logger.info(f"Updated local database record for member {member_id}")
-                except Exception as e:
-                    logger.warning(f"Could not update local database: {str(e)}")
+                # No need to try updating Supabase since the columns don't exist
+                # Just log that we're using local storage only
+                logger.info(f"Using local storage for member {member_id} photo and embedding")
             else:
                 logger.warning(f"No face detected in image for member {member_id}")
                 
