@@ -8,6 +8,7 @@ import json
 import logging
 import requests
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -17,6 +18,68 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def ensure_columns_exist(supabase_service):
+    """Ensure that the necessary columns exist in the parliament_members table"""
+    try:
+        # Check if columns exist by trying to select them
+        try:
+            supabase_service.client.table('parliament_members').select('image_url').limit(1).execute()
+            logger.info("image_url column exists in parliament_members table")
+        except Exception:
+            logger.info("Adding image_url column to parliament_members table")
+            # We need to use raw SQL to add a column
+            # This requires admin privileges in Supabase
+            # Using the REST API directly since postgrest doesn't support ALTER TABLE
+            import requests
+            from backend.core.config import settings
+            
+            headers = {
+                'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}'
+            }
+            
+            # Use the Supabase REST API to execute SQL
+            sql_url = f"{settings.SUPABASE_URL}/rest/v1/rpc/execute"
+            payload = {
+                "query": "ALTER TABLE parliament_members ADD COLUMN IF NOT EXISTS image_url TEXT;"
+            }
+            
+            response = requests.post(sql_url, json=payload, headers=headers)
+            if response.status_code == 200:
+                logger.info("Successfully added image_url column")
+            else:
+                logger.error(f"Failed to add image_url column: {response.text}")
+        
+        # Check for face_embedding column
+        try:
+            supabase_service.client.table('parliament_members').select('face_embedding').limit(1).execute()
+            logger.info("face_embedding column exists in parliament_members table")
+        except Exception:
+            logger.info("Adding face_embedding column to parliament_members table")
+            import requests
+            from backend.core.config import settings
+            
+            headers = {
+                'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}'
+            }
+            
+            sql_url = f"{settings.SUPABASE_URL}/rest/v1/rpc/execute"
+            payload = {
+                "query": "ALTER TABLE parliament_members ADD COLUMN IF NOT EXISTS face_embedding JSONB;"
+            }
+            
+            response = requests.post(sql_url, json=payload, headers=headers)
+            if response.status_code == 200:
+                logger.info("Successfully added face_embedding column")
+            else:
+                logger.error(f"Failed to add face_embedding column: {response.text}")
+                
+    except Exception as e:
+        logger.error(f"Error ensuring columns exist: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 def main():
     from backend.db.session import SessionLocal
@@ -28,6 +91,9 @@ def main():
     db = SessionLocal()
     supabase_service = SupabaseService(use_service_role=True)
     face_recognition = FaceRecognitionService()
+    
+    # Ensure the necessary columns exist
+    ensure_columns_exist(supabase_service)
     
     # Create directories for MP photos
     mp_photos_dir = "/app/data/mp_photos"
@@ -68,8 +134,8 @@ def main():
             continue
         
         # Get member details
-        name = member.get('name')
-        image_url = member.get('image_url')
+        name = member.get('display_name')  # Using display_name instead of name
+        image_url = None  # The table doesn't have image_url yet
         
         # Skip default members (unidentified speakers)
         if member.get('is_default_member'):
@@ -104,10 +170,13 @@ def main():
                     try:
                         face_data = face_recognition.extract_face_embedding(image_url)
                         if face_data and 'embedding' in face_data:
-                            # Update member with face embedding
-                            update_data = {'face_embedding': face_data['embedding']}
+                                        # Update member with face embedding and image_url
+                            update_data = {
+                                'face_embedding': face_data['embedding'],
+                                'image_url': photo_path
+                            }
                             supabase_service.client.table('parliament_members').update(update_data).eq('id', member_id).execute()
-                            logger.info(f"Updated face embedding for member {name}")
+                            logger.info(f"Updated face embedding and image_url for member {name}")
                             updated_count += 1
                             
                             # Update local cache
@@ -132,7 +201,8 @@ def main():
         # Try to find the member on the UK Parliament website
         try:
             # Search for the member by name
-            search_url = f"https://members-api.parliament.uk/api/Members/Search?Name={name}&skip=0&take=20"
+            encoded_name = urllib.parse.quote(name) if name else ""
+            search_url = f"https://members-api.parliament.uk/api/Members/Search?Name={encoded_name}&skip=0&take=20"
             
             # Add proper headers to avoid 403 errors
             headers = {
@@ -157,39 +227,44 @@ def main():
                     failed_count += 1
                     continue
                 
-                search_results = response.json()
+                search_response = response
                 
-                if not search_results.get('items'):
+                try:
+                    member_data = search_response.json().get('items', [])
+                except Exception as e:
+                    logger.error(f"Error parsing search response: {str(e)}")
+                    member_data = []
+                
+                if not member_data:
                     logger.warning(f"No search results found for member {name}")
-                    failed_count += 1
-                    continue
-                
-                # Find the best match
-                member_data = None
-                for item in search_results['items']:
-                    if item.get('value', {}).get('nameDisplayAs', '').lower() == name.lower():
-                        member_data = item.get('value')
-                        break
-                
-                if not member_data:
-                    # Take the first result if no exact match
-                    member_data = search_results['items'][0].get('value')
-                
-                if not member_data:
-                    logger.warning(f"No member data found for {name}")
-                    failed_count += 1
-                    continue
-                
-                # Get member details
-                member_id_uk = member_data.get('id')
-                
-                if not member_id_uk:
-                    logger.warning(f"No UK Parliament ID found for member {name}")
-                    failed_count += 1
-                    continue
+                    
+                    # Try alternative search with just the first name if full name didn't work
+                    if name and ' ' in name:
+                        first_name = name.split(' ')[0]
+                        logger.info(f"Trying alternative search with just first name: {first_name}")
+                        alt_search_url = f"https://members-api.parliament.uk/api/Members/Search?Name={urllib.parse.quote(first_name)}&skip=0&take=20"
+                        alt_search_response = requests.get(alt_search_url, headers=headers)
+                        if alt_search_response.status_code == 200:
+                            member_data = alt_search_response.json().get('items', [])
+                            if member_data:
+                                logger.info(f"Found results using first name search for {name}")
+                    
+                    if not member_data:
+                        failed_count += 1
+                        continue
                 
                 # Get member photo URL
-                photo_url = f"https://members-api.parliament.uk/api/Members/{member_id_uk}/Portrait?CropType=FullSize"
+                try:
+                    member_id_uk = member_data[0].get('value', {}).get('id')
+                    if not member_id_uk:
+                        logger.warning(f"No UK Parliament ID found for member {name}")
+                        failed_count += 1
+                        continue
+                    photo_url = f"https://members-api.parliament.uk/api/Members/{member_id_uk}/Portrait?CropType=FullSize"
+                except (IndexError, KeyError) as e:
+                    logger.warning(f"Error extracting member ID for {name}: {str(e)}")
+                    failed_count += 1
+                    continue
                 
                 # Download the photo
                 photo_response = requests.get(photo_url, headers=headers)
@@ -281,7 +356,17 @@ def main():
     except Exception as e:
         logger.warning(f"Failed to save cache file: {str(e)}")
     
-    logger.info(f"Processed {processed_count} members, updated {updated_count}, skipped {skipped_count}, failed {failed_count}")
+    logger.info(f"Processed {processed_count} members")
+    logger.info(f"Failed to process {failed_count} members")
+    logger.info(f"Updated {updated_count} members")
+    logger.info(f"Skipped {skipped_count} members")
+    
+    # Check how many members now have embeddings
+    try:
+        response = supabase_service.client.table('parliament_members').select('id').not_.is_('face_embedding', 'null').execute()
+        logger.info(f"After processing, {len(response.data)} members have face embeddings")
+    except Exception as e:
+        logger.warning(f"Could not count members with embeddings: {str(e)}")
 
 if __name__ == "__main__":
     main()
