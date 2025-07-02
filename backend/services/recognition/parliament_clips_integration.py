@@ -28,9 +28,9 @@ class ParliamentClipsIntegrationService:
         """Initialize the parliament clips integration service."""
         logger.info("Initializing ParliamentClipsIntegrationService")
         
-        # Check if we're running in Docker or locally
-        self.docker_db_path = "/app/data/db/parliament.db"
-        self.local_db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data/db/parliament.db")
+        # Define database paths with correct location
+        self.docker_db_path = "/app/backend/parliament_clips.db"  # Path in Docker container
+        self.local_db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "backend/parliament_clips.db")  # Local path
         
         # Use the path that exists
         if os.path.exists(self.docker_db_path):
@@ -40,10 +40,48 @@ class ParliamentClipsIntegrationService:
             self.db_path = self.local_db_path
             logger.info(f"Using local database path: {self.db_path}")
         else:
-            logger.warning("Neither Docker nor local database path exists. Creating local path.")
-            os.makedirs(os.path.dirname(self.local_db_path), exist_ok=True)
+            logger.warning("Parliament clips database doesn't exist. Creating it at the local path.")
+            # Ensure the directory exists
+            parent_dir = os.path.dirname(self.local_db_path)
+            if not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+            # Create an empty database file
             self.db_path = self.local_db_path
+            # Create the database and necessary table
+            self._create_parliament_clips_table()
             logger.info(f"Created and using local database path: {self.db_path}")
+            
+    def _create_parliament_clips_table(self):
+        """Create the parliament_clips table if it doesn't exist."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Create the parliament_clips table with the correct schema
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS parliament_clips (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    member_id INTEGER NOT NULL,
+                    transcript TEXT,
+                    full_video_path TEXT,
+                    start_timestamp TEXT,
+                    end_timestamp TEXT,
+                    confidence_score REAL,
+                    duration_seconds REAL,
+                    session_date TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    metadata TEXT
+                )
+            """)
+            
+            conn.commit()
+            logger.info("Successfully created parliament_clips table")
+        except Exception as e:
+            logger.error(f"Error creating parliament_clips table: {str(e)}")
+        finally:
+            if conn:
+                conn.close()
     
     def save_recognition_events_to_parliament_clips(self, 
                                                    video_id: int, 
@@ -76,22 +114,28 @@ class ParliamentClipsIntegrationService:
                 if event.get("type") == "speaker" and event.get("text"):
                     logger.info(f"Processing speaker event: {event.get('name', 'Unknown')} with text: {event.get('text', '')[:50]}...")
                     try:
+                        # Calculate duration in seconds
+                        start_time = float(event.get("start_time", 0))
+                        end_time = float(event.get("end_time", 0))
+                        duration_seconds = end_time - start_time
+                        
                         # Create clip data for parliament_clips table
                         clip_data = {
-                            'member_id': event.get("member_id", 0),
+                            'member_id': event.get("member_id", 0) or 0,  # Ensure not None
                             'transcript': event.get("text", ""),
                             'full_video_path': video_path,
-                            'start_timestamp': str(event.get("start_time", 0)),
-                            'end_timestamp': str(event.get("end_time", 0)),
-                            'confidence': event.get("confidence", 0),
-                            'recognition_method': event.get("recognition_method", "multimodal"),
+                            'start_timestamp': str(start_time),
+                            'end_timestamp': str(end_time),
+                            'confidence_score': event.get("confidence", 0),  # Changed from 'confidence' to 'confidence_score'
+                            'duration_seconds': duration_seconds,
                             'session_date': datetime.now().strftime("%Y-%m-%d"),
                             'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             'metadata': json.dumps({
                                 'video_id': video_id,
                                 'face_image_url': event.get("face_image_url", ""),
-                                'matched_by': event.get("matched_by", "unknown")
+                                'matched_by': event.get("matched_by", "unknown"),
+                                'recognition_method': event.get("recognition_method", "multimodal")  # Moved to metadata since it's not in schema
                             })
                         }
                         logger.info(f"Prepared clip data for member_id: {clip_data['member_id']}, start: {clip_data['start_timestamp']}, end: {clip_data['end_timestamp']}")
