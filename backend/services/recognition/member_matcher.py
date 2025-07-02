@@ -763,31 +763,6 @@ class ParliamentMemberMatcher:
                 logger.warning(f"Embedding size mismatch: {embedding1.size} vs {embedding2.size}")
                 
                 # If one is 128 (dlib) and the other is different (likely OpenCV), 
-                # we need to use a different comparison approach
-                if embedding1.size == 128 or embedding2.size == 128:
-                    logger.info("Detected potential dlib vs OpenCV embedding comparison")
-                    
-                    # For mismatched embedding types, we'll use a lower threshold
-                    # and normalize each separately before computing similarity on the 
-                    # first min(size1, size2) dimensions
-                    min_size = min(embedding1.size, embedding2.size)
-                    embedding1 = embedding1[:min_size]
-                    embedding2 = embedding2[:min_size]
-                    logger.info(f"Using first {min_size} dimensions for comparison")
-                else:
-                    logger.error(f"Cannot compare embeddings with incompatible sizes: {embedding1.size} vs {embedding2.size}")
-                    return 0.0
-            
-            # Normalize the embeddings
-            norm1 = np.linalg.norm(embedding1)
-            norm2 = np.linalg.norm(embedding2)
-            
-            if norm1 < 1e-10 or norm2 < 1e-10:
-                logger.warning("Near-zero norm detected in embedding")
-                return 0.0
-                
-            embedding1 = embedding1 / norm1
-            embedding2 = embedding2 / norm2
             
             # Compute cosine similarity
             similarity = np.dot(embedding1, embedding2)
@@ -832,7 +807,19 @@ class ParliamentMemberMatcher:
             for member in self.members:
                 member_id = member.get('id')
                 member_display_name = member.get('display_name')
-                member_house = member.get('house_id', '').lower() if member.get('house_id') else None
+                
+                # Handle house_id that could be int or string
+                house_id_value = member.get('house_id')
+                if house_id_value is not None:
+                    if isinstance(house_id_value, int):
+                        # Convert int to string
+                        member_house = str(house_id_value).lower()
+                    elif isinstance(house_id_value, str):
+                        member_house = house_id_value.lower()
+                    else:
+                        member_house = str(house_id_value).lower()
+                else:
+                    member_house = None
                 
                 if member_display_name and default_name in member_display_name and member_house == normalized_house:
                     logger.info(f"Found existing default member for house {house_id} with ID {member_id}")
