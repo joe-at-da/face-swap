@@ -56,65 +56,39 @@ class ParliamentMemberMatcher:
         
     def load_parliament_members(self) -> bool:
         """
-        Load parliament members data from Supabase and prepare for matching
-        If Supabase is not available, try to use locally cached data
+        Load parliament members from Supabase and manage local photo/embedding storage
         
         Returns:
             Boolean indicating success
         """
-        # Initialize members list
-        self.members = []
         try:
-            # Try to fetch all parliament members from Supabase
+            import os
+            import json
+            
+            # Get parliament members from Supabase
             try:
-                if hasattr(self.supabase, 'client') and self.supabase.client:
-                    response = self.supabase.client.table('parliament_members').select('*').execute()
-                    if response.data:
-                        self.members = response.data
-                    else:
-                        logger.warning("No parliament members found in Supabase")
-                else:
-                    logger.warning("Supabase client not available")
-                    # Try to use cached data if available
-                    import os
-                    import json
-                    cache_file = "/app/data/temp/parliament_members_cache.json"
-                    if os.path.exists(cache_file):
+                response = self.supabase.client.table('parliament_members').select('*').execute()
+                self.members = response.data
+                logger.info(f"Retrieved {len(self.members)} parliament members from Supabase")
+            except Exception as e:
+                logger.warning(f"Error retrieving parliament members from Supabase: {str(e)}")
+                # Try to load from cache if available
+                cache_file = "/app/data/temp/parliament_members_cache.json"
+                if os.path.exists(cache_file):
+                    try:
                         with open(cache_file, 'r') as f:
                             self.members = json.load(f)
                         logger.info(f"Loaded {len(self.members)} parliament members from cache")
-                    else:
-                        logger.warning("No cached parliament members data available")
-                        # Create a minimal set of test members for development
-                        self.members = [
-                            {"id": "test-member-1", "display_name": "Test Member 1", "house_id": "commons"},
-                            {"id": "test-member-2", "display_name": "Test Member 2", "house_id": "lords"}
-                        ]
-                        logger.info("Created minimal test member data")
-            except Exception as supabase_error:
-                logger.warning(f"Error accessing Supabase: {str(supabase_error)}")
-                # Try to use cached data
-                import os
-                import json
-                cache_file = "/app/data/temp/parliament_members_cache.json"
-                if os.path.exists(cache_file):
-                    with open(cache_file, 'r') as f:
-                        self.members = json.load(f)
-                    logger.info(f"Loaded {len(self.members)} parliament members from cache")
+                    except Exception as cache_error:
+                        logger.warning(f"Error loading cached parliament members: {str(cache_error)}")
+                        self.members = []
                 else:
-                    # Create a minimal set of test members
-                    self.members = [
-                        {"id": "test-member-1", "display_name": "Test Member 1", "house_id": "commons"},
-                        {"id": "test-member-2", "display_name": "Test Member 2", "house_id": "lords"}
-                    ]
+                    self.members = []
             
-            if not members:
-                logger.warning("No parliament members found in Supabase")
+            if not self.members:
+                logger.warning("No parliament members found in Supabase or cache")
                 return False
-            
-            # Store members
-            self.members = members
-            
+                
             # Count of members with embeddings
             members_with_embeddings = 0
             members_with_photos = 0
@@ -124,7 +98,7 @@ class ParliamentMemberMatcher:
             os.makedirs("/app/data/mp_photos", exist_ok=True)
             
             # Process each member
-            for member in members:
+            for member in self.members:
                 member_id = member.get('id')
                 display_name = member.get('display_name')
                 
@@ -195,7 +169,7 @@ class ParliamentMemberMatcher:
                         members_missing_data += 1
                         logger.warning(f"Member {member_id} has no display name, cannot download photo")
             
-            logger.info(f"Loaded {len(members)} parliament members from Supabase")
+            logger.info(f"Loaded {len(self.members)} parliament members from Supabase")
             logger.info(f"Members with embeddings: {members_with_embeddings}")
             logger.info(f"Members with photos: {members_with_photos}")
             logger.info(f"Members missing data: {members_missing_data}")
