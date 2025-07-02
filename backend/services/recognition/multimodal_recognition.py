@@ -468,92 +468,12 @@ class MultimodalRecognitionService:
             correlations = []
             speaker_to_face_profile = {}
             
-            # Process each segment
-            for segment in segments:
-                speaker = segment.get("speaker", "unknown")
-                start_time = segment.get("start", 0)
-                end_time = segment.get("end", 0)
-                
-                # Skip segments that are too short
-                if end_time - start_time < 1.0:
-                    continue
-                    
-                # Determine frame extraction interval based on segment duration
-                segment_duration = end_time - start_time
-                if segment_duration < 10:
-                    interval = 1.0  # Frame every second for short segments
-                else:
-                    interval = 4.0  # Frame every 3-5 seconds for long segments
-                
-                # Extract frames at regular intervals
-                current_time = start_time
-                while current_time < end_time:
-                    # Extract frame at current time
-                    frame_time = current_time
-                    frame_path = os.path.join(output_dir, f"frame_{video_id}_{int(frame_time * 100):08d}.jpg")
-                    
-                    # Only extract if the frame doesn't already exist
-                    if not os.path.exists(frame_path):
-                        try:
-                            # Use ffmpeg to extract the frame
-                            cmd = [
-                                "ffmpeg", "-y", "-ss", str(frame_time),
-                                "-i", video_path, "-vframes", "1",
-                                "-q:v", "2", frame_path
-                            ]
-                            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            logger.info(f"Extracted frame at {frame_time:.2f}s to {frame_path}")
-                        except subprocess.CalledProcessError as e:
-                            logger.error(f"Error extracting frame at {frame_time:.2f}s: {str(e)}")
-                            continue
-                    
-                    # Identify speaker in the frame
-                    if os.path.exists(frame_path):
-                        try:
-                            face_result = self.identify_speaker_in_frame(db, frame_path)
-                            if face_result["success"]:
-                                face_data = face_result["data"]
-                                face_data["frame_path"] = frame_path
-                                face_data["frame_time"] = frame_time
-                                face_data["segment_speaker"] = speaker
-                                
-                                # Add to recognition events with comprehensive structure
-                                recognition_event = {
-                                    "type": "speaker",
-                                    "start_time": frame_time,
-                                    "end_time": min(frame_time + 5, end_time),  # Assume 5 seconds or until segment end
-                                    "member_id": face_data.get("member_id"),
-                                    "name": face_data.get("name", "Unknown"),
-                                    "confidence": face_data.get("confidence", 0.0),
-                                    "face_image_url": frame_path,
-                                    "text": segment.get("text", ""),
-                                    "recognition_method": "facial",
-                                    "matched_by": face_data.get("matched_by", "unknown"),
-                                    "profile_id": face_data.get("profile_id"),
-                                    "segment_speaker": speaker,
-                                    "time": frame_time  # Add time field for backward compatibility
-                                }
-                                recognition_events.append(recognition_event)
-                                face_data["segment_start"] = start_time
-                                face_data["segment_end"] = end_time
-                                face_data["segment_text"] = segment.get("text", "")
-                                
-                                # Store face data by time
-                                faces_by_time[frame_time] = face_data
-                                
-                                # Store face data by speaker
-                                if speaker not in faces_by_speaker:
-                                    faces_by_speaker[speaker] = []
-                                faces_by_speaker[speaker].append(face_data)
-                                
-                                # Note: Removed duplicate recognition event creation
-                                
-                                logger.info(f"Identified speaker in frame at {frame_time:.2f}s: {face_data.get('name', 'Unknown')}")
-                        except Exception as e:
-                            logger.error(f"Error identifying speaker in frame at {frame_time:.2f}s: {str(e)}")
-                    
-                    # Move to next interval
-                    current_time += interval
+            # Use intelligent face extraction method instead of frame-by-frame extraction
+            logger.info("Using intelligent face extraction method for better speaker recognition")
+            self._process_segments_with_intelligent_face_extraction(
+                segments, video_path, output_dir, video_id, db,
+                faces_by_time, faces_by_speaker, recognition_events
+            )
             
             # Create correlations between speakers and face profiles
             for speaker, faces in faces_by_speaker.items():
@@ -715,6 +635,226 @@ class MultimodalRecognitionService:
             logger.warning(f"Error parsing timestamp {timestamp}: {str(e)}")
             return 0.0
             
+    def _process_segments_with_intelligent_face_extraction(self, segments: List[Dict], video_path: str, 
+                                                output_dir: str, video_id: int, db: Session,
+                                                faces_by_time: Dict, faces_by_speaker: Dict, 
+                                                recognition_events: List) -> None:
+        """
+        Process segments using intelligent face extraction method.
+        
+        Args:
+            segments: List of transcription segments
+            video_path: Path to the video file
+            output_dir: Directory to save output files
+            video_id: ID of the video in the database
+            db: Database session
+            faces_by_time: Dictionary to store faces by timestamp
+            faces_by_speaker: Dictionary to store faces by speaker
+            recognition_events: List to store recognition events
+        """
+        try:
+            # Create output directory for this video
+            video_dir = os.path.join(output_dir, f"video_{video_id}")
+            os.makedirs(video_dir, exist_ok=True)
+            
+            # Extract high-quality faces from the entire video
+            logger.info(f"Extracting high-quality faces from video {video_id}")
+            extraction_result = self.face_profile_service.extract_faces_from_video(
+                video_path=video_path,
+                output_dir=video_dir,
+                interval=1.0,  # Base interval, but our method will select best frames
+                min_confidence=0.6,
+                prioritize_center=True,
+                select_best_frames=True
+            )
+            
+            if extraction_result.get("success", False):
+                extracted_faces = extraction_result.get("faces_found", 0)
+                face_data = extraction_result.get("face_data", [])
+                logger.info(f"Successfully extracted {extracted_faces} high-quality faces from video")
+                
+                # Map extracted faces to segments based on timestamp
+                matched_faces = 0
+                for face_info in face_data:
+                    face_time = face_info.get("timestamp", 0)
+                    face_path = face_info.get("path", "")
+                    
+                    # Find the segment that contains this timestamp
+                    matching_segment = None
+                    for segment in segments:
+                        start_time = segment.get("start", 0)
+                        end_time = segment.get("end", 0)
+                        if start_time <= face_time <= end_time:
+                            matching_segment = segment
+                            break
+                    
+                    if matching_segment and os.path.exists(face_path):
+                        # Process this high-quality face
+                        logger.info(f"Processing high-quality face at {face_time:.2f}s")
+                        
+                        # Identify speaker in the high-quality face image
+                        face_result = self.identify_speaker_in_frame(db, face_path)
+                        if face_result["success"]:
+                            face_data = face_result["data"]
+                            face_data["frame_path"] = face_path
+                            face_data["frame_time"] = face_time
+                            speaker = matching_segment.get("speaker", "unknown")
+                            face_data["segment_speaker"] = speaker
+                            
+                            # Add to recognition events with comprehensive structure
+                            recognition_event = {
+                                "type": "speaker",
+                                "start_time": face_time,
+                                "end_time": min(face_time + 5, matching_segment.get("end", face_time + 5)),
+                                "member_id": face_data.get("member_id"),
+                                "name": face_data.get("name", "Unknown"),
+                                "confidence": face_data.get("confidence", 0.0),
+                                "face_image_url": face_path,
+                                "text": matching_segment.get("text", ""),
+                                "recognition_method": "facial",
+                                "matched_by": face_data.get("matched_by", "unknown"),
+                                "profile_id": face_data.get("profile_id"),
+                                "segment_speaker": speaker,
+                                "time": face_time,  # Add time field for backward compatibility
+                                "quality_score": face_info.get("quality_score", 0)
+                            }
+                            
+                            recognition_events.append(recognition_event)
+                            matched_faces += 1
+                            logger.info(f"Identified speaker in high-quality face: {face_data.get('name', 'Unknown')} with confidence {face_data.get('confidence', 0):.4f}")
+                            
+                            # Store face data by time
+                            faces_by_time[face_time] = face_data
+                            
+                            # Store face data by speaker
+                            if speaker not in faces_by_speaker:
+                                faces_by_speaker[speaker] = []
+                            faces_by_speaker[speaker].append(face_data)
+                        else:
+                            logger.warning(f"Failed to identify speaker in high-quality face at {face_time:.2f}s")
+                
+                logger.info(f"Successfully matched {matched_faces} faces to segments out of {extracted_faces} extracted faces")
+                
+                # If no faces were matched, fall back to the old method
+                if matched_faces == 0:
+                    logger.warning("No speakers identified with high-quality faces, falling back to frame extraction")
+                    self._process_segments_with_frame_extraction(segments, video_path, output_dir, video_id, db,
+                                                              faces_by_time, faces_by_speaker, recognition_events)
+            else:
+                logger.error(f"Failed to extract faces: {extraction_result.get('error', 'Unknown error')}")
+                # Fall back to the old method
+                self._process_segments_with_frame_extraction(segments, video_path, output_dir, video_id, db,
+                                                          faces_by_time, faces_by_speaker, recognition_events)
+        except Exception as e:
+            logger.exception(f"Error in intelligent face extraction: {str(e)}")
+            # Fall back to the old method
+            self._process_segments_with_frame_extraction(segments, video_path, output_dir, video_id, db,
+                                                      faces_by_time, faces_by_speaker, recognition_events)
+    
+    def _process_segments_with_frame_extraction(self, segments: List[Dict], video_path: str, 
+                                             output_dir: str, video_id: int, db: Session,
+                                             faces_by_time: Dict, faces_by_speaker: Dict, 
+                                             recognition_events: List) -> None:
+        """
+        Process segments by extracting frames at regular intervals (fallback method).
+        
+        Args:
+            segments: List of transcription segments
+            video_path: Path to the video file
+            output_dir: Directory to save output files
+            video_id: ID of the video in the database
+            db: Database session
+            faces_by_time: Dictionary to store faces by timestamp
+            faces_by_speaker: Dictionary to store faces by speaker
+            recognition_events: List to store recognition events
+        """
+        logger.info("Using standard frame extraction method as fallback")
+        
+        for segment in segments:
+            speaker = segment.get("speaker", "unknown")
+            start_time = segment.get("start", 0)
+            end_time = segment.get("end", 0)
+            
+            # Skip segments that are too short
+            if end_time - start_time < 1.0:
+                continue
+                
+            # Determine frame extraction interval based on segment duration
+            segment_duration = end_time - start_time
+            if segment_duration < 10:
+                interval = 1.0  # Frame every second for short segments
+            else:
+                interval = 4.0  # Frame every 3-5 seconds for long segments
+            
+            # Extract frames at regular intervals
+            current_time = start_time
+            while current_time < end_time:
+                # Extract frame at current time
+                frame_time = current_time
+                frame_path = os.path.join(output_dir, f"frame_{video_id}_{int(frame_time * 100):08d}.jpg")
+                
+                # Only extract if the frame doesn't already exist
+                if not os.path.exists(frame_path):
+                    try:
+                        # Use ffmpeg to extract the frame
+                        cmd = [
+                            "ffmpeg", "-y", "-ss", str(frame_time),
+                            "-i", video_path, "-vframes", "1",
+                            "-q:v", "2", frame_path
+                        ]
+                        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        logger.info(f"Extracted frame at {frame_time:.2f}s to {frame_path}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Error extracting frame at {frame_time:.2f}s: {str(e)}")
+                        continue
+                
+                # Identify speaker in the frame
+                if os.path.exists(frame_path):
+                    try:
+                        face_result = self.identify_speaker_in_frame(db, frame_path)
+                        if face_result["success"]:
+                            face_data = face_result["data"]
+                            face_data["frame_path"] = frame_path
+                            face_data["frame_time"] = frame_time
+                            face_data["segment_speaker"] = speaker
+                            
+                            # Add to recognition events with comprehensive structure
+                            recognition_event = {
+                                "type": "speaker",
+                                "start_time": frame_time,
+                                "end_time": min(frame_time + 5, end_time),  # Assume 5 seconds or until segment end
+                                "member_id": face_data.get("member_id"),
+                                "name": face_data.get("name", "Unknown"),
+                                "confidence": face_data.get("confidence", 0.0),
+                                "face_image_url": frame_path,
+                                "text": segment.get("text", ""),
+                                "recognition_method": "facial",
+                                "matched_by": face_data.get("matched_by", "unknown"),
+                                "profile_id": face_data.get("profile_id"),
+                                "segment_speaker": speaker,
+                                "time": frame_time  # Add time field for backward compatibility
+                            }
+                            recognition_events.append(recognition_event)
+                            
+                            face_data["segment_start"] = start_time
+                            face_data["segment_end"] = end_time
+                            face_data["segment_text"] = segment.get("text", "")
+                            
+                            # Store face data by time
+                            faces_by_time[frame_time] = face_data
+                            
+                            # Store face data by speaker
+                            if speaker not in faces_by_speaker:
+                                faces_by_speaker[speaker] = []
+                            faces_by_speaker[speaker].append(face_data)
+                            
+                            logger.info(f"Identified speaker in frame at {frame_time:.2f}s: {face_data.get('name', 'Unknown')}")
+                    except Exception as e:
+                        logger.error(f"Error identifying speaker in frame at {frame_time:.2f}s: {str(e)}")
+                
+                # Move to next interval
+                current_time += interval
+    
     def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.6) -> Dict[str, Any]:
         """Identify speakers in a frame using facial recognition and ParliamentMemberMatcher."""
         try:
