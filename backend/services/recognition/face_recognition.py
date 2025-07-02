@@ -178,7 +178,9 @@ class FaceRecognitionService:
                 cv2.imwrite(face_path, face_crop)
                 logger.debug(f"Saved face crop {i} to {face_path}")
             
-            logger.info(f"✅ Detected {len(face_results)} faces in image: {image_path} with confidences: {[f'{f["confidence"]:.2f}' for f in face_results]}")
+            confidences = [f["confidence"] for f in face_results]
+            confidence_strings = [f"{conf:.2f}" for conf in confidences]
+            logger.info(f"✅ Detected {len(face_results)} faces in image: {image_path} with confidences: {confidence_strings}")
             return face_results
             
         except Exception as e:
