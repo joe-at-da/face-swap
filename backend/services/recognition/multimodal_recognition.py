@@ -20,6 +20,7 @@ from backend.services.recognition.facial_recognition import FacialRecognitionSer
 from backend.services.recognition.face_profile_service import FaceProfileService
 from backend.services.recognition.timeline_service import TimelineService
 from backend.services.recognition.member_matcher import ParliamentMemberMatcher
+from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
 from backend.services.utils import make_json_serializable
 
 # Set up logging
@@ -37,6 +38,7 @@ class MultimodalRecognitionService:
         self.facial_recognition = FacialRecognitionService()
         self.face_profile_service = FaceProfileService()
         self.timeline_service = TimelineService()
+        self.parliament_clips_service = ParliamentClipsIntegrationService()
         self.member_matcher = None  # Will be initialized when needed with DB session
         
         # Set up directories using Docker container paths as per user preference
@@ -671,6 +673,22 @@ class MultimodalRecognitionService:
                 )
                 db.add(recognition_process)
                 db.commit()
+                
+            # Save recognition events to the local SQLite parliament_clips database
+            try:
+                logger.info(f"Saving recognition events to local SQLite parliament_clips database for video {video_id}")
+                clips_result = self.parliament_clips_service.save_recognition_events_to_parliament_clips(
+                    video_id=video_id,
+                    recognition_events=recognition_events,
+                    video_path=video_path
+                )
+                
+                if clips_result.get("success"):
+                    logger.info(f"Successfully saved {clips_result.get('clips_saved')} clips to parliament_clips database")
+                else:
+                    logger.error(f"Failed to save clips to parliament_clips database: {clips_result.get('error')}")
+            except Exception as e:
+                logger.exception(f"Error saving to parliament_clips database: {str(e)}")
             
             return {
                 "success": True,
