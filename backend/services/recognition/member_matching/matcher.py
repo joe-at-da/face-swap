@@ -264,7 +264,7 @@ class ParliamentMemberMatcher:
                 # Dlib and other models may have different similarity distributions
                 # Lower the threshold more aggressively to improve matching rates
                 if confidence_threshold > 0.5:
-                    adjusted_threshold = confidence_threshold - 0.3
+                    adjusted_threshold = confidence_threshold - 0.65  # More aggressive threshold reduction (was 0.3)
                     logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for cross-model comparison")
                     confidence_threshold = adjusted_threshold
             
