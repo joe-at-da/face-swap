@@ -30,76 +30,53 @@ class SupabaseIntegration:
     """
     
     def __init__(self):
-        self.supabase = SupabaseService()
-        self.media_bucket = settings.SUPABASE_MEDIA_BUCKET or "parliament-tv-media"
-        self.export_bucket = settings.SUPABASE_EXPORT_BUCKET or "parliament-tv-exports"
+        """
+        Initialize Supabase integration.
+        """
+        self.supabase = SupabaseService(use_service_role=True)
+        # Only using full_videos_bucket for combined AV files
+        self.full_videos_bucket = settings.SUPABASE_FULL_VIDEOS_BUCKET or "full_videos"
+        logger.info(f"Initialized SupabaseIntegration with full_videos_bucket: {self.full_videos_bucket}")
     
     def upload_media_to_supabase(
         self, 
         video_path: str, 
-        audio_path: str,
-        thumbnail_path: Optional[str] = None
+        audio_path: str = None, 
+        thumbnail_path: str = None
     ) -> Dict[str, str]:
         """
         Upload media files to Supabase storage.
         
         Args:
             video_path: Path to video file
-            audio_path: Path to audio file
-            thumbnail_path: Path to thumbnail image (optional)
+            audio_path: Path to audio file (ignored)
+            thumbnail_path: Path to thumbnail file (ignored)
             
         Returns:
             Dictionary with URLs for uploaded files
         """
-        result = {}
+        # We're not uploading any media files except combined AV files
+        # And those are handled separately in export_and_upload_recognition
+        logger.info("Skipping regular media uploads - only combined AV files will be uploaded")
         
-        # Upload video file
-        if os.path.exists(video_path):
-            video_filename = os.path.basename(video_path)
-            # Upload directly to root of bucket
-            storage_path = video_filename
-            
+        # Check if this is a combined AV file (should have combined_av_ in the filename)
+        filename = os.path.basename(video_path)
+        if 'combined_av_' in filename and os.path.exists(video_path):
+            logger.info(f"Found combined AV file: {video_path}")
             try:
-                self.supabase.upload_file(self.media_bucket, storage_path, video_path)
-                video_url = self.supabase.get_public_url(self.media_bucket, storage_path)
-                result["video_url"] = video_url
-                logger.info(f"Uploaded video to Supabase: {video_url}")
+                # Upload the combined AV file to the full_videos bucket
+                upload_result = self.supabase.upload_full_video(file_path=video_path)
+                if upload_result.get("success"):
+                    logger.info(f"Successfully uploaded combined AV file to Supabase: {upload_result.get('public_url')}")
+                    return {"combined_av_url": upload_result.get("public_url")}
+                else:
+                    logger.error(f"Failed to upload combined AV file: {upload_result.get('error')}")
             except Exception as e:
-                logger.error(f"Error uploading video to Supabase: {str(e)}")
+                logger.error(f"Error uploading combined AV file: {str(e)}")
         else:
-            logger.warning(f"Video file not found: {video_path}")
-        
-        # Upload audio file - using the separate audio URL as provided
-        if os.path.exists(audio_path):
-            audio_filename = os.path.basename(audio_path)
-            # Upload directly to root of bucket
-            storage_path = audio_filename
+            logger.info(f"Skipping upload of non-combined AV file: {filename}")
             
-            try:
-                self.supabase.upload_file(self.media_bucket, storage_path, audio_path)
-                audio_url = self.supabase.get_public_url(self.media_bucket, storage_path)
-                result["audio_url"] = audio_url
-                logger.info(f"Uploaded audio to Supabase: {audio_url}")
-            except Exception as e:
-                logger.error(f"Error uploading audio to Supabase: {str(e)}")
-        else:
-            logger.warning(f"Audio file not found: {audio_path}")
-        
-        # Upload thumbnail if provided
-        if thumbnail_path and os.path.exists(thumbnail_path):
-            thumbnail_filename = os.path.basename(thumbnail_path)
-            # Upload directly to root of bucket
-            storage_path = thumbnail_filename
-            
-            try:
-                self.supabase.upload_file(self.media_bucket, storage_path, thumbnail_path)
-                thumbnail_url = self.supabase.get_public_url(self.media_bucket, storage_path)
-                result["thumbnail_url"] = thumbnail_url
-                logger.info(f"Uploaded thumbnail to Supabase: {thumbnail_url}")
-            except Exception as e:
-                logger.error(f"Error uploading thumbnail to Supabase: {str(e)}")
-        
-        return result
+        return {}
     
     def upload_export_files(self, export_paths: Dict[str, str]) -> Dict[str, str]:
         """
@@ -219,48 +196,61 @@ class SupabaseIntegration:
             "supabase_urls": {},
             "queue_responses": {}
         }
-        
-        # Skip uploading JSON files to Supabase
+                # Skip uploading JSON files to Supabase
         logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
         export_urls = {}
         
-        # Upload media files if requested
+        # Upload ONLY the combined AV file if requested
         if upload_media:
-            # Get audio path from metadata - respecting the separate audio/video streams
-            audio_path = video_metadata.get("audio_path", "")
-            if not audio_path and "audio_url" in video_metadata:
-                # Try to find local audio file based on metadata
-                audio_url = video_metadata.get("audio_url", "")
-                if audio_url:
-                    audio_filename = os.path.basename(audio_url)
-                    audio_path = os.path.join(os.path.dirname(video_path), audio_filename)
-            
-            # Get thumbnail path if available
-            thumbnail_path = video_metadata.get("thumbnail_path", "")
-            
             # Check if combined AV file was created and upload it directly
             combined_url = export_result.get("combined_url", "")
             if combined_url and os.path.exists(combined_url):
                 logger.info(f"Uploading combined audio-video file: {combined_url}")
                 try:
-                    # Upload the combined file directly to the root of the bucket
+                    # Verify file exists and has proper size
+                    file_size = os.path.getsize(combined_url)
+                    logger.info(f"Combined AV file exists: {os.path.exists(combined_url)}, size: {file_size} bytes")
+                    
+                    # Make sure filename has combined_av_ prefix
+                    filename = os.path.basename(combined_url)
+                    if 'combined_av_' not in filename:
+                        logger.warning(f"Combined AV file does not have combined_av_ prefix: {filename}")
+                    
+                    # Upload the combined file directly to the full_videos bucket
                     # Use the original filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
                     upload_result = self.supabase.upload_full_video(file_path=combined_url)
+                    
                     if upload_result.get("success"):
-                        result["supabase_urls"]["combined_av_url"] = upload_result.get("public_url")
-                        logger.info(f"Successfully uploaded combined AV file to Supabase: {upload_result.get('public_url')}")
+                        supabase_url = upload_result.get("public_url")
+                        result["supabase_urls"]["combined_av_url"] = supabase_url
+                        logger.info(f"Successfully uploaded combined AV file to Supabase: {supabase_url}")
+                        
+                        # Update the database with the Supabase URL if we have a session
+                        if db_session:
+                            try:
+                                from backend.db.models import CaptureSession, RecognitionProcess
+                                
+                                # Try to find the capture session
+                                capture = db_session.query(CaptureSession).filter(CaptureSession.id == video_id).first()
+                                if capture:
+                                    logger.info(f"Updating CaptureSession {video_id} with Supabase URL: {supabase_url}")
+                                    capture.supabase_url = supabase_url
+                                    db_session.commit()
+                                    logger.info(f"Successfully updated CaptureSession {video_id} with Supabase URL")
+                                else:
+                                    logger.warning(f"Could not find CaptureSession with ID {video_id}")
+                            except Exception as db_e:
+                                logger.error(f"Error updating database with Supabase URL: {str(db_e)}")
                     else:
                         logger.error(f"Failed to upload combined AV file: {upload_result.get('error')}")
                 except Exception as e:
                     logger.error(f"Error uploading combined AV file: {str(e)}")
-            
-            # Upload media files
-            media_urls = self.upload_media_to_supabase(
-                video_path=video_path,
-                audio_path=audio_path,
-                thumbnail_path=thumbnail_path
-            )
-            result["supabase_urls"].update(media_urls)
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+            else:
+                logger.warning(f"Combined AV file not found at {combined_url}")
+        else:
+            logger.info("Skipping media upload as requested")
         
         # Load exported data
         try:

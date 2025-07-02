@@ -48,9 +48,9 @@ class SupabaseService:
                              used for server-side operations only.
         """
         self.client = get_supabase_client(use_service_role=use_service_role)
-        self.media_bucket = settings.SUPABASE_MEDIA_BUCKET
-        self.export_bucket = settings.SUPABASE_EXPORT_BUCKET
+        # Only using full_videos_bucket for all uploads
         self.full_videos_bucket = settings.SUPABASE_FULL_VIDEOS_BUCKET
+        logger.info(f"Initialized SupabaseService with full_videos_bucket: {self.full_videos_bucket}")
     
     # Database operations
     
@@ -102,28 +102,57 @@ class SupabaseService:
         Upload a file to Supabase Storage.
         
         Args:
-            bucket: Storage bucket name
+            bucket: Storage bucket name (ignored, always using full_videos_bucket)
             path: Destination path in the bucket
             file_path: Local file path to upload
             
         Returns:
             Response from Supabase Storage
         """
-        with open(file_path, 'rb') as f:
-            return self.client.storage.from_(bucket).upload(path, f)
+        # Always use full_videos_bucket regardless of what bucket was passed
+        logger.warning(f"Ignoring specified bucket '{bucket}' and using full_videos_bucket '{self.full_videos_bucket}' instead")
+        
+        # Only upload if the file exists
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return {"error": f"File not found: {file_path}"}
+            
+        # Only upload combined AV files
+        filename = os.path.basename(file_path)
+        if 'combined_av_' not in filename:
+            logger.warning(f"Skipping upload of non-combined AV file: {filename}")
+            return {"error": "Only combined AV files should be uploaded"}
+            
+        # Use the filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
+        destination_path = os.path.basename(path)
+        
+        try:
+            with open(file_path, 'rb') as f:
+                logger.info(f"Uploading {file_path} to {self.full_videos_bucket}/{destination_path}")
+                return self.client.storage.from_(self.full_videos_bucket).upload(destination_path, f)
+        except Exception as e:
+            logger.error(f"Error uploading file: {str(e)}")
+            return {"error": str(e)}
     
     def get_public_url(self, bucket: str, path: str) -> str:
         """
         Get public URL for a file in Supabase Storage.
         
         Args:
-            bucket: Storage bucket name
+            bucket: Storage bucket name (ignored, always using full_videos_bucket)
             path: Path to the file in the bucket
             
         Returns:
             Public URL for the file
         """
-        return self.client.storage.from_(bucket).get_public_url(path)
+        # Always use full_videos_bucket regardless of what bucket was passed
+        logger.warning(f"Ignoring specified bucket '{bucket}' and using full_videos_bucket '{self.full_videos_bucket}' instead")
+        
+        # Use the filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
+        destination_path = os.path.basename(path)
+        
+        logger.info(f"Getting public URL for {destination_path} from bucket {self.full_videos_bucket}")
+        return self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
         
     def upload_full_video(self, file_path: str, destination_path: str = None) -> Dict[str, Any]:
         """Upload a full video file to Supabase storage."""
