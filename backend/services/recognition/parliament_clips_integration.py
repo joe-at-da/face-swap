@@ -98,115 +98,163 @@ class ParliamentClipsIntegrationService:
         Returns:
             Dict with results of the operation
         """
-        logger.info(f"===== PARLIAMENT CLIPS INTEGRATION: Starting to save {len(recognition_events)} recognition events for video {video_id} =====")
-        logger.info(f"Using database path: {self.db_path}")
-        logger.info(f"Video path: {video_path}")
-        try:
-            logger.info(f"Saving {len(recognition_events)} recognition events to parliament_clips for video {video_id}")
-            
-            clips_saved = 0
-            clips_failed = 0
-            clip_ids = []
-            
-            # Log all recognition events for debugging
-            logger.info(f"Recognition events types: {[event.get('type', 'unknown') for event in recognition_events]}")
-            logger.info(f"Recognition events with text: {sum(1 for event in recognition_events if event.get('text'))}")
-            logger.info(f"Speaker events: {sum(1 for event in recognition_events if event.get('type') == 'speaker')}")
-            logger.info(f"Speaker events with text: {sum(1 for event in recognition_events if event.get('type') == 'speaker' and event.get('text'))}")
+        logger.info(f"===== SAVING RECOGNITION EVENTS TO PARLIAMENT_CLIPS =====")
+        logger.info(f"Video ID: {video_id}, Video Path: {video_path}")
+        logger.info(f"Total recognition events: {len(recognition_events)}")
         
-            # Process each recognition event
-            for event in recognition_events:
-                # Log the event for debugging
-                logger.info(f"Processing event: {event}")
+        # Log some stats about the recognition events
+        event_types = {}
+        for event in recognition_events:
+            event_type = event.get("type", "unknown")
+            event_types[event_type] = event_types.get(event_type, 0) + 1
+        
+        logger.info(f"Event types breakdown: {event_types}")
+        
+        # Create the database and table if they don't exist
+        self._create_parliament_clips_table()
+        
+        clips_saved = 0
+        errors = []
+        
+        # Filter for speaker events with text
+        speaker_events = [event for event in recognition_events if event.get("type") == "speaker" and event.get("text")]
+        logger.info(f"Found {len(speaker_events)} speaker events with text")
+        
+        # Log a sample of the speaker events for debugging
+        if speaker_events:
+            sample_event = speaker_events[0]
+            logger.info(f"Sample speaker event: {json.dumps(sample_event, indent=2)}")
+        
+        member_id_counts = {}
+        for event in speaker_events:
+            # Extract data from the event
+            start_time = event.get("start_time", 0)
+            end_time = event.get("end_time", 0)
+            text = event.get("text", "")
+            member_id = event.get("member_id", "")
+            confidence = event.get("confidence", 0.0)
+            
+            # Count member IDs for debugging
+            member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
+            
+            # Skip events without a member_id
+            if not member_id:
+                logger.warning(f"Skipping event without member_id at {start_time}-{end_time}")
+                logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
+                errors.append(f"Event at {start_time}-{end_time} has no member_id")
+                continue
                 
-                # Only process speaker events with text
-                if event.get("type") == "speaker" and event.get("text"):
-                    logger.info(f"Processing speaker event: {event.get('name', 'Unknown')} with text: {event.get('text', '')[:50]}...")
-                    try:
-                        # Calculate duration in seconds
-                        start_time = float(event.get("start_time", 0))
-                        end_time = float(event.get("end_time", 0))
-                        duration_seconds = end_time - start_time
-                        
-                        # Create clip data for parliament_clips table
-                        clip_data = {
-                            'member_id': event.get("member_id", 0) or 0,  # Ensure not None
-                            'transcript': event.get("text", ""),
-                            'full_video_path': video_path,
-                            'start_timestamp': str(start_time),
-                            'end_timestamp': str(end_time),
-                            'confidence_score': event.get("confidence", 0),  # Changed from 'confidence' to 'confidence_score'
-                            'duration_seconds': duration_seconds,
-                            'session_date': datetime.now().strftime("%Y-%m-%d"),
-                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            'metadata': json.dumps({
-                                'video_id': video_id,
-                                'face_image_url': event.get("face_image_url", ""),
-                                'matched_by': event.get("matched_by", "unknown"),
-                                'recognition_method': event.get("recognition_method", "multimodal")  # Moved to metadata since it's not in schema
-                            })
-                        }
-                        logger.info(f"Prepared clip data for member_id: {clip_data['member_id']}, start: {clip_data['start_timestamp']}, end: {clip_data['end_timestamp']}")
-                        
-                        # Insert the clip into the parliament_clips table using direct SQLite connection
-                        conn = None
-                        try:
-                            conn = sqlite3.connect(self.db_path)
-                            cursor = conn.cursor()
-                            
-                            # Prepare the SQL statement
-                            fields = list(clip_data.keys())
-                            placeholders = ', '.join(['?'] * len(fields))
-                            values = [clip_data[field] for field in fields]
-                            
-                            # Log the SQL statement for debugging
-                            sql_statement = f"INSERT INTO parliament_clips ({', '.join(fields)}) VALUES ({placeholders})"
-                            logger.info(f"Executing SQL: {sql_statement}")
-                            logger.info(f"With values: {values}")
-                            
-                            # Execute the insert
-                            cursor.execute(sql_statement, values)
-                            
-                            # Get the ID of the inserted clip
-                            clip_id = cursor.lastrowid
-                            conn.commit()
-                            
-                            if clip_id:
-                                clips_saved += 1
-                                clip_ids.append(clip_id)
-                                logger.info(f"Saved parliament clip with ID {clip_id} for member {event.get('name', 'Unknown')}")
-                            else:
-                                clips_failed += 1
-                                logger.warning(f"Failed to save parliament clip for member {event.get('name', 'Unknown')}")
-                        except Exception as db_error:
-                            clips_failed += 1
-                            logger.error(f"Database error saving parliament clip: {str(db_error)}")
-                        finally:
-                            if conn:
-                                conn.close()
-                    
-                    except Exception as e:
-                        clips_failed += 1
-                        logger.error(f"Error saving parliament clip: {str(e)}")
+            logger.info(f"Processing event for member_id: {member_id} at {start_time}-{end_time}")
             
-            logger.info(f"===== PARLIAMENT CLIPS INTEGRATION: Finished saving clips. Saved: {clips_saved}, Failed: {clips_failed} =====")
-            return {
-                "success": True,
-                "clips_saved": clips_saved,
-                "clips_failed": clips_failed,
-                "clip_ids": clip_ids
+            # Calculate duration in seconds
+            duration_seconds = end_time - start_time
+            
+            # Verify video_path exists
+            if not os.path.exists(video_path):
+                logger.error(f"❌ Video path does not exist: {video_path}")
+                errors.append(f"Video path does not exist: {video_path}")
+                continue
+                
+            # Create clip data for parliament_clips table
+            clip_data = {
+                'member_id': member_id,
+                'transcript': text,
+                'full_video_path': video_path,
+                'start_timestamp': str(start_time),
+                'end_timestamp': str(end_time),
+                'confidence_score': confidence,
+                'duration_seconds': duration_seconds,
+                'session_date': datetime.now().strftime("%Y-%m-%d"),
+                'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'metadata': json.dumps({
+                    'video_id': video_id,
+                    'face_image_url': event.get("face_image_url", ""),
+                    'matched_by': event.get("matched_by", "unknown"),
+                    'recognition_method': event.get("recognition_method", "multimodal")
+                })
             }
             
+            logger.info(f"Prepared data for clip: member_id={member_id}, duration={duration_seconds:.2f}s")
+            
+            # Insert into database
+            conn = None
+            try:
+                # Check if clip already exists
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                # Prepare the SQL statement
+                fields = list(clip_data.keys())
+                placeholders = ', '.join(['?'] * len(fields))
+                values = [clip_data[field] for field in fields]
+                
+                # Log the SQL statement for debugging
+                sql_statement = f"INSERT INTO parliament_clips ({', '.join(fields)}) VALUES ({placeholders})"
+                logger.debug(f"Executing SQL: {sql_statement}")
+                
+                # Execute the insert
+                cursor.execute(sql_statement, values)
+                
+                # Get the ID of the inserted clip
+                clip_id = cursor.lastrowid
+                conn.commit()
+                conn.close()
+                conn = None
+                
+                if clip_id:
+                    clips_saved += 1
+                    logger.info(f"✅ Successfully saved clip with ID {clip_id} for member {member_id}")
+                else:
+                    logger.warning(f"⚠️ No clip ID returned when saving clip for member {member_id}")
+                    errors.append(f"No clip ID returned for member {member_id}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error saving clip to parliament_clips database: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                errors.append(f"Error saving clip: {str(e)}")
+                if conn:
+                    conn.close()
+        
+        # Log summary of member IDs
+        logger.info(f"Member ID counts: {member_id_counts}")
+        
+        # Check database size and contents after saving
+        try:
+            db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
+            logger.info(f"Parliament clips database size: {db_size} bytes")
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM parliament_clips")
+            total_clips = cursor.fetchone()[0]
+            logger.info(f"Total clips in database: {total_clips}")
+            
+            # Get a sample of clips if any exist
+            if total_clips > 0:
+                cursor.execute("SELECT id, member_id, start_timestamp, end_timestamp FROM parliament_clips LIMIT 5")
+                sample_clips = cursor.fetchall()
+                logger.info(f"Sample clips: {sample_clips}")
+            
+            conn.close()
         except Exception as e:
-            logger.exception(f"Error saving recognition events to parliament_clips: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "clips_saved": 0,
-                "clips_failed": 0,
-                "clip_ids": []
-            }
+            logger.error(f"Error checking database after saving: {str(e)}")
+        
+        # Return results
+        success = clips_saved > 0
+        result = {
+            "success": success,
+            "clips_saved": clips_saved,
+            "errors": errors
+        }
+        
+        if success:
+            logger.info(f"✅ Successfully saved {clips_saved} clips to parliament_clips database")
+        else:
+            logger.warning(f"❌ Failed to save any clips to parliament_clips database. Errors: {errors}")
+            
+        return result
     
     def get_parliament_clips_for_video(self, video_id: int) -> Dict[str, Any]:
         """
