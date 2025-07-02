@@ -3,6 +3,7 @@ Parliament Clips Integration Service.
 
 This service integrates the multimodal recognition service with the local SQLite parliament_clips database,
 ensuring that recognized clips are properly saved for local development and testing.
+It also integrates with Supabase to ensure clips are available in the production environment.
 """
 
 import os
@@ -17,6 +18,8 @@ from sqlalchemy.orm import Session
 # Add the parent directory to sys.path to allow importing from scripts
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from scripts.create_parliament_clips_model import get_parliament_clip
+from backend.services.integration.supabase_integration import SupabaseIntegration
+from backend.services.integration.supabase_export import format_clips_for_supabase
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -27,6 +30,9 @@ class ParliamentClipsIntegrationService:
     def __init__(self):
         """Initialize the parliament clips integration service."""
         logger.info("Initializing ParliamentClipsIntegrationService")
+        
+        # Initialize Supabase integration
+        self.supabase_integration = SupabaseIntegration()
         
         # Define database paths with correct location
         self.docker_db_path = "/app/backend/parliament_clips.db"  # Path in Docker container
@@ -251,6 +257,16 @@ class ParliamentClipsIntegrationService:
         
         if success:
             logger.info(f"✅ Successfully saved {clips_saved} clips to parliament_clips database")
+            
+            # Now export clips to Supabase
+            try:
+                logger.info(f"Exporting {clips_saved} clips to Supabase")
+                self._export_clips_to_supabase(video_id, recognition_events, video_path)
+            except Exception as e:
+                logger.error(f"Error exporting clips to Supabase: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                result["supabase_export_error"] = str(e)
         else:
             logger.warning(f"❌ Failed to save any clips to parliament_clips database. Errors: {errors}")
             
@@ -267,12 +283,40 @@ class ParliamentClipsIntegrationService:
             Dict with clips data
         """
         try:
-            # This would require a custom query to the SQLite database
-            # For now, we'll return a placeholder
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Query clips for the given video ID
+            cursor.execute("""
+                SELECT * FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = ?
+            """, (str(video_id),))
+            
+            clips = []
+            for row in cursor.fetchall():
+                # Convert row to dictionary
+                clip = {
+                    'id': row[0],
+                    'member_id': row[1],
+                    'transcript': row[2],
+                    'full_video_path': row[3],
+                    'start_timestamp': row[4],
+                    'end_timestamp': row[5],
+                    'confidence_score': row[6],
+                    'duration_seconds': row[7],
+                    'session_date': row[8],
+                    'created_at': row[9],
+                    'updated_at': row[10],
+                    'metadata': json.loads(row[11]) if row[11] else {}
+                }
+                clips.append(clip)
+            
+            conn.close()
+            
+            logger.info(f"Found {len(clips)} clips for video {video_id}")
             return {
                 "success": True,
-                "message": f"Feature not implemented: Get parliament clips for video {video_id}",
-                "clips": []
+                "clips": clips
             }
         except Exception as e:
             logger.error(f"Error getting parliament clips for video {video_id}: {str(e)}")
@@ -281,3 +325,81 @@ class ParliamentClipsIntegrationService:
                 "error": str(e),
                 "clips": []
             }
+    
+    def _export_clips_to_supabase(self, video_id: int, recognition_events: List[Dict[str, Any]], video_path: str) -> Dict[str, Any]:
+        """
+        Export clips to Supabase after saving them locally.
+        
+        Args:
+            video_id: ID of the video
+            recognition_events: List of recognition events
+            video_path: Path to the video file
+            
+        Returns:
+            Dict with results of the operation
+        """
+        logger.info(f"===== EXPORTING CLIPS TO SUPABASE =====")
+        logger.info(f"Video ID: {video_id}, Video Path: {video_path}")
+        
+        try:
+            # Get video metadata from the database
+            from backend.db.session import get_db
+            from backend.db.models import CaptureSession
+            
+            db_generator = get_db()
+            db = next(db_generator)
+            
+            video = db.query(CaptureSession).filter(CaptureSession.id == video_id).first()
+            if not video:
+                logger.error(f"Video not found: {video_id}")
+                return {"success": False, "error": f"Video not found: {video_id}"}
+            
+            # Extract metadata
+            metadata = {}
+            if video.metadata:
+                try:
+                    if isinstance(video.metadata, str):
+                        metadata = json.loads(video.metadata)
+                    elif isinstance(video.metadata, dict):
+                        metadata = video.metadata
+                except Exception as e:
+                    logger.error(f"Error parsing video metadata: {str(e)}")
+            
+            # Create a structured recognition results dict
+            recognition_results = {
+                "recognition_events": recognition_events,
+                "speaker_appearances": []
+            }
+            
+            # Extract speaker appearances from recognition events
+            for event in recognition_events:
+                if event.get("type") == "speaker" and event.get("member_id"):
+                    appearance = {
+                        "member_id": event.get("member_id"),
+                        "member_name": event.get("name", "Unknown"),
+                        "start_time": event.get("start_time", 0),
+                        "end_time": event.get("end_time", 0),
+                        "confidence": event.get("confidence", 0.0),
+                        "transcript": event.get("text", ""),
+                        "face_image_url": event.get("face_image_url", ""),
+                        "matched_by": event.get("matched_by", "unknown")
+                    }
+                    recognition_results["speaker_appearances"].append(appearance)
+            
+            # Export and upload to Supabase
+            result = self.supabase_integration.export_and_upload_recognition(
+                video_path=video_path,
+                recognition_results=recognition_results,
+                video_metadata=metadata,
+                db_session=db,
+                video_id=video_id
+            )
+            
+            logger.info(f"Supabase export result: {result}")
+            return {"success": True, "supabase_result": result}
+            
+        except Exception as e:
+            logger.error(f"Error exporting clips to Supabase: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
