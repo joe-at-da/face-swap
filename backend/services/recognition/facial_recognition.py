@@ -8,12 +8,12 @@ integrating with the existing scripts for face detection and speaker identificat
 import os
 import json
 import logging
+import cv2
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+import datetime
 import numpy as np
-import cv2
 import face_recognition
 
 from backend.core.config import settings
@@ -46,7 +46,7 @@ class FacialRecognitionService:
             image_path: Path to the image file
             
         Returns:
-            Dict with detection results including faces found
+            Dict with detection results including faces found and their embeddings
         """
         try:
             logger.info(f"Detecting faces in image: {image_path}")
@@ -68,6 +68,13 @@ class FacialRecognitionService:
             
             if not face_locations:
                 logger.warning(f"No faces detected in {image_path}")
+                # Save a debug copy of the image
+                debug_dir = "/app/data/temp/debug"
+                os.makedirs(debug_dir, exist_ok=True)
+                debug_path = f"{debug_dir}/no_face_{os.path.basename(image_path)}"
+                cv2.imwrite(debug_path, cv2.imread(image_path))
+                logger.info(f"Saved debug image to {debug_path}")
+                
                 return {
                     "success": False,
                     "error": "No faces detected in the image",
@@ -84,16 +91,33 @@ class FacialRecognitionService:
                 face_width = right - left
                 face_height = bottom - top
                 
+                # Convert face_location to box format expected by MultimodalRecognitionService
+                box = [left, top, face_width, face_height]
+                
+                # Save face crop for debugging
+                debug_dir = "/app/data/temp/debug/faces"
+                os.makedirs(debug_dir, exist_ok=True)
+                
+                # Load image with OpenCV to crop face
+                cv_image = cv2.imread(image_path)
+                if cv_image is not None:
+                    face_crop = cv_image[top:top+face_height, left:left+face_width]
+                    face_path = f"{debug_dir}/face_{i}_{os.path.basename(image_path)}"
+                    cv2.imwrite(face_path, face_crop)
+                    logger.debug(f"Saved face crop {i} to {face_path}")
+                
+                # Format the detection to match what MultimodalRecognitionService expects
                 detections.append({
                     "id": f"face_{i}",
                     "confidence": 1.0,  # Default confidence
+                    "box": box,  # [x, y, width, height] format
+                    "embedding": face_encoding.tolist(),  # This is the key field needed by ParliamentMemberMatcher
                     "face_location": {
                         "top": top,
                         "right": right,
                         "bottom": bottom,
                         "left": left
                     },
-                    "face_encoding": face_encoding.tolist(),
                     "face_width": face_width,
                     "face_height": face_height
                 })
