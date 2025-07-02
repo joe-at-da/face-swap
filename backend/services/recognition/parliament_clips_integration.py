@@ -11,6 +11,7 @@ import sys
 import json
 import logging
 import sqlite3
+import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -365,26 +366,101 @@ class ParliamentClipsIntegrationService:
                 except Exception as e:
                     logger.error(f"Error parsing video metadata: {str(e)}")
             
-            # Create a structured recognition results dict
+            # Retrieve clips from the local SQLite database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Query clips for the given video ID
+            cursor.execute("""
+                SELECT * FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = ?
+            """, (str(video_id),))
+            
+            clips = []
+            for row in cursor.fetchall():
+                # Convert row to dictionary
+                clip = {
+                    'id': row[0],
+                    'member_id': row[1],
+                    'transcript': row[2],
+                    'full_video_path': row[3],
+                    'start_timestamp': row[4],
+                    'end_timestamp': row[5],
+                    'confidence_score': row[6],
+                    'duration_seconds': row[7],
+                    'session_date': row[8],
+                    'created_at': row[9],
+                    'updated_at': row[10],
+                    'metadata': json.loads(row[11]) if row[11] else {}
+                }
+                clips.append(clip)
+            
+            conn.close()
+            
+            logger.info(f"Found {len(clips)} clips in local database for video {video_id}")
+            
+            # If no clips found in the database, check if we can create them from recognition events
+            if not clips and recognition_events:
+                logger.info(f"No clips found in database, creating from {len(recognition_events)} recognition events")
+                
+                # Create clips from recognition events
+                for event in recognition_events:
+                    if event.get("type") == "speaker" and event.get("member_id") and event.get("member_id") != "default_unknown":
+                        clip = {
+                            'id': str(uuid.uuid4()),
+                            'member_id': event.get("member_id"),
+                            'transcript': event.get("text", ""),
+                            'full_video_path': video_path,
+                            'start_timestamp': event.get("start_time", 0),
+                            'end_timestamp': event.get("end_time", 0),
+                            'confidence_score': event.get("confidence", 0.0),
+                            'duration_seconds': event.get("end_time", 0) - event.get("start_time", 0),
+                            'session_date': datetime.now().strftime("%Y-%m-%d"),
+                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'metadata': {
+                                'video_id': str(video_id),
+                                'matched_by': event.get("matched_by", "unknown"),
+                                'face_image_url': event.get("face_image_url", "")
+                            }
+                        }
+                        clips.append(clip)
+            
+            # Create a structured recognition results dict with speaker appearances
             recognition_results = {
                 "recognition_events": recognition_events,
                 "speaker_appearances": []
             }
             
-            # Extract speaker appearances from recognition events
-            for event in recognition_events:
-                if event.get("type") == "speaker" and event.get("member_id"):
-                    appearance = {
-                        "member_id": event.get("member_id"),
-                        "member_name": event.get("name", "Unknown"),
-                        "start_time": event.get("start_time", 0),
-                        "end_time": event.get("end_time", 0),
-                        "confidence": event.get("confidence", 0.0),
-                        "transcript": event.get("text", ""),
-                        "face_image_url": event.get("face_image_url", ""),
-                        "matched_by": event.get("matched_by", "unknown")
-                    }
-                    recognition_results["speaker_appearances"].append(appearance)
+            # Add speaker appearances from clips
+            for clip in clips:
+                # Skip unknown members
+                if clip['member_id'] == "default_unknown":
+                    continue
+                    
+                appearance = {
+                    "member_id": clip['member_id'],
+                    "member_name": "Unknown",  # We'll try to get the name from the database
+                    "start_time": clip['start_timestamp'],
+                    "end_time": clip['end_timestamp'],
+                    "confidence": clip['confidence_score'],
+                    "transcript": clip['transcript'],
+                    "face_image_url": clip['metadata'].get('face_image_url', ""),
+                    "matched_by": clip['metadata'].get('matched_by', "unknown")
+                }
+                
+                # Try to get member name from the database
+                try:
+                    from backend.db.models import ParliamentMember
+                    member = db.query(ParliamentMember).filter(ParliamentMember.id == clip['member_id']).first()
+                    if member:
+                        appearance["member_name"] = f"{member.first_name} {member.last_name}"
+                except Exception as e:
+                    logger.warning(f"Could not get member name from database: {str(e)}")
+                
+                recognition_results["speaker_appearances"].append(appearance)
+            
+            logger.info(f"Added {len(recognition_results['speaker_appearances'])} speaker appearances to recognition results")
             
             # Export and upload to Supabase
             result = self.supabase_integration.export_and_upload_recognition(
