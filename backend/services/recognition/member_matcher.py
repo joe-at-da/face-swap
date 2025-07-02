@@ -76,6 +76,7 @@ class ParliamentMemberMatcher:
         Returns:
             Boolean indicating success
         """
+        logger.info("===== LOADING PARLIAMENT MEMBERS =====")
         try:
             import os
             import json
@@ -109,17 +110,20 @@ class ParliamentMemberMatcher:
             members_with_photos = 0
             members_missing_data = 0
             
+            logger.info(f"Total members from Supabase/cache: {len(self.members)}")
+            
             # Create directory for MP photos if it doesn't exist
             mp_photos_dir = "/app/data/mp_photos"
             os.makedirs(mp_photos_dir, exist_ok=True)
             
             # Check if photos directory is empty - warn if it is
             photo_files = [f for f in os.listdir(mp_photos_dir) if f.endswith('.jpg')]
+            embedding_files = [f for f in os.listdir(mp_photos_dir) if f.endswith('.json')]
             if len(photo_files) == 0:
                 logger.warning("No MP photos found in /app/data/mp_photos directory. ")
                 logger.warning("Please run download_mp_photos.py script to download MP photos before using this service.")
             else:
-                logger.info(f"Found {len(photo_files)} MP photos in the photos directory")
+                logger.info(f"Found {len(photo_files)} MP photos and {len(embedding_files)} embedding files in the photos directory")
             
             # Process each member
             for member in self.members:
@@ -146,6 +150,7 @@ class ParliamentMemberMatcher:
                             # Store the embedding for matching
                             self.member_embeddings[member_id] = face_embedding
                             members_with_embeddings += 1
+                            logger.debug(f"Loaded embedding for member {member_id} ({display_name}): shape={np.array(face_embedding).shape if isinstance(face_embedding, list) else 'unknown'}, type={type(face_embedding).__name__}")
                             
                             # Store member data for reference
                             self.member_data[member_id] = {
@@ -611,8 +616,11 @@ class ParliamentMemberMatcher:
         Returns:
             Dictionary with match results
         """
+        logger.info(f"Attempting to match face to member with confidence threshold {confidence_threshold}")
         # Check if we have face embedding
         if not face_data or 'embedding' not in face_data:
+            logger.warning("No face embedding provided in face_data")
+            logger.debug(f"Face data keys: {list(face_data.keys()) if face_data else 'None'}")
             return {
                 "matched": False,
                 "reason": "No face embedding provided"
@@ -620,10 +628,14 @@ class ParliamentMemberMatcher:
             
         # Get the face embedding
         face_embedding = face_data['embedding']
+        logger.info(f"Got face embedding: shape={np.array(face_embedding).shape if isinstance(face_embedding, list) else 'unknown'}, type={type(face_embedding).__name__}")
         
         # Find the best match
         best_match_id = None
         best_match_score = 0.0
+        
+        # Log the number of member embeddings we're comparing against
+        logger.info(f"Comparing against {len(self.member_embeddings)} member embeddings")
         
         # Iterate through all member embeddings
         for member_id, member_embedding in self.member_embeddings.items():
@@ -644,16 +656,22 @@ class ParliamentMemberMatcher:
                 
         # Check if we found a good match
         if best_match_id and best_match_score > confidence_threshold:
+            member_name = self.member_data.get(best_match_id, {}).get('name', 'Unknown')
+            logger.info(f"✅ MATCH FOUND: {member_name} (ID: {best_match_id}) with confidence {best_match_score:.4f}")
             return {
                 "matched": True,
                 "member_id": best_match_id,
                 "confidence": best_match_score,
-                "member_name": self.member_data.get(best_match_id, {}).get('name', 'Unknown')
+                "member_name": member_name
             }
         else:
+            logger.warning(f"❌ NO MATCH FOUND: Best score was {best_match_score:.4f}, threshold is {confidence_threshold}")
+            if best_match_id:
+                member_name = self.member_data.get(best_match_id, {}).get('name', 'Unknown')
+                logger.info(f"Best non-matching candidate was {member_name} (ID: {best_match_id})")
             return {
                 "matched": False,
-                "reason": f"No match found with sufficient confidence (best: {best_match_score:.2f}, threshold: {confidence_threshold})"
+                "reason": f"No match found with sufficient confidence (best: {best_match_score:.4f}, threshold: {confidence_threshold})"
             }
             
     def match_face_to_member(self, face_embedding, threshold: float = 0.6) -> Dict[str, Any]:
@@ -690,16 +708,41 @@ class ParliamentMemberMatcher:
                 embedding1 = np.array(embedding1)
             if not isinstance(embedding2, np.ndarray):
                 embedding2 = np.array(embedding2)
+            
+            # Check embedding dimensions
+            if embedding1.size == 0 or embedding2.size == 0:
+                logger.error(f"Empty embedding detected: embedding1 size={embedding1.size}, embedding2 size={embedding2.size}")
+                return 0.0
+                
+            # Check if shapes match
+            if embedding1.shape != embedding2.shape:
+                logger.warning(f"Embedding shape mismatch: {embedding1.shape} vs {embedding2.shape}")
+                # Try to reshape if possible
+                if embedding1.size == embedding2.size:
+                    embedding2 = embedding2.reshape(embedding1.shape)
+                    logger.info(f"Reshaped embedding2 to match embedding1: {embedding2.shape}")
+                else:
+                    logger.error(f"Cannot compare embeddings with different sizes: {embedding1.size} vs {embedding2.size}")
+                    return 0.0
                 
             # Normalize the embeddings
-            embedding1 = embedding1 / np.linalg.norm(embedding1)
-            embedding2 = embedding2 / np.linalg.norm(embedding2)
+            norm1 = np.linalg.norm(embedding1)
+            norm2 = np.linalg.norm(embedding2)
+            
+            if norm1 == 0 or norm2 == 0:
+                logger.warning("Zero norm detected in embedding")
+                return 0.0
+                
+            embedding1 = embedding1 / norm1
+            embedding2 = embedding2 / norm2
             
             # Compute cosine similarity
             similarity = np.dot(embedding1, embedding2)
             return float(similarity)
         except Exception as e:
             logger.error(f"Error computing similarity: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return 0.0
             
     def _get_default_member_for_house(self, house_id: str) -> Optional[str]:
