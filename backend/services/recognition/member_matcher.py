@@ -649,7 +649,24 @@ class ParliamentMemberMatcher:
                 "reason": f"No match found with sufficient confidence (best: {best_match_score:.2f}, threshold: {confidence_threshold})"
             }
             
-    def _compute_similarity(self, embedding1, embedding2):
+    def match_face_to_member(self, face_embedding, threshold: float = 0.6) -> Dict[str, Any]:
+        """
+        Match a face embedding to a parliament member
+        
+        Args:
+            face_embedding: Face embedding vector to match
+            threshold: Minimum confidence score for a match (0.0-1.0)
+            
+        Returns:
+            Dictionary with match results
+        """
+        # Create a face_data dict with the embedding
+        face_data = {"embedding": face_embedding}
+        
+        # Call the internal method with the face data
+        return self._match_face_to_member(face_data, house="unknown", confidence_threshold=threshold)
+    
+    def _compute_similarity(self, embedding1, embedding2) -> float:
         """
         Compute similarity between two face embeddings
         
@@ -660,18 +677,23 @@ class ParliamentMemberMatcher:
         Returns:
             Similarity score (0.0-1.0)
         """
-        # Convert to numpy arrays
-        emb1 = np.array(embedding1)
-        emb2 = np.array(embedding2)
-        
-        # Normalize embeddings
-        emb1 = emb1 / np.linalg.norm(emb1)
-        emb2 = emb2 / np.linalg.norm(emb2)
-        
-        # Compute cosine similarity
-        similarity = np.dot(emb1, emb2)
-        
-        return float(similarity)
+        try:
+            # Convert to numpy arrays if needed
+            if not isinstance(embedding1, np.ndarray):
+                embedding1 = np.array(embedding1)
+            if not isinstance(embedding2, np.ndarray):
+                embedding2 = np.array(embedding2)
+                
+            # Normalize the embeddings
+            embedding1 = embedding1 / np.linalg.norm(embedding1)
+            embedding2 = embedding2 / np.linalg.norm(embedding2)
+            
+            # Compute cosine similarity
+            similarity = np.dot(embedding1, embedding2)
+            return float(similarity)
+        except Exception as e:
+            logger.error(f"Error computing similarity: {str(e)}")
+            return 0.0
             
     def _get_default_member_for_house(self, house_id: str) -> Optional[str]:
         """
