@@ -18,6 +18,18 @@ class ParliamentMemberMatcher:
     """
     Class for matching unidentified speakers with parliament members
     based on facial recognition and other available data.
+    
+    IMPORTANT: Before using this class, ensure that MP photos have been downloaded
+    by running the download_mp_photos.py script. This script downloads photos from
+    the UK Parliament website and generates face embeddings for all MPs.
+    
+    Example:
+        # Run this first to download MP photos
+        python download_mp_photos.py
+        
+        # Then use the matcher
+        matcher = ParliamentMemberMatcher()
+        matcher.load_parliament_members()
     """
     
     def __init__(self, supabase_service: SupabaseService = None, db_session=None):
@@ -58,6 +70,9 @@ class ParliamentMemberMatcher:
         """
         Load parliament members from Supabase and manage local photo/embedding storage
         
+        NOTE: This method expects MP photos to be pre-downloaded using the download_mp_photos.py script.
+        Run this script before using the ParliamentMemberMatcher for best results.
+        
         Returns:
             Boolean indicating success
         """
@@ -84,7 +99,7 @@ class ParliamentMemberMatcher:
                         self.members = []
                 else:
                     self.members = []
-            
+        
             if not self.members:
                 logger.warning("No parliament members found in Supabase or cache")
                 return False
@@ -95,7 +110,16 @@ class ParliamentMemberMatcher:
             members_missing_data = 0
             
             # Create directory for MP photos if it doesn't exist
-            os.makedirs("/app/data/mp_photos", exist_ok=True)
+            mp_photos_dir = "/app/data/mp_photos"
+            os.makedirs(mp_photos_dir, exist_ok=True)
+            
+            # Check if photos directory is empty - warn if it is
+            photo_files = [f for f in os.listdir(mp_photos_dir) if f.endswith('.jpg')]
+            if len(photo_files) == 0:
+                logger.warning("No MP photos found in /app/data/mp_photos directory. ")
+                logger.warning("Please run download_mp_photos.py script to download MP photos before using this service.")
+            else:
+                logger.info(f"Found {len(photo_files)} MP photos in the photos directory")
             
             # Process each member
             for member in self.members:
@@ -145,30 +169,13 @@ class ParliamentMemberMatcher:
                         else:
                             members_missing_data += 1
                 else:
-                    # No local photo, try to download from UK Parliament website
-                    if display_name:
-                        logger.info(f"Trying to find photo for {display_name} from UK Parliament website")
-                        if self._download_mp_photo_from_parliament(member_id, display_name):
-                            # Process the downloaded image
-                            self._process_member_image(member_id, local_photo_path)
-                            if member_id in self.member_embeddings:
-                                members_with_embeddings += 1
-                                members_with_photos += 1
-                                
-                                # Store member data for reference
-                                self.member_data[member_id] = {
-                                    'name': display_name,
-                                    'photo_path': local_photo_path
-                                }
-                            else:
-                                members_missing_data += 1
-                        else:
-                            members_missing_data += 1
-                            logger.warning(f"Could not find photo for {display_name} from UK Parliament website")
-                    else:
-                        members_missing_data += 1
-                        logger.warning(f"Member {member_id} has no display name, cannot download photo")
+                    # No local photo - log a warning but don't try to download
+                    # This is a change from previous behavior to rely on the download_mp_photos.py script
+                    logger.warning(f"No photo found for member {display_name} (ID: {member_id}). ")
+                    logger.warning(f"Please run download_mp_photos.py script to download all MP photos.")
+                    members_missing_data += 1
             
+            # Log summary statistics after processing all members
             logger.info(f"Loaded {len(self.members)} parliament members from Supabase")
             logger.info(f"Members with embeddings: {members_with_embeddings}")
             logger.info(f"Members with photos: {members_with_photos}")
