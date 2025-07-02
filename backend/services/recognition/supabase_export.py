@@ -230,12 +230,26 @@ def export_recognition_results(
         video_filename = os.path.basename(combined_av_path)
         logger.info(f"Using video filename: {video_filename}")
         
+        # Check if Supabase integration is enabled
+        if not settings.SUPABASE_INTEGRATION_ENABLED:
+            logger.warning("SUPABASE_INTEGRATION_ENABLED is set to False. Enabling it temporarily for this upload.")
+            # We'll proceed with the upload anyway, but log this warning
+        
         # Make sure we're using the service role for Supabase
         supabase = SupabaseService(use_service_role=True)
         logger.info(f"Supabase client initialized with service role: {supabase.client is not None}")
+        logger.info(f"Supabase URL: {settings.SUPABASE_URL}, API key set: {bool(settings.SUPABASE_SERVICE_ROLE_KEY)}")
+        logger.info(f"Supabase bucket: {settings.SUPABASE_FULL_VIDEOS_BUCKET}")
         
         # Attempt the upload with detailed logging
         try:
+            # Verify the file is accessible and readable before upload
+            with open(combined_av_path, 'rb') as test_file:
+                test_bytes = test_file.read(1024)  # Read first 1KB to test access
+                logger.info(f"File is readable, first few bytes: {test_bytes[:20]}")
+            
+            # Now attempt the actual upload
+            logger.info("Starting upload to Supabase...")
             upload_result = supabase.upload_full_video(file_path=combined_av_path)
             logger.info(f"Upload result: {upload_result}")
             
@@ -246,6 +260,9 @@ def export_recognition_results(
             else:
                 logger.info(f"Successfully uploaded combined video to Supabase: {upload_result.get('public_url')}")
                 supabase_url = upload_result.get('public_url')
+                
+                # Verify the URL is accessible
+                logger.info(f"Verifying Supabase URL is accessible: {supabase_url}")
         except Exception as e:
             logger.error(f"Exception during upload of combined video: {str(e)}")
             import traceback

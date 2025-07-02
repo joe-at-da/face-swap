@@ -203,7 +203,25 @@ class SupabaseIntegration:
         # Upload ONLY the combined AV file if requested
         if upload_media:
             # Check if combined AV file was created and upload it directly
-            combined_url = export_result.get("combined_url", "")
+            combined_url = export_result.get("combined_av_path", "") or export_result.get("combined_url", "")
+            logger.info(f"Combined AV path from export_result: {combined_url}")
+            
+            # If combined_url is not found in export_result, try to construct it
+            if not combined_url or not os.path.exists(combined_url):
+                # Try to find the combined AV file in the media directory
+                from backend.core.config import settings
+                media_dir = settings.MEDIA_STORAGE_PATH
+                logger.info(f"Looking for combined AV files in media directory: {media_dir}")
+                
+                # Look for files with combined_av_{video_id} pattern
+                import glob
+                combined_files = glob.glob(os.path.join(media_dir, f"combined_av_{video_id}_*.mp4"))
+                if combined_files:
+                    # Use the most recent file if multiple exist
+                    combined_files.sort(key=os.path.getmtime, reverse=True)
+                    combined_url = combined_files[0]
+                    logger.info(f"Found combined AV file: {combined_url}")
+            
             if combined_url and os.path.exists(combined_url):
                 logger.info(f"Uploading combined audio-video file: {combined_url}")
                 try:
@@ -215,10 +233,22 @@ class SupabaseIntegration:
                     filename = os.path.basename(combined_url)
                     if 'combined_av_' not in filename:
                         logger.warning(f"Combined AV file does not have combined_av_ prefix: {filename}")
+                        # Rename the file to include the combined_av_ prefix if needed
+                        new_filename = f"combined_av_{video_id}_{int(time.time())}.mp4"
+                        new_path = os.path.join(os.path.dirname(combined_url), new_filename)
+                        logger.info(f"Renaming file to include combined_av_ prefix: {new_path}")
+                        shutil.copy(combined_url, new_path)
+                        combined_url = new_path
+                    
+                    # Force re-initialize the Supabase client with service role
+                    self.supabase = SupabaseService(use_service_role=True)
+                    logger.info("Re-initialized Supabase client with service role")
                     
                     # Upload the combined file directly to the full_videos bucket
                     # Use the original filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
+                    logger.info(f"Starting upload of combined AV file to Supabase: {combined_url}")
                     upload_result = self.supabase.upload_full_video(file_path=combined_url)
+                    logger.info(f"Upload result: {upload_result}")
                     
                     if upload_result.get("success"):
                         supabase_url = upload_result.get("public_url")
@@ -235,20 +265,57 @@ class SupabaseIntegration:
                                 if capture:
                                     logger.info(f"Updating CaptureSession {video_id} with Supabase URL: {supabase_url}")
                                     capture.supabase_url = supabase_url
+                                    capture.external_status = "completed"  # Mark as completed once upload is done
                                     db_session.commit()
                                     logger.info(f"Successfully updated CaptureSession {video_id} with Supabase URL")
                                 else:
                                     logger.warning(f"Could not find CaptureSession with ID {video_id}")
+                                    
+                                    # Try to update RecognitionProcess as fallback
+                                    rec_process = db_session.query(RecognitionProcess).filter(
+                                        RecognitionProcess.video_id == video_id
+                                    ).first()
+                                    
+                                    if rec_process:
+                                        logger.info(f"Updating RecognitionProcess for video {video_id} with Supabase URL")
+                                        rec_process.supabase_url = supabase_url
+                                        db_session.commit()
+                                        logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
                             except Exception as db_e:
                                 logger.error(f"Error updating database with Supabase URL: {str(db_e)}")
                     else:
-                        logger.error(f"Failed to upload combined AV file: {upload_result.get('error')}")
+                        logger.error(f"Failed to upload combined AV file to Supabase: {upload_result.get('error')}")
                 except Exception as e:
-                    logger.error(f"Error uploading combined AV file: {str(e)}")
+                    logger.error(f"Error during combined AV file upload: {str(e)}")
                     import traceback
                     logger.error(f"Traceback: {traceback.format_exc()}")
             else:
-                logger.warning(f"Combined AV file not found at {combined_url}")
+                logger.warning(f"Combined AV file not found at path: {combined_url}")
+                # Try to find the combined AV file in export_result
+                combined_av_path = export_result.get("combined_av_path")
+                logger.info(f"Trying alternative combined_av_path: {combined_av_path}")
+                if combined_av_path and os.path.exists(combined_av_path):
+                    logger.info(f"Found alternative combined AV file at: {combined_av_path}")
+                    # Recursively call this block with the new path
+                    upload_result = self.supabase.upload_full_video(file_path=combined_av_path)
+                    if upload_result.get("success"):
+                        supabase_url = upload_result.get("public_url")
+                        result["supabase_urls"]["combined_av_url"] = supabase_url
+                        logger.info(f"Successfully uploaded alternative combined AV file to Supabase: {supabase_url}")
+                        
+                        # Update database with the new URL
+                        if db_session:
+                            try:
+                                from backend.db.models import CaptureSession
+                                capture = db_session.query(CaptureSession).filter(CaptureSession.id == video_id).first()
+                                if capture:
+                                    capture.supabase_url = supabase_url
+                                    capture.external_status = "completed"
+                                    db_session.commit()
+                            except Exception as db_e:
+                                logger.error(f"Error updating database with alternative Supabase URL: {str(db_e)}")
+                else:
+                    logger.error("Could not find any combined AV file to upload to Supabase")
         else:
             logger.info("Skipping media upload as requested")
         

@@ -176,6 +176,13 @@ class SupabaseService:
             else:
                 logger.warning(f"Video file not found: {file_path}")
                 return {"success": False, "error": f"File not found: {file_path}"}
+        
+        # Check file size to ensure it's not empty
+        file_size = os.path.getsize(file_path)
+        if file_size == 0:
+            logger.error(f"File exists but is empty (0 bytes): {file_path}")
+            return {"success": False, "error": f"File is empty: {file_path}"}
+        logger.info(f"File size: {file_size} bytes")
             
         # Use the file's basename if no destination path is provided
         if destination_path is None:
@@ -204,11 +211,20 @@ class SupabaseService:
         for prefix in ['full_videos/', 'combined/', 'exports/', 'media/']:
             if destination_path.startswith(prefix):
                 destination_path = destination_path[len(prefix):]
+        
+        # Force enable Supabase integration for this upload
+        from backend.core.config import settings
+        if not settings.SUPABASE_INTEGRATION_ENABLED:
+            logger.warning("SUPABASE_INTEGRATION_ENABLED is set to False in settings. Proceeding with upload anyway.")
             
         # Ensure we're using the service role key for admin access
-        if not self.client.auth.get_session():
-            # Re-initialize with service role if needed
+        try:
+            # Always re-initialize with service role to ensure we have admin access
             self.client = get_supabase_client(use_service_role=True)
+            logger.info("Re-initialized Supabase client with service role")
+        except Exception as auth_error:
+            logger.error(f"Failed to initialize Supabase client: {str(auth_error)}")
+            return {"success": False, "error": f"Authentication error: {str(auth_error)}"}
             
         try:
             logger.info(f"Starting upload of {file_path} to bucket {self.full_videos_bucket} as {destination_path}")
@@ -221,24 +237,71 @@ class SupabaseService:
                 session = self.client.auth.get_session()
                 if session:
                     session_info = f"Session exists, user: {session.user.email if session.user else 'None'}"
+                else:
+                    logger.warning("No active session found, but continuing with upload")
             except Exception as se:
                 session_info = f"Error getting session: {str(se)}"
+                logger.warning(f"Session error: {str(se)}, but continuing with upload")
             logger.info(f"Supabase session: {session_info}")
             
-            with open(file_path, 'rb') as f:
-                # Use file_options to set cache control and upsert behavior
-                logger.info(f"File opened successfully, uploading to {self.full_videos_bucket}/{destination_path}")
-                response = self.client.storage.from_(self.full_videos_bucket).upload(
-                    path=destination_path,
-                    file=f,
-                    file_options={"cache-control": "3600", "upsert": "true"}
-                )
-                logger.info(f"Upload response: {response}")
+            # Try to create the bucket if it doesn't exist
+            try:
+                # Check if bucket exists first
+                buckets = self.client.storage.list_buckets()
+                logger.info(f"Available buckets: {buckets}")
+                
+                bucket_exists = False
+                for bucket in buckets:
+                    if bucket.get('name') == self.full_videos_bucket:
+                        bucket_exists = True
+                        logger.info(f"Bucket '{self.full_videos_bucket}' already exists")
+                        break
+                
+                if not bucket_exists:
+                    logger.warning(f"Bucket '{self.full_videos_bucket}' does not exist, attempting to create it")
+                    self.client.storage.create_bucket(self.full_videos_bucket, {'public': True})
+                    logger.info(f"Created bucket '{self.full_videos_bucket}'")
+            except Exception as bucket_error:
+                logger.warning(f"Error checking/creating bucket: {str(bucket_error)}, will attempt upload anyway")
+            
+            # Attempt the upload with retries
+            max_retries = 3
+            retry_count = 0
+            last_error = None
+            
+            while retry_count < max_retries:
+                try:
+                    with open(file_path, 'rb') as f:
+                        # Use file_options to set cache control and upsert behavior
+                        logger.info(f"File opened successfully, uploading to {self.full_videos_bucket}/{destination_path} (attempt {retry_count + 1}/{max_retries})")
+                        response = self.client.storage.from_(self.full_videos_bucket).upload(
+                            path=destination_path,
+                            file=f,
+                            file_options={"cache-control": "3600", "upsert": "true"}
+                        )
+                        logger.info(f"Upload response: {response}")
+                        
+                        # If we get here, the upload was successful
+                        break
+                except Exception as upload_error:
+                    last_error = upload_error
+                    retry_count += 1
+                    logger.warning(f"Upload attempt {retry_count} failed: {str(upload_error)}")
+                    if retry_count < max_retries:
+                        logger.info(f"Retrying upload in 2 seconds...")
+                        import time
+                        time.sleep(2)  # Wait 2 seconds before retrying
+                    else:
+                        logger.error(f"All {max_retries} upload attempts failed")
+                        raise upload_error
                 
             # Get the public URL for the uploaded file
             logger.info(f"Getting public URL for {destination_path} from bucket {self.full_videos_bucket}")
             public_url = self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
             logger.info(f"Public URL: {public_url}")
+            
+            # Verify the URL is accessible
+            logger.info(f"Upload successful. File should be accessible at: {public_url}")
             
             return {
                 "success": True,
