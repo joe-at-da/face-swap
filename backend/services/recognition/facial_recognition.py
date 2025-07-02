@@ -80,47 +80,66 @@ class FacialRecognitionService:
                     "error": "No faces detected in the image",
                     "detections": []
                 }
-                
-            # Generate face encodings
-            face_encodings = face_recognition.face_encodings(image, face_locations)
             
-            # Create detection results
+            face_encodings = face_recognition.face_encodings(image, face_locations)
             detections = []
+            
+            logger.info(f"Detected {len(face_locations)} faces in image {image_path}")
+            
             for i, (face_location, face_encoding) in enumerate(zip(face_locations, face_encodings)):
                 top, right, bottom, left = face_location
-                face_width = right - left
-                face_height = bottom - top
+                box = [left, top, right - left, bottom - top]
                 
-                # Convert face_location to box format expected by MultimodalRecognitionService
-                box = [left, top, face_width, face_height]
+                # Ensure the embedding is properly normalized
+                face_embedding = np.array(face_encoding)
+                norm = np.linalg.norm(face_embedding)
+                if norm > 0:
+                    face_embedding = face_embedding / norm
                 
-                # Save face crop for debugging
-                debug_dir = "/app/data/temp/debug/faces"
-                os.makedirs(debug_dir, exist_ok=True)
+                # Check for NaN values
+                if np.isnan(face_embedding).any():
+                    logger.warning(f"NaN values detected in face embedding for face {i}")
+                    continue
+                    
+                # Convert to list for JSON serialization
+                embedding_list = face_embedding.tolist()
                 
-                # Load image with OpenCV to crop face
-                cv_image = cv2.imread(image_path)
-                if cv_image is not None:
-                    face_crop = cv_image[top:top+face_height, left:left+face_width]
-                    face_path = f"{debug_dir}/face_{i}_{os.path.basename(image_path)}"
-                    cv2.imwrite(face_path, face_crop)
-                    logger.debug(f"Saved face crop {i} to {face_path}")
+                # Log embedding stats for debugging
+                logger.debug(f"Face {i} embedding stats: length={len(embedding_list)}, min={min(embedding_list):.4f}, max={max(embedding_list):.4f}")
                 
-                # Format the detection to match what MultimodalRecognitionService expects
                 detections.append({
                     "id": f"face_{i}",
                     "confidence": 1.0,  # Default confidence
                     "box": box,  # [x, y, width, height] format
-                    "embedding": face_encoding.tolist(),  # This is the key field needed by ParliamentMemberMatcher
+                    "embedding": embedding_list,  # Use the normalized embedding list
+                    "source": "dlib_face_recognition",  # Add source information for debugging
                     "face_location": {
                         "top": top,
                         "right": right,
                         "bottom": bottom,
                         "left": left
                     },
-                    "face_width": face_width,
-                    "face_height": face_height
                 })
+                
+                # Save face crop for debugging
+                try:
+                    debug_dir = "/app/data/temp/debug/faces"
+                    os.makedirs(debug_dir, exist_ok=True)
+                    
+                    # Load image with OpenCV to crop face
+                    cv_image = cv2.imread(image_path)
+                    if cv_image is not None:
+                        face_width = right - left
+                        face_height = bottom - top
+                        face_crop = cv_image[top:top+face_height, left:left+face_width]
+                        face_path = f"{debug_dir}/face_{i}_{os.path.basename(image_path)}"
+                        cv2.imwrite(face_path, face_crop)
+                        logger.debug(f"Saved face crop {i} to {face_path}")
+                    else:
+                        logger.warning(f"Could not read image {image_path} with OpenCV")
+                except Exception as e:
+                    logger.error(f"Error saving face crop: {str(e)}")
+            
                 
             return {
                 "success": True,
