@@ -11,6 +11,7 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -19,65 +20,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def ensure_columns_exist(supabase_service):
-    """Ensure that the necessary columns exist in the parliament_members table"""
+def ensure_local_directories_exist():
+    """Ensure that the necessary directories exist for storing MP photos and embeddings"""
     try:
-        # Check if columns exist by trying to select them
-        try:
-            supabase_service.client.table('parliament_members').select('image_url').limit(1).execute()
-            logger.info("image_url column exists in parliament_members table")
-        except Exception:
-            logger.info("Adding image_url column to parliament_members table")
-            # We need to use raw SQL to add a column
-            # This requires admin privileges in Supabase
-            # Using the REST API directly since postgrest doesn't support ALTER TABLE
-            import requests
-            from backend.core.config import settings
-            
-            headers = {
-                'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
-                'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}'
-            }
-            
-            # Use the Supabase REST API to execute SQL
-            sql_url = f"{settings.SUPABASE_URL}/rest/v1/rpc/execute"
-            payload = {
-                "query": "ALTER TABLE parliament_members ADD COLUMN IF NOT EXISTS image_url TEXT;"
-            }
-            
-            response = requests.post(sql_url, json=payload, headers=headers)
-            if response.status_code == 200:
-                logger.info("Successfully added image_url column")
-            else:
-                logger.error(f"Failed to add image_url column: {response.text}")
+        # Create directories for MP photos and embeddings
+        mp_photos_dir = "/app/data/mp_photos"
+        os.makedirs(mp_photos_dir, exist_ok=True)
+        logger.info(f"Ensured directory exists: {mp_photos_dir}")
         
-        # Check for face_embedding column
+        # Check if we can write to the directory
+        test_file = os.path.join(mp_photos_dir, "test_write.tmp")
         try:
-            supabase_service.client.table('parliament_members').select('face_embedding').limit(1).execute()
-            logger.info("face_embedding column exists in parliament_members table")
-        except Exception:
-            logger.info("Adding face_embedding column to parliament_members table")
-            import requests
-            from backend.core.config import settings
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            logger.info(f"Directory {mp_photos_dir} is writable")
+        except Exception as e:
+            logger.error(f"Directory {mp_photos_dir} is not writable: {str(e)}")
             
-            headers = {
-                'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
-                'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}'
-            }
-            
-            sql_url = f"{settings.SUPABASE_URL}/rest/v1/rpc/execute"
-            payload = {
-                "query": "ALTER TABLE parliament_members ADD COLUMN IF NOT EXISTS face_embedding JSONB;"
-            }
-            
-            response = requests.post(sql_url, json=payload, headers=headers)
-            if response.status_code == 200:
-                logger.info("Successfully added face_embedding column")
-            else:
-                logger.error(f"Failed to add face_embedding column: {response.text}")
-                
     except Exception as e:
-        logger.error(f"Error ensuring columns exist: {str(e)}")
+        logger.error(f"Error ensuring directories exist: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
 
@@ -86,14 +48,15 @@ def main():
     from backend.services.integration.supabase_client import SupabaseService
     from backend.services.recognition.face_recognition import FaceRecognitionService
     from sqlalchemy import text
+    from datetime import datetime  # Import datetime here as well for local scope
     
     # Initialize services
     db = SessionLocal()
     supabase_service = SupabaseService(use_service_role=True)
     face_recognition = FaceRecognitionService()
     
-    # Ensure the necessary columns exist
-    ensure_columns_exist(supabase_service)
+    # Ensure the necessary directories exist
+    ensure_local_directories_exist()
     
     # Create directories for MP photos
     mp_photos_dir = "/app/data/mp_photos"
@@ -295,33 +258,24 @@ def main():
                     'face_embedding': face_data['embedding']
                 }
                 
-                # Update in Supabase
-                supabase_service.client.table('parliament_members').update(update_data).eq('id', member_id).execute()
-                logger.info(f"Updated image URL and face embedding for member {name}")
+                # Save face embedding to local JSON file
+                embedding_file = os.path.join(mp_photos_dir, f"{member_id}.json")
+                with open(embedding_file, 'w') as f:
+                    json.dump(face_data['embedding'], f)
+                logger.info(f"Saved face embedding to {embedding_file} for member {name}")
                 
-                # Update in local SQLite database if the table exists
-                try:
-                    # Check if speakers table exists
-                    result = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='speakers'")).fetchone()
-                    if result:
-                        # Update or insert into speakers table
-                        db.execute(
-                            text("INSERT OR REPLACE INTO speakers (parliament_id, name, photo_url, face_encoding) VALUES (:parliament_id, :name, :photo_url, :face_encoding)"),
-                            {
-                                "parliament_id": member_id,
-                                "name": name,
-                                "photo_url": photo_path,
-                                "face_encoding": json.dumps(face_data['embedding'])
-                            }
-                        )
-                        db.commit()
-                        logger.info(f"Updated local database record for {name}")
-                except Exception as e:
-                    logger.warning(f"Could not update local database: {str(e)}")
+                # We'll skip updating Supabase since we're focusing on local implementation
+                logger.info(f"Skipping Supabase update for member {name} - using local files only")
+                
+                # Skip updating local SQLite database for now
+                # We'll use our custom script to manage the local database
+                logger.info(f"Skipping local database update for {name} - use create_parliament_clips_model.py instead")
                 
                 # Update cache
+                # Use datetime from the local scope
+                now = datetime.now()
                 processed_cache[member_id] = {
-                    'last_processed': datetime.now().isoformat(),
+                    'last_processed': now.isoformat(),
                     'has_embedding': True,
                     'image_path': photo_path
                 }
@@ -330,14 +284,17 @@ def main():
             else:
                 logger.warning(f"No face detected in photo for member {name}")
                 
-                # Still update the image URL even if no face was detected
-                update_data = {'image_url': photo_path}
-                supabase_service.client.table('parliament_members').update(update_data).eq('id', member_id).execute()
-                logger.info(f"Updated image URL for member {name}")
+                # Log that no face was detected but we still have the photo
+                logger.info(f"No face detected for {name}, but photo is saved at {photo_path}")
+                
+                # We'll skip updating Supabase since we're focusing on local implementation
+                logger.info(f"Skipping Supabase update for member {name} - using local files only")
                 
                 # Update cache
+                # Use datetime from the local scope
+                now = datetime.now()
                 processed_cache[member_id] = {
-                    'last_processed': datetime.now().isoformat(),
+                    'last_processed': now.isoformat(),
                     'has_embedding': False,
                     'image_path': photo_path
                 }
@@ -346,6 +303,17 @@ def main():
             
         except Exception as e:
             logger.error(f"Error processing member {name}: {str(e)}")
+            # Add to cache even if there was an error
+            try:
+                # Use datetime from the local scope
+                now = datetime.now()
+                processed_cache[member_id] = {
+                    'last_processed': now.isoformat(),
+                    'has_embedding': False,
+                    'error': str(e)
+                }
+            except Exception as cache_error:
+                logger.error(f"Error updating cache for {name}: {str(cache_error)}")
             failed_count += 1
     
     # Save the cache
@@ -361,12 +329,12 @@ def main():
     logger.info(f"Updated {updated_count} members")
     logger.info(f"Skipped {skipped_count} members")
     
-    # Check how many members now have embeddings
+    # Count how many local embedding files we have
     try:
-        response = supabase_service.client.table('parliament_members').select('id').not_.is_('face_embedding', 'null').execute()
-        logger.info(f"After processing, {len(response.data)} members have face embeddings")
+        embedding_files = [f for f in os.listdir(mp_photos_dir) if f.endswith('.json')]
+        logger.info(f"After processing, {len(embedding_files)} members have local face embeddings")
     except Exception as e:
-        logger.warning(f"Could not count members with embeddings: {str(e)}")
+        logger.warning(f"Could not count local embedding files: {str(e)}")
 
 if __name__ == "__main__":
     main()
