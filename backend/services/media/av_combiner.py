@@ -89,7 +89,7 @@ def combine_audio_video(
             return {
                 "success": True,
                 "output_path": output_path,
-                "combined_url": f"/media/combined/{os.path.basename(output_path)}"
+                "combined_url": output_path
             }
         else:
             logger.error(f"FFmpeg error: {process.stderr}")
