@@ -264,13 +264,22 @@ class ParliamentMemberMatcher:
                 # Dlib and other models may have different similarity distributions
                 # Lower the threshold more aggressively to improve matching rates
                 if confidence_threshold > 0.5:
-                    # Special handling for Darren Jones (member_id 4621) - use even lower threshold
-                    if member_id == 4621:  # Darren Jones
-                        adjusted_threshold = confidence_threshold - 0.5  # More aggressive threshold for Darren Jones
-                        logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for Darren Jones (ID: 4621)")
+                    # Calculate embedding quality metrics
+                    embedding_variance = np.var(face_embedding)
+                    embedding_range = np.max(face_embedding) - np.min(face_embedding)
+                    
+                    # Adjust threshold based on embedding quality
+                    # Higher variance and range indicate more distinctive features
+                    if embedding_variance > 0.05 and embedding_range > 0.8:
+                        # High quality embedding - use standard threshold reduction
+                        adjusted_threshold = confidence_threshold - 0.4
+                        logger.info(f"Using standard threshold reduction for high-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
                     else:
-                        adjusted_threshold = confidence_threshold - 0.45  # Standard aggressive threshold reduction
-                        logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for cross-model comparison")
+                        # Lower quality embedding - use more aggressive threshold reduction
+                        adjusted_threshold = confidence_threshold - 0.5
+                        logger.info(f"Using aggressive threshold reduction for lower-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
+                    
+                    logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for cross-model comparison")
                     confidence_threshold = adjusted_threshold
             
             # Find best match
