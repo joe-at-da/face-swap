@@ -459,6 +459,9 @@ def save_member_clips_to_supabase(
         except Exception as e:
             logger.error(f"Error loading transcription file: {str(e)}")
     
+    # Log the full_video_url to help with debugging
+    logger.info(f"Using full_video_url in supabase_automation: {full_video_url}")
+    
     # Extract speaker segments from recognition results
     speaker_segments = []
     
@@ -577,7 +580,7 @@ def save_member_clips_to_supabase(
             "transcript": segment["transcript"],
             "confidence": segment["confidence"],
             "recognition_method": segment["recognition_method"],
-            "full_video_url": full_video_url if full_video_url else "pending_combined_av_upload",
+            "full_video_url": full_video_url.replace("host.docker.internal", "localhost") if full_video_url else "pending_combined_av_upload",
             "session_title": session_info["title"],
             "session_date": session_info["date"],
             "session_description": session_info["description"],

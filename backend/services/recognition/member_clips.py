@@ -205,6 +205,9 @@ def save_member_clips_to_supabase(
         # Get video duration from metadata or default to 60 seconds
         duration = video_metadata.get("duration", 60)
         
+        # Log the full_video_url to help with debugging
+        logger.info(f"Using full_video_url: {full_video_url} for unidentified speaker clip")
+        
         speaker_segments.append({
             "speaker_id": f"unidentified_{video_id}_full",
             "speaker_name": "Unidentified Speaker",
@@ -280,7 +283,7 @@ def save_member_clips_to_supabase(
             "end_timestamp": end_timestamp,
             "duration": duration,
             "transcript": segment["transcript"],
-            "full_video_url": full_video_url,
+            "full_video_url": full_video_url if full_video_url else "pending_combined_av_upload",
             "session_title": session_info["title"],
             "created_at": datetime.now().isoformat(),
             "is_unidentified": segment["recognition_method"] in ["unidentified", "default"]
@@ -308,7 +311,7 @@ def save_member_clips_to_supabase(
                     "end_timestamp": clip.get("end_timestamp", ""),
                     "duration": float(clip.get("duration", 0)),
                     "transcript": (clip.get("transcript", "") or "")[:1000],  # Truncate long transcripts
-                    "full_video_url": clip.get("full_video_url", ""),
+                    "full_video_url": clip.get("full_video_url", "").replace("host.docker.internal", "localhost") if clip.get("full_video_url") else "",
                     "session_title": clip.get("session_title", ""),
                     "created_at": datetime.now().isoformat(),
                     "is_unidentified": bool(clip.get("is_unidentified", False))
