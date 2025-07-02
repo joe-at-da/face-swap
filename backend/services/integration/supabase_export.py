@@ -29,6 +29,7 @@ def format_video_for_supabase(
     video_url: str,
     audio_url: str,
     thumbnail_url: Optional[str] = None,
+    combined_av_url: Optional[str] = None,
     status: str = "processed",
     metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
@@ -50,6 +51,11 @@ def format_video_for_supabase(
     Returns:
         Dictionary formatted for Supabase video_processing queue
     """
+    # Prepare metadata with combined_av_url if available
+    meta = metadata or {"source": "parliament_tv"}
+    if combined_av_url:
+        meta["combined_av_url"] = combined_av_url
+    
     return {
         "video_id": video_id,
         "title": title,
@@ -59,16 +65,16 @@ def format_video_for_supabase(
         "video_url": video_url,
         "audio_url": audio_url,
         "thumbnail_url": thumbnail_url,
+        "combined_av_url": combined_av_url,  # Add as a top-level field
         "status": status,
-        "metadata": metadata or {
-            "source": "parliament_tv"
-        }
+        "metadata": meta
     }
 
 
 def format_clips_for_supabase(
     video_id: str,
-    recognition_results: Dict[str, Any]
+    recognition_results: Dict[str, Any],
+    combined_av_url: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Format recognition results for Supabase clip_creation queue
@@ -96,7 +102,8 @@ def format_clips_for_supabase(
                 "face_image_url": segment.get("face_image_url", ""),
                 "metadata": {
                     "recognition_method": "facial",
-                    "matched_by": "traditional"
+                    "matched_by": "traditional",
+                    "combined_av_url": combined_av_url
                 }
             })
     
@@ -115,7 +122,8 @@ def format_clips_for_supabase(
                 "recognition_method": "facial",
                 "matched_by": appearance.get("matched_by", "parliament_member_matcher"),
                 "appearance_id": appearance.get("id"),
-                "identification_id": appearance.get("identification_id")
+                "identification_id": appearance.get("identification_id"),
+                "combined_av_url": combined_av_url
             }
         })
     
@@ -140,7 +148,8 @@ def format_clips_for_supabase(
                     "metadata": {
                         "recognition_method": event.get("recognition_method", "multimodal"),
                         "matched_by": event.get("matched_by", "timeline"),
-                        "timeline_event_id": event.get("id")
+                        "timeline_event_id": event.get("id"),
+                        "combined_av_url": combined_av_url
                     }
                 })
     
@@ -164,7 +173,8 @@ def format_clips_for_supabase(
                 "metadata": {
                     "recognition_method": "facial",
                     "matched_by": "unidentified",
-                    "unidentified_face_id": face.get("id", "")
+                    "unidentified_face_id": face.get("id", ""),
+                    "combined_av_url": combined_av_url
                 }
             })
     
@@ -332,7 +342,7 @@ def export_recognition_results(
             except Exception as e:
                 logger.error(f"Error loading transcription file: {str(e)}")
     
-    # Format data for Supabase queues - use combined URL if available, otherwise keep separate URLs
+    # Format video data for Supabase
     formatted_video = format_video_for_supabase(
         video_id=video_file_id,
         title=video_metadata.get("title", f"Parliament TV Capture {video_file_id}"),
@@ -342,15 +352,15 @@ def export_recognition_results(
         video_url=video_url,
         audio_url=audio_url,
         thumbnail_url=video_metadata.get("thumbnail_url", ""),
+        combined_av_url=combined_url,  # Pass combined URL directly
         status="processed",
         metadata={
             "source": "parliament_tv",
-            "combined_av_url": combined_url,
             "has_transcription": transcription_data is not None
         }
     )
     
-    formatted_clips = format_clips_for_supabase(video_file_id, recognition_results)
+    formatted_clips = format_clips_for_supabase(video_file_id, recognition_results, combined_url)
     
     # Add transcription data to recognition results if available
     if transcription_data:
