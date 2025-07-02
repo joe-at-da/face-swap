@@ -409,8 +409,24 @@ class SupabaseService:
             Response from Supabase
         """
         try:
-            # Make sure we're not passing any columns parameter
-            return self.client.table('clip_creation_queue').insert(clip_data).execute()
+            # Ensure we're not passing any empty data or problematic parameters
+            if not clip_data:
+                logger.warning("No clip data provided to add_to_clip_creation_queue")
+                return {"success": False, "error": "No clip data provided"}
+                
+            # Clean the clip data to ensure no empty columns parameter
+            cleaned_data = []
+            for clip in clip_data:
+                # Remove any empty columns parameter if it exists
+                if 'columns' in clip and (clip['columns'] is None or clip['columns'] == ''):
+                    clip_copy = clip.copy()
+                    del clip_copy['columns']
+                    cleaned_data.append(clip_copy)
+                else:
+                    cleaned_data.append(clip)
+            
+            # Use the cleaned data for the insert operation
+            return self.client.table('clip_creation_queue').insert(cleaned_data).execute()
         except Exception as e:
             logger.error(f"Error adding to clip creation queue: {str(e)}")
             return {"error": str(e)}

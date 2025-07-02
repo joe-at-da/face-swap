@@ -5,7 +5,9 @@ from .capture import CaptureSession
 from .capture_log import CaptureLog
 from .social import SocialPost, SocialPlatform, PostStatus
 from .transcription import Transcription, ParliamentTranscription
-from .video import VideoClip  # Import VideoClip from video.py
+from .video import VideoClip, Video  # Import VideoClip and Video from video.py
+from .parliament_video import ParliamentVideo  # Import ParliamentVideo model
+from .parliament_member_clip import ParliamentMemberClip  # Import ParliamentMemberClip model
 from .face_profile import FaceProfile, FaceSample
 from .voice_profile import VoiceProfile, VoiceSample
 from .enums import ClipStatus, SocialPlatform, PostStatus
@@ -18,6 +20,9 @@ __all__ = [
     "CaptureSession",
     "CaptureLog",
     "VideoClip",
+    "Video",
+    "ParliamentVideo",
+    "ParliamentMemberClip",
     "SocialPost",
     "SocialPlatform",
     "PostStatus",

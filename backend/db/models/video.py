@@ -15,9 +15,11 @@ class Video(Base):
     title = Column(String, nullable=False)
     description = Column(String, nullable=True)
     source_url = Column(String, nullable=False)
+    file_path = Column(String, nullable=True)  # Path to the video file
+    video_path = Column(String, nullable=True)  # Path to the video file (for recognition)
     duration = Column(Integer, nullable=False)  # in seconds
     status = Column(String, nullable=False)  # uploaded, processing, completed, failed
-    metadata = Column(JSON, nullable=True)  # Additional metadata
+    video_metadata = Column(JSON, nullable=True)  # Additional metadata
     error_message = Column(String, nullable=True)
     
     # Metadata
