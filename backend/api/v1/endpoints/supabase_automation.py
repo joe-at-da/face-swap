@@ -340,41 +340,41 @@ async def process_parliament_tv_to_supabase(
                         import traceback
                         logger.error(f"Traceback: {traceback.format_exc()}")
                 
-                # Upload the full video
-                destination_path = f"full_videos/parliament_tv_{capture_id}.mp4"
-                upload_result = supabase_service.upload_full_video(video_file_path, destination_path)
+                # Skip uploading the original video file - we only want to upload the combined AV file
+                # The combined AV file will be created and uploaded by the export_recognition_results function
+                # which is called later in the process
+                logger.info(f"Skipping upload of original video file - only combined AV files will be uploaded to Supabase")
                 
-                if upload_result.get("success", False):
-                    logger.info(f"Uploaded full video to Supabase: {upload_result.get('public_url')}")
+                # The combined AV file will have a name like combined_av_{capture_id}_TIMESTAMP.mp4
+                # and will be uploaded to the full_videos bucket by the export_recognition_results function
+                
+                # Set placeholder values for now - these will be updated when the combined AV file is uploaded
+                capture.external_id = f"parliament_tv_{capture_id}"
+                capture.external_status = "processing"
+                db.commit()
+                
+                # Step 7: Process and save individual member clips to parliament_member_clips table
+                try:
+                    # We don't have a full_video_url yet as the combined AV file hasn't been uploaded
+                    # The combined AV file will be uploaded by the export_recognition_results function
+                    # For now, use a placeholder URL that will be updated later
+                    full_video_url = None
                     
-                    # Update capture with Supabase URL
-                    capture.external_url = upload_result.get("public_url")
-                    capture.external_id = f"parliament_tv_{capture_id}"
-                    capture.external_status = "uploaded"
-                    db.commit()
+                    # Process and save member clips
+                    save_result = save_member_clips_to_supabase(
+                        db=db,
+                        video_id=capture_id,
+                        full_video_url=full_video_url,
+                        recognition_results=recognition_data,
+                        video_metadata=video_metadata,
+                        supabase_service=supabase_service
+                    )
                     
-                    # Step 7: Process and save individual member clips to parliament_member_clips table
-                    try:
-                        # Get the public URL for the full video
-                        full_video_url = upload_result.get("public_url")
-                        
-                        # Process and save member clips
-                        save_result = save_member_clips_to_supabase(
-                            db=db,
-                            video_id=capture_id,
-                            full_video_url=full_video_url,
-                            recognition_results=recognition_data,
-                            video_metadata=video_metadata,
-                            supabase_service=supabase_service
-                        )
-                        
-                        logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
-                    except Exception as e:
-                        logger.error(f"Error saving member clips to Supabase: {str(e)}")
-                        import traceback
-                        logger.error(f"Traceback: {traceback.format_exc()}")
-                else:
-                    logger.error(f"Failed to upload full video: {upload_result.get('error', 'Unknown error')}")
+                    logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error saving member clips to Supabase: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 logger.info(f"Completed full processing pipeline for Parliament TV URL: {url}")
                 
@@ -409,7 +409,7 @@ async def process_parliament_tv_to_supabase(
 def save_member_clips_to_supabase(
     db: Session,
     video_id: int,
-    full_video_url: str,
+    full_video_url: Optional[str],
     recognition_results: Dict[str, Any],
     video_metadata: Dict[str, Any],
     supabase_service: SupabaseService
@@ -577,7 +577,7 @@ def save_member_clips_to_supabase(
             "transcript": segment["transcript"],
             "confidence": segment["confidence"],
             "recognition_method": segment["recognition_method"],
-            "full_video_url": full_video_url,
+            "full_video_url": full_video_url if full_video_url else "pending_combined_av_upload",
             "session_title": session_info["title"],
             "session_date": session_info["date"],
             "session_description": session_info["description"],
