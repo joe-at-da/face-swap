@@ -64,6 +64,8 @@ class ParliamentMemberMatcher:
         self.face_recognition = FaceRecognitionService()
         
         # Initialize photo manager
+        # Look for embeddings in both the standard location and the download_mp_photos.py location
+        self.mp_photos_dir = "/app/data/mp_photos"
         self.photo_manager = PhotoManager(
             photos_dir=os.path.join(self.cache_dir, "mp_photos"),
             embeddings_dir=os.path.join(self.cache_dir, "mp_embeddings")
@@ -128,27 +130,41 @@ class ParliamentMemberMatcher:
                     logger.warning("Member has no ID, skipping")
                     continue
                 
-                # Try to load embedding from file
+                # Try to load embedding from file - first check the standard location
                 embedding_file = os.path.join(
                     self.photo_manager.embeddings_dir, 
                     f"{member_id}.json"
                 )
+                
+                # If not found in standard location, check the download_mp_photos.py location
+                if not os.path.exists(embedding_file):
+                    embedding_file = os.path.join(
+                        self.mp_photos_dir,
+                        f"{member_id}.json"
+                    )
                 
                 if os.path.exists(embedding_file):
                     try:
                         with open(embedding_file, 'r') as f:
                             embedding_data = json.load(f)
                             
-                        if 'embedding' in embedding_data:
-                            # Convert embedding to numpy array if needed
+                        # Handle both formats: direct array or object with 'embedding' key
+                        if isinstance(embedding_data, list):
+                            # Direct array format from download_mp_photos.py
+                            embedding = np.array(embedding_data)
+                        elif isinstance(embedding_data, dict) and 'embedding' in embedding_data:
+                            # Object with 'embedding' key format
                             embedding = embedding_data['embedding']
                             if isinstance(embedding, list):
                                 embedding = np.array(embedding)
+                        else:
+                            logger.warning(f"Unknown embedding format for member {member_id}")
+                            continue
                                 
-                            self.member_embeddings[member_id] = {
-                                'embedding': embedding,
-                                'member': member
-                            }
+                        self.member_embeddings[member_id] = {
+                            'embedding': embedding,
+                            'member': member
+                        }
                     except Exception as e:
                         logger.warning(f"Error loading embedding for member {member_id}: {str(e)}")
             

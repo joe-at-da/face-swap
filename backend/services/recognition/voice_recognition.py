@@ -412,7 +412,24 @@ class VoiceRecognitionService:
         # Load the transcription
         try:
             with open(transcription_path, 'r') as f:
-                transcription = json.load(f)
+                try:
+                    # First try to load as JSON
+                    transcription = json.load(f)
+                except json.JSONDecodeError:
+                    # If that fails, try to handle as text format
+                    f.seek(0)  # Reset file pointer to beginning
+                    text_content = f.read()
+                    
+                    # Create a simple JSON structure from the text
+                    transcription = {
+                        "text": text_content,
+                        "segments": [{
+                            "start": 0,
+                            "end": 0,  # We don't have timing info in plain text
+                            "text": text_content
+                        }]
+                    }
+                    logger.info("Loaded transcription as plain text format")
         except Exception as e:
             logger.error(f"Error loading transcription: {str(e)}")
             return {
