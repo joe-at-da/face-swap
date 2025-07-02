@@ -170,15 +170,18 @@ class FaceProfileService:
         return db.query(models.FaceSample).filter(models.FaceSample.face_profile_id == profile_id).all()
     
     def extract_faces_from_video(self, video_path: str, output_dir: Optional[str] = None, 
-                               interval: float = 1.0, min_confidence: float = 0.6) -> Dict[str, Any]:
+                           interval: float = 1.0, min_confidence: float = 0.6,
+                           prioritize_center: bool = True, select_best_frames: bool = True) -> Dict[str, Any]:
         """
-        Extract faces from a video file.
+        Extract faces from a video file with intelligent frame selection.
         
         Args:
             video_path: Path to the video file
             output_dir: Directory to save extracted face images
             interval: Interval in seconds between frame processing
             min_confidence: Minimum confidence score for face detection
+            prioritize_center: Whether to prioritize faces in the center of the frame
+            select_best_frames: Whether to select the best quality frames
             
         Returns:
             Dictionary with extraction results
@@ -186,8 +189,9 @@ class FaceProfileService:
         try:
             import cv2
             import face_recognition
+            import numpy as np
             
-            logger.info(f"Extracting faces from video: {video_path}")
+            logger.info(f"Extracting faces from video: {video_path} with intelligent frame selection")
             
             # Create output directory if not provided
             if not output_dir:
@@ -203,9 +207,11 @@ class FaceProfileService:
             # Get video properties
             fps = video.get(cv2.CAP_PROP_FPS)
             frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+            frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
             duration = frame_count / fps if fps > 0 else 0
             
-            logger.info(f"Video properties: FPS={fps}, Frames={frame_count}, Duration={duration:.2f}s")
+            logger.info(f"Video properties: FPS={fps}, Frames={frame_count}, Resolution={frame_width}x{frame_height}, Duration={duration:.2f}s")
             
             # Calculate frame interval
             frame_interval = int(fps * interval)
@@ -216,6 +222,14 @@ class FaceProfileService:
             faces_found = 0
             face_data = []
             current_frame = 0
+            
+            # For best frame selection, we'll store candidate faces for each segment
+            segment_faces = []
+            segment_size = int(fps * 5)  # 5-second segments
+            
+            # Calculate frame center for prioritization
+            frame_center_x = frame_width / 2
+            frame_center_y = frame_height / 2
             
             while True:
                 ret, frame = video.read()
@@ -233,29 +247,113 @@ class FaceProfileService:
                         # Get face encodings
                         face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
                         
-                        # Save each face
+                        # Process each face
                         for i, (face_location, face_encoding) in enumerate(zip(face_locations, face_encodings)):
                             top, right, bottom, left = face_location
                             face_image = frame[top:bottom, left:right]
                             
-                            # Save the face image
-                            timestamp = current_frame / fps
-                            face_filename = f"face_{current_frame}_{i}_{timestamp:.2f}.jpg"
-                            face_path = os.path.join(output_dir, face_filename)
-                            cv2.imwrite(face_path, face_image)
+                            # Calculate face quality metrics
+                            face_width = right - left
+                            face_height = bottom - top
+                            face_size = face_width * face_height
+                            face_center_x = (left + right) / 2
+                            face_center_y = (top + bottom) / 2
                             
-                            # Store face data
-                            face_data.append({
+                            # Distance from center of frame (normalized 0-1)
+                            distance_from_center = np.sqrt(
+                                ((face_center_x - frame_center_x) / frame_width) ** 2 +
+                                ((face_center_y - frame_center_y) / frame_height) ** 2
+                            )
+                            
+                            # Calculate sharpness (Laplacian variance)
+                            gray_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
+                            sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+                            
+                            # Calculate face quality score
+                            quality_score = 0.0
+                            
+                            # Size component (bigger is better, up to a point)
+                            size_score = min(face_size / (frame_width * frame_height) * 20, 1.0)
+                            quality_score += size_score * 0.4
+                            
+                            # Center proximity component (closer to center is better)
+                            if prioritize_center:
+                                center_score = 1.0 - min(distance_from_center * 2, 1.0)
+                                quality_score += center_score * 0.3
+                            
+                            # Sharpness component (sharper is better)
+                            sharpness_score = min(sharpness / 1000, 1.0)
+                            quality_score += sharpness_score * 0.3
+                            
+                            timestamp = current_frame / fps
+                            
+                            # Store face data with quality metrics
+                            face_info = {
                                 "frame": current_frame,
                                 "timestamp": timestamp,
                                 "location": face_location,
                                 "encoding": face_encoding.tolist(),
-                                "path": face_path
-                            })
+                                "quality_score": quality_score,
+                                "size": face_size,
+                                "distance_from_center": distance_from_center,
+                                "sharpness": sharpness,
+                                "image": face_image,  # Store image temporarily
+                                "rgb_frame": rgb_frame  # Store full frame temporarily
+                            }
                             
-                            faces_found += 1
+                            if select_best_frames:
+                                # Add to segment candidates
+                                segment_faces.append(face_info)
+                            else:
+                                # Save immediately if not selecting best frames
+                                face_filename = f"face_{current_frame}_{i}_{timestamp:.2f}.jpg"
+                                face_path = os.path.join(output_dir, face_filename)
+                                cv2.imwrite(face_path, face_image)
+                                
+                                # Add path to face info and remove image data
+                                face_info["path"] = face_path
+                                del face_info["image"]
+                                del face_info["rgb_frame"]
+                                
+                                face_data.append(face_info)
+                                faces_found += 1
                 
                 current_frame += 1
+                
+                # Process segment faces at segment boundaries or end of video
+                if (select_best_frames and 
+                    (current_frame % segment_size == 0 or current_frame >= frame_count) and 
+                    segment_faces):
+                    
+                    # Group faces by similarity to find distinct people
+                    distinct_faces = self._group_similar_faces(segment_faces)
+                    
+                    # For each distinct person, select the best quality face
+                    for person_faces in distinct_faces:
+                        if not person_faces:
+                            continue
+                            
+                        # Sort by quality score and take the best one
+                        best_face = max(person_faces, key=lambda x: x["quality_score"])
+                        
+                        # Save the best face image
+                        timestamp = best_face["timestamp"]
+                        face_filename = f"face_best_{best_face['frame']}_{timestamp:.2f}.jpg"
+                        face_path = os.path.join(output_dir, face_filename)
+                        cv2.imwrite(face_path, best_face["image"])
+                        
+                        # Add path to face info and remove image data
+                        best_face["path"] = face_path
+                        del best_face["image"]
+                        del best_face["rgb_frame"]
+                        
+                        face_data.append(best_face)
+                        faces_found += 1
+                        
+                        logger.debug(f"Selected best face at frame {best_face['frame']} with quality {best_face['quality_score']:.2f}")
+                    
+                    # Clear segment faces
+                    segment_faces = []
                 
                 # Log progress periodically
                 if current_frame % 100 == 0:
@@ -275,7 +373,54 @@ class FaceProfileService:
             
         except Exception as e:
             logger.error(f"Error extracting faces: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
+            
+    def _group_similar_faces(self, faces, similarity_threshold=0.6):
+        """
+        Group similar faces to identify distinct people in a segment.
+        
+        Args:
+            faces: List of face data dictionaries
+            similarity_threshold: Threshold for considering faces as the same person
+            
+        Returns:
+            List of lists, where each inner list contains faces of the same person
+        """
+        if not faces:
+            return []
+            
+        # Extract encodings
+        encodings = [np.array(face["encoding"]) for face in faces]
+        
+        # Initialize groups
+        groups = []
+        assigned = [False] * len(faces)
+        
+        for i in range(len(faces)):
+            if assigned[i]:
+                continue
+                
+            # Start a new group
+            current_group = [faces[i]]
+            assigned[i] = True
+            
+            # Find similar faces
+            for j in range(i + 1, len(faces)):
+                if assigned[j]:
+                    continue
+                    
+                # Calculate similarity
+                similarity = 1 - np.linalg.norm(encodings[i] - encodings[j])
+                
+                if similarity >= similarity_threshold:
+                    current_group.append(faces[j])
+                    assigned[j] = True
+            
+            groups.append(current_group)
+        
+        return groups
     
     def match_face_with_profiles(self, db: Session, face_encoding: List[float], 
                                threshold: float = 0.6) -> Tuple[Optional[models.FaceProfile], float]:
