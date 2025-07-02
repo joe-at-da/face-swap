@@ -6,6 +6,29 @@ from datetime import datetime
 from backend.db.base_class import Base
 from backend.db.models.enums import ClipStatus
 
+class Video(Base):
+    """Model for videos in the system."""
+    
+    __tablename__ = "videos"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    source_url = Column(String, nullable=False)
+    duration = Column(Integer, nullable=False)  # in seconds
+    status = Column(String, nullable=False)  # uploaded, processing, completed, failed
+    metadata = Column(JSON, nullable=True)  # Additional metadata
+    error_message = Column(String, nullable=True)
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    recognition_processes = relationship("RecognitionProcess", back_populates="video", cascade="all, delete-orphan")
+    parliament_videos = relationship("ParliamentVideo", back_populates="video", cascade="all, delete-orphan")
+    member_clips = relationship("ParliamentMemberClip", back_populates="video", cascade="all, delete-orphan")
+
 class VideoClip(Base):
     __tablename__ = "video_clips"
     

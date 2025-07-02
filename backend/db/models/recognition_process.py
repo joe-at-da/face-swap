@@ -15,7 +15,7 @@ class RecognitionProcess(Base):
     __tablename__ = "recognition_processes"
     
     id = Column(Integer, primary_key=True, index=True)
-    video_id = Column(Integer, ForeignKey("capture_sessions.id", ondelete="CASCADE"), index=True)
+    video_id = Column(Integer, ForeignKey("videos.id", ondelete="CASCADE"), index=True)
     process_type = Column(String(50), index=True, default="facial")  # facial, voice, multimodal
     status = Column(String(50), index=True)  # pending, processing, completed, failed
     start_time = Column(DateTime, default=datetime.utcnow)
@@ -28,4 +28,4 @@ class RecognitionProcess(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
-    capture_session = relationship("CaptureSession", back_populates="recognition_processes")
+    video = relationship("Video", back_populates="recognition_processes")
