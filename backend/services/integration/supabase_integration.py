@@ -56,7 +56,8 @@ class SupabaseIntegration:
         # Upload video file
         if os.path.exists(video_path):
             video_filename = os.path.basename(video_path)
-            storage_path = f"videos/{video_filename}"
+            # Upload directly to root of bucket
+            storage_path = video_filename
             
             try:
                 self.supabase.upload_file(self.media_bucket, storage_path, video_path)
@@ -71,7 +72,8 @@ class SupabaseIntegration:
         # Upload audio file - using the separate audio URL as provided
         if os.path.exists(audio_path):
             audio_filename = os.path.basename(audio_path)
-            storage_path = f"audio/{audio_filename}"
+            # Upload directly to root of bucket
+            storage_path = audio_filename
             
             try:
                 self.supabase.upload_file(self.media_bucket, storage_path, audio_path)
@@ -86,7 +88,8 @@ class SupabaseIntegration:
         # Upload thumbnail if provided
         if thumbnail_path and os.path.exists(thumbnail_path):
             thumbnail_filename = os.path.basename(thumbnail_path)
-            storage_path = f"thumbnails/{thumbnail_filename}"
+            # Upload directly to root of bucket
+            storage_path = thumbnail_filename
             
             try:
                 self.supabase.upload_file(self.media_bucket, storage_path, thumbnail_path)
@@ -112,8 +115,9 @@ class SupabaseIntegration:
         
         for key, path in export_paths.items():
             if os.path.exists(path):
+                # Upload directly to the root of the bucket
                 filename = os.path.basename(path)
-                storage_path = f"exports/{filename}"
+                storage_path = filename
                 
                 try:
                     # Always use the full_videos bucket since that's the only one that exists
@@ -229,6 +233,21 @@ class SupabaseIntegration:
             
             # Get thumbnail path if available
             thumbnail_path = video_metadata.get("thumbnail_path", "")
+            
+            # Check if combined AV file was created and upload it directly
+            combined_url = export_result.get("combined_url", "")
+            if combined_url and os.path.exists(combined_url):
+                logger.info(f"Uploading combined audio-video file: {combined_url}")
+                try:
+                    # Upload the combined file directly to the root of the bucket
+                    upload_result = self.supabase.upload_full_video(combined_url)
+                    if upload_result.get("success"):
+                        result["supabase_urls"]["combined_av_url"] = upload_result.get("public_url")
+                        logger.info(f"Successfully uploaded combined AV file to Supabase: {upload_result.get('public_url')}")
+                    else:
+                        logger.error(f"Failed to upload combined AV file: {upload_result.get('error')}")
+                except Exception as e:
+                    logger.error(f"Error uploading combined AV file: {str(e)}")
             
             # Upload media files
             media_urls = self.upload_media_to_supabase(

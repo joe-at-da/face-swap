@@ -289,7 +289,9 @@ def export_recognition_results(
     if create_combined_av and audio_url:
         try:
             logger.info(f"Creating combined audio-video file for Supabase integration")
-            combined_filename = f"{video_id}_combined.mp4"
+            # Use timestamp format for the combined file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            combined_filename = f"combined_av_{video_id}_{timestamp}.mp4"
             combined_path = os.path.join(combined_dir, combined_filename)
             
             # Combine audio and video

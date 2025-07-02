@@ -152,9 +152,14 @@ class SupabaseService:
         if destination_path is None:
             # Extract just the filename without any path structure
             destination_path = os.path.basename(file_path)
-            
+        
         # Ensure we're not creating any nested folders
         destination_path = os.path.basename(destination_path)
+        
+        # Remove any nested folder prefixes like 'full_videos/' or 'combined/'
+        for prefix in ['full_videos/', 'combined/', 'exports/', 'media/']:
+            if destination_path.startswith(prefix):
+                destination_path = destination_path[len(prefix):]
             
         # Ensure we're using the service role key for admin access
         if not self.client.auth.get_session():
