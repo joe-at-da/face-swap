@@ -153,6 +153,10 @@ class SupabaseService:
             # Extract just the filename without any path structure
             destination_path = os.path.basename(file_path)
         
+        # Always use the full_videos_bucket for all uploads, including combined AV files
+        target_bucket = self.full_videos_bucket
+        logger.info(f"Using bucket '{target_bucket}' for upload of file: {destination_path}")
+        
         # Ensure we're not creating any nested folders
         destination_path = os.path.basename(destination_path)
         
