@@ -6,14 +6,6 @@ ensuring that recognized clips are properly saved for local development and test
 It also integrates with Supabase to ensure clips are available in the production environment.
 """
 
-"""
-Parliament Clips Integration Service.
-
-This service integrates the multimodal recognition service with the local SQLite parliament_clips database,
-ensuring that recognized clips are properly saved for local development and testing.
-It also integrates with Supabase to ensure clips are available in the production environment.
-"""
-
 import os
 import sys
 import json
@@ -23,15 +15,6 @@ import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-
-# Add the parent directory to sys.path to allow importing from scripts
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
-from scripts.create_parliament_clips_model import get_parliament_clip
-from backend.services.integration.supabase_integration import SupabaseIntegration
-from backend.services.integration.supabase_export import format_clips_for_supabase
-
-# Set up logging
-logger = logging.getLogger(__name__)
 
 # Add the parent directory to sys.path to allow importing from scripts
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
