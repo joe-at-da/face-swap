@@ -124,24 +124,40 @@ class ParliamentMemberMatcher:
             
             # Load embeddings for each member
             for member in self.members:
-                member_id = member.get('id')
+                member_id = member.get('id')  # UUID
+                numeric_id = member.get('member_id')  # Numeric ID
                 
                 if not member_id:
                     logger.warning("Member has no ID, skipping")
                     continue
                 
-                # Try to load embedding from file - first check the standard location
+                # Try to load embedding from file - first check the standard location with UUID
                 embedding_file = os.path.join(
                     self.photo_manager.embeddings_dir, 
                     f"{member_id}.json"
                 )
                 
-                # If not found in standard location, check the download_mp_photos.py location
+                # If not found, check the download_mp_photos.py location with UUID
                 if not os.path.exists(embedding_file):
                     embedding_file = os.path.join(
                         self.mp_photos_dir,
                         f"{member_id}.json"
                     )
+                
+                # If still not found and we have a numeric ID, try with that
+                if not os.path.exists(embedding_file) and numeric_id:
+                    # Try standard location with numeric ID
+                    embedding_file = os.path.join(
+                        self.photo_manager.embeddings_dir, 
+                        f"{numeric_id}.json"
+                    )
+                    
+                    # If not found, try download_mp_photos.py location with numeric ID
+                    if not os.path.exists(embedding_file):
+                        embedding_file = os.path.join(
+                            self.mp_photos_dir,
+                            f"{numeric_id}.json"
+                        )
                 
                 if os.path.exists(embedding_file):
                     try:
@@ -165,8 +181,20 @@ class ParliamentMemberMatcher:
                             'embedding': embedding,
                             'member': member
                         }
+                        
+                        # Also index by numeric ID if available for easier lookup
+                        if numeric_id and str(numeric_id) != member_id:
+                            self.member_embeddings[str(numeric_id)] = {
+                                'embedding': embedding,
+                                'member': member
+                            }
                     except Exception as e:
                         logger.warning(f"Error loading embedding for member {member_id}: {str(e)}")
+                elif numeric_id:
+                    logger.debug(f"No embedding found for member {member.get('display_name')} (ID: {member_id}, numeric ID: {numeric_id})")
+                else:
+                    logger.debug(f"No embedding found for member {member.get('display_name')} (ID: {member_id})")
+
             
             logger.info(f"Loaded {len(self.member_embeddings)} member embeddings")
             
