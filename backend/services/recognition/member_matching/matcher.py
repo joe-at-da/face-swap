@@ -251,7 +251,10 @@ class ParliamentMemberMatcher:
                     continue
                 
                 # Skip members from different houses if house is specified
-                member_house = member.get('house_id', '').lower()
+                member_house = member.get('house_id', '')
+                if isinstance(member_house, int):
+                    member_house = str(member_house)
+                member_house = member_house.lower()
                 if house != "unknown" and member_house != house.lower():
                     continue
                 
