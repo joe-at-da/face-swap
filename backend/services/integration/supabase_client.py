@@ -152,6 +152,17 @@ class SupabaseService:
         if destination_path is None:
             # Extract just the filename without any path structure
             destination_path = os.path.basename(file_path)
+            
+            # For Parliament TV files, use a standardized naming convention
+            # But preserve combined_av_ files with their original timestamped names
+            if 'parliament_tv_' in destination_path and 'combined_av_' not in destination_path:
+                # Convert parliament_tv_494.mp4 to just parliament_tv_494.mp4
+                # This maintains backward compatibility with existing code
+                pass
+            # For combined_av_ files, keep the original filename with timestamp
+            elif 'combined_av_' in destination_path:
+                logger.info(f"Preserving combined AV filename: {destination_path}")
+                # Keep the original filename
         
         # Always use the full_videos_bucket for all uploads, including combined AV files
         target_bucket = self.full_videos_bucket

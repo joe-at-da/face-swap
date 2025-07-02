@@ -17,7 +17,8 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.db.models import RecognitionProcess, ParliamentTranscription, CaptureSession
+from backend.db.models import RecognitionProcess, ParliamentTranscription
+from backend.db.models.capture import CaptureSession
 from backend.db.session import SessionLocal
 # TODO: There are multiple implementations of combine_audio_video in the codebase
 #       (in av_combiner.py, media/av_combiner.py, and video/processor.py).
@@ -220,8 +221,8 @@ def export_recognition_results(
     from backend.services.integration.supabase_client import SupabaseService
     supabase = SupabaseService(use_service_role=True)
     
-    # Upload the combined video to Supabase storage (this is the full video)
-    # Use the combined_av_path instead of the original video_path
+    # Upload ONLY the combined video to Supabase storage (this is the full video)
+    # We only want combined_av_ files in the Supabase bucket
     if os.path.exists(combined_av_path):
         logger.info(f"Uploading combined video to Supabase full_videos bucket: {combined_av_path}")
         video_filename = os.path.basename(combined_av_path)
@@ -229,38 +230,29 @@ def export_recognition_results(
         
         if not upload_result.get("success", False):
             logger.error(f"Failed to upload combined video to Supabase: {upload_result.get('error')}")
-            # Try uploading the original video as a fallback
-            logger.info(f"Trying to upload original video as fallback: {video_path}")
-            upload_result = supabase.upload_full_video(file_path=video_path)
-            if not upload_result.get("success", False):
-                logger.error(f"Failed to upload original video to Supabase: {upload_result.get('error')}")
-            else:
-                logger.info(f"Uploaded original video to Supabase: {upload_result.get('public_url')}")
+            # No fallback to original video - we only want combined AV files in Supabase
+            supabase_url = None
         else:
             logger.info(f"Successfully uploaded combined video to Supabase: {upload_result.get('public_url')}")
+            supabase_url = upload_result.get('public_url')
     else:
-        # If combined video doesn't exist, upload the original video
-        logger.warning(f"Combined video not found at {combined_av_path}, uploading original video instead")
-        upload_result = supabase.upload_full_video(file_path=video_path)
-        
-        if not upload_result.get("success", False):
-            logger.error(f"Failed to upload original video to Supabase: {upload_result.get('error')}")
-        else:
-            logger.info(f"Uploaded original video to Supabase: {upload_result.get('public_url')}")
+        logger.warning(f"Combined video not found at {combined_av_path}, NOT uploading any video to Supabase")
+        # Do not upload original video as fallback
+        supabase_url = None
 
         
-        # Update video record with Supabase URL if db_session is provided
-        if db_session:
+        # Update video record with Supabase URL if db_session is provided and we have a URL
+        if db_session and supabase_url:
             try:
-                # First try to update the CaptureSession record
+                # Try to update CaptureSession record first
                 video = db_session.query(CaptureSession).filter(
                     CaptureSession.id == video_id
                 ).first()
                 
                 if video:
-                    video.supabase_url = upload_result.get('public_url')
+                    video.supabase_url = supabase_url
                     db_session.commit()
-                    logger.info(f"Updated CaptureSession record with Supabase URL: {upload_result.get('public_url')}")
+                    logger.info(f"Updated CaptureSession record with Supabase URL: {supabase_url}")
                 else:
                     # If no CaptureSession record, try to update RecognitionProcess record
                     rec_process = db_session.query(RecognitionProcess).filter(
@@ -268,9 +260,9 @@ def export_recognition_results(
                     ).first()
                     
                     if rec_process:
-                        rec_process.supabase_url = upload_result.get('public_url')
+                        rec_process.supabase_url = supabase_url
                         db_session.commit()
-                        logger.info(f"Updated RecognitionProcess record with Supabase URL: {upload_result.get('public_url')}")
+                        logger.info(f"Updated RecognitionProcess record with Supabase URL: {supabase_url}")
                     else:
                         logger.warning(f"No video or recognition process record found for video ID {video_id}")
             except Exception as e:
