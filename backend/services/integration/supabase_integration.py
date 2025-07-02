@@ -241,8 +241,7 @@ class SupabaseIntegration:
                 try:
                     # Upload the combined file directly to the root of the bucket
                     # Use the original filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
-                    destination_path = os.path.basename(combined_url)
-                    upload_result = self.supabase.upload_full_video(combined_url, destination_path)
+                    upload_result = self.supabase.upload_full_video(file_path=combined_url)
                     if upload_result.get("success"):
                         result["supabase_urls"]["combined_av_url"] = upload_result.get("public_url")
                         logger.info(f"Successfully uploaded combined AV file to Supabase: {upload_result.get('public_url')}")

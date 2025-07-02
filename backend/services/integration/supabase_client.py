@@ -125,7 +125,7 @@ class SupabaseService:
         """
         return self.client.storage.from_(bucket).get_public_url(path)
         
-    def upload_full_video(self, file_path: str, destination_path: str) -> Dict[str, Any]:
+    def upload_full_video(self, file_path: str, destination_path: str = None) -> Dict[str, Any]:
         """Upload a full video file to Supabase storage."""
         if not file_path:
             logger.warning("Video file path is None")
