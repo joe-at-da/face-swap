@@ -182,16 +182,34 @@ class SupabaseService:
             self.client = get_supabase_client(use_service_role=True)
             
         try:
+            logger.info(f"Starting upload of {file_path} to bucket {self.full_videos_bucket} as {destination_path}")
+            logger.info(f"File exists: {os.path.exists(file_path)}, File size: {os.path.getsize(file_path)}")
+            logger.info(f"Supabase client initialized: {self.client is not None}")
+            
+            # Check if we have a valid session
+            session_info = "No session"
+            try:
+                session = self.client.auth.get_session()
+                if session:
+                    session_info = f"Session exists, user: {session.user.email if session.user else 'None'}"
+            except Exception as se:
+                session_info = f"Error getting session: {str(se)}"
+            logger.info(f"Supabase session: {session_info}")
+            
             with open(file_path, 'rb') as f:
                 # Use file_options to set cache control and upsert behavior
+                logger.info(f"File opened successfully, uploading to {self.full_videos_bucket}/{destination_path}")
                 response = self.client.storage.from_(self.full_videos_bucket).upload(
                     path=destination_path,
                     file=f,
                     file_options={"cache-control": "3600", "upsert": "true"}
                 )
+                logger.info(f"Upload response: {response}")
                 
             # Get the public URL for the uploaded file
+            logger.info(f"Getting public URL for {destination_path} from bucket {self.full_videos_bucket}")
             public_url = self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
+            logger.info(f"Public URL: {public_url}")
             
             return {
                 "success": True,
@@ -200,6 +218,9 @@ class SupabaseService:
                 "response": response
             }
         except Exception as e:
+            logger.error(f"Exception during upload: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 "success": False,
                 "error": str(e),

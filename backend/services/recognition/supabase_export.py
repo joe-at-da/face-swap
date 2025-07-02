@@ -226,16 +226,31 @@ def export_recognition_results(
     # We only want combined_av_ files in the Supabase bucket
     if os.path.exists(combined_av_path):
         logger.info(f"Uploading combined video to Supabase full_videos bucket: {combined_av_path}")
+        logger.info(f"File exists check: {os.path.exists(combined_av_path)}, File size: {os.path.getsize(combined_av_path)}")
         video_filename = os.path.basename(combined_av_path)
-        upload_result = supabase.upload_full_video(file_path=combined_av_path)
+        logger.info(f"Using video filename: {video_filename}")
         
-        if not upload_result.get("success", False):
-            logger.error(f"Failed to upload combined video to Supabase: {upload_result.get('error')}")
-            # No fallback to original video - we only want combined AV files in Supabase
+        # Make sure we're using the service role for Supabase
+        supabase = SupabaseService(use_service_role=True)
+        logger.info(f"Supabase client initialized with service role: {supabase.client is not None}")
+        
+        # Attempt the upload with detailed logging
+        try:
+            upload_result = supabase.upload_full_video(file_path=combined_av_path)
+            logger.info(f"Upload result: {upload_result}")
+            
+            if not upload_result.get("success", False):
+                logger.error(f"Failed to upload combined video to Supabase: {upload_result.get('error')}")
+                # No fallback to original video - we only want combined AV files in Supabase
+                supabase_url = None
+            else:
+                logger.info(f"Successfully uploaded combined video to Supabase: {upload_result.get('public_url')}")
+                supabase_url = upload_result.get('public_url')
+        except Exception as e:
+            logger.error(f"Exception during upload of combined video: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             supabase_url = None
-        else:
-            logger.info(f"Successfully uploaded combined video to Supabase: {upload_result.get('public_url')}")
-            supabase_url = upload_result.get('public_url')
     else:
         logger.warning(f"Combined video not found at {combined_av_path}, NOT uploading any video to Supabase")
         # Do not upload original video as fallback
@@ -321,18 +336,11 @@ def export_recognition_results(
                 logger.error(f"Failed to create clip: {clip_result.get('error')}")
                 continue
             
-            # Upload clip to Supabase
-            upload_result = supabase.upload_file(
-                bucket=supabase.media_bucket,
-                path=f"clips/{clip_filename}",
-                file_path=clip_path
-            )
+            # Skip uploading clips to Supabase - we only want combined AV files
+            logger.info(f"Skipping upload of clip {clip_filename} to Supabase - only combined AV files will be uploaded")
             
-            # Get public URL
-            clip_url = supabase.get_public_url(
-                bucket=supabase.media_bucket,
-                path=f"clips/{clip_filename}"
-            )
+            # Set a local URL for the clip instead
+            clip_url = f"/api/v1/media/file?path={clip_filename}"
             
             # Get MP information
             from backend.db.models import ParliamentMember

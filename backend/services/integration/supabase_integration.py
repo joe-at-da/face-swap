@@ -106,11 +106,18 @@ class SupabaseIntegration:
         Upload export files to Supabase storage.
         
         Args:
-            export_paths: Dictionary with paths to export files
+            export_paths: Dictionary of export paths
             
         Returns:
             Dictionary with URLs for uploaded files
         """
+        # We're not uploading any JSON files to Supabase anymore
+        # Only combined AV files should be uploaded directly via upload_full_video
+        logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
+        return {}
+        
+        # The original code below is commented out to prevent JSON file uploads
+        '''
         result = {}
         
         for key, path in export_paths.items():
@@ -131,6 +138,7 @@ class SupabaseIntegration:
                 logger.warning(f"Export file not found: {path}")
         
         return result
+        '''
     
     def add_to_video_processing_queue(self, video_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -212,13 +220,9 @@ class SupabaseIntegration:
             "queue_responses": {}
         }
         
-        # Upload export files to Supabase
-        export_urls = self.upload_export_files({
-            "video_export": export_result["video_export_path"],
-            "clips_export": export_result["clips_export_path"],
-            "recognition_export": export_result["recognition_export_path"]
-        })
-        result["supabase_urls"].update(export_urls)
+        # Skip uploading JSON files to Supabase
+        logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
+        export_urls = {}
         
         # Upload media files if requested
         if upload_media:
