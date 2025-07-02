@@ -9,6 +9,7 @@ import os
 import json
 import logging
 import subprocess
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -717,39 +718,66 @@ class MultimodalRecognitionService:
     def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.6) -> Dict[str, Any]:
         """Identify speakers in a frame using facial recognition and ParliamentMemberMatcher."""
         try:
-            logger.info(f"Identifying speaker in frame: {frame_path}")
+            logger.info(f"===== IDENTIFYING SPEAKER IN FRAME: {frame_path} =====")
             
             # Default to not exporting to Supabase
             export_to_supabase = False
             
-            # First, ensure member matcher has loaded parliament members
+            # First, ensure member matcher is initialized
+            if not self.member_matcher:
+                logger.info("Initializing ParliamentMemberMatcher")
+                self.member_matcher = ParliamentMemberMatcher(db)
+            
+            # Ensure member matcher has loaded parliament members
             if not hasattr(self.member_matcher, 'members') or not self.member_matcher.members:
+                logger.info("Loading parliament members in ParliamentMemberMatcher")
                 self.member_matcher.load_parliament_members()
+                logger.info(f"Loaded {len(self.member_matcher.members)} parliament members")
+            else:
+                logger.info(f"Using {len(self.member_matcher.members)} previously loaded parliament members")
             
             # Run facial recognition on the frame
+            logger.info(f"Running facial recognition on frame: {frame_path}")
             face_results = self.facial_recognition.detect_faces_in_image(frame_path)
             
             if not face_results.get("success", False):
-                logger.warning(f"No faces detected in frame: {frame_path}")
+                logger.warning(f"❌ No faces detected in frame: {frame_path}")
                 return {"success": False, "error": "No faces detected", "supabase_export": {"enabled": export_to_supabase}}
                 
             detections = face_results.get("detections", [])
             if not detections:
-                logger.warning(f"No detections in frame: {frame_path}")
+                logger.warning(f"❌ No detections in frame: {frame_path}")
                 return {"success": False, "error": "No detections", "supabase_export": {"enabled": export_to_supabase}}
+            
+            logger.info(f"Found {len(detections)} face detections in frame")
             
             # Sort by confidence (highest first)
             detections.sort(key=lambda x: x.get("confidence", 0), reverse=True)
             best_detection = detections[0]
+            logger.info(f"Using best detection with confidence: {best_detection.get('confidence', 0):.4f}")
             
             # Try to match with our improved ParliamentMemberMatcher
             face_embedding = best_detection.get("embedding")
             if face_embedding is not None:
+                # Log embedding information
+                if isinstance(face_embedding, list):
+                    embedding_len = len(face_embedding)
+                    has_nan = any(isinstance(x, float) and (math.isnan(x) or math.isinf(x)) for x in face_embedding)
+                    has_zeros = all(x == 0 for x in face_embedding)
+                    logger.info(f"Face embedding: length={embedding_len}, has_nan={has_nan}, all_zeros={has_zeros}")
+                else:
+                    logger.warning(f"Face embedding is not a list but {type(face_embedding).__name__}")
+                
                 # Get the house from the video metadata if available
                 house = "unknown"  # Default house
+                logger.info(f"Using house: {house} for matching")
                 
                 # Match the face to a parliament member
+                logger.info(f"Matching face to parliament member with threshold: {threshold}")
                 match_result = self.member_matcher.match_face_to_member(face_embedding, threshold)
+                
+                if match_result:
+                    logger.info(f"Match result: {json.dumps(match_result)}")
                 
                 if match_result and match_result.get("matched"):
                     # Use the matched member information
@@ -762,23 +790,42 @@ class MultimodalRecognitionService:
                     best_detection["confidence"] = confidence
                     best_detection["matched_by"] = "parliament_member_matcher"
                     
-                    logger.info(f"Matched face to member {member_name} with confidence {confidence}")
+                    logger.info(f"✅ Successfully matched face to member {member_name} (ID: {member_id}) with confidence {confidence:.4f}")
                 else:
+                    logger.warning(f"⚠️ Failed to match face with ParliamentMemberMatcher")
+                    if match_result:
+                        logger.info(f"Best match details: member_id={match_result.get('best_match_id')}, confidence={match_result.get('best_match_confidence', 0):.4f}, threshold={threshold}")
+                    
                     # Fallback to the original method if no match found
                     profile_id = best_detection.get("profile_id")
                     if profile_id:
+                        logger.info(f"Trying fallback to face_profile_service with profile_id: {profile_id}")
                         profile = self.face_profile_service.get_profile_by_id(db, profile_id)
                         if profile:
                             best_detection["name"] = profile.get("name", "Unknown")
                             best_detection["profile"] = profile
                             best_detection["matched_by"] = "face_profile_service"
+                            logger.info(f"Matched to profile: {profile.get('name', 'Unknown')}")
+                        else:
+                            logger.warning(f"No profile found for profile_id: {profile_id}")
                     else:
+                        logger.warning("No profile_id available for fallback matching")
+                        
                         # If no match found, use default unidentified member
+                        logger.info(f"Using default unidentified member for house: {house}")
                         default_member_id = self.member_matcher._get_default_member_for_house(house)
                         if default_member_id:
                             best_detection["member_id"] = default_member_id
                             best_detection["name"] = "Unidentified Speaker"
                             best_detection["matched_by"] = "default_unidentified"
+                            logger.info(f"Using default unidentified member ID: {default_member_id}")
+                        else:
+                            logger.warning(f"No default member found for house: {house}")
+            else:
+                logger.error(f"❌ No face embedding found in detection")
+            
+            # Log the final detection result
+            logger.info(f"Final detection result: member_id={best_detection.get('member_id')}, name={best_detection.get('name', 'Unknown')}, matched_by={best_detection.get('matched_by', 'unknown')}")
             
             return {
                 "success": True, 
