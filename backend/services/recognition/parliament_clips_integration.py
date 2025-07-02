@@ -60,6 +60,9 @@ class ParliamentClipsIntegrationService:
         Returns:
             Dict with results of the operation
         """
+        logger.info(f"===== PARLIAMENT CLIPS INTEGRATION: Starting to save {len(recognition_events)} recognition events for video {video_id} =====")
+        logger.info(f"Using database path: {self.db_path}")
+        logger.info(f"Video path: {video_path}")
         try:
             logger.info(f"Saving {len(recognition_events)} recognition events to parliament_clips for video {video_id}")
             
@@ -71,6 +74,7 @@ class ParliamentClipsIntegrationService:
             for event in recognition_events:
                 # Only process speaker events with text
                 if event.get("type") == "speaker" and event.get("text"):
+                    logger.info(f"Processing speaker event: {event.get('name', 'Unknown')} with text: {event.get('text', '')[:50]}...")
                     try:
                         # Create clip data for parliament_clips table
                         clip_data = {
@@ -90,6 +94,7 @@ class ParliamentClipsIntegrationService:
                                 'matched_by': event.get("matched_by", "unknown")
                             })
                         }
+                        logger.info(f"Prepared clip data for member_id: {clip_data['member_id']}, start: {clip_data['start_timestamp']}, end: {clip_data['end_timestamp']}")
                         
                         # Insert the clip into the parliament_clips table using direct SQLite connection
                         try:
@@ -101,11 +106,13 @@ class ParliamentClipsIntegrationService:
                             placeholders = ', '.join(['?'] * len(fields))
                             values = [clip_data[field] for field in fields]
                             
+                            # Log the SQL statement for debugging
+                            sql_statement = f"INSERT INTO parliament_clips ({', '.join(fields)}) VALUES ({placeholders})"
+                            logger.info(f"Executing SQL: {sql_statement}")
+                            logger.info(f"With values: {values}")
+                            
                             # Execute the insert
-                            cursor.execute(
-                                f"INSERT INTO parliament_clips ({', '.join(fields)}) VALUES ({placeholders})",
-                                values
-                            )
+                            cursor.execute(sql_statement, values)
                             
                             # Get the ID of the inserted clip
                             clip_id = cursor.lastrowid
@@ -129,6 +136,7 @@ class ParliamentClipsIntegrationService:
                         clips_failed += 1
                         logger.error(f"Error saving parliament clip: {str(e)}")
             
+            logger.info(f"===== PARLIAMENT CLIPS INTEGRATION: Finished saving clips. Saved: {clips_saved}, Failed: {clips_failed} =====")
             return {
                 "success": True,
                 "clips_saved": clips_saved,
