@@ -259,8 +259,20 @@ class SupabaseService:
                 
                 if not bucket_exists:
                     logger.warning(f"Bucket '{self.full_videos_bucket}' does not exist, attempting to create it")
-                    self.client.storage.create_bucket(self.full_videos_bucket, {'public': True})
-                    logger.info(f"Created bucket '{self.full_videos_bucket}'")
+                    # Create bucket with public access enabled
+                    self.client.storage.create_bucket(
+                        self.full_videos_bucket, 
+                        {'public': True, 'file_size_limit': 100000000}  # 100MB limit
+                    )
+                    logger.info(f"Created bucket '{self.full_videos_bucket}' with public access")
+                    
+                    # Ensure bucket has proper public access policy
+                    try:
+                        # Update bucket to be publicly accessible
+                        self.client.storage.update_bucket(self.full_videos_bucket, {'public': True})
+                        logger.info(f"Updated bucket '{self.full_videos_bucket}' to ensure public access")
+                    except Exception as policy_error:
+                        logger.warning(f"Error updating bucket policy: {str(policy_error)}, but continuing with upload")
             except Exception as bucket_error:
                 logger.warning(f"Error checking/creating bucket: {str(bucket_error)}, will attempt upload anyway")
             
@@ -272,12 +284,29 @@ class SupabaseService:
             while retry_count < max_retries:
                 try:
                     with open(file_path, 'rb') as f:
-                        # Use file_options to set cache control and upsert behavior
+                        # Use file_options to set cache control, content-type and upsert behavior
                         logger.info(f"File opened successfully, uploading to {self.full_videos_bucket}/{destination_path} (attempt {retry_count + 1}/{max_retries})")
+                        
+                        # Set proper content type for MP4 files
+                        content_type = "video/mp4" if file_path.lower().endswith(".mp4") else None
+                        logger.info(f"Using content-type: {content_type}")
+                        
+                        # For MP4 files, we need to ensure proper MIME type and permissions
+                        file_options = {
+                            "cache-control": "max-age=3600",
+                            "upsert": "true"
+                        }
+                        
+                        if content_type:
+                            file_options["content-type"] = content_type
+                        
+                        logger.info(f"Uploading with file options: {file_options}")
+                        
+                        # Upload the file with proper options
                         response = self.client.storage.from_(self.full_videos_bucket).upload(
                             path=destination_path,
                             file=f,
-                            file_options={"cache-control": "3600", "upsert": "true"}
+                            file_options=file_options
                         )
                         logger.info(f"Upload response: {response}")
                         
@@ -299,6 +328,17 @@ class SupabaseService:
             logger.info(f"Getting public URL for {destination_path} from bucket {self.full_videos_bucket}")
             public_url = self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
             logger.info(f"Public URL: {public_url}")
+            
+            # Update file metadata to ensure it has the correct content-type
+            try:
+                if file_path.lower().endswith(".mp4"):
+                    logger.info(f"Updating file metadata to ensure correct content-type")
+                    # Note: Supabase doesn't have a direct API for updating file metadata
+                    # We're using the update_bucket method to ensure the bucket itself is public
+                    self.client.storage.update_bucket(self.full_videos_bucket, {'public': True})
+                    logger.info(f"Updated bucket settings to ensure public access")
+            except Exception as metadata_error:
+                logger.warning(f"Error updating file metadata: {str(metadata_error)}, but continuing")
             
             # Verify the URL is accessible
             logger.info(f"Upload successful. File should be accessible at: {public_url}")
