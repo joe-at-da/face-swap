@@ -167,9 +167,10 @@ def export_recognition_results(
         export_filename = f"recognition_export_{video_id}_{timestamp}.json"
         export_path = os.path.join(export_dir, export_filename)
         
-        # Generate combined AV file path
+        # Generate combined AV file path - place directly in MEDIA_STORAGE_PATH
+        # This ensures it's in /app/data/media/ in the Docker container
         combined_av_filename = f"combined_av_{video_id}_{timestamp}.mp4"
-        combined_av_path = os.path.join(export_dir, combined_av_filename)
+        combined_av_path = os.path.join(settings.MEDIA_STORAGE_PATH, combined_av_filename)
         
         # Create combined audio-video file if both paths are provided
         combine_result = None
@@ -240,34 +241,33 @@ def export_recognition_results(
         # Do not upload original video as fallback
         supabase_url = None
 
-        
-        # Update video record with Supabase URL if db_session is provided and we have a URL
-        if db_session and supabase_url:
-            try:
-                # Try to update CaptureSession record first
-                video = db_session.query(CaptureSession).filter(
-                    CaptureSession.id == video_id
+    # Update video record with Supabase URL if db_session is provided and we have a URL
+    if db_session and supabase_url:
+        try:
+            # Try to update CaptureSession record first
+            video = db_session.query(CaptureSession).filter(
+                CaptureSession.id == video_id
+            ).first()
+            
+            if video:
+                video.supabase_url = supabase_url
+                db_session.commit()
+                logger.info(f"Updated CaptureSession record with Supabase URL: {supabase_url}")
+            else:
+                # If no CaptureSession record, try to update RecognitionProcess record
+                rec_process = db_session.query(RecognitionProcess).filter(
+                    RecognitionProcess.video_id == video_id
                 ).first()
                 
-                if video:
-                    video.supabase_url = supabase_url
+                if rec_process:
+                    rec_process.supabase_url = supabase_url
                     db_session.commit()
-                    logger.info(f"Updated CaptureSession record with Supabase URL: {supabase_url}")
+                    logger.info(f"Updated RecognitionProcess record with Supabase URL: {supabase_url}")
                 else:
-                    # If no CaptureSession record, try to update RecognitionProcess record
-                    rec_process = db_session.query(RecognitionProcess).filter(
-                        RecognitionProcess.video_id == video_id
-                    ).first()
-                    
-                    if rec_process:
-                        rec_process.supabase_url = supabase_url
-                        db_session.commit()
-                        logger.info(f"Updated RecognitionProcess record with Supabase URL: {supabase_url}")
-                    else:
-                        logger.warning(f"No video or recognition process record found for video ID {video_id}")
-            except Exception as e:
-                logger.error(f"Error updating video record: {str(e)}")
-                # Continue with export even if update fails
+                    logger.warning(f"No video or recognition process record found for video ID {video_id}")
+        except Exception as e:
+            logger.error(f"Error updating video record: {str(e)}")
+            # Continue with export even if update fails
     
     # Identify speaking segments using the 60-second pause rule
     from backend.services.recognition.speaker_segmentation import SpeakerSegmentation
