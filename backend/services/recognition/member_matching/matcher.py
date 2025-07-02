@@ -234,14 +234,16 @@ class ParliamentMemberMatcher:
                 
                 # Adjust confidence threshold for cross-model comparison
                 # Dlib and other models may have different similarity distributions
+                # Lower the threshold more aggressively to improve matching rates
                 if confidence_threshold > 0.5:
-                    adjusted_threshold = confidence_threshold - 0.2
+                    adjusted_threshold = confidence_threshold - 0.3
                     logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for cross-model comparison")
                     confidence_threshold = adjusted_threshold
             
             # Find best match
             best_match = None
             best_confidence = 0.0
+            top_matches = []
             
             for member_id, data in self.member_embeddings.items():
                 member = data.get('member', {})
@@ -261,14 +263,29 @@ class ParliamentMemberMatcher:
                 # Compute similarity
                 confidence = compute_similarity(face_embedding, member_embedding)
                 
+                # Keep track of top 5 matches for debugging
+                match_info = {
+                    'member_id': member_id,
+                    'name': member.get('name', 'Unknown'),
+                    'house_id': member.get('house_id'),
+                    'confidence': confidence
+                }
+                
+                top_matches.append(match_info)
+                
                 if confidence > best_confidence:
                     best_confidence = confidence
-                    best_match = {
-                        'member_id': member_id,
-                        'name': member.get('name', 'Unknown'),
-                        'house_id': member.get('house_id'),
-                        'confidence': confidence
-                    }
+                    best_match = match_info
+            
+            # Sort and log top 5 matches for debugging
+            top_matches.sort(key=lambda x: x['confidence'], reverse=True)
+            top_5 = top_matches[:5]
+            logger.debug(f"Top 5 matches: {top_5}")
+            
+            # If best match is close to threshold, log it for analysis
+            if best_confidence > (confidence_threshold * 0.8) and best_confidence < confidence_threshold:
+                logger.info(f"Near miss match: {best_match['name']} with confidence {best_confidence:.4f} (threshold: {confidence_threshold:.4f})")
+            
             
             # Return best match if confidence is above threshold
             if best_match and best_confidence >= confidence_threshold:

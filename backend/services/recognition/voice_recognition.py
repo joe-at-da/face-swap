@@ -437,16 +437,18 @@ class VoiceRecognitionService:
                 "error": f"Error loading transcription: {str(e)}"
             }
         
-        # Load the speaker identification results
-        try:
-            with open(speaker_results_path, 'r') as f:
-                speaker_results = json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading speaker identification results: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Error loading speaker identification results: {str(e)}"
-            }
+        # Load the speaker identification results if provided
+        speaker_results = {"segments": []}
+        if speaker_results_path:
+            try:
+                with open(speaker_results_path, 'r') as f:
+                    speaker_results = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading speaker identification results: {str(e)}")
+                # Continue with empty speaker results instead of failing
+                logger.warning("Continuing with empty speaker results")
+        else:
+            logger.warning("No speaker results path provided, using empty speaker segments")
         
         # Combine the results
         try:
