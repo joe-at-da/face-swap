@@ -108,8 +108,17 @@ class ParliamentClipsIntegrationService:
             clips_failed = 0
             clip_ids = []
             
+            # Log all recognition events for debugging
+            logger.info(f"Recognition events types: {[event.get('type', 'unknown') for event in recognition_events]}")
+            logger.info(f"Recognition events with text: {sum(1 for event in recognition_events if event.get('text'))}")
+            logger.info(f"Speaker events: {sum(1 for event in recognition_events if event.get('type') == 'speaker')}")
+            logger.info(f"Speaker events with text: {sum(1 for event in recognition_events if event.get('type') == 'speaker' and event.get('text'))}")
+        
             # Process each recognition event
             for event in recognition_events:
+                # Log the event for debugging
+                logger.info(f"Processing event: {event}")
+                
                 # Only process speaker events with text
                 if event.get("type") == "speaker" and event.get("text"):
                     logger.info(f"Processing speaker event: {event.get('name', 'Unknown')} with text: {event.get('text', '')[:50]}...")
@@ -141,6 +150,7 @@ class ParliamentClipsIntegrationService:
                         logger.info(f"Prepared clip data for member_id: {clip_data['member_id']}, start: {clip_data['start_timestamp']}, end: {clip_data['end_timestamp']}")
                         
                         # Insert the clip into the parliament_clips table using direct SQLite connection
+                        conn = None
                         try:
                             conn = sqlite3.connect(self.db_path)
                             cursor = conn.cursor()

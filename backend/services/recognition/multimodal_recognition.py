@@ -516,7 +516,7 @@ class MultimodalRecognitionService:
                                 face_data["frame_time"] = frame_time
                                 face_data["segment_speaker"] = speaker
                                 
-                                # Add to recognition events
+                                # Add to recognition events with comprehensive structure
                                 recognition_event = {
                                     "type": "speaker",
                                     "start_time": frame_time,
@@ -527,7 +527,10 @@ class MultimodalRecognitionService:
                                     "face_image_url": frame_path,
                                     "text": segment.get("text", ""),
                                     "recognition_method": "facial",
-                                    "matched_by": face_data.get("matched_by", "unknown")
+                                    "matched_by": face_data.get("matched_by", "unknown"),
+                                    "profile_id": face_data.get("profile_id"),
+                                    "segment_speaker": speaker,
+                                    "time": frame_time  # Add time field for backward compatibility
                                 }
                                 recognition_events.append(recognition_event)
                                 face_data["segment_start"] = start_time
@@ -542,17 +545,7 @@ class MultimodalRecognitionService:
                                     faces_by_speaker[speaker] = []
                                 faces_by_speaker[speaker].append(face_data)
                                 
-                                # Create a recognition event
-                                recognition_event = {
-                                    "time": frame_time,
-                                    "speaker": face_data.get("name", "Unknown"),
-                                    "confidence": face_data.get("confidence", 0),
-                                    "profile_id": face_data.get("profile_id"),
-                                    "frame_path": frame_path,
-                                    "segment_speaker": speaker,
-                                    "segment_text": segment.get("text", "")
-                                }
-                                recognition_events.append(recognition_event)
+                                # Note: Removed duplicate recognition event creation
                                 
                                 logger.info(f"Identified speaker in frame at {frame_time:.2f}s: {face_data.get('name', 'Unknown')}")
                         except Exception as e:
