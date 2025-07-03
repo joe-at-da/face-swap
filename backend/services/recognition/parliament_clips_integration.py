@@ -68,7 +68,7 @@ class ParliamentClipsIntegrationService:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS parliament_clips (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    member_id INTEGER NOT NULL,
+                    member_id TEXT NOT NULL,
                     transcript TEXT,
                     full_video_path TEXT,
                     start_timestamp TEXT,
@@ -140,6 +140,10 @@ class ParliamentClipsIntegrationService:
             text = event.get("text", "")
             member_id = event.get("member_id", "")
             confidence = event.get("confidence", 0.0)
+            
+            # Ensure member_id is stored as a string to handle UUIDs properly
+            if member_id:
+                member_id = str(member_id)
             
             # Count member IDs for debugging
             member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
@@ -436,6 +440,15 @@ class ParliamentClipsIntegrationService:
             for clip in clips:
                 # Skip unknown members
                 if clip['member_id'] == "default_unknown":
+                    logger.info(f"Skipping clip with default_unknown member_id")
+                    continue
+                
+                # Log the member ID for debugging
+                logger.info(f"Processing clip with member_id: {clip['member_id']} (type: {type(clip['member_id']).__name__})")
+                
+                # Set a minimum confidence threshold for including clips
+                if clip['confidence_score'] < 0.3:  # Adjust this threshold as needed
+                    logger.info(f"Skipping low confidence clip: {clip['confidence_score']} < 0.3")
                     continue
                     
                 appearance = {
@@ -451,18 +464,69 @@ class ParliamentClipsIntegrationService:
                 
                 # Try to get member name from the database
                 try:
-                    from backend.db.models import ParliamentMember
-                    member = db.query(ParliamentMember).filter(ParliamentMember.id == clip['member_id']).first()
+                    from backend.db.models import Speaker
+                    
+                    # Check if member_id is a UUID string (from facial recognition)
+                    import uuid
+                    member_id_str = str(clip['member_id'])
+                    is_uuid = False
+                    try:
+                        uuid_obj = uuid.UUID(member_id_str)
+                        is_uuid = True
+                        logger.info(f"Member ID {member_id_str} is a UUID")
+                    except ValueError:
+                        is_uuid = False
+                    
+                    # Try multiple approaches to find the speaker
+                    member = None
+                    
+                    # First try: direct ID match
+                    member = db.query(Speaker).filter(Speaker.id == clip['member_id']).first()
                     if member:
-                        appearance["member_name"] = f"{member.first_name} {member.last_name}"
+                        logger.info(f"Found member by direct ID: {clip['member_id']}")
+                    
+                    # Second try: parliament_id match
+                    if not member:
+                        member = db.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
+                        if member:
+                            logger.info(f"Found member by parliament_id: {member_id_str}")
+                    
+                    # Third try: if it's a UUID, try to find by string representation in any field
+                    if not member and is_uuid:
+                        # Try a more flexible search if it's a UUID
+                        member = db.query(Speaker).filter(
+                            (Speaker.parliament_id.like(f"%{member_id_str}%")) |
+                            (Speaker.name.like(f"%{member_id_str}%"))
+                        ).first()
+                        if member:
+                            logger.info(f"Found member by flexible search: {member_id_str}")
+                    
+                    # Log the result
+                    if member:
+                        logger.info(f"Successfully found member: {member.name} (ID: {member.id})")
+                    else:
+                        logger.warning(f"Could not find member for ID: {member_id_str}")
+                    
+                    if member:
+                        appearance["member_name"] = member.name
+                        logger.info(f"Found member name: {member.name}")
+                    else:
+                        logger.warning(f"Member not found for ID: {clip['member_id']}")
                 except Exception as e:
                     logger.warning(f"Could not get member name from database: {str(e)}")
+                    import traceback
+                    logger.warning(traceback.format_exc())
                 
                 recognition_results["speaker_appearances"].append(appearance)
             
             logger.info(f"Added {len(recognition_results['speaker_appearances'])} speaker appearances to recognition results")
             
             # Export and upload to Supabase
+            logger.info(f"Preparing to export {len(recognition_results['speaker_appearances'])} appearances to Supabase")
+            
+            # Log the full recognition results for debugging
+            logger.debug(f"Recognition results: {json.dumps(recognition_results, indent=2)}")
+            
             result = self.supabase_integration.export_and_upload_recognition(
                 video_path=video_path,
                 recognition_results=recognition_results,
