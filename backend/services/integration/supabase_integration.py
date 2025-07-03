@@ -512,7 +512,8 @@ class SupabaseIntegration:
                 'duration': 'duration_seconds',
                 'full_video_url': 'full_video_path',
                 'start_time': 'start_timestamp',  # Use timestamp fields instead of time fields
-                'end_time': 'end_timestamp'
+                'end_time': 'end_timestamp',
+                'speaker_id': 'member_id'  # Map speaker_id to member_id
             }
             
             for clip in clips_data:
@@ -687,22 +688,20 @@ class SupabaseIntegration:
                     logger.warning("No valid clips found. This may be due to member_id mapping issues.")
                     logger.warning("Running sync_parliament_clip_member_ids.py script to create Speaker records for all member IDs.")
                     
-                    # Run the sync script
+                    # Run the sync script but don't retry to avoid recursion
                     sync_result = self._run_sync_parliament_clip_member_ids()
                     
                     if sync_result.get("success"):
                         logger.info("Successfully synchronized member IDs with Speaker records")
-                        logger.info("Retrying clip processing with updated Speaker records")
+                        logger.info("However, not retrying clip processing to avoid recursion")
                         
-                        # Retry processing the clips with the updated Speaker records
-                        return self.export_and_upload_recognition(
-                            video_path=video_path,
-                            recognition_results=recognition_results,
-                            video_metadata=video_metadata,
-                            db_session=db_session,
-                            video_id=video_id,
-                            upload_media=upload_media
-                        )
+                        # Instead of recursively calling ourselves, just continue with what we have
+                        # This may result in no clips being exported, but it avoids the recursion error
+                        logger.warning("No valid clips could be processed after synchronization")
+                        
+                        # Return a partial result indicating the sync was successful but no clips were processed
+                        result["clips_processed"] = 0
+                        result["sync_successful"] = True
                     else:
                         logger.error(f"Failed to synchronize member IDs: {sync_result.get('error')}")
                         
