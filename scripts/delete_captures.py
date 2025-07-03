@@ -93,6 +93,46 @@ def clean_database():
         
         logger.info("Successfully cleaned all capture-related data from the database")
         
+        # Clean SQLite database (parliament_clips.db)
+        try:
+            import sqlite3
+            import os
+            
+            # Path to SQLite database
+            sqlite_db_path = "/app/backend/parliament_clips.db"
+            
+            if os.path.exists(sqlite_db_path):
+                logger.info(f"Cleaning SQLite database at {sqlite_db_path}")
+                conn = sqlite3.connect(sqlite_db_path)
+                cursor = conn.cursor()
+                
+                # Get list of tables
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                sqlite_tables = cursor.fetchall()
+                
+                for table in sqlite_tables:
+                    table_name = table[0]
+                    if table_name != 'sqlite_sequence':  # Skip internal SQLite table
+                        try:
+                            cursor.execute(f"DELETE FROM {table_name}")
+                            logger.info(f"Cleaned SQLite table: {table_name}")
+                        except Exception as e:
+                            logger.error(f"Error cleaning SQLite table {table_name}: {str(e)}")
+                
+                # Also reset the autoincrement counters
+                cursor.execute("DELETE FROM sqlite_sequence")
+                
+                conn.commit()
+                conn.close()
+                logger.info("Successfully cleaned SQLite database")
+            else:
+                logger.info(f"SQLite database not found at {sqlite_db_path}, skipping")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning SQLite database: {str(e)}")
+            import traceback
+            logger.error(f"SQLite cleanup traceback: {traceback.format_exc()}")
+        
     except Exception as e:
         logger.error(f"Error cleaning database: {str(e)}")
         import traceback
