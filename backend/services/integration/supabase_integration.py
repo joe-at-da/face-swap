@@ -137,6 +137,48 @@ class SupabaseIntegration:
             logger.error(f"Error adding video to processing queue: {str(e)}")
             return {"error": str(e)}
     
+    def _run_sync_parliament_clip_member_ids(self) -> Dict[str, Any]:
+        """
+        Run the sync_parliament_clip_member_ids.py script to ensure all member IDs in SQLite
+        have corresponding Speaker records in PostgreSQL.
+        
+        Returns:
+            Dict with sync results
+        """
+        try:
+            logger.info("Running sync_parliament_clip_member_ids.py script to ensure all member IDs have Speaker records")
+            import subprocess
+            import sys
+            import os
+            
+            # Get the path to the script
+            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+                                      "backend/scripts/sync_parliament_clip_member_ids.py")
+            
+            # Check if we're running in Docker or locally
+            if os.path.exists("/app/backend/scripts/sync_parliament_clip_member_ids.py"):
+                script_path = "/app/backend/scripts/sync_parliament_clip_member_ids.py"
+                
+            logger.info(f"Sync script path: {script_path}")
+            
+            # Run the script using the Python interpreter
+            result = subprocess.run([sys.executable, script_path], 
+                                   capture_output=True, 
+                                   text=True)
+            
+            if result.returncode == 0:
+                logger.info("Successfully ran sync_parliament_clip_member_ids.py script")
+                logger.info(f"Script output: {result.stdout}")
+                return {"success": True, "output": result.stdout}
+            else:
+                logger.error(f"Error running sync_parliament_clip_member_ids.py script: {result.stderr}")
+                return {"success": False, "error": result.stderr}
+        except Exception as e:
+            logger.error(f"Error running sync_parliament_clip_member_ids.py script: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+    
     def add_to_clip_creation_queue(self, clip_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Add jobs to the clip_creation queue.
@@ -366,18 +408,17 @@ class SupabaseIntegration:
                 logger.info("Successfully sanitized clips data for JSON serialization")
             except Exception as e:
                 logger.error(f"Failed to serialize sanitized clips data: {str(e)}")
-                # Fall back to a more aggressive approach
-                clips_data = []
-                for clip in clips_data_raw:
-                    try:
-                        sanitized_clip = {}
-                        for k, v in clip.items():
-                            sanitized_clip[k] = sanitize_for_json(v)
-                        json.dumps(sanitized_clip)  # Verify this clip is serializable
-                        clips_data.append(sanitized_clip)
-                    except Exception as clip_error:
-                        logger.error(f"Skipping non-serializable clip: {str(clip_error)}")
-                logger.info(f"After aggressive sanitization: {len(clips_data)} clips remain")
+                # Filter out clips without required fields
+                valid_clips = []
+                for clip in clips_data:
+                    missing_fields = [field for field in required_fields if field not in clip or clip[field] is None]
+                    if missing_fields:
+                        logger.warning(f"Skipping clip with missing required fields: {missing_fields}")
+                        logger.warning(f"Clip details: {json.dumps({k: v for k, v in clip.items() if k not in excluded_fields})}")
+                        continue
+                    valid_clips.append(clip)  # Verify this clip is serializable
+                clips_data = valid_clips
+                logger.info(f"After filtering out invalid clips: {len(clips_data)} clips remain")
             
             # Update URLs with Supabase URLs if available
             if "video_url" in result["supabase_urls"]:
@@ -471,11 +512,59 @@ class SupabaseIntegration:
                             logger.warning(f"Failed to format session_date: {e}")
                             simplified_clip[field] = None  # Set to None if we can't parse it
                     elif field == 'member_id':
-                        # Ensure member_id is an integer
                         try:
-                            simplified_clip[field] = int(value) if value is not None else 1  # Default to 1 if None
-                        except (ValueError, TypeError):
-                            simplified_clip[field] = 1  # Default to 1 if conversion fails
+                            # Ensure member_id is an integer
+                            if value is not None:
+                                try:
+                                    # First try to convert directly to int
+                                    simplified_clip[field] = int(value)
+                                    logger.info(f"Successfully converted member_id {value} to int: {simplified_clip[field]}")
+                                except (ValueError, TypeError):
+                                    # If it's a UUID, try multiple approaches to find the Speaker
+                                    member_id_str = str(value)
+                                    logger.info(f"Looking up Speaker for UUID member_id: {member_id_str}")
+                                    
+                                    # Try to find Speaker by parliament_id (most reliable)
+                                    speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
+                                    if speaker:
+                                        logger.info(f"Found Speaker by parliament_id: {speaker.id}")
+                                        # Use the Speaker's ID as the member_id
+                                        simplified_clip[field] = speaker.id
+                                    else:
+                                        # Try to find by UUID in any field
+                                        try:
+                                            uuid_obj = uuid.UUID(member_id_str)
+                                            speaker = db_session.query(Speaker).filter(
+                                                (Speaker.id.cast(String) == member_id_str) | 
+                                                (Speaker.parliament_id == member_id_str) | 
+                                                (Speaker.member_id == member_id_str)
+                                            ).first()
+                                            
+                                            if speaker:
+                                                logger.info(f"Found Speaker by UUID search: {speaker.id}")
+                                                simplified_clip[field] = speaker.id
+                                            else:
+                                                logger.warning(f"No Speaker found for UUID {member_id_str}, running sync script")
+                                                # Run the sync script to create the Speaker if needed
+                                                sync_result = self._run_sync_parliament_clip_member_ids()
+                                                if sync_result.get("success"):
+                                                    # Try again after sync
+                                                    speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
+                                                    if speaker:
+                                                        logger.info(f"Found Speaker after sync: {speaker.id}")
+                                                        simplified_clip[field] = speaker.id
+                                                    else:
+                                                        logger.warning(f"Still no Speaker found after sync for {member_id_str}")
+                                                        simplified_clip[field] = None
+                                                else:
+                                                    logger.error(f"Sync failed for {member_id_str}")
+                                                    simplified_clip[field] = None
+                                        except (ValueError, TypeError):
+                                            logger.warning(f"Invalid UUID format: {member_id_str}")
+                                            simplified_clip[field] = None
+                        except Exception as e:
+                            logger.error(f"Error processing member_id {value}: {str(e)}")
+                            simplified_clip[field] = None
                     elif not isinstance(value, (str, int, float, bool, type(None))):
                         simplified_clip[field] = str(value)
                 
@@ -546,48 +635,31 @@ class SupabaseIntegration:
                     logger.warning(f"First raw clip is missing these required fields: {missing_in_first}")
                     logger.warning(f"Available fields in first raw clip: {list(first_clip.keys())}")
                     
-                    # Try to create a valid clip manually for debugging
-                    logger.info("Attempting to create a valid clip manually for debugging...")
-                    debug_clip = {}
+                    # Instead of creating debug clips, log the issue and run the sync script automatically
+                    logger.warning("No valid clips found. This may be due to member_id mapping issues.")
+                    logger.warning("Running sync_parliament_clip_member_ids.py script to create Speaker records for all member IDs.")
                     
-                    # Copy all available fields
-                    for field in first_clip:
-                        if field not in excluded_fields:  # Skip excluded fields
-                            debug_clip[field] = first_clip[field]
+                    # Run the sync script
+                    sync_result = self._run_sync_parliament_clip_member_ids()
                     
-                    # Add required fields with placeholder values if missing
-                    for field in required_fields:
-                        if field not in debug_clip:
-                            if field == 'member_id':
-                                debug_clip[field] = 1  # Placeholder member ID
-                            elif field == 'transcript':
-                                debug_clip[field] = "Debug transcript"  # Placeholder transcript
-                            elif field == 'full_video_path':
-                                debug_clip[field] = first_clip.get('full_video_url', "debug_path.mp4")
-                            elif field == 'start_timestamp':
-                                debug_clip[field] = "00:00:00"  # Placeholder start timestamp
-                            elif field == 'end_timestamp':
-                                debug_clip[field] = "00:01:00"  # Placeholder end timestamp
-                    
-                    # Ensure session_date is in the correct format (YYYY-MM-DD)
-                    if 'session_date' in debug_clip and debug_clip['session_date']:
-                        try:
-                            # If it's not already a date string in YYYY-MM-DD format, convert it
-                            if not isinstance(debug_clip['session_date'], str) or len(debug_clip['session_date']) != 10 or debug_clip['session_date'][4] != '-':
-                                from datetime import datetime
-                                if isinstance(debug_clip['session_date'], (int, float)):
-                                    # Assume it's a timestamp
-                                    date_obj = datetime.fromtimestamp(debug_clip['session_date'])
-                                    debug_clip['session_date'] = date_obj.strftime('%Y-%m-%d')
-                                else:
-                                    # Default to today's date
-                                    debug_clip['session_date'] = datetime.now().strftime('%Y-%m-%d')
-                        except Exception as e:
-                            logger.warning(f"Failed to format session_date: {e}")
-                            debug_clip['session_date'] = None  # Set to None if we can't parse it
-                    
-                    logger.debug(f"Debug clip created: {json.dumps(debug_clip)}")
-                    simplified_clips.append(debug_clip)
+                    if sync_result.get("success"):
+                        logger.info("Successfully synchronized member IDs with Speaker records")
+                        logger.info("Retrying clip processing with updated Speaker records")
+                        
+                        # Retry processing the clips with the updated Speaker records
+                        return self.export_and_upload_recognition(
+                            video_path=video_path,
+                            recognition_results=recognition_results,
+                            video_metadata=video_metadata,
+                            db_session=db_session,
+                            video_id=video_id,
+                            upload_media=upload_media
+                        )
+                    else:
+                        logger.error(f"Failed to synchronize member IDs: {sync_result.get('error')}")
+                        
+                    # Log details about the first clip for debugging
+                    logger.info(f"Example clip that couldn't be processed: {json.dumps({k: v for k, v in first_clip.items() if k not in excluded_fields})}")
             
             # Add to queues
             video_queue_response = self.add_to_video_processing_queue(video_data)

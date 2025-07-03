@@ -360,6 +360,51 @@ class ParliamentClipsIntegrationService:
                 "clips": []
             }
     
+    def _run_sync_parliament_clip_member_ids(self, db_session):
+        """
+        Run the sync_parliament_clip_member_ids.py script to ensure all member IDs in SQLite
+        have corresponding Speaker records in PostgreSQL.
+        
+        Args:
+            db_session: SQLAlchemy database session
+            
+        Returns:
+            Dict with sync results
+        """
+        try:
+            logger.info("Running sync_parliament_clip_member_ids.py script to ensure all member IDs have Speaker records")
+            import subprocess
+            import sys
+            import os
+            
+            # Get the path to the script
+            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+                                      "backend/scripts/sync_parliament_clip_member_ids.py")
+            
+            # Check if we're running in Docker or locally
+            if os.path.exists("/app/backend/scripts/sync_parliament_clip_member_ids.py"):
+                script_path = "/app/backend/scripts/sync_parliament_clip_member_ids.py"
+                
+            logger.info(f"Sync script path: {script_path}")
+            
+            # Run the script using the Python interpreter
+            result = subprocess.run([sys.executable, script_path], 
+                                   capture_output=True, 
+                                   text=True)
+            
+            if result.returncode == 0:
+                logger.info("Successfully ran sync_parliament_clip_member_ids.py script")
+                logger.info(f"Script output: {result.stdout}")
+                return {"success": True, "output": result.stdout}
+            else:
+                logger.error(f"Error running sync_parliament_clip_member_ids.py script: {result.stderr}")
+                return {"success": False, "error": result.stderr}
+        except Exception as e:
+            logger.error(f"Error running sync_parliament_clip_member_ids.py script: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+    
     def _export_clips_to_supabase(self, video_id: int, recognition_events: List[Dict[str, Any]], video_path: str) -> Dict[str, Any]:
         """
         Export clips to Supabase after saving them locally.
@@ -641,6 +686,28 @@ class ParliamentClipsIntegrationService:
             if len(recognition_results['speaker_appearances']) == 0:
                 logger.warning(f"No valid speaker appearances to export to Supabase for video ID {video_id}")
                 return {"success": False, "error": "No valid speaker appearances to export"}
+            
+            # Check if we have any UUID member IDs that need to be synced
+            uuid_member_ids_detected = False
+            for appearance in recognition_results['speaker_appearances']:
+                member_id_str = str(appearance['member_id'])
+                try:
+                    uuid_obj = uuid.UUID(member_id_str)
+                    uuid_member_ids_detected = True
+                    logger.info(f"Detected UUID member_id: {member_id_str}")
+                    break
+                except ValueError:
+                    pass
+            
+            # If UUID member IDs are detected, run the sync script to ensure they have Speaker records
+            if uuid_member_ids_detected:
+                logger.info("UUID member IDs detected, running sync script to ensure Speaker records exist")
+                sync_result = self._run_sync_parliament_clip_member_ids(db)
+                if sync_result.get("success"):
+                    logger.info("Successfully synchronized member IDs with Speaker records")
+                else:
+                    logger.warning(f"Failed to synchronize member IDs: {sync_result.get('error')}")
+                    logger.warning("Continuing with export anyway, but some member IDs may not be properly mapped")
             
             # Export and upload to Supabase
             logger.info(f"Preparing to export {len(recognition_results['speaker_appearances'])} appearances to Supabase")
