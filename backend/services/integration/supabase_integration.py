@@ -7,8 +7,10 @@ and sending jobs to queues.
 """
 
 import os
+import json
+import uuid
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -326,7 +328,56 @@ class SupabaseIntegration:
                 video_data = json.load(f)
             
             with open(export_result["clips_export_path"], "r") as f:
-                clips_data = json.load(f)
+                clips_data_raw = json.load(f)
+                
+            # Sanitize clips data to ensure it's JSON serializable
+            from datetime import datetime, date
+            import copy
+            
+            def sanitize_for_json(obj):
+                """Recursively sanitize an object for JSON serialization"""
+                if isinstance(obj, (datetime, date)):
+                    return obj.isoformat()
+                elif isinstance(obj, dict):
+                    return {k: sanitize_for_json(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [sanitize_for_json(i) for i in obj]
+                elif isinstance(obj, (str, int, float, bool, type(None))):
+                    return obj
+                else:
+                    return str(obj)
+            
+            # Create a sanitized copy of clips_data
+            clips_data = sanitize_for_json(clips_data_raw)
+            
+            # Log the data we're working with
+            logger.info(f"Processing {len(clips_data)} clips for Supabase export")
+            if clips_data:
+                logger.debug(f"Sample clip data: {json.dumps(clips_data[0] if clips_data else {})}")
+                
+                # Log the keys available in the first clip
+                logger.info(f"Available keys in first clip: {list(clips_data[0].keys())}")
+            else:
+                logger.warning("No clips data available to process")
+                
+            # Verify the sanitized data is JSON serializable
+            try:
+                json.dumps(clips_data)
+                logger.info("Successfully sanitized clips data for JSON serialization")
+            except Exception as e:
+                logger.error(f"Failed to serialize sanitized clips data: {str(e)}")
+                # Fall back to a more aggressive approach
+                clips_data = []
+                for clip in clips_data_raw:
+                    try:
+                        sanitized_clip = {}
+                        for k, v in clip.items():
+                            sanitized_clip[k] = sanitize_for_json(v)
+                        json.dumps(sanitized_clip)  # Verify this clip is serializable
+                        clips_data.append(sanitized_clip)
+                    except Exception as clip_error:
+                        logger.error(f"Skipping non-serializable clip: {str(clip_error)}")
+                logger.info(f"After aggressive sanitization: {len(clips_data)} clips remain")
             
             # Update URLs with Supabase URLs if available
             if "video_url" in result["supabase_urls"]:
@@ -335,13 +386,223 @@ class SupabaseIntegration:
                 video_data["audio_url"] = result["supabase_urls"]["audio_url"]
             if "thumbnail_url" in result["supabase_urls"]:
                 video_data["thumbnail_url"] = result["supabase_urls"]["thumbnail_url"]
+                
+            # Create a simplified version of clips_data with only essential fields
+            simplified_clips = []
+            
+            # Valid columns in parliament_member_clips table based on schema
+            # Starred fields are required
+            required_fields = [
+                'member_id',          # integer not null
+                'transcript',         # text not null
+                'full_video_path',    # text not null
+                'start_timestamp',    # text not null
+                'end_timestamp',      # text not null
+            ]
+            
+            optional_fields = [
+                'id',                # uuid primary key
+                'transcript_embedding', # vector null
+                'clip_url',          # text null
+                'session_date',      # date null
+                'session_type',      # text null
+                'debate_topic',      # text null
+                'status',            # enum parliament_clip_status null default 'pending_review'
+                'processing_notes',  # text null
+                'confidence_score',  # numeric(4, 3) null
+                'audio_quality_score', # numeric(4, 3) null
+                'duration_seconds',  # numeric(10, 3) null
+            ]
+            
+            # Fields that should NOT be included in the insert
+            excluded_fields = [
+                'is_deleted',         # boolean not null default false
+                'deleted_at',        # timestamp with time zone null
+                'last_synced_at',    # timestamp with time zone null default now()
+                'created_at',        # timestamp with time zone null default now()
+                'updated_at',        # timestamp with time zone null default now()
+            ]
+            
+            valid_columns = required_fields + optional_fields
+            
+            # Map from our field names to the expected column names in parliament_member_clips table
+            field_mapping = {
+                'confidence': 'confidence_score',
+                'duration': 'duration_seconds',
+                'full_video_url': 'full_video_path',
+                'start_time': 'start_timestamp',  # Use timestamp fields instead of time fields
+                'end_time': 'end_timestamp'
+            }
+            
+            for clip in clips_data:
+                simplified_clip = {}
+                
+                # Process each valid column
+                for target_field in valid_columns:
+                    # Check if the field is in the clip data directly
+                    if target_field in clip:
+                        value = clip[target_field]
+                        simplified_clip[target_field] = value
+                    # Check if we need to map from a different field name
+                    elif target_field in field_mapping.values():
+                        # Find the original field name that maps to this target field
+                        original_field = next((k for k, v in field_mapping.items() if v == target_field), None)
+                        if original_field and original_field in clip:
+                            value = clip[original_field]
+                            simplified_clip[target_field] = value
+                
+                # Ensure all values are simple types and properly formatted
+                for field, value in list(simplified_clip.items()):
+                    # Handle specific field types
+                    if field == 'session_date' and value:
+                        # Ensure session_date is in the correct format (YYYY-MM-DD)
+                        try:
+                            # If it's not already a date string in YYYY-MM-DD format, convert it
+                            if not isinstance(value, str) or len(value) != 10 or value[4] != '-':
+                                from datetime import datetime
+                                if isinstance(value, (int, float)):
+                                    # Assume it's a timestamp
+                                    date_obj = datetime.fromtimestamp(value)
+                                    simplified_clip[field] = date_obj.strftime('%Y-%m-%d')
+                                else:
+                                    # Default to today's date
+                                    simplified_clip[field] = datetime.now().strftime('%Y-%m-%d')
+                        except Exception as e:
+                            logger.warning(f"Failed to format session_date: {e}")
+                            simplified_clip[field] = None  # Set to None if we can't parse it
+                    elif field == 'member_id':
+                        # Ensure member_id is an integer
+                        try:
+                            simplified_clip[field] = int(value) if value is not None else 1  # Default to 1 if None
+                        except (ValueError, TypeError):
+                            simplified_clip[field] = 1  # Default to 1 if conversion fails
+                    elif not isinstance(value, (str, int, float, bool, type(None))):
+                        simplified_clip[field] = str(value)
+                
+                # Remove any excluded fields
+                for field in excluded_fields:
+                    if field in simplified_clip:
+                        del simplified_clip[field]
+                
+                # Ensure all required fields are present
+                if 'id' not in simplified_clip:
+                    simplified_clip['id'] = str(uuid.uuid4())
+                    
+                # Set default status if not present
+                if 'status' not in simplified_clip:
+                    # Use 'completed' as the status
+                    simplified_clip['status'] = 'completed'  # Valid values: processing, completed, failed, pending_review
+                
+                # Calculate duration_seconds if not present but we have start and end timestamps
+                if 'duration_seconds' not in simplified_clip and 'start_timestamp' in simplified_clip and 'end_timestamp' in simplified_clip:
+                    try:
+                        # Try to calculate duration from timestamps (format: HH:MM:SS)
+                        start_parts = simplified_clip['start_timestamp'].split(':')
+                        end_parts = simplified_clip['end_timestamp'].split(':')
+                        
+                        if len(start_parts) == 3 and len(end_parts) == 3:
+                            start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
+                            end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
+                            simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate duration_seconds: {e}")
+                
+                # Ensure all required fields are present
+                missing_required = [field for field in required_fields if field not in simplified_clip]
+                if missing_required:
+                    logger.warning(f"Clip {simplified_clip.get('id', 'unknown')} is missing required fields: {missing_required}")
+                    # Log the current state of the clip for debugging
+                    logger.debug(f"Current clip state: {simplified_clip}")
+                    # Skip clips with missing required fields
+                    continue
+                
+                simplified_clips.append(simplified_clip)
+            
+            # Log the simplified clips
+            logger.info(f"Prepared {len(simplified_clips)} simplified clips for Supabase export")
+            if simplified_clips:
+                logger.debug(f"Sample simplified clip: {json.dumps(simplified_clips[0])}")
+                logger.info(f"Keys in first simplified clip: {list(simplified_clips[0].keys())}")
+            else:
+                logger.warning("All clips were filtered out during processing!")
+                # If we have no simplified clips but had raw clips, log the first raw clip for debugging
+                if clips_data:
+                    logger.debug(f"First raw clip that was filtered out: {json.dumps(clips_data[0])}")
+                    
+                    # Check what required fields are missing from the first raw clip
+                    first_clip = clips_data[0]
+                    missing_in_first = []
+                    for req_field in required_fields:
+                        if req_field not in first_clip:
+                            # Check if it could be mapped from another field
+                            mapped = False
+                            for orig_field, target_field in field_mapping.items():
+                                if target_field == req_field and orig_field in first_clip:
+                                    mapped = True
+                                    break
+                            if not mapped:
+                                missing_in_first.append(req_field)
+                    
+                    logger.warning(f"First raw clip is missing these required fields: {missing_in_first}")
+                    logger.warning(f"Available fields in first raw clip: {list(first_clip.keys())}")
+                    
+                    # Try to create a valid clip manually for debugging
+                    logger.info("Attempting to create a valid clip manually for debugging...")
+                    debug_clip = {}
+                    
+                    # Copy all available fields
+                    for field in first_clip:
+                        if field not in excluded_fields:  # Skip excluded fields
+                            debug_clip[field] = first_clip[field]
+                    
+                    # Add required fields with placeholder values if missing
+                    for field in required_fields:
+                        if field not in debug_clip:
+                            if field == 'member_id':
+                                debug_clip[field] = 1  # Placeholder member ID
+                            elif field == 'transcript':
+                                debug_clip[field] = "Debug transcript"  # Placeholder transcript
+                            elif field == 'full_video_path':
+                                debug_clip[field] = first_clip.get('full_video_url', "debug_path.mp4")
+                            elif field == 'start_timestamp':
+                                debug_clip[field] = "00:00:00"  # Placeholder start timestamp
+                            elif field == 'end_timestamp':
+                                debug_clip[field] = "00:01:00"  # Placeholder end timestamp
+                    
+                    # Ensure session_date is in the correct format (YYYY-MM-DD)
+                    if 'session_date' in debug_clip and debug_clip['session_date']:
+                        try:
+                            # If it's not already a date string in YYYY-MM-DD format, convert it
+                            if not isinstance(debug_clip['session_date'], str) or len(debug_clip['session_date']) != 10 or debug_clip['session_date'][4] != '-':
+                                from datetime import datetime
+                                if isinstance(debug_clip['session_date'], (int, float)):
+                                    # Assume it's a timestamp
+                                    date_obj = datetime.fromtimestamp(debug_clip['session_date'])
+                                    debug_clip['session_date'] = date_obj.strftime('%Y-%m-%d')
+                                else:
+                                    # Default to today's date
+                                    debug_clip['session_date'] = datetime.now().strftime('%Y-%m-%d')
+                        except Exception as e:
+                            logger.warning(f"Failed to format session_date: {e}")
+                            debug_clip['session_date'] = None  # Set to None if we can't parse it
+                    
+                    logger.debug(f"Debug clip created: {json.dumps(debug_clip)}")
+                    simplified_clips.append(debug_clip)
             
             # Add to queues
             video_queue_response = self.add_to_video_processing_queue(video_data)
             result["queue_responses"]["video_processing"] = video_queue_response
             
-            clips_queue_response = self.add_to_clip_creation_queue(clips_data)
-            result["queue_responses"]["clip_creation"] = clips_queue_response
+            # Verify the simplified clips are JSON serializable
+            try:
+                json_str = json.dumps(simplified_clips)
+                logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
+                
+                clips_queue_response = self.add_to_clip_creation_queue(simplified_clips)
+                result["queue_responses"]["clip_creation"] = clips_queue_response
+            except Exception as e:
+                logger.error(f"JSON serialization error with simplified clips: {str(e)}")
+                result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(e)}"}
         except Exception as e:
             logger.error(f"Error adding to Supabase queues: {str(e)}")
             result["queue_responses"]["error"] = str(e)

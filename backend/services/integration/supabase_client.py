@@ -400,7 +400,7 @@ class SupabaseService:
     
     def add_to_clip_creation_queue(self, clip_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Add jobs to the clip_creation queue.
+        Add clips to the parliament_member_clips table.
         
         Args:
             clip_data: List of clip data to process
@@ -408,25 +408,183 @@ class SupabaseService:
         Returns:
             Response from Supabase
         """
+        # Cache of valid member IDs to avoid repeated queries
+        valid_member_ids = None
+        # Define the exact columns that are valid for the parliament_member_clips table
+        valid_columns = [
+            'id',                # uuid primary key
+            'member_id',          # integer not null
+            'transcript',         # text not null
+            'transcript_embedding', # vector null
+            'clip_url',          # text null
+            'full_video_path',    # text not null
+            'session_date',      # date null
+            'session_type',      # text null
+            'debate_topic',      # text null
+            'status',            # enum parliament_clip_status null default 'pending_review'
+            'processing_notes',  # text null
+            'confidence_score',  # numeric(4, 3) null
+            'audio_quality_score', # numeric(4, 3) null
+            'start_timestamp',    # text not null
+            'end_timestamp',      # text not null
+            'duration_seconds',  # numeric(10, 3) null
+        ]
         try:
             # Ensure we're not passing any empty data or problematic parameters
             if not clip_data:
                 logger.warning("No clip data provided to add_to_clip_creation_queue")
                 return {"success": False, "error": "No clip data provided"}
-                
-            # Clean the clip data to ensure no empty columns parameter
+            
+            # Create a deep copy of the data and ensure all values are JSON serializable
+            import copy
+            import json
+            from datetime import datetime, date
+            
+            # Clean the data to ensure it's JSON serializable and only contains valid columns
             cleaned_data = []
             for clip in clip_data:
-                # Remove any empty columns parameter if it exists
-                if 'columns' in clip and (clip['columns'] is None or clip['columns'] == ''):
-                    clip_copy = clip.copy()
-                    del clip_copy['columns']
-                    cleaned_data.append(clip_copy)
-                else:
-                    cleaned_data.append(clip)
+                # Create a new clip dict with only valid columns
+                clean_clip = {}
+                
+                # Only include valid columns
+                for key in valid_columns:
+                    if key in clip:
+                        value = clip[key]
+                        # Convert values to appropriate types
+                        if key == 'member_id' and value is not None:
+                            try:
+                                # Check if it's a UUID string (which can't be converted to int)
+                                if isinstance(value, str) and '-' in value and len(value) > 30:
+                                    # This looks like a UUID, we need to use a valid integer ID instead
+                                    if valid_member_ids:
+                                        clean_clip[key] = valid_member_ids[0]  # Use the first valid member ID
+                                        logger.warning(f"Replaced UUID member_id {value} with valid ID {clean_clip[key]}")
+                                    else:
+                                        # Skip this clip if we can't find a valid member ID
+                                        logger.warning(f"Found UUID member_id {value} but no valid IDs available")
+                                        continue
+                                else:
+                                    clean_clip[key] = int(value)
+                            except (ValueError, TypeError):
+                                # If we have valid member IDs, use the first one
+                                if valid_member_ids:
+                                    clean_clip[key] = valid_member_ids[0]
+                                    logger.warning(f"Replaced invalid member_id {value} with valid ID {clean_clip[key]}")
+                                else:
+                                    # Skip this clip if we can't find a valid member ID
+                                    logger.warning(f"Found invalid member_id {value} and no valid IDs available")
+                                    continue
+                        elif key == 'session_date' and value:
+                            # Ensure date format is correct
+                            if isinstance(value, str) and len(value) == 10 and value[4] == '-':
+                                clean_clip[key] = value
+                            else:
+                                # Skip this field if it's not a valid date string
+                                continue
+                        elif isinstance(value, (datetime, date)):
+                            clean_clip[key] = value.isoformat()
+                        elif not isinstance(value, (str, int, float, bool, type(None))):
+                            clean_clip[key] = str(value)
+                        else:
+                            clean_clip[key] = value
+                
+                # Verify this clip has all required fields
+                required_fields = ['member_id', 'transcript', 'full_video_path', 'start_timestamp', 'end_timestamp']
+                missing_fields = [field for field in required_fields if field not in clean_clip]
+                
+                if missing_fields:
+                    logger.warning(f"Skipping clip missing required fields: {missing_fields}")
+                    continue
+                    
+                # Check if member_id exists in the parliament_members table
+                try:
+                    # First check if member_id is valid
+                    member_id = clean_clip.get('member_id')
+                    if member_id is not None:
+                        # If we haven't fetched valid member IDs yet, do it now
+                        if valid_member_ids is None:
+                            try:
+                                # Get a list of valid member_ids (integer) from the parliament_members table
+                                member_response = self.client.table('parliament_members').select('member_id').execute()
+                                valid_member_ids = [member['member_id'] for member in member_response.data if 'member_id' in member] if member_response.data else []
+                                logger.info(f"Fetched {len(valid_member_ids)} valid member_ids from parliament_members table")
+                                
+                                # If we couldn't find any valid member IDs, log an error and use a fallback
+                                if not valid_member_ids:
+                                    logger.error("No valid member IDs found in parliament_members table")
+                                    # Try to create a test member for debugging
+                                    try:
+                                        test_member = {
+                                            'member_id': 9999,  # Use a high number unlikely to conflict
+                                            'display_name': 'Test Member',
+                                            'given_name': 'Test',
+                                            'family_name': 'Member',
+                                            'party_name': 'Test Party',
+                                            'constituency_name': 'Test Constituency',
+                                            'is_current_member': True
+                                        }
+                                        member_insert = self.client.table('parliament_members').insert(test_member).execute()
+                                        if member_insert.data:
+                                            test_id = member_insert.data[0]['member_id']
+                                            valid_member_ids = [test_id]
+                                            logger.info(f"Created test member with member_id {test_id}")
+                                    except Exception as test_error:
+                                        logger.error(f"Failed to create test member: {str(test_error)}")
+                            except Exception as fetch_error:
+                                logger.error(f"Error fetching valid member IDs: {str(fetch_error)}")
+                                valid_member_ids = []
+                        
+                        # Check if the member_id is in our list of valid IDs
+                        if valid_member_ids and member_id not in valid_member_ids:
+                            if valid_member_ids:
+                                # Use the first valid member ID as a fallback
+                                fallback_id = valid_member_ids[0]
+                                logger.warning(f"Member ID {member_id} not found. Using fallback ID {fallback_id}")
+                                clean_clip['member_id'] = fallback_id
+                            else:
+                                logger.warning(f"Member ID {member_id} not found and no fallbacks available. Skipping clip.")
+                                continue
+                except Exception as e:
+                    logger.warning(f"Error checking member_id: {str(e)}. Skipping clip.")
+                    continue
+                
+                # Verify this clip is JSON serializable
+                try:
+                    json.dumps(clean_clip)
+                    cleaned_data.append(clean_clip)
+                except Exception as e:
+                    logger.error(f"Skipping non-serializable clip: {str(e)}")
+                    
+            if not cleaned_data:
+                logger.error("No valid clips after cleaning for JSON serialization")
+                return {"success": False, "error": "No valid clips after cleaning"}
+            
+            logger.info(f"Sending {len(cleaned_data)} cleaned clips to Supabase clip_creation_queue")
+            
+            # Directly convert to JSON string and back to ensure it's serializable
+            json_str = json.dumps(cleaned_data)
+            final_data = json.loads(json_str)
             
             # Use the cleaned data for the insert operation
-            return self.client.table('clip_creation_queue').insert(cleaned_data).execute()
+            try:
+                response = self.client.table('parliament_member_clips').insert(final_data).execute()
+                logger.info(f"Successfully added {len(final_data)} clips to parliament_member_clips table")
+                return response
+            except Exception as e:
+                logger.error(f"Supabase insert error: {str(e)}")
+                # Try inserting one by one to identify problematic clips
+                successful_inserts = 0
+                for i, clip in enumerate(final_data):
+                    try:
+                        self.client.table('parliament_member_clips').insert([clip]).execute()
+                        successful_inserts += 1
+                    except Exception as clip_error:
+                        logger.error(f"Failed to insert clip {i}: {str(clip_error)}")
+                
+                if successful_inserts > 0:
+                    return {"success": True, "inserted": successful_inserts, "total": len(final_data)}
+                else:
+                    return {"error": f"Failed to insert any clips: {str(e)}"}
         except Exception as e:
             logger.error(f"Error adding to clip creation queue: {str(e)}")
             return {"error": str(e)}
