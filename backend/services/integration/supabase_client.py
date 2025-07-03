@@ -455,14 +455,34 @@ class SupabaseService:
                             try:
                                 # Check if it's a UUID string (which can't be converted to int)
                                 if isinstance(value, str) and '-' in value and len(value) > 30:
-                                    # This looks like a UUID, we need to use a valid integer ID instead
-                                    if valid_member_ids:
-                                        clean_clip[key] = valid_member_ids[0]  # Use the first valid member ID
-                                        logger.warning(f"Replaced UUID member_id {value} with valid ID {clean_clip[key]}")
-                                    else:
-                                        # Skip this clip if we can't find a valid member ID
-                                        logger.warning(f"Found UUID member_id {value} but no valid IDs available")
-                                        continue
+                                    # This looks like a UUID, try to find the corresponding integer member_id
+                                    try:
+                                        # Query the parliament_members table to get the integer member_id for this UUID
+                                        response = self.client.table('parliament_members').select('member_id').eq('id', value).execute()
+                                        data = response.data
+                                        
+                                        if data and len(data) > 0:
+                                            # Use the integer member_id from the Speaker record
+                                            clean_clip[key] = data[0]['member_id']
+                                            logger.info(f"Found Speaker member_id {clean_clip[key]} for UUID {value}")
+                                        else:
+                                            # If no Speaker found, use a fallback if available
+                                            if valid_member_ids:
+                                                clean_clip[key] = valid_member_ids[0]  # Use the first valid member ID
+                                                logger.warning(f"No Speaker found for UUID {value}, using fallback ID {clean_clip[key]}")
+                                            else:
+                                                # Skip this clip if we can't find a valid member ID
+                                                logger.warning(f"Found UUID member_id {value} but no valid IDs available")
+                                                continue
+                                    except Exception as e:
+                                        logger.error(f"Error looking up Speaker for UUID {value}: {e}")
+                                        # Use fallback if available
+                                        if valid_member_ids:
+                                            clean_clip[key] = valid_member_ids[0]
+                                            logger.warning(f"Error looking up UUID {value}, using fallback ID {clean_clip[key]}")
+                                        else:
+                                            logger.warning(f"Error looking up UUID {value} and no fallbacks available")
+                                            continue
                                 else:
                                     clean_clip[key] = int(value)
                             except (ValueError, TypeError):
