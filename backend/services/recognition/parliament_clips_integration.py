@@ -519,15 +519,35 @@ class ParliamentClipsIntegrationService:
                     # This event passes all filters
                     filtered_stats["valid_clips"] += 1
                     
+                    # Ensure timestamps are numeric for calculation
+                    start_time = event.get("start_time", 0)
+                    end_time = event.get("end_time", 0)
+                    
+                    # Convert timestamps to float if they're strings
+                    if isinstance(start_time, str):
+                        try:
+                            start_time = float(start_time)
+                        except ValueError:
+                            start_time = 0
+                    
+                    if isinstance(end_time, str):
+                        try:
+                            end_time = float(end_time)
+                        except ValueError:
+                            end_time = 0
+                    
+                    # Calculate duration
+                    duration_seconds = end_time - start_time
+                    
                     clip = {
                         'id': str(uuid.uuid4()),
                         'member_id': event.get("member_id"),
                         'transcript': event.get("text", ""),
                         'full_video_path': video_path,
-                        'start_timestamp': event.get("start_time", 0),
-                        'end_timestamp': event.get("end_time", 0),
+                        'start_timestamp': start_time,
+                        'end_timestamp': end_time,
                         'confidence_score': confidence,
-                        'duration_seconds': event.get("end_time", 0) - event.get("start_time", 0),
+                        'duration_seconds': duration_seconds,
                         'session_date': datetime.now().strftime("%Y-%m-%d"),
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

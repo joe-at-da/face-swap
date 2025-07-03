@@ -402,6 +402,14 @@ class SupabaseIntegration:
             else:
                 logger.warning("No clips data available to process")
                 
+            # Run the sync script proactively to ensure all member IDs have corresponding Speaker records
+            logger.info("Running member ID synchronization before processing clips")
+            sync_result = self._run_sync_parliament_clip_member_ids()
+            if sync_result.get("success"):
+                logger.info("Member ID synchronization completed successfully")
+            else:
+                logger.warning("Member ID synchronization failed or was not needed")
+                
             # Verify the sanitized data is JSON serializable
             try:
                 json.dumps(clips_data)
@@ -410,12 +418,44 @@ class SupabaseIntegration:
                 logger.error(f"Failed to serialize sanitized clips data: {str(e)}")
                 # Filter out clips without required fields
                 valid_clips = []
-                for clip in clips_data:
-                    missing_fields = [field for field in required_fields if field not in clip or clip[field] is None]
+                for clip_id, clip in enumerate(clips_data):
+                    missing_fields = []
+                    for required_field in required_fields:
+                        if required_field not in clip or clip[required_field] is None:
+                            missing_fields.append(required_field)
+                    
+                    # Try to fix missing fields if possible
+                    if 'member_id' in missing_fields and 'metadata' in clip and clip['metadata']:
+                        # Try to extract member_id from metadata
+                        metadata = clip['metadata']
+                        if isinstance(metadata, str):
+                            try:
+                                metadata = json.loads(metadata)
+                            except:
+                                pass
+                        
+                        if isinstance(metadata, dict):
+                            # Try different possible metadata fields for member_id
+                            possible_member_id_fields = ['member_id', 'parliament_id', 'speaker_id', 'uuid']
+                            for field in possible_member_id_fields:
+                                if field in metadata and metadata[field]:
+                                    clip['member_id'] = metadata[field]
+                                    logger.info(f"Extracted member_id {clip['member_id']} from metadata.{field}")
+                                    missing_fields.remove('member_id')
+                                    break
+                    
+                    if 'full_video_path' in missing_fields and 'video_path' in clip and clip['video_path']:
+                        # Use video_path as fallback for full_video_path
+                        clip['full_video_path'] = clip['video_path']
+                        logger.info(f"Using video_path as fallback for full_video_path: {clip['full_video_path']}")
+                        missing_fields.remove('full_video_path')
+                    
+                    # If still missing required fields, skip this clip
                     if missing_fields:
-                        logger.warning(f"Skipping clip with missing required fields: {missing_fields}")
+                        logger.warning(f"Clip {clip_id} is missing required fields: {missing_fields}")
                         logger.warning(f"Clip details: {json.dumps({k: v for k, v in clip.items() if k not in excluded_fields})}")
                         continue
+                    
                     valid_clips.append(clip)  # Verify this clip is serializable
                 clips_data = valid_clips
                 logger.info(f"After filtering out invalid clips: {len(clips_data)} clips remain")
@@ -585,14 +625,32 @@ class SupabaseIntegration:
                 # Calculate duration_seconds if not present but we have start and end timestamps
                 if 'duration_seconds' not in simplified_clip and 'start_timestamp' in simplified_clip and 'end_timestamp' in simplified_clip:
                     try:
-                        # Try to calculate duration from timestamps (format: HH:MM:SS)
-                        start_parts = simplified_clip['start_timestamp'].split(':')
-                        end_parts = simplified_clip['end_timestamp'].split(':')
+                        start_timestamp = simplified_clip['start_timestamp']
+                        end_timestamp = simplified_clip['end_timestamp']
                         
-                        if len(start_parts) == 3 and len(end_parts) == 3:
-                            start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
-                            end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
-                            simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                        # Check if timestamps are already numeric
+                        if isinstance(start_timestamp, (int, float)) and isinstance(end_timestamp, (int, float)):
+                            # Direct calculation if they're already numeric
+                            simplified_clip['duration_seconds'] = round(float(end_timestamp) - float(start_timestamp), 3)
+                        elif isinstance(start_timestamp, str) and isinstance(end_timestamp, str):
+                            # Try to parse string timestamps (format: HH:MM:SS)
+                            try:
+                                start_parts = start_timestamp.split(':')
+                                end_parts = end_timestamp.split(':')
+                                
+                                if len(start_parts) == 3 and len(end_parts) == 3:
+                                    start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
+                                    end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
+                                    simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                            except Exception as e:
+                                logger.warning(f"Failed to parse string timestamps: {e}")
+                                # Try direct conversion as fallback
+                                try:
+                                    start_seconds = float(start_timestamp)
+                                    end_seconds = float(end_timestamp)
+                                    simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                                except:
+                                    pass
                     except Exception as e:
                         logger.warning(f"Failed to calculate duration_seconds: {e}")
                 
