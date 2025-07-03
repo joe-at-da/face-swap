@@ -111,11 +111,40 @@ class ParliamentClipsIntegrationService:
         
         # Log some stats about the recognition events
         event_types = {}
+        member_id_counts = {}
+        confidence_distribution = {
+            "0.0-0.1": 0,
+            "0.1-0.15": 0,
+            "0.15-0.2": 0,
+            "0.2-0.3": 0,
+            "0.3+": 0
+        }
+        
         for event in recognition_events:
             event_type = event.get("type", "unknown")
             event_types[event_type] = event_types.get(event_type, 0) + 1
+            
+            # Count member IDs
+            if event_type == "speaker":
+                member_id = event.get("member_id", "none")
+                member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
+                
+                # Track confidence distribution
+                confidence = event.get("confidence", 0.0)
+                if confidence < 0.1:
+                    confidence_distribution["0.0-0.1"] += 1
+                elif confidence < 0.15:
+                    confidence_distribution["0.1-0.15"] += 1
+                elif confidence < 0.2:
+                    confidence_distribution["0.15-0.2"] += 1
+                elif confidence < 0.3:
+                    confidence_distribution["0.2-0.3"] += 1
+                else:
+                    confidence_distribution["0.3+"] += 1
         
         logger.info(f"Event types breakdown: {event_types}")
+        logger.info(f"Member ID distribution: {member_id_counts}")
+        logger.info(f"Confidence score distribution: {confidence_distribution}")
         
         # Create the database and table if they don't exist
         self._create_parliament_clips_table()
@@ -407,28 +436,62 @@ class ParliamentClipsIntegrationService:
             if not clips and recognition_events:
                 logger.info(f"No clips found in database, creating from {len(recognition_events)} recognition events")
                 
+                # Count how many events are filtered out for different reasons
+                filtered_stats = {
+                    "not_speaker_event": 0,
+                    "no_member_id": 0,
+                    "default_unknown": 0,
+                    "low_confidence": 0,
+                    "valid_clips": 0
+                }
+                
                 # Create clips from recognition events
                 for event in recognition_events:
-                    if event.get("type") == "speaker" and event.get("member_id") and event.get("member_id") != "default_unknown":
-                        clip = {
-                            'id': str(uuid.uuid4()),
-                            'member_id': event.get("member_id"),
-                            'transcript': event.get("text", ""),
-                            'full_video_path': video_path,
-                            'start_timestamp': event.get("start_time", 0),
-                            'end_timestamp': event.get("end_time", 0),
-                            'confidence_score': event.get("confidence", 0.0),
-                            'duration_seconds': event.get("end_time", 0) - event.get("start_time", 0),
-                            'session_date': datetime.now().strftime("%Y-%m-%d"),
-                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            'metadata': {
-                                'video_id': str(video_id),
-                                'matched_by': event.get("matched_by", "unknown"),
-                                'face_image_url': event.get("face_image_url", "")
-                            }
+                    if event.get("type") != "speaker":
+                        filtered_stats["not_speaker_event"] += 1
+                        continue
+                        
+                    if not event.get("member_id"):
+                        filtered_stats["no_member_id"] += 1
+                        logger.debug(f"Skipping event with no member_id: {event}")
+                        continue
+                        
+                    if event.get("member_id") == "default_unknown":
+                        filtered_stats["default_unknown"] += 1
+                        logger.debug(f"Skipping event with default_unknown member_id")
+                        continue
+                        
+                    confidence = event.get("confidence", 0.0)
+                    if confidence < 0.15:
+                        filtered_stats["low_confidence"] += 1
+                        logger.debug(f"Skipping low confidence event: {confidence} < 0.15")
+                        continue
+                        
+                    # This event passes all filters
+                    filtered_stats["valid_clips"] += 1
+                    
+                    clip = {
+                        'id': str(uuid.uuid4()),
+                        'member_id': event.get("member_id"),
+                        'transcript': event.get("text", ""),
+                        'full_video_path': video_path,
+                        'start_timestamp': event.get("start_time", 0),
+                        'end_timestamp': event.get("end_time", 0),
+                        'confidence_score': confidence,
+                        'duration_seconds': event.get("end_time", 0) - event.get("start_time", 0),
+                        'session_date': datetime.now().strftime("%Y-%m-%d"),
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'metadata': {
+                            'video_id': str(video_id),
+                            'matched_by': event.get("matched_by", "unknown"),
+                            'face_image_url': event.get("face_image_url", "")
                         }
-                        clips.append(clip)
+                    }
+                    clips.append(clip)
+                    
+                logger.info(f"Recognition events filtering stats: {filtered_stats}")
+                logger.info(f"Created {len(clips)} clips from recognition events")
             
             # Create a structured recognition results dict with speaker appearances
             recognition_results = {
@@ -437,9 +500,16 @@ class ParliamentClipsIntegrationService:
             }
             
             # Add speaker appearances from clips
+            filtered_clips_stats = {
+                "default_unknown": 0,
+                "low_confidence": 0,
+                "valid_clips": 0
+            }
+            
             for clip in clips:
                 # Skip unknown members
                 if clip['member_id'] == "default_unknown":
+                    filtered_clips_stats["default_unknown"] += 1
                     logger.info(f"Skipping clip with default_unknown member_id")
                     continue
                 
@@ -447,9 +517,13 @@ class ParliamentClipsIntegrationService:
                 logger.info(f"Processing clip with member_id: {clip['member_id']} (type: {type(clip['member_id']).__name__})")
                 
                 # Set a minimum confidence threshold for including clips
-                if clip['confidence_score'] < 0.3:  # Adjust this threshold as needed
-                    logger.info(f"Skipping low confidence clip: {clip['confidence_score']} < 0.3")
+                if clip['confidence_score'] < 0.15:  # Lowered threshold to include existing clips
+                    filtered_clips_stats["low_confidence"] += 1
+                    logger.info(f"Skipping low confidence clip: {clip['confidence_score']} < 0.15")
                     continue
+                    
+                # This clip passes all filters
+                filtered_clips_stats["valid_clips"] += 1
                     
                 appearance = {
                     "member_id": clip['member_id'],
@@ -520,6 +594,7 @@ class ParliamentClipsIntegrationService:
                 recognition_results["speaker_appearances"].append(appearance)
             
             logger.info(f"Added {len(recognition_results['speaker_appearances'])} speaker appearances to recognition results")
+            logger.info(f"Clip filtering stats: {filtered_clips_stats}")
             
             # Export and upload to Supabase
             logger.info(f"Preparing to export {len(recognition_results['speaker_appearances'])} appearances to Supabase")
