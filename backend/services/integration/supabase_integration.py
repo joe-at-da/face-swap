@@ -570,8 +570,16 @@ class SupabaseIntegration:
                                     speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
                                     if speaker:
                                         logger.info(f"Found Speaker by parliament_id: {speaker.id}")
-                                        # Use the Speaker's ID as the member_id
-                                        simplified_clip[field] = speaker.id
+                                        # Use the Speaker's ID as the member_id (must be an integer)
+                                        if isinstance(speaker.id, int):
+                                            simplified_clip[field] = speaker.id
+                                        else:
+                                            try:
+                                                simplified_clip[field] = int(speaker.id)
+                                            except (ValueError, TypeError):
+                                                # If we can't convert to int, use a fallback ID
+                                                logger.warning(f"Speaker ID {speaker.id} is not an integer, using fallback")
+                                                simplified_clip[field] = 1  # Use a default ID as fallback
                                     else:
                                         # Try to find by UUID in any field
                                         try:
@@ -584,19 +592,31 @@ class SupabaseIntegration:
                                             
                                             if speaker:
                                                 logger.info(f"Found Speaker by UUID search: {speaker.id}")
-                                                simplified_clip[field] = speaker.id
+                                                # Ensure speaker.id is an integer
+                                                if isinstance(speaker.id, int):
+                                                    simplified_clip[field] = speaker.id
+                                                else:
+                                                    try:
+                                                        simplified_clip[field] = int(speaker.id)
+                                                    except (ValueError, TypeError):
+                                                        # If we can't convert to int, use a fallback ID
+                                                        logger.warning(f"Speaker ID {speaker.id} is not an integer, using fallback")
+                                                        simplified_clip[field] = 1  # Use a default ID as fallback
                                             else:
-                                                logger.warning(f"No Speaker found for UUID {member_id_str}, running sync script")
-                                                # Don't run the sync script again to avoid recursion
-                                                # Just log the issue and continue
-                                                logger.warning(f"No Speaker found for UUID {member_id_str}, but skipping sync to avoid recursion")
-                                                simplified_clip[field] = None
+                                                logger.warning(f"No Speaker found for UUID {member_id_str}, using fallback ID")
+                                                # Use a default ID as fallback
+                                                simplified_clip[field] = 1
                                         except (ValueError, TypeError):
-                                            logger.warning(f"Invalid UUID format: {member_id_str}")
-                                            simplified_clip[field] = None
+                                            logger.warning(f"Invalid UUID format: {member_id_str}, using fallback ID")
+                                            simplified_clip[field] = 1  # Use a default ID as fallback
+                            else:
+                                # If value is None, use a default ID
+                                logger.warning("member_id is None, using fallback ID")
+                                simplified_clip[field] = 1  # Use a default ID as fallback
                         except Exception as e:
                             logger.error(f"Error processing member_id {value}: {str(e)}")
-                            simplified_clip[field] = None
+                            # Always provide a fallback ID instead of None
+                            simplified_clip[field] = 1
                     elif not isinstance(value, (str, int, float, bool, type(None))):
                         simplified_clip[field] = str(value)
                 

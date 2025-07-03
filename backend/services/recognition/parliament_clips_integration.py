@@ -511,9 +511,9 @@ class ParliamentClipsIntegrationService:
                         continue
                         
                     confidence = event.get("confidence", 0.0)
-                    if confidence < 0.15:
+                    if confidence < 0.05:  # Lowered from 0.15 to 0.05 (5%)
                         filtered_stats["low_confidence"] += 1
-                        logger.debug(f"Skipping low confidence event: {confidence} < 0.15")
+                        logger.debug(f"Skipping low confidence event: {confidence} < 0.05")
                         continue
                         
                     # This event passes all filters
