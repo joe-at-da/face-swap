@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 """
-Script to verify and validate Parliament Clips export to Supabase.
-This script performs the following checks:
-1. Verifies clips in local SQLite database
-2. Checks member_id mapping between SQLite and Supabase
-3. Validates that clips were successfully exported to Supabase
-4. Provides detailed reporting on any issues found
+Script to verify that clips have been successfully exported to Supabase by checking
+if Speaker records exist for all member_ids in the local SQLite database and
+comparing clips between SQLite and Supabase.
 """
 
 import os
@@ -14,15 +11,14 @@ import json
 import logging
 import argparse
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 
 # Add the project root to the Python path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 # Import required modules
 from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-from backend.services.integration.supabase_client import SupabaseService
+from backend.services.integration.supabase_client import SupabaseClient
 from backend.db.session import SessionLocal
 from backend.db.models import Speaker
 
@@ -35,7 +31,7 @@ logging.basicConfig(
     ]
 )
 
-logger = logging.getLogger("supabase_export_verification")
+logger = logging.getLogger("export_verification")
 logger.setLevel(logging.INFO)
 
 
@@ -154,89 +150,115 @@ def verify_speaker_matches() -> None:
         db.close()
 
 
-def check_supabase_clips(video_id: int = None) -> None:
+def check_supabase_clips(video_id: Optional[int] = None) -> None:
     """
-    Check if clips have been successfully exported to Supabase.
+    Check clips in Supabase and compare with local SQLite database.
     """
-    logger.info("Checking clips in Supabase...")
+    # Load clips from SQLite
+    sqlite_clips = load_clips_from_sqlite(video_id)
+    
+    if not sqlite_clips:
+        logger.error("No clips found in SQLite database")
+        return
     
     # Initialize Supabase client
-    supabase_client = SupabaseService(use_service_role=True)
-    
     try:
-        # Check for valid member IDs in parliament_members table
-        member_response = supabase_client.client.table('parliament_members').select('id,member_id').limit(5).execute()
-        valid_members = member_response.data if member_response.data else []
-        logger.info(f"Found {len(valid_members)} valid members in parliament_members table")
-        
-        # Extract the integer member_ids (not the UUID primary keys)
-        valid_member_ids = [member['member_id'] for member in valid_members if 'member_id' in member]
-        logger.info(f"Valid integer member_ids: {valid_member_ids}")
+        supabase_client = SupabaseClient()
         
         # Query clips from Supabase
+        response = supabase_client.client.table("parliament_member_clips").select("*")
         if video_id is not None:
-            # If we have a specific video ID, try to find clips with that video ID in metadata
-            clips_response = supabase_client.client.table('parliament_member_clips').select('*').execute()
-            clips = clips_response.data if clips_response.data else []
+            response = response.eq("video_id", video_id)
+        
+        supabase_clips = response.execute()
+        
+        if hasattr(supabase_clips, "data"):
+            supabase_clips_data = supabase_clips.data
+            logger.info(f"Found {len(supabase_clips_data)} clips in Supabase")
             
-            # Filter clips by video ID (if possible)
-            filtered_clips = []
-            for clip in clips:
-                if clip.get('full_video_path') and str(video_id) in clip.get('full_video_path'):
-                    filtered_clips.append(clip)
+            # Compare clip counts
+            if video_id is not None:
+                logger.info(f"SQLite clips for video {video_id}: {len(sqlite_clips)}")
+                logger.info(f"Supabase clips for video {video_id}: {len(supabase_clips_data)}")
+            else:
+                logger.info(f"Total SQLite clips: {len(sqlite_clips)}")
+                logger.info(f"Total Supabase clips: {len(supabase_clips_data)}")
             
-            logger.info(f"Found {len(filtered_clips)} clips in Supabase for video ID {video_id} (out of {len(clips)} total clips)")
-            clips = filtered_clips
+            # Check member_ids in Supabase clips
+            supabase_member_ids = {clip.get("member_id") for clip in supabase_clips_data if clip.get("member_id")}
+            logger.info(f"Found {len(supabase_member_ids)} unique member_ids in Supabase clips")
+            
+            # Extract member_ids from SQLite clips for comparison
+            sqlite_member_ids = {clip.get("member_id") for clip in sqlite_clips if clip.get("member_id") and clip.get("member_id") != "default_unknown"}
+            
+            # Compare member_ids between SQLite and Supabase
+            common_member_ids = sqlite_member_ids.intersection(supabase_member_ids)
+            missing_in_supabase = sqlite_member_ids - supabase_member_ids
+            extra_in_supabase = supabase_member_ids - sqlite_member_ids
+            
+            logger.info(f"Common member_ids: {len(common_member_ids)}/{len(sqlite_member_ids)}")
+            
+            if missing_in_supabase:
+                logger.warning(f"Found {len(missing_in_supabase)} member_ids in SQLite but not in Supabase:")
+                for member_id in sorted(missing_in_supabase):
+                    logger.warning(f"  - {member_id}")
+            
+            if extra_in_supabase:
+                logger.warning(f"Found {len(extra_in_supabase)} member_ids in Supabase but not in SQLite:")
+                for member_id in sorted(extra_in_supabase):
+                    logger.warning(f"  - {member_id}")
+            
+            # Check for duplicate clips in Supabase
+            clip_keys = {}
+            duplicates = []
+            for clip in supabase_clips_data:
+                key = (clip.get("video_id"), clip.get("start_time"), clip.get("end_time"), clip.get("member_id"))
+                if key in clip_keys:
+                    duplicates.append(key)
+                else:
+                    clip_keys[key] = True
+            
+            if duplicates:
+                logger.warning(f"Found {len(duplicates)} duplicate clips in Supabase")
+                for key in duplicates:
+                    logger.warning(f"  - Video: {key[0]}, Start: {key[1]}, End: {key[2]}, Member: {key[3]}")
+            else:
+                logger.info("No duplicate clips found in Supabase")
         else:
-            # Otherwise, get all clips
-            clips_response = supabase_client.client.table('parliament_member_clips').select('*').execute()
-            clips = clips_response.data if clips_response.data else []
-            logger.info(f"Found {len(clips)} total clips in Supabase")
-        
-        # Check member_id distribution in Supabase clips
-        member_id_counts = {}
-        for clip in clips:
-            member_id = clip.get("member_id", "None")
-            if member_id not in member_id_counts:
-                member_id_counts[member_id] = 0
-            member_id_counts[member_id] += 1
-        
-        logger.info(f"Member ID distribution in Supabase clips: {member_id_counts}")
-        
-        # Compare with local SQLite clips
-        sqlite_clips = load_clips_from_sqlite(video_id)
-        logger.info(f"Comparison - SQLite: {len(sqlite_clips)} clips, Supabase: {len(clips)} clips")
-        
-        # Check for any potential issues with member_id mapping
-        if clips:
-            sample_clip = clips[0]
-            logger.info(f"Sample Supabase clip: {json.dumps(sample_clip, default=str)}")
-            
+            logger.error("Failed to retrieve clips from Supabase")
+    
     except Exception as e:
         logger.error(f"Error checking Supabase clips: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Verify Parliament Clips export to Supabase')
-    parser.add_argument('video_id', type=int, nargs='?', help='Optional video ID to filter clips')
-    parser.add_argument('--check-sqlite', action='store_true', help='Check clips in local SQLite database')
-    parser.add_argument('--check-speakers', action='store_true', help='Check speaker matches')
-    parser.add_argument('--check-supabase', action='store_true', help='Check clips in Supabase')
-    parser.add_argument('--all', action='store_true', help='Run all checks')
+def parse_args():
+    """
+    Parse command line arguments.
+    """
+    parser = argparse.ArgumentParser(description="Verify clips export to Supabase")
+    parser.add_argument("--all", action="store_true", help="Run all checks")
+    parser.add_argument("--check-speakers", action="store_true", help="Check speaker matches")
+    parser.add_argument("--check-supabase", action="store_true", help="Check Supabase clips")
+    parser.add_argument("--video-id", type=int, help="Filter by video ID")
     
     args = parser.parse_args()
     
-    # If no specific checks are requested, run all checks
-    if not (args.check_sqlite or args.check_speakers or args.check_supabase):
+    # If no specific check is requested, run all checks
+    if not (args.all or args.check_speakers or args.check_supabase):
         args.all = True
     
-    logger.info("Starting verification of Parliament Clips export...")
+    return args
+
+
+def main():
+    """
+    Main entry point.
+    """
+    logger.info("Verifying clips export...")
     
-    if args.all or args.check_sqlite:
-        logger.info("=== CHECKING SQLITE DATABASE ===")
-        load_clips_from_sqlite(args.video_id)
+    args = parse_args()
     
     if args.all or args.check_speakers:
         logger.info("=== CHECKING SPEAKER MATCHES ===")
