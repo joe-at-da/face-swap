@@ -511,6 +511,7 @@ class SupabaseIntegration:
                 'confidence': 'confidence_score',
                 'duration': 'duration_seconds',
                 'full_video_url': 'full_video_path',
+                'video_path': 'full_video_path',  # Map video_path to full_video_path
                 'start_time': 'start_timestamp',  # Use timestamp fields instead of time fields
                 'end_time': 'end_timestamp',
                 'speaker_id': 'member_id'  # Map speaker_id to member_id
