@@ -554,26 +554,37 @@ class ParliamentClipsIntegrationService:
                     # Try multiple approaches to find the speaker
                     member = None
                     
-                    # First try: direct ID match
-                    member = db.query(Speaker).filter(Speaker.id == clip['member_id']).first()
-                    if member:
-                        logger.info(f"Found member by direct ID: {clip['member_id']}")
-                    
-                    # Second try: parliament_id match
-                    if not member:
+                    # Skip direct ID match since Speaker.id is an integer and clip['member_id'] is a UUID string
+                    # Instead, first try parliament_id match
+                    try:
                         member = db.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
                         if member:
                             logger.info(f"Found member by parliament_id: {member_id_str}")
+                    except Exception as e:
+                        logger.warning(f"Error finding member by parliament_id: {str(e)}")
                     
-                    # Third try: if it's a UUID, try to find by string representation in any field
+                    # Second try: if it's a UUID, try to find by string representation in any field
                     if not member and is_uuid:
-                        # Try a more flexible search if it's a UUID
-                        member = db.query(Speaker).filter(
-                            (Speaker.parliament_id.like(f"%{member_id_str}%")) |
-                            (Speaker.name.like(f"%{member_id_str}%"))
-                        ).first()
-                        if member:
-                            logger.info(f"Found member by flexible search: {member_id_str}")
+                        try:
+                            # Try a more flexible search if it's a UUID
+                            member = db.query(Speaker).filter(
+                                (Speaker.parliament_id.like(f"%{member_id_str}%")) |
+                                (Speaker.name.like(f"%{member_id_str}%"))
+                            ).first()
+                            if member:
+                                logger.info(f"Found member by flexible search: {member_id_str}")
+                        except Exception as e:
+                            logger.warning(f"Error finding member by flexible search: {str(e)}")
+                    
+                    # Third try: look up by name if the member_id might be a name
+                    if not member and not is_uuid:
+                        try:
+                            # Try to find by name if the member_id is not a UUID
+                            member = db.query(Speaker).filter(Speaker.name.ilike(f"%{member_id_str}%")).first()
+                            if member:
+                                logger.info(f"Found member by name search: {member_id_str}")
+                        except Exception as e:
+                            logger.warning(f"Error finding member by name: {str(e)}")
                     
                     # Log the result
                     if member:
@@ -596,22 +607,33 @@ class ParliamentClipsIntegrationService:
             logger.info(f"Added {len(recognition_results['speaker_appearances'])} speaker appearances to recognition results")
             logger.info(f"Clip filtering stats: {filtered_clips_stats}")
             
+            # Check if we have any valid appearances to export
+            if len(recognition_results['speaker_appearances']) == 0:
+                logger.warning(f"No valid speaker appearances to export to Supabase for video ID {video_id}")
+                return {"success": False, "error": "No valid speaker appearances to export"}
+            
             # Export and upload to Supabase
             logger.info(f"Preparing to export {len(recognition_results['speaker_appearances'])} appearances to Supabase")
             
             # Log the full recognition results for debugging
             logger.debug(f"Recognition results: {json.dumps(recognition_results, indent=2)}")
             
-            result = self.supabase_integration.export_and_upload_recognition(
-                video_path=video_path,
-                recognition_results=recognition_results,
-                video_metadata=metadata,
-                db_session=db,
-                video_id=video_id
-            )
-            
-            logger.info(f"Supabase export result: {result}")
-            return {"success": True, "supabase_result": result}
+            try:
+                result = self.supabase_integration.export_and_upload_recognition(
+                    video_path=video_path,
+                    recognition_results=recognition_results,
+                    video_metadata=metadata,
+                    db_session=db,
+                    video_id=video_id
+                )
+                
+                logger.info(f"Supabase export result: {result}")
+                return {"success": True, "supabase_result": result}
+            except Exception as e:
+                logger.error(f"Error in Supabase export: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return {"success": False, "error": f"Supabase export error: {str(e)}"}
             
         except Exception as e:
             logger.error(f"Error exporting clips to Supabase: {str(e)}")
