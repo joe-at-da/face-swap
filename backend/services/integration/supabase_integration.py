@@ -524,129 +524,87 @@ class SupabaseIntegration:
                 for target_field in valid_columns:
                     # Check if the field is in the clip data directly
                     if target_field in clip:
-                        value = clip[target_field]
-                        simplified_clip[target_field] = value
-                    # Check if we need to map from a different field name
-                    elif target_field in field_mapping.values():
-                        # Find the original field name that maps to this target field
-                        original_field = next((k for k, v in field_mapping.items() if v == target_field), None)
-                        if original_field and original_field in clip:
-                            value = clip[original_field]
-                            simplified_clip[target_field] = value
-                
-                # Ensure all values are simple types and properly formatted
-                for field, value in list(simplified_clip.items()):
-                    # Handle specific field types
-                    if field == 'session_date' and value:
-                        # Ensure session_date is in the correct format (YYYY-MM-DD)
-                        try:
-                            # If it's not already a date string in YYYY-MM-DD format, convert it
-                            if not isinstance(value, str) or len(value) != 10 or value[4] != '-':
-                                from datetime import datetime
-                                if isinstance(value, (int, float)):
-                                    # Assume it's a timestamp
-                                    date_obj = datetime.fromtimestamp(value)
-                                    simplified_clip[field] = date_obj.strftime('%Y-%m-%d')
-                                else:
-                                    # Default to today's date
-                                    simplified_clip[field] = datetime.now().strftime('%Y-%m-%d')
-                        except Exception as e:
-                            logger.warning(f"Failed to format session_date: {e}")
-                            simplified_clip[field] = None  # Set to None if we can't parse it
-                    elif field == 'member_id':
-                        try:
-                            # Ensure member_id is an integer
-                            if value is not None:
-                                try:
-                                    # First try to convert directly to int
-                                    simplified_clip[field] = int(value)
-                                    logger.info(f"Successfully converted member_id {value} to int: {simplified_clip[field]}")
-                                except (ValueError, TypeError):
-                                    # If it's a UUID, try to find the corresponding integer member_id in Supabase
-                                    member_id_str = str(value)
-                                    logger.info(f"Looking up integer member_id for UUID: {member_id_str}")
                                     
-                                    # First try to find Speaker by parliament_id in local database
-                                    speaker = None
-                                    if db_session:
-                                        speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
-                                    
-                                    if speaker and hasattr(speaker, 'member_id') and speaker.member_id is not None:
-                                        logger.info(f"Found Speaker by parliament_id with member_id: {speaker.member_id}")
-                                        try:
-                                            simplified_clip[field] = int(speaker.member_id)
-                                        except (ValueError, TypeError):
-                                            logger.warning(f"Speaker member_id {speaker.member_id} is not an integer, querying Supabase")
-                                            # Continue to Supabase query
-                                    
-                                    # If not found in local DB or member_id is not valid, query Supabase directly
-                                    if not speaker or not hasattr(speaker, 'member_id') or speaker.member_id is None or not isinstance(simplified_clip.get(field), int):
-                                        # Query Supabase for the integer member_id using the UUID
-                                        try:
-                                            # Initialize Supabase client if not already done
-                                            from backend.services.integration.supabase_client import SupabaseService
-                                            supabase_service = SupabaseService()
-                                            
-                                            # Query parliament_members table for the UUID
-                                            response = supabase_service.client.table('parliament_members').select('member_id').eq('id', member_id_str).execute()
-                                            
-                                            if response.data and len(response.data) > 0 and 'member_id' in response.data[0]:
-                                                int_member_id = response.data[0]['member_id']
-                                                logger.info(f"Found integer member_id {int_member_id} in Supabase for UUID {member_id_str}")
-                                                simplified_clip[field] = int(int_member_id)
-                                            else:
-                                                # If not found by exact UUID, try a broader search
-                                                logger.warning(f"No exact match found in Supabase for UUID {member_id_str}, trying broader search")
-                                                
-                                                # Try to derive an integer from the UUID as a fallback
-                                                try:
-                                                    uuid_obj = uuid.UUID(member_id_str)
-                                                    # Use the last 4 digits of the UUID's integer representation as a fallback
-                                                    fallback_id = int(uuid_obj.int % 10000)
-                                                    logger.warning(f"Using derived fallback ID from UUID: {fallback_id}")
-                                                    simplified_clip[field] = fallback_id
-                                                except Exception as uuid_err:
-                                                    logger.error(f"Failed to create fallback ID from UUID: {str(uuid_err)}")
-                                                    simplified_clip[field] = 1  # Last resort fallback
-                                        except Exception as supabase_err:
-                                            logger.error(f"Error querying Supabase for member_id: {str(supabase_err)}")
-                                            simplified_clip[field] = 1  # Use a default ID as fallback
-                                else:
-                                    # If we have a valid integer member_id, use it
-                                    logger.info(f"Using valid integer member_id: {simplified_clip[field]}")
-                            else:
-                                # If value is None, use a default ID
-                                logger.warning("member_id is None, using fallback ID")
-                                simplified_clip[field] = 1  # Use a default ID as fallback
-                        except Exception as e:
-                            logger.error(f"Error processing member_id {value}: {str(e)}")
-                            # Always provide a fallback ID instead of None
-                            simplified_clip[field] = 1
-                    elif not isinstance(value, (str, int, float, bool, type(None))):
-                        simplified_clip[field] = str(value)
-                
-                # Remove any excluded fields
-                for field in excluded_fields:
-                    if field in simplified_clip:
-                        del simplified_clip[field]
-                
-                # Ensure all required fields are present
-                if 'id' not in simplified_clip:
-                    simplified_clip['id'] = str(uuid.uuid4())
+                                logger.info(f"Found {len(clips)} existing clips for video path {video_path}")
+                            except Exception as e:
+                                logger.error(f"Error fetching existing clips for {video_path}: {str(e)}")
+
+                    # Map recognition events to Supabase schema
+                    supabase_clips = []
+                    skipped_clips = 0
                     
-                # Set default status if not present
-                if 'status' not in simplified_clip:
-                    # Use 'completed' as the status
-                    simplified_clip['status'] = 'completed'  # Valid values: processing, completed, failed, pending_review
-                
-                # Calculate duration_seconds if not present but we have start and end timestamps
-                if 'duration_seconds' not in simplified_clip and 'start_timestamp' in simplified_clip and 'end_timestamp' in simplified_clip:
-                    try:
-                        start_timestamp = simplified_clip['start_timestamp']
-                        end_timestamp = simplified_clip['end_timestamp']
-                        
-                        # Check if timestamps are already numeric
-                        if isinstance(start_timestamp, (int, float)) and isinstance(end_timestamp, (int, float)):
+                    for event in recognition_events:
+                        # Create a clean clip for Supabase
+                        try:
+                            # Generate a unique ID for this clip
+                            clip_id = str(uuid.uuid4())
+                            
+                            # Check if this clip already exists
+                            signature = f"{event.get('full_video_path', '')}-{event.get('start_timestamp', '')}-{event.get('end_timestamp', '')}" 
+                            if signature in existing_clips:
+                                logger.debug(f"Skipping duplicate clip: {signature}")
+                                skipped_clips += 1
+                                continue
+                            
+                            # Process member_id - ensure it's an integer
+                            member_id = event.get('member_id')
+                            if member_id is not None:
+                                if isinstance(member_id, int):
+                                    # Already an integer, use as is
+                                    pass
+                                elif isinstance(member_id, str):
+                                    if '-' in member_id:  # Looks like a UUID
+                                        # Try to find the corresponding integer member_id
+                                        try:
+                                            # First check local DB
+                                            speaker = None
+                                            try:
+                                                with self.db_session() as session:
+                                                    speaker = session.query(Speaker).filter(Speaker.id == member_id).first()
+                                                    if speaker:
+                                                        member_id = speaker.member_id
+                                                        logger.info(f"Found Speaker record for UUID {event.get('member_id')}, using member_id {member_id}")
+                                            except Exception as e:
+                                                logger.error(f"Error querying Speaker record: {str(e)}")
+                                            
+                                            # If no Speaker found, check Supabase
+                                            if not speaker:
+                                                response = supabase_service.client.table('parliament_members').select('member_id').eq('id', member_id).execute()
+                                                members = response.data if hasattr(response, 'data') else []
+                                                
+                                                if members and len(members) > 0 and 'member_id' in members[0]:
+                                                    member_id = members[0]['member_id']
+                                                    logger.info(f"Found member_id {member_id} in Supabase for UUID {event.get('member_id')}")
+                                                else:
+                                                    # Get any valid member_id as fallback
+                                                    fallback_response = supabase_service.client.table('parliament_members').select('member_id').limit(1).execute()
+                                                    fallback_members = fallback_response.data if hasattr(fallback_response, 'data') else []
+                                                    
+                                                    if fallback_members and len(fallback_members) > 0 and 'member_id' in fallback_members[0]:
+                                                        member_id = fallback_members[0]['member_id']
+                                                        logger.warning(f"Using fallback member_id {member_id} for UUID {event.get('member_id')}")
+                                                    else:
+                                                        logger.error(f"No valid member_id found for UUID {event.get('member_id')}, skipping clip")
+                                                        skipped_clips += 1
+                                                        continue
+                                        except Exception as e:
+                                            logger.error(f"Error processing member_id {event.get('member_id')}: {str(e)}, skipping clip")
+                                            skipped_clips += 1
+                                            continue
+                                    else:
+                                        # Try to convert string to int
+                                        try:
+                                            member_id = int(member_id)
+                                        except (ValueError, TypeError):
+                                            logger.error(f"Cannot convert member_id {member_id} to integer, skipping clip")
+                                            skipped_clips += 1
+                                            continue
+                                else:
+                                    logger.error(f"Invalid member_id type: {type(member_id)}, skipping clip")
+                                    skipped_clips += 1
+                                    continue
+                            else:
+                                # No member_id provided, try to get a valid one from Supabase
                             # Direct calculation if they're already numeric
                             simplified_clip['duration_seconds'] = round(float(end_timestamp) - float(start_timestamp), 3)
                         elif isinstance(start_timestamp, str) and isinstance(end_timestamp, str):
