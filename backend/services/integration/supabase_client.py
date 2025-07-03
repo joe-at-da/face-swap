@@ -408,6 +408,8 @@ class SupabaseService:
         Returns:
             Response from Supabase
         """
+        import uuid
+        from datetime import datetime
         # Cache of valid member IDs to avoid repeated queries
         valid_member_ids = None
         # Define the exact columns that are valid for the parliament_member_clips table
@@ -585,17 +587,74 @@ class SupabaseService:
             json_str = json.dumps(cleaned_data)
             final_data = json.loads(json_str)
             
-            # Use the cleaned data for the insert operation
+            # Check for existing clips and only insert new ones
             try:
+                # First, get all existing clips with the same video path
+                video_path = final_data[0].get('full_video_path') if final_data else None
+                if not video_path:
+                    logger.warning("No video path found in clip data")
+                    return {"success": False, "error": "No video path found in clip data"}
+                
+                logger.info(f"Checking for existing clips with video path: {video_path}")
+                existing_response = self.client.table('parliament_member_clips').select('*').eq('full_video_path', video_path).execute()
+                existing_clips = existing_response.data if hasattr(existing_response, 'data') else []
+                logger.info(f"Found {len(existing_clips)} existing clips with the same video path")
+                
+                # Create a set of existing clip signatures for quick lookup
+                existing_signatures = set()
+                for clip in existing_clips:
+                    # Include transcript in signature to detect truly new clips
+                    signature = f"{clip.get('full_video_path', '')}-{clip.get('start_timestamp', '')}-{clip.get('end_timestamp', '')}-{clip.get('transcript', '')}"
+                    existing_signatures.add(signature)
+                
+                # Filter out clips that already exist in Supabase
+                new_clips = []
+                for clip in final_data:
+                    # Generate a unique ID for each clip
+                    clip['id'] = str(uuid.uuid4())
+                    
+                    # Add timestamps to make clips unique
+                    now = datetime.now().isoformat()
+                    if 'created_at' not in clip:
+                        clip['created_at'] = now
+                    if 'updated_at' not in clip:
+                        clip['updated_at'] = now
+                    
+                    # Check if this clip already exists
+                    signature = f"{clip.get('full_video_path', '')}-{clip.get('start_timestamp', '')}-{clip.get('end_timestamp', '')}-{clip.get('transcript', '')}"
+                    if signature in existing_signatures:
+                        logger.debug(f"Skipping duplicate clip: {signature}")
+                        continue
+                    
+                    # This is a new clip, add it to our list
+                    new_clips.append(clip)
+                
+                # Update final_data to only include new clips
+                final_data = new_clips
+                logger.info(f"Filtered to {len(final_data)} new clips to insert")
+                
+                # If no new clips, return early
+                if not final_data:
+                    logger.warning("No new clips to insert after filtering out duplicates")
+                    return {"success": True, "inserted": 0, "message": "No new clips to insert"}
+                
+                # Use the cleaned data for the insert operation
                 response = self.client.table('parliament_member_clips').insert(final_data).execute()
                 logger.info(f"Successfully added {len(final_data)} clips to parliament_member_clips table")
                 return response
             except Exception as e:
                 logger.error(f"Supabase insert error: {str(e)}")
+                
+                # Check if it's a duplicate key error
+                if 'duplicate key' in str(e).lower():
+                    logger.warning("Duplicate key detected, trying to insert clips one by one")
+                    
                 # Try inserting one by one to identify problematic clips
                 successful_inserts = 0
                 for i, clip in enumerate(final_data):
                     try:
+                        # Add a more unique identifier to avoid duplicates
+                        clip['id'] = str(uuid.uuid4())
                         self.client.table('parliament_member_clips').insert([clip]).execute()
                         successful_inserts += 1
                     except Exception as clip_error:

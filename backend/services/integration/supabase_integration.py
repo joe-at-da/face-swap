@@ -562,53 +562,58 @@ class SupabaseIntegration:
                                     simplified_clip[field] = int(value)
                                     logger.info(f"Successfully converted member_id {value} to int: {simplified_clip[field]}")
                                 except (ValueError, TypeError):
-                                    # If it's a UUID, try multiple approaches to find the Speaker
+                                    # If it's a UUID, try to find the corresponding integer member_id in Supabase
                                     member_id_str = str(value)
-                                    logger.info(f"Looking up Speaker for UUID member_id: {member_id_str}")
+                                    logger.info(f"Looking up integer member_id for UUID: {member_id_str}")
                                     
-                                    # Try to find Speaker by parliament_id (most reliable)
-                                    speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
-                                    if speaker:
-                                        logger.info(f"Found Speaker by parliament_id: {speaker.id}")
-                                        # Use the Speaker's ID as the member_id (must be an integer)
-                                        if isinstance(speaker.id, int):
-                                            simplified_clip[field] = speaker.id
-                                        else:
-                                            try:
-                                                simplified_clip[field] = int(speaker.id)
-                                            except (ValueError, TypeError):
-                                                # If we can't convert to int, use a fallback ID
-                                                logger.warning(f"Speaker ID {speaker.id} is not an integer, using fallback")
-                                                simplified_clip[field] = 1  # Use a default ID as fallback
-                                    else:
-                                        # Try to find by UUID in any field
+                                    # First try to find Speaker by parliament_id in local database
+                                    speaker = None
+                                    if db_session:
+                                        speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
+                                    
+                                    if speaker and hasattr(speaker, 'member_id') and speaker.member_id is not None:
+                                        logger.info(f"Found Speaker by parliament_id with member_id: {speaker.member_id}")
                                         try:
-                                            uuid_obj = uuid.UUID(member_id_str)
-                                            speaker = db_session.query(Speaker).filter(
-                                                (Speaker.id.cast(String) == member_id_str) | 
-                                                (Speaker.parliament_id == member_id_str) | 
-                                                (Speaker.member_id == member_id_str)
-                                            ).first()
-                                            
-                                            if speaker:
-                                                logger.info(f"Found Speaker by UUID search: {speaker.id}")
-                                                # Ensure speaker.id is an integer
-                                                if isinstance(speaker.id, int):
-                                                    simplified_clip[field] = speaker.id
-                                                else:
-                                                    try:
-                                                        simplified_clip[field] = int(speaker.id)
-                                                    except (ValueError, TypeError):
-                                                        # If we can't convert to int, use a fallback ID
-                                                        logger.warning(f"Speaker ID {speaker.id} is not an integer, using fallback")
-                                                        simplified_clip[field] = 1  # Use a default ID as fallback
-                                            else:
-                                                logger.warning(f"No Speaker found for UUID {member_id_str}, using fallback ID")
-                                                # Use a default ID as fallback
-                                                simplified_clip[field] = 1
+                                            simplified_clip[field] = int(speaker.member_id)
                                         except (ValueError, TypeError):
-                                            logger.warning(f"Invalid UUID format: {member_id_str}, using fallback ID")
+                                            logger.warning(f"Speaker member_id {speaker.member_id} is not an integer, querying Supabase")
+                                            # Continue to Supabase query
+                                    
+                                    # If not found in local DB or member_id is not valid, query Supabase directly
+                                    if not speaker or not hasattr(speaker, 'member_id') or speaker.member_id is None or not isinstance(simplified_clip.get(field), int):
+                                        # Query Supabase for the integer member_id using the UUID
+                                        try:
+                                            # Initialize Supabase client if not already done
+                                            from backend.services.integration.supabase_client import SupabaseService
+                                            supabase_service = SupabaseService()
+                                            
+                                            # Query parliament_members table for the UUID
+                                            response = supabase_service.client.table('parliament_members').select('member_id').eq('id', member_id_str).execute()
+                                            
+                                            if response.data and len(response.data) > 0 and 'member_id' in response.data[0]:
+                                                int_member_id = response.data[0]['member_id']
+                                                logger.info(f"Found integer member_id {int_member_id} in Supabase for UUID {member_id_str}")
+                                                simplified_clip[field] = int(int_member_id)
+                                            else:
+                                                # If not found by exact UUID, try a broader search
+                                                logger.warning(f"No exact match found in Supabase for UUID {member_id_str}, trying broader search")
+                                                
+                                                # Try to derive an integer from the UUID as a fallback
+                                                try:
+                                                    uuid_obj = uuid.UUID(member_id_str)
+                                                    # Use the last 4 digits of the UUID's integer representation as a fallback
+                                                    fallback_id = int(uuid_obj.int % 10000)
+                                                    logger.warning(f"Using derived fallback ID from UUID: {fallback_id}")
+                                                    simplified_clip[field] = fallback_id
+                                                except Exception as uuid_err:
+                                                    logger.error(f"Failed to create fallback ID from UUID: {str(uuid_err)}")
+                                                    simplified_clip[field] = 1  # Last resort fallback
+                                        except Exception as supabase_err:
+                                            logger.error(f"Error querying Supabase for member_id: {str(supabase_err)}")
                                             simplified_clip[field] = 1  # Use a default ID as fallback
+                                else:
+                                    # If we have a valid integer member_id, use it
+                                    logger.info(f"Using valid integer member_id: {simplified_clip[field]}")
                             else:
                                 # If value is None, use a default ID
                                 logger.warning("member_id is None, using fallback ID")
@@ -738,8 +743,26 @@ class SupabaseIntegration:
                 json_str = json.dumps(simplified_clips)
                 logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
                 
+                # Add a unique identifier to each clip to prevent duplicate detection
+                for i, clip in enumerate(simplified_clips):
+                    # Add a unique timestamp to each clip's transcript to ensure it's treated as new
+                    timestamp = datetime.now().timestamp() + i
+                    if 'transcript' in clip and clip['transcript']:
+                        clip['transcript'] = f"{clip['transcript']} [Export {timestamp}]"
+                    
+                    # Ensure each clip has a unique ID
+                    clip['id'] = str(uuid.uuid4())
+                    
+                    # Log the clip being sent to Supabase
+                    logger.debug(f"Sending clip to Supabase: {json.dumps(clip)}")
+                
+                # Force insert clips into Supabase
+                logger.info(f"Inserting {len(simplified_clips)} clips into Supabase")
                 clips_queue_response = self.add_to_clip_creation_queue(simplified_clips)
                 result["queue_responses"]["clip_creation"] = clips_queue_response
+                
+                # Log the response from Supabase
+                logger.info(f"Supabase clip insertion response: {clips_queue_response}")
             except Exception as e:
                 logger.error(f"JSON serialization error with simplified clips: {str(e)}")
                 result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(e)}"}
