@@ -18,7 +18,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 # Import required modules
 from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-from backend.services.integration.supabase_client import SupabaseClient
+from backend.services.integration.supabase_client import SupabaseService
 from backend.db.session import SessionLocal
 from backend.db.models import Speaker
 
@@ -92,13 +92,41 @@ def load_clips_from_sqlite(video_id: int = None) -> List[Dict[str, Any]]:
 def verify_speaker_matches() -> None:
     """
     Verify that all member_ids in the SQLite database have matching Speaker records.
+    If no SQLite clips are found, check Supabase clips instead.
     """
     # Load all clips from SQLite
     clips = load_clips_from_sqlite()
     
     if not clips:
-        logger.error("No clips found in SQLite database")
-        return
+        logger.warning("No clips found in SQLite database, checking Supabase clips instead")
+        try:
+            # Initialize Supabase client
+            supabase_service = SupabaseService(use_service_role=True)
+            
+            # Query clips from Supabase
+            response = supabase_service.client.table("parliament_member_clips").select("*").execute()
+            
+            if hasattr(response, "data") and response.data:
+                supabase_clips = response.data
+                logger.info(f"Found {len(supabase_clips)} clips in Supabase")
+                
+                # Extract member_ids from Supabase clips
+                member_ids = set()
+                for clip in supabase_clips:
+                    member_id = clip.get("member_id")
+                    if member_id:
+                        member_ids.add(member_id)
+                
+                logger.info(f"Found {len(member_ids)} unique member_ids in Supabase clips")
+                
+                # Continue with speaker verification using Supabase member_ids
+                clips = supabase_clips
+            else:
+                logger.error("No clips found in Supabase")
+                return
+        except Exception as e:
+            logger.error(f"Error fetching Supabase clips: {str(e)}")
+            return
     
     # Extract unique member_ids
     member_ids = set()
@@ -152,21 +180,20 @@ def verify_speaker_matches() -> None:
 
 def check_supabase_clips(video_id: Optional[int] = None) -> None:
     """
-    Check clips in Supabase and compare with local SQLite database.
+    Check clips in Supabase database.
     """
-    # Load clips from SQLite
+    # Load clips from SQLite (for comparison if available)
     sqlite_clips = load_clips_from_sqlite(video_id)
     
     if not sqlite_clips:
-        logger.error("No clips found in SQLite database")
-        return
+        logger.warning("No clips found in SQLite database, proceeding with Supabase check only")
     
     # Initialize Supabase client
     try:
-        supabase_client = SupabaseClient()
+        supabase_service = SupabaseService(use_service_role=True)
         
         # Query clips from Supabase
-        response = supabase_client.client.table("parliament_member_clips").select("*")
+        response = supabase_service.client.table("parliament_member_clips").select("*")
         if video_id is not None:
             response = response.eq("video_id", video_id)
         
@@ -176,37 +203,88 @@ def check_supabase_clips(video_id: Optional[int] = None) -> None:
             supabase_clips_data = supabase_clips.data
             logger.info(f"Found {len(supabase_clips_data)} clips in Supabase")
             
-            # Compare clip counts
+            # Report clip counts
             if video_id is not None:
-                logger.info(f"SQLite clips for video {video_id}: {len(sqlite_clips)}")
+                if sqlite_clips:
+                    logger.info(f"SQLite clips for video {video_id}: {len(sqlite_clips)}")
                 logger.info(f"Supabase clips for video {video_id}: {len(supabase_clips_data)}")
             else:
-                logger.info(f"Total SQLite clips: {len(sqlite_clips)}")
+                if sqlite_clips:
+                    logger.info(f"Total SQLite clips: {len(sqlite_clips)}")
                 logger.info(f"Total Supabase clips: {len(supabase_clips_data)}")
             
             # Check member_ids in Supabase clips
             supabase_member_ids = {clip.get("member_id") for clip in supabase_clips_data if clip.get("member_id")}
             logger.info(f"Found {len(supabase_member_ids)} unique member_ids in Supabase clips")
             
-            # Extract member_ids from SQLite clips for comparison
-            sqlite_member_ids = {clip.get("member_id") for clip in sqlite_clips if clip.get("member_id") and clip.get("member_id") != "default_unknown"}
-            
-            # Compare member_ids between SQLite and Supabase
-            common_member_ids = sqlite_member_ids.intersection(supabase_member_ids)
-            missing_in_supabase = sqlite_member_ids - supabase_member_ids
-            extra_in_supabase = supabase_member_ids - sqlite_member_ids
-            
-            logger.info(f"Common member_ids: {len(common_member_ids)}/{len(sqlite_member_ids)}")
-            
-            if missing_in_supabase:
-                logger.warning(f"Found {len(missing_in_supabase)} member_ids in SQLite but not in Supabase:")
-                for member_id in sorted(missing_in_supabase):
-                    logger.warning(f"  - {member_id}")
-            
-            if extra_in_supabase:
-                logger.warning(f"Found {len(extra_in_supabase)} member_ids in Supabase but not in SQLite:")
-                for member_id in sorted(extra_in_supabase):
-                    logger.warning(f"  - {member_id}")
+            # Verify member_ids against parliament_members table
+            try:
+                # Query all member_ids from parliament_members table
+                members_response = supabase_service.client.table("parliament_members").select("id,member_id,name").execute()
+                if hasattr(members_response, "data"):
+                    members_data = members_response.data
+                    logger.info(f"Found {len(members_data)} members in parliament_members table")
+                    
+                    # Create mapping from UUID to integer member_id
+                    uuid_to_member_id = {}
+                    member_id_to_name = {}
+                    for member in members_data:
+                        if member.get("id") and member.get("member_id"):
+                            uuid_to_member_id[member.get("id")] = member.get("member_id")
+                            member_id_to_name[member.get("member_id")] = member.get("name")
+                    
+                    logger.info(f"Created mapping for {len(uuid_to_member_id)} members from UUID to integer member_id")
+                    
+                    # Check if all clip member_ids are valid
+                    valid_member_ids = set(member_id_to_name.keys())
+                    invalid_member_ids = supabase_member_ids - valid_member_ids
+                    
+                    if invalid_member_ids:
+                        logger.warning(f"Found {len(invalid_member_ids)} invalid member_ids in clips:")
+                        for member_id in sorted(invalid_member_ids):
+                            logger.warning(f"  - {member_id}")
+                    else:
+                        logger.info("All member_ids in clips are valid!")
+                    
+                    # Show distribution of clips by member name
+                    member_clip_counts = {}
+                    for clip in supabase_clips_data:
+                        member_id = clip.get("member_id")
+                        if member_id in member_id_to_name:
+                            name = member_id_to_name[member_id]
+                            if name not in member_clip_counts:
+                                member_clip_counts[name] = 0
+                            member_clip_counts[name] += 1
+                    
+                    logger.info("Clip distribution by member name:")
+                    for name, count in sorted(member_clip_counts.items(), key=lambda x: x[1], reverse=True):
+                        logger.info(f"  - {name}: {count} clips")
+                else:
+                    logger.error("Failed to retrieve members from parliament_members table")
+            except Exception as e:
+                logger.error(f"Error verifying member_ids: {str(e)}")
+                
+            # If SQLite clips are available, compare them with Supabase
+            if sqlite_clips:
+                # Extract member_ids from SQLite clips for comparison
+                sqlite_member_ids = {clip.get("member_id") for clip in sqlite_clips if clip.get("member_id") and clip.get("member_id") != "default_unknown"}
+                
+                # Compare member_ids between SQLite and Supabase
+                common_member_ids = sqlite_member_ids.intersection(supabase_member_ids)
+                missing_in_supabase = sqlite_member_ids - supabase_member_ids
+                extra_in_supabase = supabase_member_ids - sqlite_member_ids
+                
+                logger.info(f"Common member_ids: {len(common_member_ids)}/{len(sqlite_member_ids)}")
+                
+                if missing_in_supabase:
+                    logger.warning(f"Found {len(missing_in_supabase)} member_ids in SQLite but not in Supabase:")
+                    for member_id in sorted(missing_in_supabase):
+                        logger.warning(f"  - {member_id}")
+                
+                if extra_in_supabase:
+                    logger.warning(f"Found {len(extra_in_supabase)} member_ids in Supabase but not in SQLite:")
+                    for member_id in sorted(extra_in_supabase):
+                        logger.warning(f"  - {member_id}")
             
             # Check for duplicate clips in Supabase
             clip_keys = {}
