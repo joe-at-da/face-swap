@@ -585,20 +585,10 @@ class SupabaseIntegration:
                                                 simplified_clip[field] = speaker.id
                                             else:
                                                 logger.warning(f"No Speaker found for UUID {member_id_str}, running sync script")
-                                                # Run the sync script to create the Speaker if needed
-                                                sync_result = self._run_sync_parliament_clip_member_ids()
-                                                if sync_result.get("success"):
-                                                    # Try again after sync
-                                                    speaker = db_session.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
-                                                    if speaker:
-                                                        logger.info(f"Found Speaker after sync: {speaker.id}")
-                                                        simplified_clip[field] = speaker.id
-                                                    else:
-                                                        logger.warning(f"Still no Speaker found after sync for {member_id_str}")
-                                                        simplified_clip[field] = None
-                                                else:
-                                                    logger.error(f"Sync failed for {member_id_str}")
-                                                    simplified_clip[field] = None
+                                                # Don't run the sync script again to avoid recursion
+                                                # Just log the issue and continue
+                                                logger.warning(f"No Speaker found for UUID {member_id_str}, but skipping sync to avoid recursion")
+                                                simplified_clip[field] = None
                                         except (ValueError, TypeError):
                                             logger.warning(f"Invalid UUID format: {member_id_str}")
                                             simplified_clip[field] = None
