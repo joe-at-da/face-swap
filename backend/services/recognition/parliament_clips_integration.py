@@ -370,8 +370,12 @@ class ParliamentClipsIntegrationService:
             video_path: Path to the video file
             
         Returns:
-            Dict with results of the operation
+            Dict with export status and results
         """
+        import uuid  # Ensure uuid is imported in this method's scope
+        
+        # Initialize cache for temporary Speaker objects
+        temp_members_cache = {}
         logger.info(f"===== EXPORTING CLIPS TO SUPABASE =====")
         logger.info(f"Video ID: {video_id}, Video Path: {video_path}")
         
@@ -585,6 +589,32 @@ class ParliamentClipsIntegrationService:
                                 logger.info(f"Found member by name search: {member_id_str}")
                         except Exception as e:
                             logger.warning(f"Error finding member by name: {str(e)}")
+                    
+                    # Fallback: If no member found, create a temporary one for export purposes
+                    if not member:
+                        logger.warning(f"No matching Speaker found for member_id: {member_id_str}, creating temporary record for export")
+                        try:
+                            # Check if we already created a temporary Speaker for this member_id in this session
+                            temp_member_key = f"temp_member_{member_id_str}"
+                            if temp_member_key in temp_members_cache:
+                                member = temp_members_cache[temp_member_key]
+                                logger.info(f"Using cached temporary Speaker for {member_id_str}")
+                            else:
+                                # Create a temporary Speaker object (not persisted to database)
+                                from sqlalchemy import inspect
+                                member = Speaker()
+                                member.id = -1  # Temporary ID
+                                member.name = f"Unknown Speaker ({member_id_str[:8]})"
+                                member.parliament_id = member_id_str
+                                member.image_url = ""
+                                
+                                # Cache this temporary member for future use in this export session
+                                temp_members_cache[temp_member_key] = member
+                                logger.info(f"Created temporary Speaker for {member_id_str}")
+                        except Exception as e:
+                            logger.error(f"Error creating temporary Speaker: {str(e)}")
+                            import traceback
+                            logger.error(traceback.format_exc())
                     
                     # Log the result
                     if member:
