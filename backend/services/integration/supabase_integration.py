@@ -524,10 +524,8 @@ class SupabaseIntegration:
                 for target_field in valid_columns:
                     # Check if the field is in the clip data directly
                     if target_field in clip:
-                                    
-                                logger.info(f"Found {len(clips)} existing clips for video path {video_path}")
-                            except Exception as e:
-                                logger.error(f"Error fetching existing clips for {video_path}: {str(e)}")
+                        # Add field to simplified clip
+                        simplified_clip[target_field] = clip[target_field]
 
                     # Map recognition events to Supabase schema
                     supabase_clips = []

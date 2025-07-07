@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 # Add the parent directory to sys.path to allow importing from scripts
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from scripts.create_parliament_clips_model import get_parliament_clip
-from backend.services.integration.supabase_integration import SupabaseIntegration
+from backend.services.integration.supabase_client import SupabaseService
 from backend.services.integration.supabase_export import format_clips_for_supabase
 
 # Set up logging
@@ -32,8 +32,8 @@ class ParliamentClipsIntegrationService:
         """Initialize the parliament clips integration service."""
         logger.info("Initializing ParliamentClipsIntegrationService")
         
-        # Initialize Supabase integration
-        self.supabase_integration = SupabaseIntegration()
+        # Initialize Supabase service
+        self.supabase_service = SupabaseService(use_service_role=True)
         
         # Define database paths with correct location
         self.docker_db_path = "/app/backend/parliament_clips.db"  # Path in Docker container
@@ -736,13 +736,15 @@ class ParliamentClipsIntegrationService:
             logger.debug(f"Recognition results: {json.dumps(recognition_results, indent=2)}")
             
             try:
-                result = self.supabase_integration.export_and_upload_recognition(
-                    video_path=video_path,
-                    recognition_results=recognition_results,
-                    video_metadata=metadata,
-                    db_session=db,
-                    video_id=video_id
+                # Format clips for Supabase using the existing function
+                formatted_clips = format_clips_for_supabase(
+                    video_id=str(video_id),  # Ensure video_id is a string
+                    recognition_results=recognition_results,  # Pass the entire recognition_results dictionary
+                    combined_av_url=video_path  # Use video_path as combined_av_url
                 )
+                
+                # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
+                result = self.supabase_service.add_to_clip_creation_queue(formatted_clips)
                 
                 logger.info(f"Supabase export result: {result}")
                 return {"success": True, "supabase_result": result}

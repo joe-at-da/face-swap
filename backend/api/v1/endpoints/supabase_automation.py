@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.api.deps import get_db, get_api_key
-from backend.services.integration.supabase_integration import SupabaseIntegration
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.parliament_tv import ParliamentTVCapture
 from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
@@ -276,7 +275,7 @@ async def process_parliament_tv_to_supabase(
                 }
                 
                 # Export to Supabase
-                supabase = SupabaseIntegration()
+                supabase = SupabaseService(use_service_role=True)
                 
                 # Ensure all metadata is properly serializable using the utility function
                 # This handles SQLAlchemy MetaData objects, datetime objects, and other non-serializable types
