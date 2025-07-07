@@ -919,11 +919,17 @@ class ParliamentClipsIntegrationService:
                         continue
                         
                     # Create a properly formatted clip for Supabase
+                    # For Supabase, we need to use the integer member_id, not the UUID
+                    # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
+                    
+                    # Log the member_id for debugging
+                    logger.info(f"Preparing clip with member_id: {member_id} (type: {type(member_id).__name__})")
+                    
                     clips_to_export.append({
                         "video_id": str(video_id),
                         "start_time": clip.get('start_timestamp'),
                         "end_time": clip.get('end_timestamp'),
-                        "speaker_id": member_id,  # Use the UUID member_id directly
+                        "member_id": member_id,  # This will be converted to integer in add_to_clip_creation_queue
                         "speaker_name": clip.get('member_name', 'Unknown'),
                         "confidence": clip.get('confidence_score', 0.0),
                         "transcript": clip.get('transcript', ''),
@@ -933,7 +939,8 @@ class ParliamentClipsIntegrationService:
                             "recognition_method": "facial",
                             "matched_by": "parliament_clips",
                             "clip_id": clip.get('id'),
-                            "combined_av_url": video_path
+                            "combined_av_url": video_path,
+                            "original_uuid": str(member_id)  # Store the original UUID for reference
                         }
                     })
                 
