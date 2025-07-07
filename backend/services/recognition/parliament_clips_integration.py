@@ -306,6 +306,32 @@ class ParliamentClipsIntegrationService:
             
         return result
     
+    def get_clip_count_for_video(self, video_id: int) -> int:
+        """
+        Get the count of parliament clips associated with a video ID.
+        
+        Args:
+            video_id: ID of the video
+            
+        Returns:
+            Integer count of clips for the video
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Query to count clips for the given video ID
+            cursor.execute("SELECT COUNT(*) FROM parliament_clips WHERE video_id = ?", (video_id,))
+            count = cursor.fetchone()[0]
+            
+            return count
+        except Exception as e:
+            logger.error(f"Error getting clip count for video {video_id}: {str(e)}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    
     def get_parliament_clips_for_video(self, video_id: int) -> Dict[str, Any]:
         """
         Get all parliament clips associated with a video ID.
