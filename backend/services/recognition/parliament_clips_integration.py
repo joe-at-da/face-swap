@@ -314,47 +314,66 @@ class ParliamentClipsIntegrationService:
             video_id: ID of the video
             
         Returns:
-            Integer count of clips for the video
+            Count of clips
         """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # First, check if the metadata column exists and if it contains video_id information
+            # Check if the video_id column exists
             cursor.execute("PRAGMA table_info(parliament_clips)")
             columns = [col[1] for col in cursor.fetchall()]
             
-            if 'metadata' in columns:
-                # Use JSON extraction to find clips with matching video_id in metadata
+            if 'video_id' in columns:
+                # Use direct column query
+                cursor.execute(
+                    "SELECT COUNT(*) FROM parliament_clips WHERE video_id = ?", 
+                    (video_id,)
+                )
+                count = cursor.fetchone()[0]
+                logger.info(f"Found {count} clips with video_id {video_id} in video_id column")
+                
+                # If no clips found with video_id, count all clips
+                if count == 0:
+                    cursor.execute("SELECT COUNT(*) FROM parliament_clips")
+                    count = cursor.fetchone()[0]
+                    logger.info(f"No clips found with video_id {video_id}, counting all {count} clips")
+            elif 'metadata' in columns:
+                # Fall back to JSON extraction if video_id column doesn't exist
                 try:
-                    # Try to count clips where metadata JSON contains the video_id
                     cursor.execute(
                         "SELECT COUNT(*) FROM parliament_clips WHERE json_extract(metadata, '$.video_id') = ?", 
                         (str(video_id),)
                     )
                     count = cursor.fetchone()[0]
                     logger.info(f"Found {count} clips with video_id {video_id} in metadata")
-                    return count
+                    
+                    # If no clips found with video_id in metadata, count all clips
+                    if count == 0:
+                        cursor.execute("SELECT COUNT(*) FROM parliament_clips")
+                        count = cursor.fetchone()[0]
+                        logger.info(f"No clips found with video_id in metadata, counting all {count} clips")
                 except sqlite3.OperationalError:
-                    # If JSON extraction fails, fall back to counting all clips
-                    logger.warning(f"Could not query JSON metadata for video_id {video_id}, returning total count")
+                    # If JSON extraction fails, count all clips
+                    logger.warning(f"Could not query JSON metadata for video_id {video_id}, counting all clips")
                     cursor.execute("SELECT COUNT(*) FROM parliament_clips")
                     count = cursor.fetchone()[0]
-                    logger.info(f"Total clips in database: {count}")
-                    return count
+                    logger.info(f"Counting all {count} clips in database")
             else:
-                # If no metadata column, return total count
+                # If neither column exists, count all clips
                 cursor.execute("SELECT COUNT(*) FROM parliament_clips")
                 count = cursor.fetchone()[0]
-                logger.info(f"No metadata column found. Total clips in database: {count}")
-                return count
+                logger.info(f"No video_id or metadata column found. Counting all {count} clips in database")
+            
+            conn.close()
+            return count
         except Exception as e:
-            logger.error(f"Error getting clip count for video {video_id}: {str(e)}")
+            logger.error(f"Error getting parliament clip count for video {video_id}: {str(e)}")
             return 0
         finally:
             if conn:
                 conn.close()
-    
+                
     def get_parliament_clips_for_video(self, video_id: int) -> Dict[str, Any]:
         """
         Get all parliament clips associated with a video ID.
@@ -365,18 +384,62 @@ class ParliamentClipsIntegrationService:
         Returns:
             Dict with clips data
         """
+        conn = None
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row  # This enables column access by name
             cursor = conn.cursor()
             
-            # First, check if the metadata column exists and if it contains video_id information
+            # Check if the video_id column exists
             cursor.execute("PRAGMA table_info(parliament_clips)")
             columns = [col[1] for col in cursor.fetchall()]
             
             clips = []
-            if 'metadata' in columns:
-                # Use JSON extraction to find clips with matching video_id in metadata
+            
+            if 'video_id' in columns:
+                # Use direct column query
+                cursor.execute(
+                    "SELECT * FROM parliament_clips WHERE video_id = ?", 
+                    (video_id,)
+                )
+                rows = cursor.fetchall()
+                
+                # Convert rows to dictionaries
+                for row in rows:
+                    clip_dict = {}
+                    for key in row.keys():
+                        clip_dict[key] = row[key]
+                    clips.append(clip_dict)
+                
+                logger.info(f"Found {len(clips)} clips with video_id {video_id} in video_id column")
+                
+                # If no clips found with video_id, get all clips and update them
+                if len(clips) == 0:
+                    logger.warning(f"No clips found with video_id {video_id} in video_id column. Getting all clips.")
+                    cursor.execute("SELECT * FROM parliament_clips")
+                    rows = cursor.fetchall()
+                    
+                    # Convert rows to dictionaries and update video_id
+                    for row in rows:
+                        clip_dict = {}
+                        for key in row.keys():
+                            clip_dict[key] = row[key]
+                        # Set the video_id for this clip
+                        clip_dict['video_id'] = video_id
+                        clips.append(clip_dict)
+                    
+                    # Update the video_id in the database for all clips
+                    try:
+                        update_cursor = conn.cursor()
+                        update_cursor.execute("UPDATE parliament_clips SET video_id = ?", (video_id,))
+                        conn.commit()
+                        logger.info(f"Updated video_id to {video_id} for all clips in database")
+                    except Exception as e:
+                        logger.error(f"Error updating video_id in database: {str(e)}")
+                    
+                    logger.info(f"Returning all {len(clips)} clips with updated video_id")
+            elif 'metadata' in columns:
+                # Fall back to JSON extraction if video_id column doesn't exist
                 try:
                     # Try to get clips where metadata JSON contains the video_id
                     cursor.execute(
@@ -390,23 +453,26 @@ class ParliamentClipsIntegrationService:
                         clip_dict = {}
                         for key in row.keys():
                             clip_dict[key] = row[key]
-                        # Add video_id to metadata if not present
-                        if 'metadata' in clip_dict and clip_dict['metadata']:
-                            try:
-                                metadata = json.loads(clip_dict['metadata']) if isinstance(clip_dict['metadata'], str) else clip_dict['metadata']
-                                if not metadata:
-                                    metadata = {}
-                                if 'video_id' not in metadata:
-                                    metadata['video_id'] = str(video_id)
-                                clip_dict['metadata'] = metadata
-                            except Exception as e:
-                                logger.warning(f"Error parsing metadata: {e}")
                         clips.append(clip_dict)
                     
                     logger.info(f"Found {len(clips)} clips with video_id {video_id} in metadata")
-                except sqlite3.OperationalError:
-                    # If JSON extraction fails, get all clips
-                    logger.warning(f"Could not query JSON metadata for video_id {video_id}, returning all clips")
+                    
+                    # If no clips found with video_id in metadata, get all clips
+                    if len(clips) == 0:
+                        logger.warning(f"No clips found with video_id {video_id} in metadata. Getting all clips.")
+                        cursor.execute("SELECT * FROM parliament_clips")
+                        rows = cursor.fetchall()
+                        
+                        # Convert rows to dictionaries
+                        for row in rows:
+                            clip_dict = {}
+                            for key in row.keys():
+                                clip_dict[key] = row[key]
+                            clips.append(clip_dict)
+                        
+                        logger.info(f"Returning all {len(clips)} clips from database")
+                except sqlite3.OperationalError as e:
+                    logger.warning(f"Could not query JSON metadata for video_id {video_id}: {str(e)}. Getting all clips.")
                     cursor.execute("SELECT * FROM parliament_clips")
                     rows = cursor.fetchall()
                     
@@ -419,7 +485,7 @@ class ParliamentClipsIntegrationService:
                     
                     logger.info(f"Returning all {len(clips)} clips from database")
             else:
-                # If no metadata column, get all clips
+                # If neither column exists, get all clips
                 cursor.execute("SELECT * FROM parliament_clips")
                 rows = cursor.fetchall()
                 
@@ -430,13 +496,11 @@ class ParliamentClipsIntegrationService:
                         clip_dict[key] = row[key]
                     clips.append(clip_dict)
                 
-                logger.info(f"No metadata column found. Returning all {len(clips)} clips from database")
+                logger.info(f"No video_id or metadata column found. Returning all {len(clips)} clips from database")
             
             # Get the total count of all clips in the database
             cursor.execute("SELECT COUNT(*) FROM parliament_clips")
             total_count = cursor.fetchone()[0]
-            
-            conn.close()
             
             logger.info(f"Found {len(clips)} clips for video {video_id}")
             return {
@@ -454,6 +518,14 @@ class ParliamentClipsIntegrationService:
                 "count": 0,
                 "total_count": 0
             }
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+    
+    # End of get_parliament_clips_for_video method
     
     def _run_sync_parliament_clip_member_ids(self, db_session):
         """
