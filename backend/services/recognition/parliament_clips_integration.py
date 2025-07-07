@@ -736,15 +736,44 @@ class ParliamentClipsIntegrationService:
             logger.debug(f"Recognition results: {json.dumps(recognition_results, indent=2)}")
             
             try:
-                # Format clips for Supabase using the existing function
-                formatted_clips = format_clips_for_supabase(
-                    video_id=str(video_id),  # Ensure video_id is a string
-                    recognition_results=recognition_results,  # Pass the entire recognition_results dictionary
-                    combined_av_url=video_path  # Use video_path as combined_av_url
-                )
+                # First, ensure we have the correct member_id mapping
+                # Run the sync script to ensure all UUID member IDs have corresponding Speaker records
+                sync_result = self._run_sync_parliament_clip_member_ids(db)
+                if not sync_result.get("success"):
+                    logger.warning(f"Member ID sync failed: {sync_result.get('error')}")
+                
+                # Prepare clips with proper member_id format for Supabase
+                clips_to_export = []
+                for clip in recognition_results['speaker_appearances']:
+                    # Get the member_id from the clip
+                    member_id = clip.get('member_id')
+                    if not member_id:
+                        logger.warning(f"Skipping clip without member_id: {clip}")
+                        continue
+                        
+                    # Create a properly formatted clip for Supabase
+                    clips_to_export.append({
+                        "video_id": str(video_id),
+                        "start_time": clip.get('start_timestamp'),
+                        "end_time": clip.get('end_timestamp'),
+                        "speaker_id": member_id,  # Use the UUID member_id directly
+                        "speaker_name": clip.get('member_name', 'Unknown'),
+                        "confidence": clip.get('confidence_score', 0.0),
+                        "transcript": clip.get('transcript', ''),
+                        "face_image_url": '',
+                        "full_video_path": clip.get('full_video_path', video_path),
+                        "metadata": {
+                            "recognition_method": "facial",
+                            "matched_by": "parliament_clips",
+                            "clip_id": clip.get('id'),
+                            "combined_av_url": video_path
+                        }
+                    })
+                
+                logger.info(f"Prepared {len(clips_to_export)} clips for export to Supabase")
                 
                 # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
-                result = self.supabase_service.add_to_clip_creation_queue(formatted_clips)
+                result = self.supabase_service.add_to_clip_creation_queue(clips_to_export)
                 
                 logger.info(f"Supabase export result: {result}")
                 return {"success": True, "supabase_result": result}

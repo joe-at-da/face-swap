@@ -283,14 +283,19 @@ async def process_parliament_tv_to_supabase(
                 serializable_video_metadata = make_json_serializable(video_metadata)
                 
                 logger.info(f"Exporting recognition results to Supabase for session {capture_id}")
-                export_result = supabase.export_and_upload_recognition(
-                    video_path=video_file_path,
+                
+                # Import the format_clips_for_supabase function
+                from backend.services.integration.supabase_export import format_clips_for_supabase
+                
+                # Format the clips for Supabase using the correct function
+                formatted_clips = format_clips_for_supabase(
+                    video_id=str(capture_id),
                     recognition_results=serializable_recognition_data,
-                    video_metadata=serializable_video_metadata,
-                    db_session=db,
-                    video_id=capture_id,
-                    upload_media=True
+                    combined_av_url=video_file_path
                 )
+                
+                # Use the correct method to export clips to Supabase
+                export_result = supabase.add_to_clip_creation_queue(formatted_clips)
                 
                 logger.info(f"Exported recognition results to Supabase for session {capture_id}")
                 
