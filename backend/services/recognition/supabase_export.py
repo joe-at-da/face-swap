@@ -403,19 +403,21 @@ def export_recognition_results(
                 "confidence": clip.get('confidence_score', 0.0),
                 "recognition_method": clip.get('metadata', {}).get('recognition_method', 'facial'),
                 "full_video_url": upload_result.get('public_url'),
+                "full_video_path": video_path,  # Add the full_video_path field which is required
                 "clip_url": clip_url,
                 "session_title": video.title if video else "",
                 "session_date": video.created_at.isoformat() if video and video.created_at else clip.get('session_date', ''),
                 "session_description": video.description if video else "",
                 "original_url": video.source_url if video else "",
-                "status": "processed"
+                "status": "pending_review"  # Use a valid enum value for parliament_clip_status
             }
             
             # Log the clip data for transparency
             logger.info(f"Exporting clip {i} with member_id {member_id} and duration {duration:.2f}s")
             
-            # Insert clip data into Supabase
-            insert_result = supabase.insert_clip(clip_data)
+            # Insert clip data into Supabase parliament_member_clips table
+            # Use add_to_clip_creation_queue instead of insert_clip as it handles the correct table
+            insert_result = supabase.add_to_clip_creation_queue([clip_data])
             
             clips.append({
                 "clip_id": i,
