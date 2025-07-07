@@ -301,36 +301,47 @@ def export_recognition_results(
             logger.error(f"Error updating video record: {str(e)}")
             # Continue with export even if update fails
     
-    # Identify speaking segments using the 60-second pause rule
-    from backend.services.recognition.speaker_segmentation import SpeakerSegmentation
-    speaker_segmentation = SpeakerSegmentation(db=db_session)
-    segments_result = speaker_segmentation.identify_speaking_segments(
-        video_id=video_id,
-        recognition_results=recognition_results
-    )
+    # Get clips from the parliament_clips SQLite database using ParliamentClipsIntegrationService
+    from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+    clips_service = ParliamentClipsIntegrationService()
+    clips_result = clips_service.get_parliament_clips_for_video(video_id)
     
-    if not segments_result.get("success", False):
-        logger.error(f"Failed to identify speaking segments: {segments_result.get('error')}")
-        # Continue with export even if segmentation fails
+    if not clips_result.get("success", False) or not clips_result.get("clips"):
+        logger.error(f"Failed to get parliament clips for video {video_id}: {clips_result.get('error', 'No clips found')}")
+        # Continue with export even if no clips are found
         segments_result = {"segments": [], "segment_count": 0}
+    else:
+        logger.info(f"Found {len(clips_result['clips'])} parliament clips for video {video_id}")
+        segments_result = {"segments": [], "segment_count": len(clips_result['clips']), "success": True}
     
     # Initialize clip generator
     from backend.services.recognition.clip_generator import ClipGenerator
     clip_generator = ClipGenerator()
     
-    # Process each speaking segment
+    # Process each clip from the parliament_clips database
     clips = []
-    segments = segments_result.get("segments", [])
+    parliament_clips = clips_result.get("clips", [])
     
-    for i, segment in enumerate(segments):
+    for i, clip in enumerate(parliament_clips):
         try:
-            # Format timestamps
-            start_time = segment["start_time"]
-            end_time = segment["end_time"]
-            duration = end_time - start_time
-            
-            # Skip segments shorter than 3 seconds
+            # Get clip data from the parliament_clips database
+            member_id = clip.get('member_id')
+            if not member_id:
+                logger.warning(f"Skipping clip without member_id: {clip}")
+                continue
+                
+            # Parse timestamps
+            try:
+                start_time = float(clip.get('start_timestamp', 0))
+                end_time = float(clip.get('end_timestamp', 0))
+                duration = end_time - start_time
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error parsing timestamps for clip {i}: {str(e)}")
+                continue
+                
+            # Skip clips shorter than 3 seconds
             if duration < 3:
+                logger.info(f"Skipping clip {i} with duration {duration} seconds (too short)")
                 continue
                 
             # Format timestamps for display
@@ -338,7 +349,7 @@ def export_recognition_results(
             end_timestamp = format_timestamp(end_time)
             
             # Generate clip filename
-            clip_filename = f"mp_{segment['speaker_id']}_{video_id}_{i}_{start_timestamp.replace(':', '-')}.mp4"
+            clip_filename = f"mp_{member_id}_{video_id}_{i}_{start_timestamp.replace(':', '-')}.mp4"
             clip_path = f"/app/data/temp/clips/{clip_filename}"
             
             # Generate clip
@@ -359,13 +370,19 @@ def export_recognition_results(
             # Set a local URL for the clip instead
             clip_url = f"/api/v1/media/file?path={clip_filename}"
             
-            # Get MP information
-            from backend.db.models import ParliamentMember
-            mp = db_session.query(ParliamentMember).filter(
-                ParliamentMember.id == segment["speaker_id"]
+            # Get MP information from Speaker table
+            from backend.db.models import Speaker
+            mp = db_session.query(Speaker).filter(
+                Speaker.parliament_id == str(member_id)  # Use parliament_id and convert member_id to string
             ).first() if db_session else None
             
-            mp_name = mp.name if mp else "Unknown MP"
+            # Log the Speaker lookup attempt for transparency
+            if mp:
+                logger.info(f"Found Speaker record for member_id {member_id}: {mp.name}")
+            else:
+                logger.warning(f"No Speaker record found for member_id {member_id}")
+                
+            mp_name = mp.name if mp and hasattr(mp, 'name') else clip.get('member_name', "Unknown MP")
             
             # Get video information
             video = db_session.query(CaptureSession).filter(
@@ -375,31 +392,34 @@ def export_recognition_results(
             # Create clip metadata
             clip_data = {
                 "video_id": str(video_id),
-                "member_id": segment["speaker_id"],
+                "member_id": member_id,  # Use the integer member_id from parliament_clips
                 "member_name": mp_name,
                 "start_time": start_time,
                 "end_time": end_time,
                 "start_timestamp": start_timestamp,
                 "end_timestamp": end_timestamp,
                 "duration": duration,
-                "transcript": segment["transcript"],
-                "confidence": segment["confidence"],
-                "recognition_method": segment["recognition_method"],
+                "transcript": clip.get('transcript', ''),
+                "confidence": clip.get('confidence_score', 0.0),
+                "recognition_method": clip.get('metadata', {}).get('recognition_method', 'facial'),
                 "full_video_url": upload_result.get('public_url'),
                 "clip_url": clip_url,
                 "session_title": video.title if video else "",
-                "session_date": video.created_at.isoformat() if video and video.created_at else "",
+                "session_date": video.created_at.isoformat() if video and video.created_at else clip.get('session_date', ''),
                 "session_description": video.description if video else "",
                 "original_url": video.source_url if video else "",
                 "status": "processed"
             }
+            
+            # Log the clip data for transparency
+            logger.info(f"Exporting clip {i} with member_id {member_id} and duration {duration:.2f}s")
             
             # Insert clip data into Supabase
             insert_result = supabase.insert_clip(clip_data)
             
             clips.append({
                 "clip_id": i,
-                "speaker_id": segment["speaker_id"],
+                "member_id": member_id,
                 "speaker_name": mp_name,
                 "start_time": start_time,
                 "end_time": end_time,
@@ -410,6 +430,24 @@ def export_recognition_results(
             
         except Exception as e:
             logger.exception(f"Error processing clip {i}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    # Log summary of export process
+    if clips:
+        logger.info(f"Successfully exported {len(clips)} clips to Supabase for video ID {video_id}")
+    else:
+        logger.warning(f"No clips were exported to Supabase for video ID {video_id}")
+    
+    # Run the sync script to ensure all member IDs have corresponding Speaker records
+    if db_session and clips:
+        try:
+            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+            clips_service = ParliamentClipsIntegrationService()
+            sync_result = clips_service._run_sync_parliament_clip_member_ids(db_session)
+            logger.info(f"Sync parliament clip member IDs result: {sync_result}")
+        except Exception as e:
+            logger.error(f"Error running sync script: {str(e)}")
     
     return {
         "success": True,

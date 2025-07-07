@@ -284,6 +284,41 @@ async def process_parliament_tv_to_supabase(
                 
                 logger.info(f"Exporting recognition results to Supabase for session {capture_id}")
                 
+                # Add detailed logging to understand the recognition data structure
+                logger.info(f"Recognition data keys: {list(serializable_recognition_data.keys())}")
+                
+                # Log counts of key data structures
+                if 'identified_speakers' in serializable_recognition_data:
+                    logger.info(f"Found {len(serializable_recognition_data['identified_speakers'])} identified speakers")
+                    if serializable_recognition_data['identified_speakers']:
+                        sample_speaker = serializable_recognition_data['identified_speakers'][0]
+                        logger.info(f"Sample identified speaker keys: {list(sample_speaker.keys())}")
+                        if 'segments' in sample_speaker and sample_speaker['segments']:
+                            logger.info(f"Sample segment keys: {list(sample_speaker['segments'][0].keys())}")
+                            
+                if 'speaker_appearances' in serializable_recognition_data:
+                    logger.info(f"Found {len(serializable_recognition_data['speaker_appearances'])} speaker appearances")
+                    if serializable_recognition_data['speaker_appearances']:
+                        sample_appearance = serializable_recognition_data['speaker_appearances'][0]
+                        logger.info(f"Sample speaker appearance keys: {list(sample_appearance.keys())}")
+                        logger.info(f"Sample speaker appearance member_id: {sample_appearance.get('member_id')}")
+                        
+                if 'timeline' in serializable_recognition_data:
+                    logger.info(f"Found {len(serializable_recognition_data['timeline'])} timeline events")
+                    if serializable_recognition_data['timeline']:
+                        sample_event = serializable_recognition_data['timeline'][0]
+                        logger.info(f"Sample timeline event keys: {list(sample_event.keys())}")
+                        logger.info(f"Sample timeline event member_id: {sample_event.get('member_id')}")
+                        
+                if 'unidentified_faces' in serializable_recognition_data:
+                    logger.info(f"Found {len(serializable_recognition_data['unidentified_faces'])} unidentified faces")
+                    
+                # Check if we have any clips in the parliament_clips database
+                from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                clips_service = ParliamentClipsIntegrationService()
+                clips_count = clips_service.get_clip_count_for_video(capture_id)
+                logger.info(f"Found {clips_count} clips in parliament_clips database for video {capture_id}")
+                
                 # Import the format_clips_for_supabase function
                 from backend.services.integration.supabase_export import format_clips_for_supabase
                 

@@ -6,8 +6,10 @@ import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, Security, HTTPException, Body, status
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from backend.api.deps import get_db, get_api_key
+from backend.core.config import settings
 from backend.db.models import CaptureSession, ParliamentTranscription, RecognitionProcess
 from backend.services.recognition.supabase_export import export_recognition_results
 import json
@@ -161,7 +163,7 @@ async def export_to_supabase(
         )
     
     # Get video path
-    video_path = video.output_file if video.output_file else None
+    video_path = video.video_path if video.video_path else (video.file_path if video.file_path else None)
     if not video_path or not os.path.exists(video_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

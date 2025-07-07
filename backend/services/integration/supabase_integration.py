@@ -603,29 +603,40 @@ class SupabaseIntegration:
                                     continue
                             else:
                                 # No member_id provided, try to get a valid one from Supabase
-                            # Direct calculation if they're already numeric
-                            simplified_clip['duration_seconds'] = round(float(end_timestamp) - float(start_timestamp), 3)
-                        elif isinstance(start_timestamp, str) and isinstance(end_timestamp, str):
-                            # Try to parse string timestamps (format: HH:MM:SS)
-                            try:
-                                start_parts = start_timestamp.split(':')
-                                end_parts = end_timestamp.split(':')
-                                
-                                if len(start_parts) == 3 and len(end_parts) == 3:
-                                    start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
-                                    end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
-                                    simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
-                            except Exception as e:
-                                logger.warning(f"Failed to parse string timestamps: {e}")
-                                # Try direct conversion as fallback
+                                logger.warning("No member_id provided, skipping clip")
+                                skipped_clips += 1
+                                continue
+                            
+                            # Calculate duration if we have valid timestamps
+                            start_timestamp = event.get('start_timestamp')
+                            end_timestamp = event.get('end_timestamp')
+                            
+                            if isinstance(start_timestamp, (int, float)) and isinstance(end_timestamp, (int, float)):
+                                # Direct calculation if they're already numeric
+                                simplified_clip['duration_seconds'] = round(float(end_timestamp) - float(start_timestamp), 3)
+                            elif isinstance(start_timestamp, str) and isinstance(end_timestamp, str):
+                                # Try to parse string timestamps (format: HH:MM:SS)
                                 try:
-                                    start_seconds = float(start_timestamp)
-                                    end_seconds = float(end_timestamp)
-                                    simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
-                                except:
-                                    pass
-                    except Exception as e:
-                        logger.warning(f"Failed to calculate duration_seconds: {e}")
+                                    start_parts = start_timestamp.split(':')
+                                    end_parts = end_timestamp.split(':')
+                                    
+                                    if len(start_parts) == 3 and len(end_parts) == 3:
+                                        start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
+                                        end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
+                                        simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse string timestamps: {e}")
+                                    # Try direct conversion as fallback
+                                    try:
+                                        start_seconds = float(start_timestamp)
+                                        end_seconds = float(end_timestamp)
+                                        simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                                    except Exception:
+                                        logger.warning(f"Failed to convert timestamps to float: {start_timestamp}, {end_timestamp}")
+                        except Exception as e:
+                            logger.warning(f"Failed to process clip: {e}")
+                            skipped_clips += 1
+                            continue
                 
                 # Ensure all required fields are present
                 missing_required = [field for field in required_fields if field not in simplified_clip]

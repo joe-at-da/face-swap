@@ -320,13 +320,14 @@ class ParliamentClipsIntegrationService:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Query clips for the given video ID
+            clips = []
+            
+            # First, query clips for the given video ID in metadata
             cursor.execute("""
                 SELECT * FROM parliament_clips 
                 WHERE json_extract(metadata, '$.video_id') = ?
             """, (str(video_id),))
             
-            clips = []
             for row in cursor.fetchall():
                 # Convert row to dictionary
                 clip = {
@@ -344,6 +345,37 @@ class ParliamentClipsIntegrationService:
                     'metadata': json.loads(row[11]) if row[11] else {}
                 }
                 clips.append(clip)
+            
+            # If no clips found, try searching by file path pattern
+            if not clips:
+                logger.info(f"No clips found by metadata video_id, checking by file path for video {video_id}")
+                cursor.execute("""
+                    SELECT * FROM parliament_clips 
+                    WHERE full_video_path LIKE ? OR full_video_path LIKE ?
+                """, (f"%/{video_id}.mp4", f"%\\{video_id}.mp4"))
+                
+                for row in cursor.fetchall():
+                    # Convert row to dictionary
+                    clip = {
+                        'id': row[0],
+                        'member_id': row[1],
+                        'transcript': row[2],
+                        'full_video_path': row[3],
+                        'start_timestamp': row[4],
+                        'end_timestamp': row[5],
+                        'confidence_score': row[6],
+                        'duration_seconds': row[7],
+                        'session_date': row[8],
+                        'created_at': row[9],
+                        'updated_at': row[10],
+                        'metadata': json.loads(row[11]) if row[11] else {}
+                    }
+                    # Add video_id to metadata if not present
+                    if clip['metadata'] is None:
+                        clip['metadata'] = {}
+                    if 'video_id' not in clip['metadata']:
+                        clip['metadata']['video_id'] = str(video_id)
+                    clips.append(clip)
             
             conn.close()
             
