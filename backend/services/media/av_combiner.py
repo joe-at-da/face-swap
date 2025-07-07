@@ -50,6 +50,23 @@ def combine_audio_video(
         else:
             audio_path = audio_url
             
+        # Verify if the files exist
+        video_exists = os.path.exists(video_path)
+        video_size = os.path.getsize(video_path) if video_exists else 0
+        logger.info(f"Video file check - Path: {video_path}, Exists: {video_exists}, Size: {video_size} bytes")
+        
+        audio_exists = os.path.exists(audio_path)
+        audio_size = os.path.getsize(audio_path) if audio_exists else 0
+        logger.info(f"Audio file check - Path: {audio_path}, Exists: {audio_exists}, Size: {audio_size} bytes")
+        
+        if not video_exists:
+            logger.error(f"Video file does not exist: {video_path}")
+            return {"success": False, "error": f"Video file not found: {video_path}"}
+            
+        if not audio_exists:
+            logger.error(f"Audio file does not exist: {audio_path}")
+            return {"success": False, "error": f"Audio file not found: {audio_path}"}
+            
         # Prepare FFmpeg command
         ffmpeg_cmd = [
             'ffmpeg',

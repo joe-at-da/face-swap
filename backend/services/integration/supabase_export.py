@@ -349,7 +349,21 @@ def export_recognition_results(
     # If audio_url is not provided, try to find the audio file using common patterns
     if not audio_url:
         video_name = os.path.splitext(os.path.basename(video_path))[0]
+        logger.info(f"Looking for audio file for video: {video_name}")
         audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+        logger.info(f"Searching in audio extracts directory: {audio_extracts_dir}")
+        
+        # Check if audio extracts directory exists
+        if os.path.exists(audio_extracts_dir):
+            logger.info(f"Audio extracts directory exists, contains: {os.listdir(audio_extracts_dir)}")
+        else:
+            logger.warning(f"Audio extracts directory does not exist: {audio_extracts_dir}")
+            # Try to create the directory
+            try:
+                os.makedirs(audio_extracts_dir, exist_ok=True)
+                logger.info(f"Created audio extracts directory: {audio_extracts_dir}")
+            except Exception as e:
+                logger.error(f"Failed to create audio extracts directory: {str(e)}")
         
         # Try common naming patterns for audio files
         potential_audio_files = [
@@ -364,13 +378,17 @@ def export_recognition_results(
             os.path.join(audio_extracts_dir, f"{video_name}.audio.aac"),
             os.path.join(audio_extracts_dir, f"{video_name}.aac"),
             os.path.join(audio_extracts_dir, f"{video_name}_audio.aac"),
+            # Try in the media directory as well
+            os.path.join(media_dir, f"{video_name}.audio.mp3"),
+            os.path.join(media_dir, f"{video_name}.mp3"),
+            os.path.join(media_dir, f"{video_name}_audio.mp3"),
         ]
         
         for audio_file in potential_audio_files:
             if os.path.exists(audio_file):
                 logger.info(f"Found audio file: {audio_file}")
-                # Convert to URL format for the combine_audio_video function
-                audio_url = f"/temp/audio_extracts/{os.path.basename(audio_file)}"
+                # Use the full path directly instead of a URL format
+                audio_url = audio_file
                 break
         
         if not audio_url:
@@ -479,10 +497,20 @@ def export_recognition_results(
     
     logger.info(f"Exported recognition results for video {video_file_id} to {export_dir}")
     
-    return {
+    # Ensure combined_url is properly set in the return value
+    result = {
         "video_export_path": video_export_path,
         "clips_export_path": clips_export_path,
         "recognition_export_path": recognition_export_path,
         "combined_av_url": combined_url,
+        "combined_av_path": combined_url,  # Add both keys for compatibility
         "has_transcription": transcription_data is not None
     }
+    
+    logger.info(f"Returning export result with combined AV path: {combined_url}")
+    if combined_url and os.path.exists(combined_url):
+        logger.info(f"Combined AV file exists, size: {os.path.getsize(combined_url)} bytes")
+    else:
+        logger.warning(f"Combined AV file does not exist or path is empty: {combined_url}")
+        
+    return result

@@ -250,7 +250,13 @@ class SupabaseIntegration:
             combined_url = export_result.get("combined_av_path", "") or export_result.get("combined_url", "")
             logger.info(f"Combined AV path from export_result: {combined_url}")
             
-            # If combined_url is not found in export_result, try to construct it
+            # Verify if the combined URL is valid and file exists
+            if combined_url:
+                file_exists = os.path.exists(combined_url)
+                file_size = os.path.getsize(combined_url) if file_exists else 0
+                logger.info(f"Combined AV file check - Exists: {file_exists}, Size: {file_size} bytes")
+            
+            # If combined_url is not found in export_result or file doesn't exist, try to find it
             if not combined_url or not os.path.exists(combined_url):
                 # Try to find the combined AV file in the media directory
                 from backend.core.config import settings
