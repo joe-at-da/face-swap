@@ -86,20 +86,40 @@ def format_clips_for_supabase(
     Returns:
         List of clips formatted for Supabase clip_creation queue
     """
+    # Log the structure of the recognition_results for debugging
+    logger.info(f"Recognition results keys: {list(recognition_results.keys())}")
+    if 'speaker_appearances' in recognition_results:
+        logger.info(f"Found {len(recognition_results.get('speaker_appearances', []))} speaker appearances")
+        # Log a sample speaker appearance if available
+        if recognition_results.get('speaker_appearances'):
+            sample = recognition_results['speaker_appearances'][0]
+            logger.info(f"Sample speaker appearance keys: {list(sample.keys())}")
+    
     clips = []
     
     # Process identified speakers from the traditional format
     for speaker in recognition_results.get("identified_speakers", []):
         for segment in speaker.get("segments", []):
+            # Ensure required fields are present
+            mp_id = speaker.get("mp_id")
+            start_time = segment.get("start_time")
+            end_time = segment.get("end_time")
+            
+            # Skip this segment if any required field is missing
+            if mp_id is None or start_time is None or end_time is None:
+                logger.warning(f"Skipping identified speaker segment with missing required fields: mp_id={mp_id}, start_time={start_time}, end_time={end_time}")
+                continue
+                
             clips.append({
                 "video_id": video_id,
-                "start_time": segment["start_time"],
-                "end_time": segment["end_time"],
-                "speaker_id": speaker["mp_id"],
-                "speaker_name": speaker["name"],
+                "start_timestamp": start_time,
+                "end_timestamp": end_time,
+                "member_id": mp_id,  # Use member_id instead of speaker_id
+                "speaker_name": speaker.get("name", "Unknown"),
                 "confidence": segment.get("confidence", 0.0),
                 "transcript": segment.get("transcript", ""),
                 "face_image_url": segment.get("face_image_url", ""),
+                "full_video_path": combined_av_url or "unknown_path",  # Ensure full_video_path is present
                 "metadata": {
                     "recognition_method": "facial",
                     "matched_by": "traditional",
@@ -109,15 +129,26 @@ def format_clips_for_supabase(
     
     # Process speaker appearances from our improved local database format
     for appearance in recognition_results.get("speaker_appearances", []):
+        # Ensure required fields are present
+        member_id = appearance.get("member_id")
+        start_time = appearance.get("start_time")
+        end_time = appearance.get("end_time")
+        
+        # Skip this appearance if any required field is missing
+        if member_id is None or start_time is None or end_time is None:
+            logger.warning(f"Skipping appearance with missing required fields: member_id={member_id}, start_time={start_time}, end_time={end_time}")
+            continue
+            
         clips.append({
             "video_id": video_id,
-            "start_time": appearance.get("start_time", 0),
-            "end_time": appearance.get("end_time", 0),
-            "speaker_id": appearance.get("member_id"),
+            "start_timestamp": start_time,
+            "end_timestamp": end_time,
+            "member_id": member_id,  # Ensure this is present
             "speaker_name": appearance.get("member_name", "Unknown"),
             "confidence": appearance.get("confidence", 0.0),
-            "transcript": appearance.get("transcript", ""),
+            "transcript": appearance.get("transcript", ""),  # Ensure transcript is present
             "face_image_url": appearance.get("face_image_url", ""),
+            "full_video_path": combined_av_url or "unknown_path",  # Ensure full_video_path is present
             "metadata": {
                 "recognition_method": "facial",
                 "matched_by": appearance.get("matched_by", "parliament_member_matcher"),
@@ -135,16 +166,27 @@ def format_clips_for_supabase(
                 if "start_time" not in event or "end_time" not in event:
                     continue
                     
+                # Ensure required fields are present
+                member_id = event.get("member_id")
+                start_time = event.get("start_time")
+                end_time = event.get("end_time")
+                
+                # Skip this event if any required field is missing
+                if member_id is None or start_time is None or end_time is None:
+                    logger.warning(f"Skipping timeline event with missing required fields: member_id={member_id}, start_time={start_time}, end_time={end_time}")
+                    continue
+                    
                 # Create clip for this timeline event
                 clips.append({
                     "video_id": video_id,
-                    "start_time": event.get("start_time", 0),
-                    "end_time": event.get("end_time", 0),
-                    "speaker_id": event.get("member_id"),
+                    "start_timestamp": start_time,
+                    "end_timestamp": end_time,
+                    "member_id": member_id,  # Use member_id instead of speaker_id
                     "speaker_name": event.get("name", "Unknown"),
                     "confidence": event.get("confidence", 0.0),
-                    "transcript": event.get("text", ""),
+                    "transcript": event.get("text", "") or "No transcript available",  # Ensure transcript is not empty
                     "face_image_url": event.get("face_image_url", ""),
+                    "full_video_path": combined_av_url or "unknown_path",  # Ensure full_video_path is present
                     "metadata": {
                         "recognition_method": event.get("recognition_method", "multimodal"),
                         "matched_by": event.get("matched_by", "timeline"),
@@ -161,15 +203,20 @@ def format_clips_for_supabase(
             # Assume each appearance is 5 seconds if end_time not provided
             end_time = appearance.get("end_time", start_time + 5)
             
+            # For unidentified faces, we need to use a default member_id since it's required
+            # Use 9999 as a special ID for unidentified speakers
+            default_member_id = 9999
+            
             clips.append({
                 "video_id": video_id,
-                "start_time": start_time,
-                "end_time": end_time,
-                "speaker_id": None,
+                "start_timestamp": start_time,
+                "end_timestamp": end_time,
+                "member_id": default_member_id,  # Use default member_id for unidentified faces
                 "speaker_name": "Unknown",
                 "confidence": 0.0,
-                "transcript": "",
+                "transcript": "Unidentified speaker",  # Provide a default transcript
                 "face_image_url": face.get("filename", ""),
+                "full_video_path": combined_av_url or "unknown_path",  # Ensure full_video_path is present
                 "metadata": {
                     "recognition_method": "facial",
                     "matched_by": "unidentified",
@@ -178,31 +225,67 @@ def format_clips_for_supabase(
                 }
             })
     
-    # Remove duplicate clips based on time ranges and speaker_id
+    # Remove duplicate clips based on time ranges and member_id
     # This prevents multiple entries for the same speaker in the same time segment
     unique_clips = {}
     for clip in clips:
-        # Create a key based on time range and speaker_id
-        key = f"{clip['start_time']:.2f}_{clip['end_time']:.2f}_{clip['speaker_id']}"
+        # Ensure all required fields are present before deduplication
+        if 'member_id' not in clip or 'start_timestamp' not in clip or 'end_timestamp' not in clip:
+            logger.warning(f"Skipping clip with missing fields during deduplication: {clip.keys()}")
+            continue
+            
+        # Create a key based on time range and member_id
+        start_time = clip['start_timestamp']
+        end_time = clip['end_timestamp']
+        member_id = clip['member_id']
+        key = f"{start_time:.2f}_{end_time:.2f}_{member_id}"
         
-        # Prioritize clips with MP associations (non-None speaker_id)
-        has_mp_association = clip['speaker_id'] is not None
-        existing_has_mp = key in unique_clips and unique_clips[key]['speaker_id'] is not None
+        # Prioritize clips with real MP associations (member_id < 9000)
+        # This ensures our default unidentified member_id (9999) gets lower priority
+        has_real_mp = isinstance(member_id, int) and member_id < 9000
+        existing_has_real_mp = key in unique_clips and isinstance(unique_clips[key].get('member_id'), int) and unique_clips[key]['member_id'] < 9000
         
         # Logic for deciding which clip to keep:
         # 1. If this is a new unique clip, keep it
-        # 2. If this clip has an MP association and existing doesn't, replace it
-        # 3. If both have MP associations or both don't, use the one with higher confidence
+        # 2. If this clip has a real MP association and existing doesn't, replace it
+        # 3. If both have real MP associations or both don't, use the one with higher confidence
         if (key not in unique_clips or 
-            (has_mp_association and not existing_has_mp) or
-            (has_mp_association == existing_has_mp and clip['confidence'] > unique_clips[key]['confidence'])):
+            (has_real_mp and not existing_has_real_mp) or
+            (has_real_mp == existing_has_real_mp and clip['confidence'] > unique_clips[key]['confidence'])):
             unique_clips[key] = clip
     
     # Log the number of clips with MP associations
-    mp_clips = [clip for clip in unique_clips.values() if clip['speaker_id'] is not None]
+    mp_clips = [clip for clip in unique_clips.values() if clip.get('member_id') is not None and clip.get('member_id') != 9999]
     logger.info(f"Formatted {len(unique_clips)} unique clips for Supabase, {len(mp_clips)} with MP associations")
     
-    return list(unique_clips.values())
+    # Add detailed debug logging to help diagnose issues
+    if len(unique_clips) == 0:
+        logger.warning("No clips were formatted for Supabase export")
+        # Log the keys in recognition_results to help diagnose
+        logger.warning(f"Recognition results keys: {list(recognition_results.keys())}")
+        # Log counts of various data sources
+        logger.warning(f"Identified speakers: {len(recognition_results.get('identified_speakers', []))}")
+        logger.warning(f"Speaker appearances: {len(recognition_results.get('speaker_appearances', []))}")
+        logger.warning(f"Timeline events: {len(recognition_results.get('timeline', []))}")
+        logger.warning(f"Unidentified faces: {len(recognition_results.get('unidentified_faces', []))}")
+    elif len(mp_clips) == 0:
+        logger.warning("No clips with real MP associations were found")
+    
+    # Verify all clips have the required fields before returning
+    valid_clips = []
+    for clip in unique_clips.values():
+        missing_fields = []
+        for field in ['member_id', 'start_timestamp', 'end_timestamp', 'transcript', 'full_video_path']:
+            if field not in clip or clip[field] is None:
+                missing_fields.append(field)
+        
+        if missing_fields:
+            logger.warning(f"Clip still missing required fields after formatting: {missing_fields}")
+        else:
+            valid_clips.append(clip)
+    
+    logger.info(f"Returning {len(valid_clips)} valid clips after final validation")
+    return valid_clips
 
 
 def export_to_json(data: Dict[str, Any], output_path: str) -> None:
