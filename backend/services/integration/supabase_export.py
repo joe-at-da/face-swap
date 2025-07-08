@@ -92,10 +92,10 @@ def format_clips_for_supabase(
         if not member_id:
             return None
             
-        # Skip default_unknown
+        # Handle default_unknown - use a special ID instead of skipping
         if member_id == "default_unknown":
-            logger.warning("Skipping default_unknown member_id")
-            return None
+            logger.warning("Using special ID for default_unknown member_id")
+            return -1  # Use -1 as a special ID for unknown members
             
         # Handle UUID format (which can't be converted to int)
         if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:

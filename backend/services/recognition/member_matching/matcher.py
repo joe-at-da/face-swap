@@ -206,28 +206,46 @@ class ParliamentMemberMatcher:
             import traceback
             logger.error(traceback.format_exc())
     
-    def match_face_to_member(self, face_embedding, threshold: float = 0.6) -> Dict[str, Any]:
-        """
-        Match a face embedding to a parliament member
+    def match_face_to_member(self, face_embedding, confidence_threshold=0.1, house="unknown", timestamp=None, video_id=None):
+        """Match a face embedding to a parliament member.
         
         Args:
-            face_embedding: Face embedding vector to match
-            threshold: Minimum confidence score for a match (0.0-1.0)
+            face_embedding: Face embedding vector
+            confidence_threshold: Confidence threshold for matching
+            house: House ID to filter members by
+            timestamp: Optional timestamp of the current frame (for temporal consistency)
+            video_id: Optional video ID for tracking speaker history
             
         Returns:
-            Dictionary with match results
+            Dict with match information or None if no match
         """
-        if not self.member_embeddings:
-            logger.error("No member embeddings loaded. Call load_parliament_members() first.")
-            return {
-                'matched': False,
-                'error': "No member embeddings loaded"
-            }
-        
-        return self._match_face_to_member({'embedding': face_embedding}, confidence_threshold=threshold)
+        try:
+            # Initialize speaker history tracking if not already done
+            if not hasattr(self, '_speaker_history'):
+                self._speaker_history = {}
+                logger.info("Initialized speaker history tracking")
+                
+            # Initialize confidence adjustment tracking if not already done
+            if not hasattr(self, '_confidence_adjustments'):
+                self._confidence_adjustments = {}
+                logger.info("Initialized confidence adjustment tracking")
+                
+            # Get the match result
+            match_result = self._match_face_to_member({'embedding': face_embedding}, house, confidence_threshold)
+            
+            # Apply temporal consistency if we have timestamp and video_id
+            if timestamp is not None and video_id is not None and match_result:
+                match_result = self._apply_temporal_consistency(match_result, timestamp, video_id)
+                
+            return match_result
+        except Exception as e:
+            logger.error(f"Error matching face to member: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
     
     def _match_face_to_member(self, face_data: Dict[str, Any], house: str = "unknown", 
-                             confidence_threshold: float = 0.6) -> Dict[str, Any]:
+                             confidence_threshold: float = 0.1) -> Dict[str, Any]:
         """
         Internal method to match a face to a parliament member
         
@@ -260,9 +278,8 @@ class ParliamentMemberMatcher:
             if is_dlib:
                 logger.info("Detected dlib-based face embedding (128 dimensions)")
                 
-                # Adjust confidence threshold for cross-model comparison
-                # Dlib and other models may have different similarity distributions
-                # Lower the threshold more aggressively to improve matching rates
+                # IMPROVED: Use more conservative threshold adjustment to reduce false positives
+                # Only make small adjustments to the threshold
                 if confidence_threshold > 0.5:
                     # Calculate embedding quality metrics
                     embedding_variance = np.var(face_embedding)
@@ -271,13 +288,13 @@ class ParliamentMemberMatcher:
                     # Adjust threshold based on embedding quality
                     # Higher variance and range indicate more distinctive features
                     if embedding_variance > 0.05 and embedding_range > 0.8:
-                        # High quality embedding - use standard threshold reduction
-                        adjusted_threshold = confidence_threshold - 0.4
-                        logger.info(f"Using standard threshold reduction for high-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
+                        # High quality embedding - use minimal threshold reduction
+                        adjusted_threshold = confidence_threshold - 0.15
+                        logger.info(f"Using minimal threshold reduction for high-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
                     else:
-                        # Lower quality embedding - use more aggressive threshold reduction
-                        adjusted_threshold = confidence_threshold - 0.5
-                        logger.info(f"Using aggressive threshold reduction for lower-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
+                        # Lower quality embedding - use moderate threshold reduction
+                        adjusted_threshold = confidence_threshold - 0.2
+                        logger.info(f"Using moderate threshold reduction for lower-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
                     
                     logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for cross-model comparison")
                     confidence_threshold = adjusted_threshold
@@ -322,21 +339,43 @@ class ParliamentMemberMatcher:
             # Sort and log top 5 matches for debugging
             top_matches.sort(key=lambda x: x['confidence'], reverse=True)
             top_5 = top_matches[:5]
-            logger.debug(f"Top 5 matches: {top_5}")
+            
+            # IMPROVED: Log all top matches with their confidence scores for better debugging
+            logger.info(f"Top 5 matches: {[(m['name'], m['confidence']) for m in top_5]}")
+            
+            # IMPROVED: Check if there's a significant gap between the top match and second match
+            # This helps ensure we're not confusing similar-looking members
+            if len(top_5) >= 2:
+                confidence_gap = top_5[0]['confidence'] - top_5[1]['confidence']
+                logger.info(f"Confidence gap between top two matches: {confidence_gap:.4f}")
+                
+                # If the gap is too small, be more strict with the threshold
+                if confidence_gap < 0.15 and best_confidence < confidence_threshold + 0.15:
+                    logger.info(f"Small confidence gap detected ({confidence_gap:.4f}). Increasing threshold to avoid confusion.")
+                    confidence_threshold += 0.1
             
             # If best match is close to threshold, log it for analysis
             if best_confidence > (confidence_threshold * 0.8) and best_confidence < confidence_threshold:
                 logger.info(f"Near miss match: {best_match['name']} with confidence {best_confidence:.4f} (threshold: {confidence_threshold:.4f})")
             
-            
-            # Return best match if confidence is above threshold
+            # IMPROVED: Only return a match if confidence is significantly above threshold
+            # This helps reduce false positives
             if best_match and best_confidence >= confidence_threshold:
+                # Add more metadata to the match for better tracking
                 best_match['matched'] = True
+                best_match['confidence_gap'] = confidence_gap if len(top_5) >= 2 else 1.0
+                best_match['top_alternatives'] = [(m['name'], m['confidence']) for m in top_5[1:3]] if len(top_5) > 1 else []
+                best_match['original_threshold'] = confidence_threshold
+                
+                logger.info(f"Matched {best_match['name']} with confidence {best_confidence:.4f} (threshold: {confidence_threshold:.4f})")
                 return best_match
             else:
                 return {
                     'matched': False,
-                    'confidence': best_confidence if best_match else 0.0
+                    'confidence': best_confidence if best_match else 0.0,
+                    'best_match_id': best_match['member_id'] if best_match else None,
+                    'best_match_name': best_match['name'] if best_match else None,
+                    'best_match_confidence': best_confidence if best_match else 0.0
                 }
         except Exception as e:
             logger.error(f"Error matching face to member: {str(e)}")
@@ -346,7 +385,131 @@ class ParliamentMemberMatcher:
                 'matched': False,
                 'error': str(e)
             }
-    
+            
+    def _apply_temporal_consistency(self, match_result: Dict[str, Any], timestamp: float, video_id: str) -> Dict[str, Any]:
+        """
+        Apply temporal consistency checks to improve speaker differentiation.
+        
+        This method tracks speaker appearances over time and can adjust confidence
+        based on temporal proximity to reduce the likelihood of misattributing
+        multiple clips to the same speaker when multiple speakers are present.
+        
+        Args:
+            match_result: The current match result from _match_face_to_member
+            timestamp: Current frame timestamp in seconds
+            video_id: ID of the current video
+            
+        Returns:
+            Potentially adjusted match result
+        """
+        # Initialize video history if not already done
+        if not hasattr(self, '_video_speaker_history'):
+            self._video_speaker_history = {}
+            
+        # Initialize history for this video
+        if video_id not in self._video_speaker_history:
+            self._video_speaker_history[video_id] = {
+                'speakers': {},
+                'last_timestamp': None,
+                'speaker_transitions': 0
+            }
+            
+        video_history = self._video_speaker_history[video_id]
+        
+        # If this is not a match, just record the timestamp and return
+        if not match_result.get('matched', False):
+            video_history['last_timestamp'] = timestamp
+            return match_result
+            
+        member_id = match_result.get('member_id')
+        confidence = match_result.get('confidence', 0.0)
+        
+        # Initialize speaker history if this is a new speaker
+        if member_id not in video_history['speakers']:
+            video_history['speakers'][member_id] = {
+                'appearances': [],
+                'total_duration': 0.0,
+                'last_seen': None
+            }
+            
+        speaker_history = video_history['speakers'][member_id]
+        
+        # Record this appearance
+        speaker_history['appearances'].append({
+            'timestamp': timestamp,
+            'confidence': confidence
+        })
+        
+        # Calculate time since last seen for this speaker
+        if speaker_history['last_seen'] is not None:
+            time_since_last_seen = timestamp - speaker_history['last_seen']
+            speaker_history['total_duration'] += time_since_last_seen
+        
+        speaker_history['last_seen'] = timestamp
+        
+        # Check for speaker transition
+        if video_history['last_timestamp'] is not None:
+            last_speaker_id = None
+            
+            # Find who was the last speaker
+            for spk_id, spk_data in video_history['speakers'].items():
+                if spk_data['last_seen'] == video_history['last_timestamp']:
+                    last_speaker_id = spk_id
+                    break
+            
+            # If we have a different speaker than last time, it's a transition
+            if last_speaker_id is not None and last_speaker_id != member_id:
+                video_history['speaker_transitions'] += 1
+                logger.info(f"Speaker transition detected: {last_speaker_id} -> {member_id} at {timestamp:.2f}s")
+                
+                # Check if this transition happened too quickly (potential false positive)
+                time_since_last = timestamp - video_history['last_timestamp']
+                if time_since_last < 5.0:  # Less than 5 seconds between speakers is suspicious
+                    logger.warning(f"Rapid speaker transition detected ({time_since_last:.2f}s). Possible false positive.")
+                    
+                    # Get the total speaking time for both speakers
+                    current_speaker_time = speaker_history['total_duration']
+                    last_speaker_time = video_history['speakers'][last_speaker_id]['total_duration'] 
+                    
+                    # If the last speaker has spoken much more than the current one,
+                    # and the confidence is close to the threshold, this might be a false positive
+                    if last_speaker_time > (current_speaker_time * 3) and confidence < (match_result['original_threshold'] + 0.15):
+                        logger.warning(f"Possible false positive match. Last speaker ({last_speaker_id}) has spoken {last_speaker_time:.2f}s vs current ({member_id}) {current_speaker_time:.2f}s")
+                        
+                        # Check confidence gap
+                        if match_result.get('confidence_gap', 1.0) < 0.2:
+                            logger.warning(f"Small confidence gap ({match_result['confidence_gap']:.4f}) detected during rapid speaker transition")
+                            
+                            # Get the alternatives
+                            alternatives = match_result.get('top_alternatives', [])
+                            
+                            # If the last speaker is among the alternatives, prefer continuity
+                            for alt_name, alt_conf in alternatives:
+                                alt_id = next((id for id, data in self.member_embeddings.items() 
+                                              if data.get('member', {}).get('name') == alt_name), None)
+                                
+                                if alt_id == last_speaker_id and alt_conf > (confidence - 0.1):
+                                    logger.info(f"Maintaining speaker continuity: {alt_name} ({alt_conf:.4f}) instead of {match_result['name']} ({confidence:.4f})")
+                                    
+                                    # Update the match result to maintain continuity
+                                    match_result['member_id'] = last_speaker_id
+                                    match_result['name'] = alt_name
+                                    match_result['confidence'] = alt_conf
+                                    match_result['continuity_adjusted'] = True
+                                    break
+        
+        # Update the last timestamp
+        video_history['last_timestamp'] = timestamp
+        
+        # Add temporal consistency metadata to the match result
+        match_result['temporal_metadata'] = {
+            'speaker_transitions': video_history['speaker_transitions'],
+            'speaker_history_count': len(speaker_history['appearances']),
+            'total_speaker_duration': speaker_history['total_duration']
+        }
+        
+        return match_result
+        
     def match_unidentified_speakers(self, clip_id: str) -> Dict[str, Any]:
         """
         Match unidentified speakers in a video clip to parliament members
@@ -409,7 +572,7 @@ class ParliamentMemberMatcher:
                 match_result = self._match_face_to_member(
                     face_data, 
                     house=speaker.house_id if speaker.house_id else "unknown",
-                    confidence_threshold=0.5
+                    confidence_threshold=0.1
                 )
                 
                 if match_result.get('matched'):

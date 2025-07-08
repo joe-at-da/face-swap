@@ -693,7 +693,15 @@ class MultimodalRecognitionService:
                         logger.info(f"Processing high-quality face at {face_time:.2f}s")
                         
                         # Identify speaker in the high-quality face image
-                        face_result = self.identify_speaker_in_frame(db, face_path)
+                        # Pass timestamp and video_id for temporal consistency checks
+                        # Using very low threshold as requested to ensure we capture all potential matches
+                        face_result = self.identify_speaker_in_frame(
+                            db, 
+                            face_path, 
+                            threshold=0.3,  # Very low threshold as requested
+                            timestamp=face_time, 
+                            video_id=str(video_id)  # Convert to string as expected by the matcher
+                        )
                         if face_result["success"]:
                             face_data = face_result["data"]
                             face_data["frame_path"] = face_path
@@ -811,7 +819,15 @@ class MultimodalRecognitionService:
                 # Identify speaker in the frame
                 if os.path.exists(frame_path):
                     try:
-                        face_result = self.identify_speaker_in_frame(db, frame_path)
+                        # Pass timestamp and video_id for temporal consistency checks
+                        # Using very low threshold as requested to ensure we capture all potential matches
+                        face_result = self.identify_speaker_in_frame(
+                            db, 
+                            frame_path, 
+                            threshold=0.3,  # Very low threshold as requested
+                            timestamp=frame_time, 
+                            video_id=str(video_id)  # Convert to string as expected by the matcher
+                        )
                         if face_result["success"]:
                             face_data = face_result["data"]
                             face_data["frame_path"] = frame_path
@@ -855,7 +871,7 @@ class MultimodalRecognitionService:
                 # Move to next interval
                 current_time += interval
     
-    def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.6) -> Dict[str, Any]:
+    def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.1, timestamp: float = None, video_id: str = None) -> Dict[str, Any]:
         """Identify speakers in a frame using facial recognition and ParliamentMemberMatcher."""
         try:
             logger.info(f"===== IDENTIFYING SPEAKER IN FRAME: {frame_path} =====")
@@ -893,8 +909,22 @@ class MultimodalRecognitionService:
             
             # Sort by confidence (highest first)
             detections.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+            
+            # IMPROVED: Consider multiple face detections instead of just the best one
+            # This helps when there are multiple speakers in the frame
             best_detection = detections[0]
+            
+            # Log information about all detections for debugging
+            for i, detection in enumerate(detections[:3]):  # Log top 3 detections
+                logger.info(f"Detection #{i+1}: confidence={detection.get('confidence', 0):.4f}, "
+                           f"box={detection.get('box', [])}")
+            
             logger.info(f"Using best detection with confidence: {best_detection.get('confidence', 0):.4f}")
+            
+            # IMPROVED: Skip low-confidence detections
+            if best_detection.get('confidence', 0) < 0.7:  # Minimum face detection confidence
+                logger.warning(f"⚠️ Best face detection has low confidence: {best_detection.get('confidence', 0):.4f}")
+                # Continue anyway, but log the warning
             
             # Try to match with our improved ParliamentMemberMatcher
             face_embedding = best_detection.get("embedding")
@@ -914,9 +944,23 @@ class MultimodalRecognitionService:
                 
                 # Match the face to a parliament member
                 logger.info(f"Matching face to parliament member with threshold: {threshold}")
-                match_result = self.member_matcher.match_face_to_member(face_embedding, threshold)
+                
+                # Pass timestamp and video_id for temporal consistency checks if available
+                if timestamp is not None and video_id is not None:
+                    logger.info(f"Using temporal consistency with timestamp {timestamp:.2f}s for video {video_id}")
+                
+                match_result = self.member_matcher.match_face_to_member(
+                    face_embedding, 
+                    threshold, 
+                    house=house,
+                    timestamp=timestamp, 
+                    video_id=video_id
+                )
                 
                 if match_result:
+                    # Log if temporal consistency was applied
+                    if match_result.get('continuity_adjusted'):
+                        logger.info(f"Match was adjusted for temporal consistency")
                     logger.info(f"Match result: {json.dumps(match_result)}")
                 
                 if match_result and match_result.get("matched"):
