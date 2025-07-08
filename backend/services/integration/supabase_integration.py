@@ -476,6 +476,11 @@ class SupabaseIntegration:
                                         
                                         # Update and commit
                                         rec_process.recognition_results["supabase_urls"]["combined_av_url"] = supabase_url
+                                        
+                                        # Convert to JSON string before saving to database
+                                        if isinstance(rec_process.recognition_results, dict):
+                                            rec_process.recognition_results = json.dumps(rec_process.recognition_results)
+                                            
                                         db_session.commit()
                                         
                                         # Verify the update

@@ -341,7 +341,8 @@ def export_recognition_results(
                         rec_results['supabase_urls'] = {}
                     
                     rec_results['supabase_urls']['combined_av_url'] = supabase_url
-                    video.recognition_results = rec_results
+                    # Ensure we're storing a JSON string, not a Python dict
+                    video.recognition_results = json.dumps(rec_results) if isinstance(rec_results, dict) else rec_results
                 
                 db_session.commit()
                 logger.info(f"Updated CaptureSession record with Supabase URL in JSON fields: {supabase_url}")
