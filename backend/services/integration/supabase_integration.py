@@ -241,21 +241,50 @@ class SupabaseIntegration:
             "supabase_urls": {},
             "queue_responses": {}
         }
-                # Skip uploading JSON files to Supabase
+        
+        # Skip uploading JSON files to Supabase
         logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
         export_urls = {}
         
         # Upload ONLY the combined AV file if requested
         if upload_media:
-            # Check if combined AV file was created and upload it directly
-            combined_url = export_result.get("combined_av_path", "") or export_result.get("combined_av_url", "") or export_result.get("combined_url", "")
-            logger.info(f"Combined AV path from export_result: {combined_url}")
+            logger.warning(f"🔍 DEBUG: Looking for combined AV file in export_result keys: {list(export_result.keys())}")
+
+        
+            # Check all possible keys where the combined AV file path might be stored
+            combined_url = None
+            possible_keys = ["combined_av_path", "combined_av_url", "combined_url", "combined_path", "av_path"]
+            
+            for key in possible_keys:
+                if key in export_result and export_result[key]:
+                    combined_url = export_result[key]
+                    logger.warning(f"🔍 Found combined AV path in export_result[{key}]: {combined_url}")
+                    break
+                
+            # If still not found, check if it's nested in a dictionary
+            if not combined_url:
+                for key, value in export_result.items():
+                    if isinstance(value, dict) and any(av_key in value for av_key in possible_keys):
+                        for av_key in possible_keys:
+                            if av_key in value and value[av_key]:
+                                combined_url = value[av_key]
+                                logger.warning(f"🔍 Found nested combined AV path in export_result[{key}][{av_key}]: {combined_url}")
+                                break
+                        if combined_url:
+                            break
+        
+            # If still not found, check if video_path might contain the combined file
+            if not combined_url and "video_path" in export_result and export_result["video_path"]:
+                video_path = export_result["video_path"]
+                if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+                    logger.warning(f"🔍 Using video_path as fallback for combined AV file: {video_path}")
+                    combined_url = video_path
             
             # Verify if the combined URL is valid and file exists
             if combined_url:
                 file_exists = os.path.exists(combined_url)
                 file_size = os.path.getsize(combined_url) if file_exists else 0
-                logger.info(f"Combined AV file check - Exists: {file_exists}, Size: {file_size} bytes")
+                logger.warning(f"🔍 Combined AV file check - Exists: {file_exists}, Size: {file_size} bytes, Path: {combined_url}")
                 
                 # If file doesn't exist or has zero size, log a clear error
                 if not file_exists:

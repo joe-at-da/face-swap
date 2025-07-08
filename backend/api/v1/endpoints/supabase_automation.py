@@ -348,34 +348,65 @@ async def process_parliament_tv_to_supabase(
                         else:
                             logger.error(f"No suitable video file found for session {capture_id}")
                     
-                    # Call the export function with detailed logging
-                    logger.warning(f"🚀 CALLING export_and_upload_recognition for video_id={capture_id}")
-                    export_result = supabase.export_and_upload_recognition(
-                        video_path=video_file_path,
-                        recognition_results=serializable_recognition_data,
-                        video_metadata=serializable_video_metadata,
-                        db_session=db,
-                        video_id=capture_id,
-                        upload_media=True
-                    )
-                    logger.info(f"Export result for session {capture_id}: {export_result}")
-                except Exception as e:
-                    logger.error(f"Error in export_and_upload_recognition: {str(e)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    export_result = {"error": str(e), "success": False}
-                
-                # Get the Supabase URL for the uploaded combined AV file
-                full_video_url = None
-                if export_result and "supabase_urls" in export_result:
-                    if isinstance(export_result["supabase_urls"], dict):
-                        full_video_url = export_result["supabase_urls"].get("combined_av_url")
+                    # Export recognition results to Supabase
+                    try:
+                        logger.warning(f"🚀 CALLING export_and_upload_recognition for video_id={capture_id}")
+                        export_result = supabase.export_and_upload_recognition(
+                            video_path=video_file_path,
+                            recognition_results=serializable_recognition_data,
+                            video_metadata=serializable_video_metadata,
+                            db_session=db,
+                            video_id=capture_id,
+                            upload_media=True
+                        )
+                        logger.info(f"Export result for session {capture_id}: {export_result}")
+                    except Exception as e:
+                        logger.error(f"Error in export_and_upload_recognition: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        export_result = {"error": str(e), "success": False}
                     
-                logger.info(f"Full video URL from export: {full_video_url}")
-                
-                # Process and save member clips to Supabase
-                try:
-                    # Use the SupabaseService with service role for privileged operations
+                    # Get the full video URL from the export result
+                    full_video_url = None
+                    if export_result and "supabase_urls" in export_result:
+                        if isinstance(export_result["supabase_urls"], dict):
+                            full_video_url = export_result["supabase_urls"].get("combined_av_url")
+                            logger.warning(f"🔍 Found full_video_url in export_result[supabase_urls][combined_av_url]: {full_video_url}")
+                    
+                    # If full_video_url is still None, check if it's available in the capture session
+                    if not full_video_url:
+                        capture = db.query(CaptureSession).filter(CaptureSession.id == capture_id).first()
+                        if capture and capture.supabase_url:
+                            full_video_url = capture.supabase_url
+                            logger.warning(f"🔍 Using supabase_url from CaptureSession as fallback: {full_video_url}")
+                    
+                    # If still None, check if there's a combined AV file in the media directory
+                    if not full_video_url:
+                        from backend.core.config import settings
+                        media_dir = settings.MEDIA_STORAGE_PATH
+                        import glob, os
+                        combined_files = glob.glob(os.path.join(media_dir, f"combined_av_{capture_id}_*.mp4"))
+                        if combined_files:
+                            # Use the most recent file if multiple exist
+                            combined_files.sort(key=os.path.getmtime, reverse=True)
+                            combined_url = combined_files[0]
+                            logger.warning(f"🔍 Found combined AV file in media directory: {combined_url}")
+                            
+                            # Try to upload it to Supabase
+                            try:
+                                # Use the upload_media_to_supabase method which internally calls upload_full_video
+                                upload_result = supabase.upload_media_to_supabase(video_path=combined_url)
+                                if "combined_av_url" in upload_result:
+                                    full_video_url = upload_result.get("combined_av_url")
+                                    logger.warning(f"🔍 Successfully uploaded combined AV file to Supabase: {full_video_url}")
+                            except Exception as e:
+                                logger.error(f"Error uploading combined AV file to Supabase: {str(e)}")
+                                import traceback
+                                logger.error(f"Upload traceback: {traceback.format_exc()}")
+                    
+                    logger.info(f"Full video URL from export: {full_video_url}")
+                    
+                    # Initialize SupabaseService for saving member clips
                     logger.info(f"Initializing SupabaseService with service role for saving member clips for session {capture_id}")
                     supabase_service = SupabaseService(use_service_role=True)
                     
