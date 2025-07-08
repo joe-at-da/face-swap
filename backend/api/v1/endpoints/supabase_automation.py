@@ -233,11 +233,17 @@ async def process_parliament_tv_to_supabase(
                 
                 # Step 5: Export to Supabase
                 # Get recognition results
+                logger.info(f"Retrieving recognition results for session {capture_id} for Supabase export")
                 recognition_data = recognition_service.get_recognition_results(capture_id)
                 
-                if not recognition_data:
+                # Log the recognition data structure (not the full content)
+                if recognition_data:
+                    logger.info(f"Recognition data retrieved for session {capture_id}. Keys: {list(recognition_data.keys())}")
+                    logger.info(f"Recognition data type: {type(recognition_data)}")
+                else:
                     logger.error(f"No recognition data found for session {capture_id}")
-                    return
+                    # Don't return here, try to continue with empty data for diagnostic purposes
+                    recognition_data = {}
                 
                 # Get video metadata
                 db.refresh(capture)
@@ -276,12 +282,31 @@ async def process_parliament_tv_to_supabase(
                 }
                 
                 # Export to Supabase using service role for privileged operations
+                logger.info(f"Initializing SupabaseIntegration for export of session {capture_id}")
                 supabase = SupabaseIntegration()
                 
                 # Ensure all metadata is properly serializable using the utility function
                 # This handles SQLAlchemy MetaData objects, datetime objects, and other non-serializable types
-                serializable_recognition_data = make_json_serializable(recognition_data)
-                serializable_video_metadata = make_json_serializable(video_metadata)
+                logger.info(f"Serializing recognition data and video metadata for session {capture_id}")
+                try:
+                    serializable_recognition_data = make_json_serializable(recognition_data)
+                    logger.info(f"Successfully serialized recognition data for session {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error serializing recognition data: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    # Create a minimal serializable version
+                    serializable_recognition_data = {"error": "Serialization failed", "original_keys": list(recognition_data.keys()) if isinstance(recognition_data, dict) else "Not a dict"}
+                
+                try:
+                    serializable_video_metadata = make_json_serializable(video_metadata)
+                    logger.info(f"Successfully serialized video metadata for session {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error serializing video metadata: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    # Create a minimal serializable version
+                    serializable_video_metadata = {"video_id": capture_id, "error": "Serialization failed"}
                 
                 # Get the combined AV path from process metadata if available
                 process = db.query(RecognitionProcess).filter(RecognitionProcess.video_id == capture_id).first()
@@ -308,14 +333,37 @@ async def process_parliament_tv_to_supabase(
                         logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 logger.info(f"Exporting recognition results to Supabase for session {capture_id} with video path: {video_file_path}")
-                export_result = supabase.export_and_upload_recognition(
-                    video_path=video_file_path,
-                    recognition_results=serializable_recognition_data,
-                    video_metadata=serializable_video_metadata,
-                    db_session=db,
-                    video_id=capture_id,
-                    upload_media=True
-                )
+                try:
+                    # Check if the video file exists before attempting to export
+                    if os.path.exists(video_file_path):
+                        logger.info(f"Video file exists at {video_file_path}, size: {os.path.getsize(video_file_path)} bytes")
+                    else:
+                        logger.warning(f"Video file does not exist at {video_file_path}, checking for alternatives")
+                        # Try to find the file in the media directory
+                        media_dir = "/app/data/media"
+                        potential_files = [f for f in os.listdir(media_dir) if str(capture_id) in f and f.endswith('.mp4')]
+                        if potential_files:
+                            video_file_path = os.path.join(media_dir, potential_files[0])
+                            logger.info(f"Found alternative video file: {video_file_path}")
+                        else:
+                            logger.error(f"No suitable video file found for session {capture_id}")
+                    
+                    # Call the export function with detailed logging
+                    logger.warning(f"🚀 CALLING export_and_upload_recognition for video_id={capture_id}")
+                    export_result = supabase.export_and_upload_recognition(
+                        video_path=video_file_path,
+                        recognition_results=serializable_recognition_data,
+                        video_metadata=serializable_video_metadata,
+                        db_session=db,
+                        video_id=capture_id,
+                        upload_media=True
+                    )
+                    logger.info(f"Export result for session {capture_id}: {export_result}")
+                except Exception as e:
+                    logger.error(f"Error in export_and_upload_recognition: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    export_result = {"error": str(e), "success": False}
                 
                 # Get the Supabase URL for the uploaded combined AV file
                 full_video_url = None
@@ -328,9 +376,23 @@ async def process_parliament_tv_to_supabase(
                 # Process and save member clips to Supabase
                 try:
                     # Use the SupabaseService with service role for privileged operations
+                    logger.info(f"Initializing SupabaseService with service role for saving member clips for session {capture_id}")
                     supabase_service = SupabaseService(use_service_role=True)
                     
+                    # First run the synchronization script to ensure member IDs are properly synchronized
+                    logger.info(f"Running member ID synchronization script before saving clips for session {capture_id}")
+                    try:
+                        from backend.services.integration.sync_parliament_clip_member_ids import sync_parliament_clip_member_ids
+                        sync_result = sync_parliament_clip_member_ids(db)
+                        logger.info(f"Synchronized member IDs between SQLite and PostgreSQL: {sync_result}")
+                    except Exception as sync_error:
+                        logger.error(f"Error synchronizing member IDs: {str(sync_error)}")
+                        import traceback
+                        logger.error(f"Synchronization traceback: {traceback.format_exc()}")
+                        # Continue with the export, but log the error
+                    
                     # Process and save member clips
+                    logger.warning(f"🚀 CALLING save_member_clips_to_supabase for video_id={capture_id}")
                     save_result = save_member_clips_to_supabase(
                         db=db,
                         video_id=capture_id,
@@ -341,10 +403,13 @@ async def process_parliament_tv_to_supabase(
                     )
                     
                     logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
+                    logger.info(f"Saved clips: {save_result.get('saved_clips', [])}")
+                    if save_result.get('failed_clips', []):
+                        logger.warning(f"Failed clips: {save_result.get('failed_clips', [])}")
                 except Exception as e:
                     logger.error(f"Error saving member clips to Supabase: {str(e)}")
                     import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    logger.error(f"Traceback: {traceback.format_exc()})")
                 
                 
                 logger.info(f"Exported recognition results to Supabase for session {capture_id}")
