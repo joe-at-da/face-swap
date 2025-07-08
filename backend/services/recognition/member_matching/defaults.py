@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-def get_default_member_for_house(house_id: str, members: List[Dict[str, Any]] = None) -> Optional[str]:
+def get_default_member_for_house(house_id: str, members: List[Dict[str, Any]] = None) -> Optional[int]:
     """
     Get or create a default member for unidentified speakers in a specific house
     
@@ -24,13 +24,13 @@ def get_default_member_for_house(house_id: str, members: List[Dict[str, Any]] = 
         
         # Define default IDs and names based on house
         if normalized_house == 'commons':
-            default_id = 'default_commons'
+            default_id = -1  # Using numeric ID instead of 'default_commons'
             default_name = 'Unidentified MP (Commons)'
         elif normalized_house == 'lords':
-            default_id = 'default_lords'
+            default_id = -1  # Using numeric ID instead of 'default_lords'
             default_name = 'Unidentified Peer (Lords)'
         else:
-            default_id = 'default_unknown'
+            default_id = -1  # Using numeric ID instead of 'default_unknown'
             default_name = 'Unidentified Speaker'
         
         # If members list is provided, check if default member already exists

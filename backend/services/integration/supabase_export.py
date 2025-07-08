@@ -92,9 +92,10 @@ def format_clips_for_supabase(
         if not member_id:
             return None
             
-        # Handle default_unknown - use a special ID for unknown members
-        if member_id == "default_unknown":
-            logger.warning("Using special ID -1 for default_unknown member_id")
+        # Handle default_unknown or already -1 - use a special ID for unknown members
+        if member_id == "default_unknown" or member_id == -1:
+            if member_id == "default_unknown":
+                logger.warning("Using special ID -1 for default_unknown member_id")
             return -1  # Use -1 as a special ID for unknown members
             
         # If already an integer, return as is

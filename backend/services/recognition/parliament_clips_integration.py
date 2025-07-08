@@ -656,7 +656,7 @@ class ParliamentClipsIntegrationService:
                 filtered_stats = {
                     "not_speaker_event": 0,
                     "no_member_id": 0,
-                    "default_unknown": 0,
+                    "unknown_speaker": 0,  # Using numeric ID -1 instead of string "default_unknown"
                     "low_confidence": 0,
                     "valid_clips": 0
                 }
@@ -672,9 +672,9 @@ class ParliamentClipsIntegrationService:
                         logger.debug(f"Skipping event with no member_id: {event}")
                         continue
                         
-                    if event.get("member_id") == "default_unknown":
-                        filtered_stats["default_unknown"] += 1
-                        logger.debug(f"Skipping event with default_unknown member_id")
+                    if event.get("member_id") == "default_unknown" or event.get("member_id") == -1:
+                        filtered_stats["unknown_speaker"] += 1
+                        logger.debug(f"Skipping event with unknown speaker member_id: {event.get('member_id')}")
                         continue
                         
                     confidence = event.get("confidence", 0.0)
@@ -737,16 +737,16 @@ class ParliamentClipsIntegrationService:
             
             # Add speaker appearances from clips
             filtered_clips_stats = {
-                "default_unknown": 0,
+                "unknown_speaker": 0,  # Using numeric ID -1 instead of string "default_unknown"
                 "low_confidence": 0,
                 "valid_clips": 0
             }
             
             for clip in clips:
                 # Skip unknown members
-                if clip['member_id'] == "default_unknown":
-                    filtered_clips_stats["default_unknown"] += 1
-                    logger.info(f"Skipping clip with default_unknown member_id")
+                if clip['member_id'] == "default_unknown" or clip['member_id'] == -1:
+                    filtered_clips_stats["unknown_speaker"] += 1
+                    logger.info(f"Skipping clip with unknown speaker member_id: {clip['member_id']}")
                     continue
                 
                 # Log the member ID for debugging
