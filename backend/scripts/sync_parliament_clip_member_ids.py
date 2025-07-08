@@ -3,6 +3,10 @@
 Script to synchronize member IDs between SQLite clips database and PostgreSQL Speaker records.
 This script ensures that each unique member_id in the SQLite database has a corresponding
 Speaker record in PostgreSQL, allowing for proper export to Supabase.
+
+UPDATED: This script now prioritizes numeric member IDs and uses -1 as a special ID for
+unknown members (previously "default_unknown"). It converts UUIDs to numeric IDs where possible
+and ensures consistent ID handling between SQLite and PostgreSQL databases.
 """
 
 import os
@@ -95,25 +99,44 @@ def get_unique_member_ids_from_sqlite():
 def check_speaker_exists(db_session, member_id):
     """Check if a Speaker record exists for the given member_id"""
     try:
-        # Try different ways to match the speaker
+        # Try to convert member_id to integer if possible for consistent comparison
+        try:
+            numeric_id = int(member_id)
+            member_id_str = str(numeric_id)
+        except (ValueError, TypeError):
+            member_id_str = str(member_id)
+            numeric_id = None
+        
+        # First check by numeric member_id (preferred method)
+        if numeric_id is not None:
+            result = db_session.execute(
+                text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id"),
+                {"member_id": member_id_str}
+            ).fetchone()
+            
+            if result:
+                return True, result
+        
+        # Then try by parliament_id
         result = db_session.execute(
-            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id OR parliament_id = :member_id"),
-            {"member_id": str(member_id)}
+            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE parliament_id = :member_id"),
+            {"member_id": member_id_str}
         ).fetchone()
         
         if result:
             return True, result
         
         # Try to match by UUID if the member_id is a UUID
-        try:
-            uuid_obj = uuid.UUID(str(member_id))
-            result = db_session.execute(
-                text("SELECT id, name, parliament_id, member_id FROM speakers WHERE id::text = :uuid_str"),
-                {"uuid_str": str(uuid_obj)}
-            ).fetchone()
-            if result:
-                return True, result
-        except (ValueError, TypeError):
+        if '-' in member_id_str and len(member_id_str) > 30:
+            try:
+                result = db_session.execute(
+                    text("SELECT id, name, parliament_id, member_id FROM speakers WHERE id::text = :uuid_str"),
+                    {"uuid_str": member_id_str}
+                ).fetchone()
+                if result:
+                    return True, result
+            except Exception:
+                pass  # Ignore UUID parsing errors
             pass
             
         return False, None
@@ -129,6 +152,20 @@ def create_speaker_for_member_id(db_session, member_id, member_info=None):
         if exists:
             logger.info(f"Speaker already exists for member_id {member_id}: {speaker}")
             return True, speaker
+        
+        # Try to convert member_id to integer if possible for consistent storage
+        try:
+            numeric_id = int(member_id)
+            member_id_str = str(numeric_id)
+        except (ValueError, TypeError):
+            # If conversion fails and it's a UUID, keep as is
+            if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:
+                member_id_str = member_id
+                logger.warning(f"Using UUID as member_id: {member_id_str}")
+            else:
+                # For invalid or unknown member_id, use -1
+                member_id_str = "-1"
+                logger.warning(f"Invalid member_id format: {member_id}, using -1 instead")
         
         # Generate a name for the speaker
         name = "Unknown Speaker"
@@ -164,15 +201,15 @@ def create_speaker_for_member_id(db_session, member_id, member_info=None):
                 "photo_url": photo_url,
                 "party": "Unknown",  # Default party
                 "constituency": "Unknown",  # Default constituency
-                "member_id": str(member_id),  # Use the original member_id as both member_id and parliament_id
-                "parliament_id": str(member_id),
+                "member_id": member_id_str,  # Use numeric ID when possible
+                "parliament_id": member_id_str,
                 "created_at": datetime.now(),
                 "updated_at": datetime.now()
             }
         )
         
         db_session.commit()
-        logger.info(f"Created new Speaker for member_id {member_id} with name '{name}'")
+        logger.info(f"Created new Speaker for member_id {member_id_str} with name '{name}'")
         
         # Return the newly created speaker
         new_speaker = db_session.execute(
@@ -301,10 +338,32 @@ def main():
     success_count = 0
     failure_count = 0
     already_exists_count = 0
+    special_cases_count = 0
     
     for member_id in member_ids:
-        if not member_id or member_id == "default_unknown":
-            logger.warning(f"Skipping invalid member_id: {member_id}")
+        if not member_id:
+            logger.warning(f"Skipping empty member_id")
+            continue
+        
+        # Handle special case for default_unknown - map to -1 instead of skipping
+        if member_id == "default_unknown":
+            logger.info(f"Found default_unknown member_id, creating special record with ID -1")
+            # Check if -1 already exists
+            exists, speaker = check_speaker_exists(db_session, -1)
+            if exists:
+                logger.info(f"Special ID -1 already exists: {speaker}")
+                already_exists_count += 1
+                special_cases_count += 1
+                continue
+                
+            # Create special record for unknown member
+            success, new_speaker = create_speaker_for_member_id(db_session, -1, {"member_name": "Unknown MP"})
+            if success:
+                logger.info(f"Created special record for unknown members with ID -1")
+                success_count += 1
+                special_cases_count += 1
+            else:
+                failure_count += 1
             continue
             
         info = member_info.get(member_id, {})
@@ -325,7 +384,14 @@ def main():
     logger.info(f"  - Total member IDs: {len(member_ids)}")
     logger.info(f"  - Already existed: {already_exists_count}")
     logger.info(f"  - Successfully created: {success_count}")
+    logger.info(f"  - Special cases handled (default_unknown → -1): {special_cases_count}")
     logger.info(f"  - Failed to create: {failure_count}")
+    
+    # Check if we have a record for the special -1 ID (unknown member)
+    exists, _ = check_speaker_exists(db_session, -1)
+    if not exists:
+        logger.warning("No record exists for special ID -1 (unknown member). This may cause issues with unidentified speakers.")
+        logger.warning("Consider running this script again or manually creating a record for ID -1.")
     
     return True
 

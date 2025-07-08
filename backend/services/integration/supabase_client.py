@@ -471,47 +471,29 @@ class SupabaseService:
                         # Convert values to appropriate types
                         if key == 'member_id' and value is not None:
                             try:
-                                # Check if it's a UUID string (which can't be converted to int)
-                                if isinstance(value, str) and '-' in value and len(value) > 30:
-                                    # This looks like a UUID, try to find the corresponding integer member_id
-                                    try:
-                                        # Query the parliament_members table to get the integer member_id for this UUID
-                                        response = self.client.table('parliament_members').select('member_id').eq('id', value).execute()
-                                        data = response.data
-                                        
-                                        if data and len(data) > 0:
-                                            # Use the integer member_id from the Speaker record
-                                            clean_clip[key] = data[0]['member_id']
-                                            logger.info(f"Found Speaker member_id {clean_clip[key]} for UUID {value}")
-                                        else:
-                                            # If no Speaker found, use a fallback if available
-                                            if valid_member_ids:
-                                                clean_clip[key] = valid_member_ids[0]  # Use the first valid member ID
-                                                logger.warning(f"No Speaker found for UUID {value}, using fallback ID {clean_clip[key]}")
-                                            else:
-                                                # Skip this clip if we can't find a valid member ID
-                                                logger.warning(f"Found UUID member_id {value} but no valid IDs available")
-                                                continue
-                                    except Exception as e:
-                                        logger.error(f"Error looking up Speaker for UUID {value}: {e}")
-                                        # Use fallback if available
-                                        if valid_member_ids:
-                                            clean_clip[key] = valid_member_ids[0]
-                                            logger.warning(f"Error looking up UUID {value}, using fallback ID {clean_clip[key]}")
-                                        else:
-                                            logger.warning(f"Error looking up UUID {value} and no fallbacks available")
-                                            continue
-                                else:
+                                # Handle special case for unknown members
+                                if value == -1:
+                                    # Use -1 as a special ID for unknown members
+                                    clean_clip[key] = -1
+                                    logger.info("Using special ID -1 for unknown member")
+                                # If already an integer, use as is
+                                elif isinstance(value, int):
+                                    clean_clip[key] = value
+                                # If it's a string that can be converted to int, do so
+                                elif isinstance(value, str) and value.isdigit():
                                     clean_clip[key] = int(value)
-                            except (ValueError, TypeError):
-                                # If we have valid member IDs, use the first one
-                                if valid_member_ids:
-                                    clean_clip[key] = valid_member_ids[0]
-                                    logger.warning(f"Replaced invalid member_id {value} with valid ID {clean_clip[key]}")
+                                # Handle UUID format by using special ID
+                                elif isinstance(value, str) and '-' in value and len(value) > 30:
+                                    logger.warning(f"Found UUID member_id {value}, using special ID -1")
+                                    clean_clip[key] = -1
+                                # For any other format, use special ID
                                 else:
-                                    # Skip this clip if we can't find a valid member ID
-                                    logger.warning(f"Found invalid member_id {value} and no valid IDs available")
-                                    continue
+                                    logger.warning(f"Unrecognized member_id format: {value}, using special ID -1")
+                                    clean_clip[key] = -1
+                            except (ValueError, TypeError) as e:
+                                # For any conversion error, use special ID
+                                logger.warning(f"Error converting member_id {value}: {e}, using special ID -1")
+                                clean_clip[key] = -1
                         elif key == 'session_date' and value:
                             # Ensure date format is correct
                             if isinstance(value, str) and len(value) == 10 and value[4] == '-':

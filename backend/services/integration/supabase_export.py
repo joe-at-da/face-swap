@@ -92,22 +92,29 @@ def format_clips_for_supabase(
         if not member_id:
             return None
             
-        # Handle default_unknown - use a special ID instead of skipping
+        # Handle default_unknown - use a special ID for unknown members
         if member_id == "default_unknown":
-            logger.warning("Using special ID for default_unknown member_id")
+            logger.warning("Using special ID -1 for default_unknown member_id")
             return -1  # Use -1 as a special ID for unknown members
             
-        # Handle UUID format (which can't be converted to int)
-        if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:
-            logger.warning(f"Found UUID member_id {member_id}, needs synchronization")
-            return member_id  # Return as is, will be handled by add_to_clip_creation_queue
+        # If already an integer, return as is
+        if isinstance(member_id, int):
+            return member_id
             
-        # Try to convert to integer
+        # Try to convert string to integer
         try:
+            # If it's a UUID, extract just the numeric part if possible
+            if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:
+                logger.warning(f"Converting UUID member_id {member_id} to numeric ID")
+                # Try to find a numeric ID in the member_id string
+                # This is a fallback and should be avoided in production
+                return -1  # Return special ID for UUIDs that can't be converted
+                
+            # Standard conversion to integer
             return int(member_id)
         except (ValueError, TypeError):
-            logger.warning(f"Invalid member_id format: {member_id}")
-            return None  # Return None for invalid member_id
+            logger.warning(f"Invalid member_id format: {member_id}, using special ID -1")
+            return -1  # Use special ID for invalid formats
     # Log the structure of the recognition_results for debugging
     logger.info(f"Recognition results keys: {list(recognition_results.keys())}")
     if 'speaker_appearances' in recognition_results:

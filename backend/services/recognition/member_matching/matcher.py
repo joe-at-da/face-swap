@@ -124,39 +124,44 @@ class ParliamentMemberMatcher:
             
             # Load embeddings for each member
             for member in self.members:
-                member_id = member.get('id')  # UUID
+                # Prioritize numeric ID over UUID
                 numeric_id = member.get('member_id')  # Numeric ID
+                uuid_id = member.get('id')  # UUID
                 
-                if not member_id:
-                    logger.warning("Member has no ID, skipping")
+                # Skip if no numeric ID
+                if not numeric_id:
+                    logger.warning(f"Member {uuid_id} has no numeric member_id, skipping")
                     continue
                 
-                # Try to load embedding from file - first check the standard location with UUID
+                # Convert numeric_id to string for consistent key usage
+                member_key = str(numeric_id)
+                
+                # Try to load embedding from file - first check with numeric ID
                 embedding_file = os.path.join(
                     self.photo_manager.embeddings_dir, 
-                    f"{member_id}.json"
+                    f"{numeric_id}.json"
                 )
                 
-                # If not found, check the download_mp_photos.py location with UUID
+                # If not found, check the download_mp_photos.py location with numeric ID
                 if not os.path.exists(embedding_file):
                     embedding_file = os.path.join(
                         self.mp_photos_dir,
-                        f"{member_id}.json"
-                    )
-                
-                # If still not found and we have a numeric ID, try with that
-                if not os.path.exists(embedding_file) and numeric_id:
-                    # Try standard location with numeric ID
-                    embedding_file = os.path.join(
-                        self.photo_manager.embeddings_dir, 
                         f"{numeric_id}.json"
                     )
+                
+                # If still not found and we have a UUID, try with that as fallback
+                if not os.path.exists(embedding_file) and uuid_id:
+                    # Try standard location with UUID
+                    embedding_file = os.path.join(
+                        self.photo_manager.embeddings_dir, 
+                        f"{uuid_id}.json"
+                    )
                     
-                    # If not found, try download_mp_photos.py location with numeric ID
+                    # If not found, try download_mp_photos.py location with UUID
                     if not os.path.exists(embedding_file):
                         embedding_file = os.path.join(
                             self.mp_photos_dir,
-                            f"{numeric_id}.json"
+                            f"{uuid_id}.json"
                         )
                 
                 if os.path.exists(embedding_file):
@@ -174,26 +179,22 @@ class ParliamentMemberMatcher:
                             if isinstance(embedding, list):
                                 embedding = np.array(embedding)
                         else:
-                            logger.warning(f"Unknown embedding format for member {member_id}")
+                            logger.warning(f"Unknown embedding format for member {member_key}")
                             continue
-                                
-                        self.member_embeddings[member_id] = {
+                        
+                        # Store with numeric ID as the primary key
+                        self.member_embeddings[member_key] = {
                             'embedding': embedding,
                             'member': member
                         }
                         
-                        # Also index by numeric ID if available for easier lookup
-                        if numeric_id and str(numeric_id) != member_id:
-                            self.member_embeddings[str(numeric_id)] = {
-                                'embedding': embedding,
-                                'member': member
-                            }
+                        # Log success
+                        logger.debug(f"Loaded embedding for member {member.get('display_name')} (ID: {member_key})")
                     except Exception as e:
-                        logger.warning(f"Error loading embedding for member {member_id}: {str(e)}")
-                elif numeric_id:
-                    logger.debug(f"No embedding found for member {member.get('display_name')} (ID: {member_id}, numeric ID: {numeric_id})")
+                        logger.warning(f"Error loading embedding for member {member_key}: {str(e)}")
                 else:
-                    logger.debug(f"No embedding found for member {member.get('display_name')} (ID: {member_id})")
+                    logger.debug(f"No embedding found for member {member.get('display_name')} (ID: {member_key})")
+
 
             
             logger.info(f"Loaded {len(self.member_embeddings)} member embeddings")
@@ -245,118 +246,75 @@ class ParliamentMemberMatcher:
             return None
     
     def _match_face_to_member(self, face_data: Dict[str, Any], house: str = "unknown", 
-                             confidence_threshold: float = 0.1) -> Dict[str, Any]:
+                              confidence_threshold: float = 0.1) -> Dict[str, Any]:
         """
         Internal method to match a face to a parliament member
         
         Args:
             face_data: Dictionary with face data including embedding
-            house: House ID to filter members by (commons, lords, etc.)
-            confidence_threshold: Minimum confidence score for a match (0.0-1.0)
+            house: House ID to filter members by
+            confidence_threshold: Confidence threshold for matching
             
         Returns:
-            Dictionary with match results
+            Dictionary with match information
         """
         try:
+            # Check if we have member embeddings loaded
+            if not self.member_embeddings:
+                logger.error("No member embeddings loaded. Call load_parliament_members() first.")
+                return {'matched': False, 'error': 'No member embeddings loaded'}
+                
             # Get face embedding
-            face_embedding = face_data.get('embedding')
-            if face_embedding is None:
-                return {
-                    'matched': False,
-                    'error': "No face embedding provided"
-                }
-            
-            # Convert to numpy array if needed
-            if isinstance(face_embedding, list):
-                face_embedding = np.array(face_embedding)
-            
-            # Check embedding dimensions
-            embedding_dim = len(face_embedding) if isinstance(face_embedding, np.ndarray) else -1
-            
-            # Detect if this is a dlib-based embedding (128 dimensions)
-            is_dlib = embedding_dim == 128
-            if is_dlib:
-                logger.info("Detected dlib-based face embedding (128 dimensions)")
+            if 'embedding' not in face_data:
+                logger.error("No embedding found in face data")
+                return {'matched': False, 'error': 'No embedding in face data'}
                 
-                # IMPROVED: Use more conservative threshold adjustment to reduce false positives
-                # Only make small adjustments to the threshold
-                if confidence_threshold > 0.5:
-                    # Calculate embedding quality metrics
-                    embedding_variance = np.var(face_embedding)
-                    embedding_range = np.max(face_embedding) - np.min(face_embedding)
-                    
-                    # Adjust threshold based on embedding quality
-                    # Higher variance and range indicate more distinctive features
-                    if embedding_variance > 0.05 and embedding_range > 0.8:
-                        # High quality embedding - use minimal threshold reduction
-                        adjusted_threshold = confidence_threshold - 0.15
-                        logger.info(f"Using minimal threshold reduction for high-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
-                    else:
-                        # Lower quality embedding - use moderate threshold reduction
-                        adjusted_threshold = confidence_threshold - 0.2
-                        logger.info(f"Using moderate threshold reduction for lower-quality embedding (var={embedding_variance:.4f}, range={embedding_range:.4f})")
-                    
-                    logger.info(f"Adjusting confidence threshold from {confidence_threshold} to {adjusted_threshold} for cross-model comparison")
-                    confidence_threshold = adjusted_threshold
+            face_embedding = face_data['embedding']
             
-            # Find best match
-            best_match = None
-            best_confidence = 0.0
-            top_matches = []
+            # Calculate similarity with all members
+            similarities = []
             
-            for member_id, data in self.member_embeddings.items():
-                member = data.get('member', {})
-                member_embedding = data.get('embedding')
-                
-                if member_embedding is None:
+            for member_id, member_data in self.member_embeddings.items():
+                # Skip if no embedding
+                if 'embedding' not in member_data:
                     continue
+                    
+                # Calculate similarity
+                similarity = compute_similarity(face_embedding, member_data['embedding'])
                 
-                # Skip members from different houses if house is specified
-                member_house = member.get('house_id', '')
-                if isinstance(member_house, int):
-                    member_house = str(member_house)
-                member_house = member_house.lower()
-                if house != "unknown" and member_house != house.lower():
-                    continue
+                # Convert member_id to int if possible for consistent comparison
+                try:
+                    numeric_id = int(member_id)
+                except (ValueError, TypeError):
+                    numeric_id = -1  # Use -1 as fallback for non-numeric IDs
                 
-                # Compute similarity
-                confidence = compute_similarity(face_embedding, member_embedding)
+                # Get member name
+                member_name = member_data['member'].get('display_name', 'Unknown')
+                if not member_name:
+                    member_name = member_data['member'].get('name', 'Unknown')
                 
-                # Keep track of top 5 matches for debugging
-                match_info = {
-                    'member_id': member_id,
-                    'name': member.get('name', 'Unknown'),
-                    'house_id': member.get('house_id'),
-                    'confidence': confidence
-                }
-                
-                top_matches.append(match_info)
-                
-                if confidence > best_confidence:
-                    best_confidence = confidence
-                    best_match = match_info
+                # Add to similarities list
+                similarities.append({
+                    'member_id': numeric_id,  # Always use numeric ID
+                    'name': member_name,
+                    'confidence': float(similarity),
+                    'house_id': member_data['member'].get('house_id', house)
+                })
             
-            # Sort and log top 5 matches for debugging
-            top_matches.sort(key=lambda x: x['confidence'], reverse=True)
-            top_5 = top_matches[:5]
+            # Sort by confidence (highest first)
+            similarities.sort(key=lambda x: x['confidence'], reverse=True)
             
-            # IMPROVED: Log all top matches with their confidence scores for better debugging
-            logger.info(f"Top 5 matches: {[(m['name'], m['confidence']) for m in top_5]}")
+            # Get top 5 matches
+            top_5 = similarities[:5] if similarities else []
             
-            # IMPROVED: Check if there's a significant gap between the top match and second match
-            # This helps ensure we're not confusing similar-looking members
+            # Get best match
+            best_match = top_5[0] if top_5 else None
+            best_confidence = best_match['confidence'] if best_match else 0.0
+            
+            # Calculate confidence gap between top two matches
+            confidence_gap = 0.0
             if len(top_5) >= 2:
-                confidence_gap = top_5[0]['confidence'] - top_5[1]['confidence']
-                logger.info(f"Confidence gap between top two matches: {confidence_gap:.4f}")
-                
-                # If the gap is too small, be more strict with the threshold
-                if confidence_gap < 0.15 and best_confidence < confidence_threshold + 0.15:
-                    logger.info(f"Small confidence gap detected ({confidence_gap:.4f}). Increasing threshold to avoid confusion.")
-                    confidence_threshold += 0.1
-            
-            # If best match is close to threshold, log it for analysis
-            if best_confidence > (confidence_threshold * 0.8) and best_confidence < confidence_threshold:
-                logger.info(f"Near miss match: {best_match['name']} with confidence {best_confidence:.4f} (threshold: {confidence_threshold:.4f})")
+                confidence_gap = best_confidence - top_5[1]['confidence']
             
             # IMPROVED: Only return a match if confidence is significantly above threshold
             # This helps reduce false positives
