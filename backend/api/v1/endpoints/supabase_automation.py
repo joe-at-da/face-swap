@@ -19,10 +19,10 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.api.deps import get_db, get_api_key
+from backend.services.integration.supabase_integration import SupabaseIntegration
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.parliament_tv import ParliamentTVCapture
 from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
-from backend.services.recognition.supabase_export import export_recognition_results
 from sqlalchemy import desc
 from backend.db.models import CaptureSession, RecognitionProcess, ParliamentTranscription
 from backend.services.utils import make_json_serializable
@@ -204,62 +204,6 @@ async def process_parliament_tv_to_supabase(
                         
                         if status_value == "completed":
                             recognition_completed = True
-                            logger.info(f"Recognition completed for session {capture_id}, proceeding to export results to Supabase")
-                            
-                            # Get the recognition results and file paths
-                            try:
-                                # Get the recognition results from the database
-                                recognition_data = {}
-                                if hasattr(capture, 'recognition_results') and capture.recognition_results:
-                                    if isinstance(capture.recognition_results, str):
-                                        try:
-                                            recognition_data = json.loads(capture.recognition_results)
-                                        except json.JSONDecodeError:
-                                            logger.error(f"Error parsing recognition results JSON for capture {capture_id}")
-                                    elif isinstance(capture.recognition_results, dict):
-                                        recognition_data = capture.recognition_results
-                                
-                                # Get video and audio file paths
-                                video_path = capture.file_path
-                                audio_path = None
-                                if hasattr(capture, 'capture_metadata') and capture.capture_metadata:
-                                    metadata = {}
-                                    if isinstance(capture.capture_metadata, str):
-                                        try:
-                                            metadata = json.loads(capture.capture_metadata)
-                                        except json.JSONDecodeError:
-                                            logger.error(f"Error parsing capture metadata JSON for capture {capture_id}")
-                                    elif isinstance(capture.capture_metadata, dict):
-                                        metadata = capture.capture_metadata
-                                    
-                                    if 'audio_path' in metadata:
-                                        audio_path = metadata['audio_path']
-                                
-                                # If we have an audio file with .mp3 extension in the same directory as the video file
-                                if not audio_path and video_path:
-                                    potential_audio_path = video_path.rsplit('.', 1)[0] + '.mp3'
-                                    if os.path.exists(potential_audio_path):
-                                        audio_path = potential_audio_path
-                                        logger.info(f"Found audio file at {audio_path}")
-                                
-                                # Call export_recognition_results with all required parameters
-                                if video_path and recognition_data:
-                                    logger.info(f"Calling export_recognition_results with video_path={video_path}, audio_path={audio_path}")
-                                    export_result = export_recognition_results(
-                                        video_id=capture_id,
-                                        recognition_results=recognition_data,
-                                        video_path=video_path,
-                                        audio_path=audio_path,
-                                        metadata=metadata if 'metadata' in locals() else None,
-                                        db_session=db
-                                    )
-                                    logger.info(f"Export result: {export_result}")
-                                else:
-                                    logger.error(f"Missing required parameters for export_recognition_results: video_path={video_path}, recognition_data={bool(recognition_data)}")
-                            except Exception as e:
-                                logger.error(f"Error exporting recognition results to Supabase: {str(e)}")
-                                import traceback
-                                logger.error(f"Traceback: {traceback.format_exc()}")
                             break
                         elif status_value == "failed":
                             error_message = capture.error_message if hasattr(capture, 'error_message') else "Unknown error"
@@ -331,63 +275,77 @@ async def process_parliament_tv_to_supabase(
                     "original_url": capture_metadata.get("original_url")
                 }
                 
-                # Export to Supabase
-                supabase = SupabaseService(use_service_role=True)
+                # Export to Supabase using service role for privileged operations
+                supabase = SupabaseIntegration()
                 
                 # Ensure all metadata is properly serializable using the utility function
                 # This handles SQLAlchemy MetaData objects, datetime objects, and other non-serializable types
                 serializable_recognition_data = make_json_serializable(recognition_data)
                 serializable_video_metadata = make_json_serializable(video_metadata)
                 
-                logger.info(f"Exporting recognition results to Supabase for session {capture_id}")
-                
-                # Add detailed logging to understand the recognition data structure
-                logger.info(f"Recognition data keys: {list(serializable_recognition_data.keys())}")
-                
-                # Log counts of key data structures
-                if 'identified_speakers' in serializable_recognition_data:
-                    logger.info(f"Found {len(serializable_recognition_data['identified_speakers'])} identified speakers")
-                    if serializable_recognition_data['identified_speakers']:
-                        sample_speaker = serializable_recognition_data['identified_speakers'][0]
-                        logger.info(f"Sample identified speaker keys: {list(sample_speaker.keys())}")
-                        if 'segments' in sample_speaker and sample_speaker['segments']:
-                            logger.info(f"Sample segment keys: {list(sample_speaker['segments'][0].keys())}")
-                            
-                if 'speaker_appearances' in serializable_recognition_data:
-                    logger.info(f"Found {len(serializable_recognition_data['speaker_appearances'])} speaker appearances")
-                    if serializable_recognition_data['speaker_appearances']:
-                        sample_appearance = serializable_recognition_data['speaker_appearances'][0]
-                        logger.info(f"Sample speaker appearance keys: {list(sample_appearance.keys())}")
-                        logger.info(f"Sample speaker appearance member_id: {sample_appearance.get('member_id')}")
+                # Get the combined AV path from process metadata if available
+                process = db.query(RecognitionProcess).filter(RecognitionProcess.video_id == capture_id).first()
+                if process and process.process_metadata:
+                    try:
+                        metadata = {}
+                        if isinstance(process.process_metadata, str):
+                            try:
+                                metadata = json.loads(process.process_metadata)
+                            except json.JSONDecodeError:
+                                logger.error(f"Error parsing process metadata JSON for process {process.id}")
+                        elif isinstance(process.process_metadata, dict):
+                            metadata = process.process_metadata
+                        else:
+                            logger.error(f"Unexpected process metadata type: {type(process.process_metadata)}")
                         
-                if 'timeline' in serializable_recognition_data:
-                    logger.info(f"Found {len(serializable_recognition_data['timeline'])} timeline events")
-                    if serializable_recognition_data['timeline']:
-                        sample_event = serializable_recognition_data['timeline'][0]
-                        logger.info(f"Sample timeline event keys: {list(sample_event.keys())}")
-                        logger.info(f"Sample timeline event member_id: {sample_event.get('member_id')}")
-                        
-                if 'unidentified_faces' in serializable_recognition_data:
-                    logger.info(f"Found {len(serializable_recognition_data['unidentified_faces'])} unidentified faces")
-                    
-                # Check if we have any clips in the parliament_clips database
-                from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-                clips_service = ParliamentClipsIntegrationService()
-                clips_count = clips_service.get_clip_count_for_video(capture_id)
-                logger.info(f"Found {clips_count} clips in parliament_clips database for video {capture_id}")
+                        # Check for combined_av_path in the parsed metadata
+                        if metadata and "combined_av_path" in metadata:
+                            video_file_path = metadata["combined_av_path"]
+                            logger.info(f"Using combined AV path from metadata: {video_file_path}")
+                    except Exception as e:
+                        logger.error(f"Error processing metadata for combined AV path: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
                 
-                # Import the format_clips_for_supabase function
-                from backend.services.integration.supabase_export import format_clips_for_supabase
-                
-                # Format the clips for Supabase using the correct function
-                formatted_clips = format_clips_for_supabase(
-                    video_id=str(capture_id),
+                logger.info(f"Exporting recognition results to Supabase for session {capture_id} with video path: {video_file_path}")
+                export_result = supabase.export_and_upload_recognition(
+                    video_path=video_file_path,
                     recognition_results=serializable_recognition_data,
-                    combined_av_url=video_file_path
+                    video_metadata=serializable_video_metadata,
+                    db_session=db,
+                    video_id=capture_id,
+                    upload_media=True
                 )
                 
-                # Use the correct method to export clips to Supabase
-                export_result = supabase.add_to_clip_creation_queue(formatted_clips)
+                # Get the Supabase URL for the uploaded combined AV file
+                full_video_url = None
+                if export_result and "supabase_urls" in export_result:
+                    if isinstance(export_result["supabase_urls"], dict):
+                        full_video_url = export_result["supabase_urls"].get("combined_av_url")
+                    
+                logger.info(f"Full video URL from export: {full_video_url}")
+                
+                # Process and save member clips to Supabase
+                try:
+                    # Use the SupabaseService with service role for privileged operations
+                    supabase_service = SupabaseService(use_service_role=True)
+                    
+                    # Process and save member clips
+                    save_result = save_member_clips_to_supabase(
+                        db=db,
+                        video_id=capture_id,
+                        full_video_url=full_video_url,
+                        recognition_results=recognition_data,
+                        video_metadata=video_metadata,
+                        supabase_service=supabase_service
+                    )
+                    
+                    logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
+                except Exception as e:
+                    logger.error(f"Error saving member clips to Supabase: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                
                 
                 logger.info(f"Exported recognition results to Supabase for session {capture_id}")
                 
@@ -406,72 +364,10 @@ async def process_parliament_tv_to_supabase(
                 except Exception as e:
                     logger.error(f"Error verifying MP clips: {str(e)}")
                 
-                # Step 6: Upload full video to Supabase using service role key
-                supabase_service = SupabaseService(use_service_role=True)
-                
-                # Use the combined AV file if available, otherwise use the original video file
-                video_path = capture.file_path
-                process = db.query(RecognitionProcess).filter(RecognitionProcess.video_id == capture_id).first()
-                
-                if process and process.process_metadata:
-                    # Handle process_metadata properly - it might be a string, dict, or other type
-                    try:
-                        metadata = {}
-                        if isinstance(process.process_metadata, str):
-                            try:
-                                metadata = json.loads(process.process_metadata)
-                            except json.JSONDecodeError:
-                                logger.error(f"Error parsing process metadata JSON for process {process.id}")
-                        elif isinstance(process.process_metadata, dict):
-                            metadata = process.process_metadata
-                        else:
-                            logger.error(f"Unexpected process metadata type: {type(process.process_metadata)}")
-                        
-                        # Check for combined_av_path in the parsed metadata
-                        if metadata and "combined_av_path" in metadata:
-                            video_path = metadata["combined_av_path"]
-                            logger.info(f"Using combined AV path from metadata: {video_path}")
-                    except Exception as e:
-                        logger.error(f"Error processing metadata for combined AV path: {str(e)}")
-                        import traceback
-                        logger.error(f"Traceback: {traceback.format_exc()}")
-                
-                # Skip uploading the original video file - we only want to upload the combined AV file
-                # The combined AV file will be created and uploaded by the export_recognition_results function
-                # which is called later in the process
-                logger.info(f"Skipping upload of original video file - only combined AV files will be uploaded to Supabase")
-                
-                # The combined AV file will have a name like combined_av_{capture_id}_TIMESTAMP.mp4
-                # and will be uploaded to the full_videos bucket by the export_recognition_results function
-                
-                # Set placeholder values for now - these will be updated when the combined AV file is uploaded
+                # Update capture status with external ID
                 capture.external_id = f"parliament_tv_{capture_id}"
-                capture.external_status = "processing"
-                db.commit()
-                
-                # Step 7: Process and save individual member clips to parliament_member_clips table
-                try:
-                    # We don't have a full_video_url yet as the combined AV file hasn't been uploaded
-                    # The combined AV file will be uploaded by the export_recognition_results function
-                    # For now, use a placeholder URL that will be updated later
-                    full_video_url = None
-                    
-                    # Process and save member clips
-                    save_result = save_member_clips_to_supabase(
-                        db=db,
-                        video_id=capture_id,
-                        full_video_url=full_video_url,
-                        recognition_results=recognition_data,
-                        video_metadata=video_metadata,
-                        supabase_service=supabase_service
-                    )
-                    
-                    logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
-                except Exception as e:
-                    logger.error(f"Error saving member clips to Supabase: {str(e)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                
+                capture.external_status = "processed"
+                db.commit() 
                 logger.info(f"Completed full processing pipeline for Parliament TV URL: {url}")
                 
             except Exception as e:
@@ -571,6 +467,11 @@ def save_member_clips_to_supabase(
                 continue
                 
             for segment in speaker.get("segments", []):
+                # Validate required fields
+                if "start_time" not in segment or "end_time" not in segment:
+                    logger.warning(f"Skipping segment missing required time fields: {segment}")
+                    continue
+                    
                 speaker_segments.append({
                     "speaker_id": speaker_id,
                     "speaker_name": speaker_name,
@@ -591,6 +492,11 @@ def save_member_clips_to_supabase(
                 continue
                 
             for segment in speaker.get("segments", []):
+                # Validate required fields
+                if "start_time" not in segment or "end_time" not in segment:
+                    logger.warning(f"Skipping voice segment missing required time fields: {segment}")
+                    continue
+                    
                 # Find corresponding transcript text
                 transcript_text = ""
                 if "segments" in transcript_data:
@@ -655,18 +561,63 @@ def save_member_clips_to_supabase(
         
         # Format timestamps as HH:MM:SS
         def format_timestamp(seconds):
-            m, s = divmod(seconds, 60)
-            h, m = divmod(m, 60)
-            return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
+            if seconds is None:
+                logger.warning(f"Missing timestamp value for segment: {segment}")
+                return None
+                
+            try:
+                seconds_float = float(seconds)
+                m, s = divmod(seconds_float, 60)
+                h, m = divmod(m, 60)
+                return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error formatting timestamp {seconds}: {str(e)}")
+                return None
         
         start_timestamp = format_timestamp(segment["start_time"])
         end_timestamp = format_timestamp(segment["end_time"])
         
+        # Skip clip if timestamps couldn't be formatted properly
+        if start_timestamp is None or end_timestamp is None:
+            logger.warning(f"Skipping clip with invalid timestamps: start={segment['start_time']}, end={segment['end_time']}")
+            continue
+        
+        # Handle member_id properly - convert UUID to integer if needed
+        # The parliament_members table has a UUID as primary key (id) but also a separate member_id column that's an integer
+        # The parliament_member_clips table requires an integer member_id
+        member_id = segment["speaker_id"]
+        
+        # Check if this is a UUID string that needs to be converted to an integer
+        try:
+            # Try to parse as UUID to check if it's a valid UUID string
+            uuid_obj = uuid.UUID(str(member_id))
+            is_uuid = True
+        except (ValueError, TypeError):
+            is_uuid = False
+            
+        # If it's a UUID, we need to look up the corresponding integer member_id
+        if is_uuid:
+            logger.info(f"Looking up integer member_id for UUID: {member_id}")
+            # Query Supabase to find the member with this UUID and get their integer member_id
+            try:
+                response = supabase_service.client.table('parliament_members').select('member_id').eq('id', str(member_id)).execute()
+                if response.data and len(response.data) > 0 and 'member_id' in response.data[0]:
+                    member_id = response.data[0]['member_id']
+                    logger.info(f"Found integer member_id {member_id} for UUID {segment['speaker_id']}")
+                else:
+                    logger.warning(f"No matching member found in Supabase for UUID {segment['speaker_id']}")
+                    # Skip this clip if we can't find a valid member_id - don't use fake data
+                    continue
+            except Exception as e:
+                logger.error(f"Error looking up member_id for UUID {segment['speaker_id']}: {str(e)}")
+                # Skip this clip rather than using invalid data
+                continue
+                
         # Create clip metadata
         clip_data = {
             "id": clip_id,
             "video_id": str(video_id),
-            "member_id": segment["speaker_id"],
+            "member_id": member_id,  # Now using the properly converted member_id
             "member_name": segment["speaker_name"],
             "start_time": segment["start_time"],
             "end_time": segment["end_time"],
@@ -690,6 +641,18 @@ def save_member_clips_to_supabase(
     # Save clips to Supabase parliament_member_clips table
     saved_clips = []
     failed_clips = []
+    
+    # Log summary of clips before attempting to save
+    logger.info(f"Preparing to save {len(member_clips)} clips to Supabase parliament_member_clips table")
+    
+    # Run the sync script to ensure all member IDs exist in PostgreSQL
+    try:
+        from backend.services.integration.sync_parliament_clip_member_ids import sync_parliament_clip_member_ids
+        sync_result = sync_parliament_clip_member_ids(db)
+        logger.info(f"Synchronized member IDs between SQLite and PostgreSQL: {sync_result}")
+    except Exception as sync_error:
+        logger.error(f"Error synchronizing member IDs: {str(sync_error)}")
+        # Continue with the export, but log the error
     
     for clip in member_clips:
         try:
@@ -716,18 +679,37 @@ def save_member_clips_to_supabase(
                     "error_info": "Serialization error - some data may be missing"
                 }
             
-            # Insert clip into parliament_member_clips table
-            response = supabase_service.client.table('parliament_member_clips').insert(serializable_clip).execute()
+            # Final validation check for required fields before inserting
+            required_fields = ["id", "video_id", "member_id", "start_time", "end_time", "start_timestamp", "end_timestamp"]
+            missing_fields = [field for field in required_fields if field not in serializable_clip or serializable_clip[field] is None]
             
-            if response.data:
-                saved_clips.append(clip["id"])
-                logger.info(f"Saved clip {clip['id']} for member {clip['member_name']} to Supabase")
-            else:
+            if missing_fields:
+                logger.warning(f"Skipping clip {clip.get('id', 'unknown')} due to missing required fields: {missing_fields}")
+                failed_clips.append({
+                    "clip_id": clip.get("id", "unknown"),
+                    "error": f"Missing required fields: {missing_fields}"
+                })
+                continue
+                
+            # Insert clip into parliament_member_clips table
+            try:
+                response = supabase_service.client.table('parliament_member_clips').insert(serializable_clip).execute()
+                
+                if response.data:
+                    saved_clips.append(clip["id"])
+                    logger.info(f"Saved clip {clip['id']} for member {clip['member_name']} to Supabase")
+                else:
+                    failed_clips.append({
+                        "clip_id": clip["id"],
+                        "error": "No data returned from Supabase"
+                    })
+                    logger.warning(f"No data returned when saving clip {clip['id']} to Supabase")
+            except Exception as insert_error:
                 failed_clips.append({
                     "clip_id": clip["id"],
-                    "error": "No data returned from Supabase"
+                    "error": f"Insert error: {str(insert_error)}"
                 })
-                logger.warning(f"No data returned when saving clip {clip['id']} to Supabase")
+                logger.error(f"Error inserting clip {clip['id']} to Supabase: {str(insert_error)}")
         except Exception as e:
             failed_clips.append({
                 "clip_id": clip["id"],
