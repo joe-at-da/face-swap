@@ -123,6 +123,7 @@ def export_recognition_results(
     metadata: Optional[Dict[str, Any]] = None,
     db_session: Optional[Session] = None
 ) -> Dict[str, Any]:
+    logger.warning(f"🔍 DEBUG: export_recognition_results called for video_id={video_id} - COMBINED AV FILE CREATION ENTRY POINT")
     """
     Export recognition results for Supabase integration.
     
@@ -176,38 +177,64 @@ def export_recognition_results(
         combine_result = None
         if audio_path and os.path.exists(audio_path) and os.path.exists(video_path):
             try:
+                logger.info(f"Attempting to combine audio ({audio_path}) and video ({video_path}) to {combined_av_path}")
                 combine_result = combine_audio_video(
                     video_path=video_path,
                     audio_path=audio_path,
                     output_path=combined_av_path
                 )
-                logger.info(f"Combined audio-video file created at {combined_av_path}")
+                
+                # Verify the combined file was created successfully
+                if os.path.exists(combined_av_path) and os.path.getsize(combined_av_path) > 0:
+                    logger.info(f"Combined audio-video file created successfully at {combined_av_path} with size {os.path.getsize(combined_av_path)} bytes")
+                    combine_result = {
+                        "success": True,
+                        "combined_path": combined_av_path,
+                        "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
+                    }
+                else:
+                    logger.error(f"Combined audio-video file was not created or has zero size at {combined_av_path}")
+                    raise Exception("Combined file creation failed or resulted in empty file")
             except Exception as e:
                 logger.error(f"Error combining audio-video: {str(e)}")
-                # Continue with export even if combining fails
-                shutil.copy(video_path, combined_av_path)
-                combine_result = {
-                    "success": True,
-                    "combined_path": combined_av_path,
-                    "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
-                }
+                logger.info(f"Falling back to copying video file to {combined_av_path}")
+                # Continue with export even if combining fails by copying the video file
+                try:
+                    shutil.copy(video_path, combined_av_path)
+                    if os.path.exists(combined_av_path) and os.path.getsize(combined_av_path) > 0:
+                        logger.info(f"Successfully copied video file to {combined_av_path} with size {os.path.getsize(combined_av_path)} bytes")
+                        combine_result = {
+                            "success": True,
+                            "combined_path": combined_av_path,
+                            "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
+                        }
+                    else:
+                        logger.error(f"Failed to copy video file to {combined_av_path} or resulting file has zero size")
+                except Exception as copy_error:
+                    logger.error(f"Error copying video file: {str(copy_error)}")
         elif os.path.exists(video_path):
             # Just copy the video file if no audio path is provided
             logger.info(f"No audio path provided, copying video file to {combined_av_path}")
-            shutil.copy(video_path, combined_av_path)
-            combine_result = {
-                "success": True,
-                "combined_path": combined_av_path,
-                "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
-            }
+            try:
+                shutil.copy(video_path, combined_av_path)
+                if os.path.exists(combined_av_path) and os.path.getsize(combined_av_path) > 0:
+                    logger.info(f"Successfully copied video file to {combined_av_path} with size {os.path.getsize(combined_av_path)} bytes")
+                    combine_result = {
+                        "success": True,
+                        "combined_path": combined_av_path,
+                        "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
+                    }
+                else:
+                    logger.error(f"Failed to copy video file to {combined_av_path} or resulting file has zero size")
+            except Exception as copy_error:
+                logger.error(f"Error copying video file: {str(copy_error)}")
         else:
             logger.error(f"Video file not found: {video_path}")
-            # Continue with export even if combining fails
-            shutil.copy(video_path, combined_av_path)
             combine_result = {
-                "success": True,
-                "combined_path": combined_av_path,
-                "combined_url": f"/media/combined/{os.path.basename(combined_av_path)}"
+                "success": False,
+                "error": f"Video file not found: {video_path}",
+                "combined_path": None,
+                "combined_url": None
             }
     except Exception as e:
         logger.error(f"Error setting up export: {str(e)}")

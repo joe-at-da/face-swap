@@ -22,6 +22,7 @@ from backend.api.deps import get_db, get_api_key
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.parliament_tv import ParliamentTVCapture
 from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
+from backend.services.recognition.supabase_export import export_recognition_results
 from sqlalchemy import desc
 from backend.db.models import CaptureSession, RecognitionProcess, ParliamentTranscription
 from backend.services.utils import make_json_serializable
@@ -203,6 +204,62 @@ async def process_parliament_tv_to_supabase(
                         
                         if status_value == "completed":
                             recognition_completed = True
+                            logger.info(f"Recognition completed for session {capture_id}, proceeding to export results to Supabase")
+                            
+                            # Get the recognition results and file paths
+                            try:
+                                # Get the recognition results from the database
+                                recognition_data = {}
+                                if hasattr(capture, 'recognition_results') and capture.recognition_results:
+                                    if isinstance(capture.recognition_results, str):
+                                        try:
+                                            recognition_data = json.loads(capture.recognition_results)
+                                        except json.JSONDecodeError:
+                                            logger.error(f"Error parsing recognition results JSON for capture {capture_id}")
+                                    elif isinstance(capture.recognition_results, dict):
+                                        recognition_data = capture.recognition_results
+                                
+                                # Get video and audio file paths
+                                video_path = capture.file_path
+                                audio_path = None
+                                if hasattr(capture, 'capture_metadata') and capture.capture_metadata:
+                                    metadata = {}
+                                    if isinstance(capture.capture_metadata, str):
+                                        try:
+                                            metadata = json.loads(capture.capture_metadata)
+                                        except json.JSONDecodeError:
+                                            logger.error(f"Error parsing capture metadata JSON for capture {capture_id}")
+                                    elif isinstance(capture.capture_metadata, dict):
+                                        metadata = capture.capture_metadata
+                                    
+                                    if 'audio_path' in metadata:
+                                        audio_path = metadata['audio_path']
+                                
+                                # If we have an audio file with .mp3 extension in the same directory as the video file
+                                if not audio_path and video_path:
+                                    potential_audio_path = video_path.rsplit('.', 1)[0] + '.mp3'
+                                    if os.path.exists(potential_audio_path):
+                                        audio_path = potential_audio_path
+                                        logger.info(f"Found audio file at {audio_path}")
+                                
+                                # Call export_recognition_results with all required parameters
+                                if video_path and recognition_data:
+                                    logger.info(f"Calling export_recognition_results with video_path={video_path}, audio_path={audio_path}")
+                                    export_result = export_recognition_results(
+                                        video_id=capture_id,
+                                        recognition_results=recognition_data,
+                                        video_path=video_path,
+                                        audio_path=audio_path,
+                                        metadata=metadata if 'metadata' in locals() else None,
+                                        db_session=db
+                                    )
+                                    logger.info(f"Export result: {export_result}")
+                                else:
+                                    logger.error(f"Missing required parameters for export_recognition_results: video_path={video_path}, recognition_data={bool(recognition_data)}")
+                            except Exception as e:
+                                logger.error(f"Error exporting recognition results to Supabase: {str(e)}")
+                                import traceback
+                                logger.error(f"Traceback: {traceback.format_exc()}")
                             break
                         elif status_value == "failed":
                             error_message = capture.error_message if hasattr(capture, 'error_message') else "Unknown error"

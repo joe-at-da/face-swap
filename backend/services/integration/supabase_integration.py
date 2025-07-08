@@ -206,6 +206,7 @@ class SupabaseIntegration:
         video_id: Optional[int] = None,
         upload_media: bool = True
     ) -> Dict[str, Any]:
+        logger.warning(f"🚨 DEBUG: export_and_upload_recognition called for video_id={video_id} - SUPABASE UPLOAD ENTRY POINT")
         """
         Export recognition results, upload to Supabase, and add to queues.
         
@@ -247,7 +248,7 @@ class SupabaseIntegration:
         # Upload ONLY the combined AV file if requested
         if upload_media:
             # Check if combined AV file was created and upload it directly
-            combined_url = export_result.get("combined_av_path", "") or export_result.get("combined_url", "")
+            combined_url = export_result.get("combined_av_path", "") or export_result.get("combined_av_url", "") or export_result.get("combined_url", "")
             logger.info(f"Combined AV path from export_result: {combined_url}")
             
             # Verify if the combined URL is valid and file exists
@@ -255,6 +256,14 @@ class SupabaseIntegration:
                 file_exists = os.path.exists(combined_url)
                 file_size = os.path.getsize(combined_url) if file_exists else 0
                 logger.info(f"Combined AV file check - Exists: {file_exists}, Size: {file_size} bytes")
+                
+                # If file doesn't exist or has zero size, log a clear error
+                if not file_exists:
+                    logger.error(f"Combined AV file does not exist at path: {combined_url}")
+                elif file_size == 0:
+                    logger.error(f"Combined AV file exists but has zero size: {combined_url}")
+            else:
+                logger.error("No combined AV file path found in export results")
             
             # If combined_url is not found in export_result or file doesn't exist, try to find it
             if not combined_url or not os.path.exists(combined_url):
@@ -316,8 +325,21 @@ class SupabaseIntegration:
                                     logger.info(f"Updating CaptureSession {video_id} with Supabase URL: {supabase_url}")
                                     capture.supabase_url = supabase_url
                                     capture.external_status = "completed"  # Mark as completed once upload is done
+                                    
+                                    # Explicitly log the before and after values
+                                    logger.info(f"Before update - CaptureSession {video_id} supabase_url: {capture.supabase_url}")
+                                    
+                                    # Commit the changes
                                     db_session.commit()
-                                    logger.info(f"Successfully updated CaptureSession {video_id} with Supabase URL")
+                                    
+                                    # Verify the update by refreshing the object
+                                    db_session.refresh(capture)
+                                    logger.info(f"After update - CaptureSession {video_id} supabase_url: {capture.supabase_url}")
+                                    
+                                    if capture.supabase_url == supabase_url:
+                                        logger.info(f"Successfully updated CaptureSession {video_id} with Supabase URL")
+                                    else:
+                                        logger.error(f"Failed to update CaptureSession {video_id} with Supabase URL. Value not saved correctly.")
                                 else:
                                     logger.warning(f"Could not find CaptureSession with ID {video_id}")
                                     
@@ -328,11 +350,28 @@ class SupabaseIntegration:
                                     
                                     if rec_process:
                                         logger.info(f"Updating RecognitionProcess for video {video_id} with Supabase URL")
+                                        
+                                        # Log before value
+                                        logger.info(f"Before update - RecognitionProcess for video {video_id} supabase_url: {rec_process.supabase_url}")
+                                        
+                                        # Update and commit
                                         rec_process.supabase_url = supabase_url
                                         db_session.commit()
-                                        logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
+                                        
+                                        # Verify the update
+                                        db_session.refresh(rec_process)
+                                        logger.info(f"After update - RecognitionProcess for video {video_id} supabase_url: {rec_process.supabase_url}")
+                                        
+                                        if rec_process.supabase_url == supabase_url:
+                                            logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
+                                        else:
+                                            logger.error(f"Failed to update RecognitionProcess with Supabase URL. Value not saved correctly.")
+                                    else:
+                                        logger.error(f"Could not find either CaptureSession or RecognitionProcess for video {video_id}")
                             except Exception as db_e:
                                 logger.error(f"Error updating database with Supabase URL: {str(db_e)}")
+                                import traceback
+                                logger.error(f"Database update traceback: {traceback.format_exc()}")
                     else:
                         logger.error(f"Failed to upload combined AV file to Supabase: {upload_result.get('error')}")
                 except Exception as e:
@@ -340,14 +379,17 @@ class SupabaseIntegration:
                     import traceback
                     logger.error(f"Traceback: {traceback.format_exc()}")
             else:
-                logger.warning(f"Combined AV file not found at path: {combined_url}")
-                # Try to find the combined AV file in export_result
+                logger.error(f"Combined AV file not found or upload failed: {combined_url}")
+                # Try to find the combined AV file in export_result using a different key
                 combined_av_path = export_result.get("combined_av_path")
                 logger.info(f"Trying alternative combined_av_path: {combined_av_path}")
-                if combined_av_path and os.path.exists(combined_av_path):
-                    logger.info(f"Found alternative combined AV file at: {combined_av_path}")
-                    # Recursively call this block with the new path
+                
+                if combined_av_path and os.path.exists(combined_av_path) and os.path.getsize(combined_av_path) > 0:
+                    logger.info(f"Found valid alternative combined AV file at: {combined_av_path}")
+                    # Upload the alternative file
                     upload_result = self.supabase.upload_full_video(file_path=combined_av_path)
+                    logger.info(f"Alternative upload result: {upload_result}")
+                    
                     if upload_result.get("success"):
                         supabase_url = upload_result.get("public_url")
                         result["supabase_urls"]["combined_av_url"] = supabase_url
@@ -364,6 +406,9 @@ class SupabaseIntegration:
                                     db_session.commit()
                             except Exception as db_e:
                                 logger.error(f"Error updating database with alternative Supabase URL: {str(db_e)}")
+                    else:
+                        logger.error(f"Failed to upload alternative combined AV file: {upload_result.get('error')}")
+                        result["errors"] = result.get("errors", []) + ["Failed to upload alternative combined AV file"]
                 else:
                     logger.error("Could not find any combined AV file to upload to Supabase")
         else:
@@ -413,8 +458,15 @@ class SupabaseIntegration:
             sync_result = self._run_sync_parliament_clip_member_ids()
             if sync_result.get("success"):
                 logger.info("Member ID synchronization completed successfully")
+                # Add success message to result
+                result["sync_status"] = "success"
+                result["sync_message"] = "Successfully synchronized member IDs between SQLite and PostgreSQL"
             else:
-                logger.warning("Member ID synchronization failed or was not needed")
+                logger.warning(f"Member ID synchronization failed: {sync_result.get('error', 'Unknown error')}")
+                # Add warning to result
+                result["sync_status"] = "warning"
+                result["sync_message"] = f"Member ID synchronization warning: {sync_result.get('error', 'Unknown error')}"
+                result["warnings"] = result.get("warnings", []) + ["Member ID synchronization issue - some clips may fail to export"]
                 
             # Verify the sanitized data is JSON serializable
             try:

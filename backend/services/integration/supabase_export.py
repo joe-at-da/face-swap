@@ -82,10 +82,32 @@ def format_clips_for_supabase(
     Args:
         video_id: Reference to the parent video
         recognition_results: Recognition results from facial recognition
+        combined_av_url: URL to the combined audio-video file
         
     Returns:
         List of clips formatted for Supabase clip_creation queue
     """
+    # Function to validate and convert member_id to integer
+    def validate_member_id(member_id):
+        if not member_id:
+            return None
+            
+        # Skip default_unknown
+        if member_id == "default_unknown":
+            logger.warning("Skipping default_unknown member_id")
+            return None
+            
+        # Handle UUID format (which can't be converted to int)
+        if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:
+            logger.warning(f"Found UUID member_id {member_id}, needs synchronization")
+            return member_id  # Return as is, will be handled by add_to_clip_creation_queue
+            
+        # Try to convert to integer
+        try:
+            return int(member_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid member_id format: {member_id}")
+            return None  # Return None for invalid member_id
     # Log the structure of the recognition_results for debugging
     logger.info(f"Recognition results keys: {list(recognition_results.keys())}")
     if 'speaker_appearances' in recognition_results:
@@ -110,11 +132,17 @@ def format_clips_for_supabase(
                 logger.warning(f"Skipping identified speaker segment with missing required fields: mp_id={mp_id}, start_time={start_time}, end_time={end_time}")
                 continue
                 
+            # Validate and convert member_id
+            valid_mp_id = validate_member_id(mp_id)
+            if valid_mp_id is None:
+                logger.warning(f"Skipping identified speaker segment with invalid member_id: {mp_id}")
+                continue
+                
             clips.append({
                 "video_id": video_id,
                 "start_timestamp": start_time,
                 "end_timestamp": end_time,
-                "member_id": mp_id,  # Use member_id instead of speaker_id
+                "member_id": valid_mp_id,  # Use validated member_id
                 "speaker_name": speaker.get("name", "Unknown"),
                 "confidence": segment.get("confidence", 0.0),
                 "transcript": segment.get("transcript", ""),
@@ -139,11 +167,17 @@ def format_clips_for_supabase(
             logger.warning(f"Skipping appearance with missing required fields: member_id={member_id}, start_time={start_time}, end_time={end_time}")
             continue
             
+        # Validate and convert member_id
+        valid_member_id = validate_member_id(member_id)
+        if valid_member_id is None:
+            logger.warning(f"Skipping appearance with invalid member_id: {member_id}")
+            continue
+            
         clips.append({
             "video_id": video_id,
             "start_timestamp": start_time,
             "end_timestamp": end_time,
-            "member_id": member_id,  # Ensure this is present
+            "member_id": valid_member_id,  # Use validated member_id
             "speaker_name": appearance.get("member_name", "Unknown"),
             "confidence": appearance.get("confidence", 0.0),
             "transcript": appearance.get("transcript", ""),  # Ensure transcript is present
@@ -176,12 +210,18 @@ def format_clips_for_supabase(
                     logger.warning(f"Skipping timeline event with missing required fields: member_id={member_id}, start_time={start_time}, end_time={end_time}")
                     continue
                     
+                # Validate and convert member_id
+                valid_member_id = validate_member_id(member_id)
+                if valid_member_id is None:
+                    logger.warning(f"Skipping timeline event with invalid member_id: {member_id}")
+                    continue
+                    
                 # Create clip for this timeline event
                 clips.append({
                     "video_id": video_id,
                     "start_timestamp": start_time,
                     "end_timestamp": end_time,
-                    "member_id": member_id,  # Use member_id instead of speaker_id
+                    "member_id": valid_member_id,  # Use validated member_id
                     "speaker_name": event.get("name", "Unknown"),
                     "confidence": event.get("confidence", 0.0),
                     "transcript": event.get("text", "") or "No transcript available",  # Ensure transcript is not empty
@@ -204,8 +244,10 @@ def format_clips_for_supabase(
             end_time = appearance.get("end_time", start_time + 5)
             
             # For unidentified faces, we need to use a default member_id since it's required
-            # Use 9999 as a special ID for unidentified speakers
-            default_member_id = 9999
+            # Use a consistent default ID for unidentified speakers
+            # We'll log this clearly so it's transparent that these are unidentified speakers
+            default_member_id = "default_unknown"
+            logger.info(f"Using default_unknown member_id for unidentified face at time {start_time}")
             
             clips.append({
                 "video_id": video_id,

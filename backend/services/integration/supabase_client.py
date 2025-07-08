@@ -155,6 +155,7 @@ class SupabaseService:
         return self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
         
     def upload_full_video(self, file_path: str, destination_path: str = None) -> Dict[str, Any]:
+        logger.warning(f"🔄 DEBUG: upload_full_video called for file_path={file_path} - SUPABASE STORAGE UPLOAD ENTRY POINT")
         """Upload a full video file to Supabase storage."""
         if not file_path:
             logger.warning("Video file path is None")
@@ -335,6 +336,21 @@ class SupabaseService:
                 logger.info(f"Converted Docker internal URL '{original_url}' to external URL: '{public_url}'")
             
             logger.info(f"Public URL: {public_url}")
+            
+            # Verify the file exists in Supabase storage
+            try:
+                # List files in the bucket to verify our file is there
+                files = self.client.storage.from_(self.full_videos_bucket).list()
+                logger.info(f"Files in bucket {self.full_videos_bucket}: {files}")
+                
+                # Check if our file is in the list
+                file_exists = any(file.get('name') == destination_path for file in files)
+                logger.info(f"File {destination_path} exists in bucket: {file_exists}")
+                
+                if not file_exists:
+                    logger.warning(f"File {destination_path} not found in bucket after upload. This may indicate an upload issue.")
+            except Exception as verify_error:
+                logger.warning(f"Error verifying file in storage: {str(verify_error)}, but continuing")
             
             # Update file metadata to ensure it has the correct content-type
             try:
@@ -531,27 +547,15 @@ class SupabaseService:
                                 valid_member_ids = [member['member_id'] for member in member_response.data if 'member_id' in member] if member_response.data else []
                                 logger.info(f"Fetched {len(valid_member_ids)} valid member_ids from parliament_members table")
                                 
-                                # If we couldn't find any valid member IDs, log an error and use a fallback
+                                # If we couldn't find any valid member IDs, log an error
                                 if not valid_member_ids:
                                     logger.error("No valid member IDs found in parliament_members table")
-                                    # Try to create a test member for debugging
-                                    try:
-                                        test_member = {
-                                            'member_id': 9999,  # Use a high number unlikely to conflict
-                                            'display_name': 'Test Member',
-                                            'given_name': 'Test',
-                                            'family_name': 'Member',
-                                            'party_name': 'Test Party',
-                                            'constituency_name': 'Test Constituency',
-                                            'is_current_member': True
-                                        }
-                                        member_insert = self.client.table('parliament_members').insert(test_member).execute()
-                                        if member_insert.data:
-                                            test_id = member_insert.data[0]['member_id']
-                                            valid_member_ids = [test_id]
-                                            logger.info(f"Created test member with member_id {test_id}")
-                                    except Exception as test_error:
-                                        logger.error(f"Failed to create test member: {str(test_error)}")
+                                    logger.error("Please run the sync_parliament_clip_member_ids.py script to create Speaker records")
+                                    # Return clear error instead of using fallbacks
+                                    return {
+                                        "success": False, 
+                                        "error": "No valid member IDs found in parliament_members table. Run sync_parliament_clip_member_ids.py first."
+                                    }
                             except Exception as fetch_error:
                                 logger.error(f"Error fetching valid member IDs: {str(fetch_error)}")
                                 valid_member_ids = []
