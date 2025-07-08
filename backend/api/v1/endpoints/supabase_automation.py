@@ -374,12 +374,25 @@ async def process_parliament_tv_to_supabase(
                             full_video_url = export_result["supabase_urls"].get("combined_av_url")
                             logger.warning(f"🔍 Found full_video_url in export_result[supabase_urls][combined_av_url]: {full_video_url}")
                     
-                    # If full_video_url is still None, check if it's available in the capture session
+                    # If full_video_url is still None, check if it's available in the capture session metadata
                     if not full_video_url:
                         capture = db.query(CaptureSession).filter(CaptureSession.id == capture_id).first()
-                        if capture and capture.supabase_url:
-                            full_video_url = capture.supabase_url
-                            logger.warning(f"🔍 Using supabase_url from CaptureSession as fallback: {full_video_url}")
+                        if capture and capture.capture_metadata:
+                            # Try to get URL from metadata if it exists
+                            metadata = capture.capture_metadata
+                            if isinstance(metadata, dict) and "supabase_url" in metadata:
+                                full_video_url = metadata["supabase_url"]
+                                logger.warning(f"🔍 Found full_video_url in capture_metadata: {full_video_url}")
+                            # Check recognition_results for URL information
+                            elif capture.recognition_results:
+                                try:
+                                    rec_results = json.loads(capture.recognition_results) if isinstance(capture.recognition_results, str) else capture.recognition_results
+                                    if isinstance(rec_results, dict) and "supabase_urls" in rec_results:
+                                        full_video_url = rec_results["supabase_urls"].get("combined_av_url")
+                                        logger.warning(f"🔍 Found full_video_url in recognition_results: {full_video_url}")
+                                except (json.JSONDecodeError, AttributeError) as e:
+                                    logger.warning(f"Could not parse recognition_results: {str(e)}")
+                        logger.info(f"No supabase_url found in CaptureSession for ID {capture_id}")
                     
                     # If still None, check if there's a combined AV file in the media directory
                     if not full_video_url:
