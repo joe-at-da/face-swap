@@ -227,9 +227,50 @@ class SupabaseIntegration:
         os.makedirs(export_dir, exist_ok=True)
         
         # Export recognition results to JSON files
-        # Extract audio path from video_metadata
+        # Extract audio path from video_metadata or find it based on common patterns
         audio_path = video_metadata.get("audio_path")
+        
+        # If audio_path is not provided or doesn't exist, try to find it
+        if not audio_path or not os.path.exists(audio_path):
+            # Get video filename without extension
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            logger.info(f"Looking for audio file for video: {video_name}")
+            
+            # Check common locations for audio files
+            data_dir = "/app/data"
+            audio_extracts_dir = os.path.join(data_dir, "temp", "audio_extracts")
+            media_dir = os.path.join(data_dir, "media")
+            
+            # Try common naming patterns for audio files
+            potential_audio_files = [
+                # Check in media directory first (most common location)
+                os.path.join(media_dir, f"{video_name}.mp3"),
+                os.path.join(media_dir, f"audio_{video_name}.mp3"),
+                os.path.join(media_dir, f"{video_name}_audio.mp3"),
+                # Check in audio extracts directory
+                os.path.join(audio_extracts_dir, f"{video_name}.audio.mp3"),
+                os.path.join(audio_extracts_dir, f"{video_name}.mp3"),
+                os.path.join(audio_extracts_dir, f"capture_{video_name}.audio.mp3"),
+                os.path.join(audio_extracts_dir, f"capture_{video_name}.mp3"),
+                os.path.join(audio_extracts_dir, f"{video_name}_audio.mp3"),
+                # Try other audio formats
+                os.path.join(media_dir, f"{video_name}.m4a"),
+                os.path.join(media_dir, f"{video_name}.aac"),
+                os.path.join(audio_extracts_dir, f"{video_name}.m4a"),
+                os.path.join(audio_extracts_dir, f"{video_name}.aac")
+            ]
+            
+            for audio_file in potential_audio_files:
+                if os.path.exists(audio_file):
+                    logger.info(f"Found audio file: {audio_file}")
+                    audio_path = audio_file
+                    break
+        
         logger.warning(f"🔍 DEBUG: Calling export_recognition_results with video_id={video_id}, audio_path={audio_path}")
+        if audio_path and os.path.exists(audio_path):
+            logger.info(f"Audio file exists at {audio_path}, size: {os.path.getsize(audio_path)} bytes")
+        else:
+            logger.warning(f"Audio file not found or invalid: {audio_path}")
         
         # Create temporary export directory for JSON files
         export_dir = os.path.join("/app/data/temp", "supabase_export", Path(video_path).stem)
