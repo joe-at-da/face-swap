@@ -550,11 +550,10 @@ class SupabaseService:
                                 # If we couldn't find any valid member IDs, log an error
                                 if not valid_member_ids:
                                     logger.error("No valid member IDs found in parliament_members table")
-                                    logger.error("Please run the sync_parliament_clip_member_ids.py script to create Speaker records")
-                                    # Return clear error instead of using fallbacks
+                                    # Return clear error instead of creating test data
                                     return {
                                         "success": False, 
-                                        "error": "No valid member IDs found in parliament_members table. Run sync_parliament_clip_member_ids.py first."
+                                        "error": "No valid member IDs found in parliament_members table. Please ensure parliament_members table is populated."
                                     }
                             except Exception as fetch_error:
                                 logger.error(f"Error fetching valid member IDs: {str(fetch_error)}")

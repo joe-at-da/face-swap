@@ -382,9 +382,8 @@ async def process_parliament_tv_to_supabase(
                     # First run the synchronization script to ensure member IDs are properly synchronized
                     logger.info(f"Running member ID synchronization script before saving clips for session {capture_id}")
                     try:
-                        from backend.services.integration.sync_parliament_clip_member_ids import sync_parliament_clip_member_ids
-                        sync_result = sync_parliament_clip_member_ids(db)
-                        logger.info(f"Synchronized member IDs between SQLite and PostgreSQL: {sync_result}")
+                        # Member ID conversion is now handled inline in supabase_client.py
+                        logger.info("Using inline member ID conversion in supabase_client.py")
                     except Exception as sync_error:
                         logger.error(f"Error synchronizing member IDs: {str(sync_error)}")
                         import traceback
@@ -712,9 +711,8 @@ def save_member_clips_to_supabase(
     
     # Run the sync script to ensure all member IDs exist in PostgreSQL
     try:
-        from backend.services.integration.sync_parliament_clip_member_ids import sync_parliament_clip_member_ids
-        sync_result = sync_parliament_clip_member_ids(db)
-        logger.info(f"Synchronized member IDs between SQLite and PostgreSQL: {sync_result}")
+        # Member ID conversion is now handled inline in supabase_client.py
+        logger.info("Using inline member ID conversion in supabase_client.py")
     except Exception as sync_error:
         logger.error(f"Error synchronizing member IDs: {str(sync_error)}")
         # Continue with the export, but log the error
