@@ -309,9 +309,42 @@ def export_recognition_results(
             ).first()
             
             if video:
-                video.supabase_url = supabase_url
+                # Store URL in capture_metadata JSON field
+                metadata = {}
+                if video.capture_metadata:
+                    if isinstance(video.capture_metadata, str):
+                        try:
+                            metadata = json.loads(video.capture_metadata)
+                        except json.JSONDecodeError:
+                            metadata = {}
+                    elif isinstance(video.capture_metadata, dict):
+                        metadata = video.capture_metadata
+                
+                metadata['supabase_url'] = supabase_url
+                video.capture_metadata = metadata
+                
+                # Also store in recognition_results if it exists
+                if video.recognition_results:
+                    rec_results = {}
+                    if isinstance(video.recognition_results, str):
+                        try:
+                            rec_results = json.loads(video.recognition_results)
+                        except json.JSONDecodeError:
+                            rec_results = {}
+                    elif isinstance(video.recognition_results, dict):
+                        rec_results = video.recognition_results
+                    
+                    if not isinstance(rec_results, dict):
+                        rec_results = {}
+                    
+                    if 'supabase_urls' not in rec_results:
+                        rec_results['supabase_urls'] = {}
+                    
+                    rec_results['supabase_urls']['combined_av_url'] = supabase_url
+                    video.recognition_results = rec_results
+                
                 db_session.commit()
-                logger.info(f"Updated CaptureSession record with Supabase URL: {supabase_url}")
+                logger.info(f"Updated CaptureSession record with Supabase URL in JSON fields: {supabase_url}")
             else:
                 # If no CaptureSession record, try to update RecognitionProcess record
                 rec_process = db_session.query(RecognitionProcess).filter(
@@ -319,13 +352,34 @@ def export_recognition_results(
                 ).first()
                 
                 if rec_process:
-                    rec_process.supabase_url = supabase_url
+                    # Store URL in recognition_results JSON field
+                    rec_results = {}
+                    if rec_process.results:
+                        if isinstance(rec_process.results, str):
+                            try:
+                                rec_results = json.loads(rec_process.results)
+                            except json.JSONDecodeError:
+                                rec_results = {}
+                        elif isinstance(rec_process.results, dict):
+                            rec_results = rec_process.results
+                    
+                    if not isinstance(rec_results, dict):
+                        rec_results = {}
+                    
+                    if 'supabase_urls' not in rec_results:
+                        rec_results['supabase_urls'] = {}
+                    
+                    rec_results['supabase_urls']['combined_av_url'] = supabase_url
+                    rec_process.results = json.dumps(rec_results) if isinstance(rec_results, dict) else rec_results
+                    
                     db_session.commit()
-                    logger.info(f"Updated RecognitionProcess record with Supabase URL: {supabase_url}")
+                    logger.info(f"Updated RecognitionProcess record with Supabase URL in JSON fields: {supabase_url}")
                 else:
                     logger.warning(f"No video or recognition process record found for video ID {video_id}")
         except Exception as e:
             logger.error(f"Error updating video record: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Continue with export even if update fails
     
     # Get clips from the parliament_clips SQLite database using ParliamentClipsIntegrationService

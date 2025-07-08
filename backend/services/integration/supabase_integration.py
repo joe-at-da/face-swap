@@ -19,9 +19,10 @@ from backend.core.config import settings
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.integration.supabase_export import (
     format_video_for_supabase,
-    format_clips_for_supabase,
-    export_recognition_results
+    format_clips_for_supabase
 )
+# Import the correct export_recognition_results function
+from backend.services.recognition.supabase_export import export_recognition_results
 
 logger = logging.getLogger(__name__)
 
@@ -226,15 +227,31 @@ class SupabaseIntegration:
         os.makedirs(export_dir, exist_ok=True)
         
         # Export recognition results to JSON files
+        # Extract audio path from video_metadata
+        audio_path = video_metadata.get("audio_path")
+        logger.warning(f"🔍 DEBUG: Calling export_recognition_results with video_id={video_id}, audio_path={audio_path}")
+        
+        # Create temporary export directory for JSON files
+        export_dir = os.path.join("/app/data/temp", "supabase_export", Path(video_path).stem)
+        os.makedirs(export_dir, exist_ok=True)
+        
+        # Call the correct export_recognition_results function with the right parameters
         export_result = export_recognition_results(
-            video_path=video_path,
+            video_id=video_id,
             recognition_results=recognition_results,
-            video_metadata=video_metadata,
-            export_dir=export_dir,
-            create_combined_av=True,
-            db_session=db_session,
-            video_id=video_id
+            video_path=video_path,
+            audio_path=audio_path,
+            metadata=video_metadata,  # Pass video_metadata as metadata
+            db_session=db_session
         )
+        
+        # Add export paths to the result for compatibility
+        if "export_path" not in export_result:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            video_export_path = os.path.join(export_dir, f"recognition_export_{video_id}_{timestamp}.json")
+            clips_export_path = os.path.join(export_dir, f"clips_export_{video_id}_{timestamp}.json")
+            export_result["video_export_path"] = video_export_path
+            export_result["clips_export_path"] = clips_export_path
         
         result = {
             "export_paths": export_result,
@@ -466,9 +483,26 @@ class SupabaseIntegration:
                                 from backend.db.models import CaptureSession
                                 capture = db_session.query(CaptureSession).filter(CaptureSession.id == video_id).first()
                                 if capture:
-                                    capture.supabase_url = supabase_url
+                                    # Store URL in capture_metadata JSON field
+                                    if not capture.capture_metadata:
+                                        capture.capture_metadata = {}
+                                    elif isinstance(capture.capture_metadata, str):
+                                        try:
+                                            capture.capture_metadata = json.loads(capture.capture_metadata)
+                                        except json.JSONDecodeError:
+                                            capture.capture_metadata = {}
+                                    
+                                    # Ensure capture_metadata is a dictionary
+                                    if not isinstance(capture.capture_metadata, dict):
+                                        capture.capture_metadata = {}
+                                    
+                                    # Store the URL in the metadata
+                                    capture.capture_metadata["supabase_url"] = supabase_url
                                     capture.external_status = "completed"
                                     db_session.commit()
+                                    
+                                    # Log the update
+                                    logger.info(f"Updated CaptureSession {video_id} with alternative Supabase URL in JSON fields: {supabase_url}")
                             except Exception as db_e:
                                 logger.error(f"Error updating database with alternative Supabase URL: {str(db_e)}")
                     else:
