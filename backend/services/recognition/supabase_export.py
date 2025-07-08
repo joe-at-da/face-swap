@@ -321,7 +321,8 @@ def export_recognition_results(
                         metadata = video.capture_metadata
                 
                 metadata['supabase_url'] = supabase_url
-                video.capture_metadata = metadata
+                # Ensure we're storing a JSON string, not a Python dict
+                video.capture_metadata = json.dumps(metadata) if isinstance(metadata, dict) else metadata
                 
                 # Also store in recognition_results if it exists
                 if video.recognition_results:
