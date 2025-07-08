@@ -408,15 +408,15 @@ def export_recognition_results(
     for i, clip in enumerate(parliament_clips):
         try:
             # Get clip data from the parliament_clips database
-            member_id = clip.get('member_id')
+            member_id = clip.get('member_id') if isinstance(clip, dict) else None
             if not member_id:
                 logger.warning(f"Skipping clip without member_id: {clip}")
                 continue
                 
             # Parse timestamps
             try:
-                start_time = float(clip.get('start_timestamp', 0))
-                end_time = float(clip.get('end_timestamp', 0))
+                start_time = float(clip.get('start_timestamp', 0)) if isinstance(clip, dict) else 0.0
+                end_time = float(clip.get('end_timestamp', 0)) if isinstance(clip, dict) else 0.0
                 duration = end_time - start_time
             except (ValueError, TypeError) as e:
                 logger.error(f"Error parsing timestamps for clip {i}: {str(e)}")
@@ -465,7 +465,7 @@ def export_recognition_results(
             else:
                 logger.warning(f"No Speaker record found for member_id {member_id}")
                 
-            mp_name = mp.name if mp and hasattr(mp, 'name') else clip.get('member_name', "Unknown MP")
+            mp_name = mp.name if mp and hasattr(mp, 'name') else (clip.get('member_name', "Unknown MP") if isinstance(clip, dict) else "Unknown MP")
             
             # Get video information
             video = db_session.query(CaptureSession).filter(
@@ -482,14 +482,16 @@ def export_recognition_results(
                 "start_timestamp": start_timestamp,
                 "end_timestamp": end_timestamp,
                 "duration": duration,
-                "transcript": clip.get('transcript', ''),
-                "confidence": clip.get('confidence_score', 0.0),
-                "recognition_method": clip.get('metadata', {}).get('recognition_method', 'facial'),
+                "transcript": clip.get('transcript', '') if isinstance(clip, dict) else '',
+                "confidence": clip.get('confidence_score', 0.0) if isinstance(clip, dict) else 0.0,
+                "recognition_method": (clip.get('metadata', {}).get('recognition_method', 'facial') 
+                                     if isinstance(clip, dict) and isinstance(clip.get('metadata'), dict) 
+                                     else 'facial'),
                 "full_video_url": upload_result.get('public_url'),
                 "full_video_path": video_path,  # Add the full_video_path field which is required
                 "clip_url": clip_url,
                 "session_title": video.title if video else "",
-                "session_date": video.created_at.isoformat() if video and video.created_at else clip.get('session_date', ''),
+                "session_date": video.created_at.isoformat() if video and video.created_at else (clip.get('session_date', '') if isinstance(clip, dict) else ''),
                 "session_description": video.description if video else "",
                 "original_url": video.source_url if video else "",
                 "status": "pending_review"  # Use a valid enum value for parliament_clip_status
