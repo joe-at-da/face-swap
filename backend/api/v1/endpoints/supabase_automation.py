@@ -11,6 +11,7 @@ import os
 import json
 import time
 import uuid
+import glob
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from backend.services.utils import make_json_serializable
@@ -384,7 +385,6 @@ async def process_parliament_tv_to_supabase(
                     if not full_video_url:
                         from backend.core.config import settings
                         media_dir = settings.MEDIA_STORAGE_PATH
-                        import glob, os
                         combined_files = glob.glob(os.path.join(media_dir, f"combined_av_{capture_id}_*.mp4"))
                         if combined_files:
                             # Use the most recent file if multiple exist
