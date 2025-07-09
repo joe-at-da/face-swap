@@ -618,19 +618,17 @@ class SupabaseService:
                             if not isinstance(clip['member_id'], int):
                                 clip['member_id'] = int(clip['member_id'])
                                 
-                            # Verify this member_id exists in parliament_members table
-                            member_check = self.client.table('parliament_members').select('member_id').eq('member_id', clip['member_id']).execute()
-                            if not member_check.data or len(member_check.data) == 0:
-                                logger.warning(f"Member ID {clip['member_id']} not found in parliament_members table, getting fallback ID")
-                                
-                                # Get a valid member_id as fallback
-                                fallback = self.client.table('parliament_members').select('member_id').limit(1).execute()
-                                if fallback.data and len(fallback.data) > 0:
-                                    clip['member_id'] = fallback.data[0]['member_id']
-                                    logger.info(f"Using fallback member_id: {clip['member_id']}")
-                                else:
-                                    logger.error("No valid member_ids found in parliament_members table")
-                                    continue  # Skip this clip if we can't find a valid member_id
+                            # Special case: Allow member_id -1 for unknown speakers
+                            if clip['member_id'] == -1:
+                                logger.info(f"Allowing special member ID -1 for unknown speaker in second validation")
+                                # Keep the -1 as is, don't verify or replace with fallback
+                            else:
+                                # Verify this member_id exists in parliament_members table
+                                member_check = self.client.table('parliament_members').select('member_id').eq('member_id', clip['member_id']).execute()
+                                if not member_check.data or len(member_check.data) == 0:
+                                    logger.warning(f"Member ID {clip['member_id']} not found in parliament_members table")
+                                    logger.warning(f"Skipping clip with invalid member ID {clip['member_id']}")
+                                    continue  # Skip this clip instead of using a fallback ID
                         except (ValueError, TypeError) as e:
                             logger.error(f"Invalid member_id format: {e}")
                             continue  # Skip this clip if member_id is invalid
