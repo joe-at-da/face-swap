@@ -352,8 +352,12 @@ def update_member_embeddings_in_cache(supabase_service: SupabaseService, member_
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Update parliament member embeddings')
-    parser.add_argument('--video_path', type=str, default=SAMPLE_VIDEO_PATH,
+    parser.add_argument('--video_path', type=str, default=None,
                         help='Path to the Parliament TV video file')
+    parser.add_argument('--frame_path', type=str, default=None,
+                        help='Path to a single Parliament TV frame')
+    parser.add_argument('--frames_dir', type=str, default=None,
+                        help='Path to a directory containing Parliament TV frames')
     parser.add_argument('--threshold', type=float, default=0.7,
                         help='Similarity threshold below which to update embeddings')
     parser.add_argument('--update', action='store_true',
@@ -374,8 +378,26 @@ def main():
     # Create output directory for frames
     os.makedirs(FRAMES_OUTPUT_DIR, exist_ok=True)
     
-    # Extract frames from the video
-    frame_paths = extract_frames(args.video_path, FRAMES_OUTPUT_DIR)
+    # Get frame paths based on input arguments
+    frame_paths = []
+    
+    if args.video_path:
+        # Extract frames from the video
+        logger.info(f"Extracting frames from video: {args.video_path}")
+        frame_paths = extract_frames(args.video_path, FRAMES_OUTPUT_DIR)
+    elif args.frame_path:
+        # Use a single frame
+        logger.info(f"Using single frame: {args.frame_path}")
+        frame_paths = [args.frame_path]
+    elif args.frames_dir:
+        # Use all frames in a directory
+        logger.info(f"Using frames from directory: {args.frames_dir}")
+        import glob
+        frame_paths = glob.glob(os.path.join(args.frames_dir, "*.jpg"))
+        logger.info(f"Found {len(frame_paths)} frames in directory")
+    else:
+        logger.error("No input source specified. Use --video_path, --frame_path, or --frames_dir")
+        return
     
     # Detect faces in frames
     frame_faces = detect_faces_in_frames(face_service, frame_paths)
