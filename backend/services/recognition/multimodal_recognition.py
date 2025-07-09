@@ -698,7 +698,7 @@ class MultimodalRecognitionService:
                         face_result = self.identify_speaker_in_frame(
                             db, 
                             face_path, 
-                            threshold=0.3,  # Very low threshold as requested
+                            threshold=0.1,  # Lower threshold to match more faces
                             timestamp=face_time, 
                             video_id=str(video_id)  # Convert to string as expected by the matcher
                         )
@@ -824,7 +824,7 @@ class MultimodalRecognitionService:
                         face_result = self.identify_speaker_in_frame(
                             db, 
                             frame_path, 
-                            threshold=0.3,  # Very low threshold as requested
+                            threshold=0.1,  # Lower threshold to match more faces
                             timestamp=frame_time, 
                             video_id=str(video_id)  # Convert to string as expected by the matcher
                         )
