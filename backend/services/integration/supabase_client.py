@@ -542,12 +542,17 @@ class SupabaseService:
                                 valid_member_ids = []
                         
                         # Check if the member_id is in our list of valid IDs
-                        if valid_member_ids and member_id not in valid_member_ids:
+                        # Special case: Allow member_id -1 for unknown speakers even if not in valid_member_ids
+                        if member_id == -1:
+                            logger.info(f"Allowing special member ID -1 for unknown speaker")
+                            # Keep the -1 as is, don't replace with fallback
+                        elif valid_member_ids and member_id not in valid_member_ids:
                             if valid_member_ids:
-                                # Use the first valid member ID as a fallback
-                                fallback_id = valid_member_ids[0]
-                                logger.warning(f"Member ID {member_id} not found. Using fallback ID {fallback_id}")
-                                clean_clip['member_id'] = fallback_id
+                                # For non-special IDs that aren't valid, log a clear warning
+                                logger.warning(f"Member ID {member_id} not found in parliament_members table")
+                                # Don't use a fallback - this would mask the real issue
+                                logger.warning(f"Skipping clip with invalid member ID {member_id}")
+                                continue
                             else:
                                 logger.warning(f"Member ID {member_id} not found and no fallbacks available. Skipping clip.")
                                 continue
