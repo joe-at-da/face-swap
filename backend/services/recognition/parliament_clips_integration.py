@@ -1021,8 +1021,8 @@ class ParliamentClipsIntegrationService:
                     
                     clips_to_export.append({
                         "video_id": str(video_id),
-                        "start_time": clip.get('start_timestamp'),
-                        "end_time": clip.get('end_timestamp'),
+                        "start_timestamp": clip.get('start_timestamp'),
+                        "end_timestamp": clip.get('end_timestamp'),
                         "member_id": member_id,  # This will be converted to integer in add_to_clip_creation_queue
                         "speaker_name": clip.get('member_name', 'Unknown'),
                         "confidence": clip.get('confidence_score', 0.0),
