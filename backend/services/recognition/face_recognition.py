@@ -40,7 +40,7 @@ class FaceRecognitionService:
                 self.face_detector_model,
                 "",
                 (320, 320),
-                0.9,  # Score threshold
+                0.3,  # Score threshold - lowered for better Parliament TV face detection
                 0.3,  # NMS threshold
                 5000  # Top K
             )
@@ -133,17 +133,17 @@ class FaceRecognitionService:
             height, width = image.shape[:2]
             logger.info(f"Image dimensions: {width}x{height}, channels: {image.shape[2] if len(image.shape) > 2 else 1}")
             
-            # Resize image if it's too large
-            max_size = 1280
-            if height > max_size or width > max_size:
-                scale = max_size / max(height, width)
-                image = cv2.resize(image, (int(width * scale), int(height * scale)))
-                height, width = image.shape[:2]
-                logger.info(f"Resized image to {width}x{height}")
-            
-            # Set input size for the detector
+            # Set input size for the detector to original image dimensions
             self.face_detector.setInputSize((width, height))
             logger.debug(f"Set face detector input size to {width}x{height}")
+            
+            # Resize image if it's too large (for display purposes only)
+            max_size = 1280
+            display_image = image.copy()
+            if height > max_size or width > max_size:
+                scale = max_size / max(height, width)
+                display_image = cv2.resize(image, (int(width * scale), int(height * scale)))
+                logger.info(f"Resized image for display to {int(width * scale)}x{int(height * scale)}")
             
             # Detect faces
             logger.debug("Running face detection...")
