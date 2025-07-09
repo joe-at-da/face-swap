@@ -6,14 +6,14 @@ ensuring that recognized clips are properly saved for local development and test
 It also integrates with Supabase to ensure clips are available in the production environment.
 """
 
+import json
 import os
 import sys
-import json
-import logging
 import sqlite3
-import uuid
-from typing import Dict, List, Any, Optional
+import logging
+import time
 from datetime import datetime
+from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 
 # Add the parent directory to sys.path to allow importing from scripts
@@ -685,8 +685,6 @@ class ParliamentClipsIntegrationService:
         Returns:
             Dict with export status and results
         """
-        import uuid  # Ensure uuid is imported in this method's scope
-        
         # Initialize cache for temporary Speaker objects
         temp_members_cache = {}
         logger.info(f"===== EXPORTING CLIPS TO SUPABASE =====")
@@ -807,9 +805,17 @@ class ParliamentClipsIntegrationService:
                     # Calculate duration
                     duration_seconds = end_time - start_time
                     
+                    # Ensure member_id is an integer
+                    member_id = event.get("member_id")
+                    if isinstance(member_id, str) and member_id.isdigit():
+                        member_id = int(member_id)
+                    elif not isinstance(member_id, int):
+                        logger.warning(f"Non-integer member_id found: {member_id}, skipping clip")
+                        continue
+                        
                     clip = {
-                        'id': str(uuid.uuid4()),
-                        'member_id': event.get("member_id"),
+                        'id': str(int(time.time() * 1000)),  # Use timestamp instead of UUID
+                        'member_id': member_id,  # Use integer member_id
                         'transcript': event.get("text", ""),
                         'full_video_path': video_path,
                         'start_timestamp': start_time,
@@ -877,73 +883,67 @@ class ParliamentClipsIntegrationService:
                 try:
                     from backend.db.models import Speaker
                     
-                    # Check if member_id is a UUID string (from facial recognition)
-                    import uuid
-                    member_id_str = str(clip['member_id'])
-                    is_uuid = False
-                    try:
-                        uuid_obj = uuid.UUID(member_id_str)
-                        is_uuid = True
-                        logger.info(f"Member ID {member_id_str} is a UUID")
-                    except ValueError:
-                        is_uuid = False
+                    # Get member_id as integer
+                    member_id_int = clip['member_id']
+                    if not isinstance(member_id_int, int):
+                        try:
+                            member_id_int = int(member_id_int)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Cannot convert member_id to integer: {clip['member_id']}")
+                            member_id_int = -1
                     
-                    # Try multiple approaches to find the speaker
+                    # Try to find the speaker by member_id
                     member = None
                     
-                    # Skip direct ID match since Speaker.id is an integer and clip['member_id'] is a UUID string
-                    # Instead, first try parliament_id match
                     try:
-                        member = db.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
+                        # Direct lookup by member_id (integer)
+                        member = db.query(Speaker).filter(Speaker.member_id == member_id_int).first()
                         if member:
-                            logger.info(f"Found member by parliament_id: {member_id_str}")
+                            logger.info(f"Found member by member_id: {member_id_int}")
                     except Exception as e:
-                        logger.warning(f"Error finding member by parliament_id: {str(e)}")
+                        logger.warning(f"Error finding member by member_id: {str(e)}")
                     
-                    # Second try: if it's a UUID, try to find by string representation in any field
-                    if not member and is_uuid:
+                    # If not found by member_id, try by ID
+                    if not member:
                         try:
-                            # Try a more flexible search if it's a UUID
-                            member = db.query(Speaker).filter(
-                                (Speaker.parliament_id.like(f"%{member_id_str}%")) |
-                                (Speaker.name.like(f"%{member_id_str}%"))
-                            ).first()
+                            member = db.query(Speaker).filter(Speaker.id == member_id_int).first()
                             if member:
-                                logger.info(f"Found member by flexible search: {member_id_str}")
+                                logger.info(f"Found member by id: {member_id_int}")
                         except Exception as e:
-                            logger.warning(f"Error finding member by flexible search: {str(e)}")
+                            logger.warning(f"Error finding member by id: {str(e)}")
                     
-                    # Third try: look up by name if the member_id might be a name
-                    if not member and not is_uuid:
+                    # If still not found, try by parliament_id as a fallback
+                    if not member:
                         try:
-                            # Try to find by name if the member_id is not a UUID
-                            member = db.query(Speaker).filter(Speaker.name.ilike(f"%{member_id_str}%")).first()
+                            member_id_str = str(member_id_int)
+                            member = db.query(Speaker).filter(Speaker.parliament_id == member_id_str).first()
                             if member:
-                                logger.info(f"Found member by name search: {member_id_str}")
+                                logger.info(f"Found member by parliament_id: {member_id_str}")
                         except Exception as e:
-                            logger.warning(f"Error finding member by name: {str(e)}")
+                            logger.warning(f"Error finding member by parliament_id: {str(e)}")
                     
                     # Fallback: If no member found, create a temporary one for export purposes
                     if not member:
-                        logger.warning(f"No matching Speaker found for member_id: {member_id_str}, creating temporary record for export")
+                        logger.warning(f"No matching Speaker found for member_id: {member_id_int}, creating temporary record for export")
                         try:
                             # Check if we already created a temporary Speaker for this member_id in this session
-                            temp_member_key = f"temp_member_{member_id_str}"
+                            temp_member_key = f"temp_member_{member_id_int}"
                             if temp_member_key in temp_members_cache:
                                 member = temp_members_cache[temp_member_key]
-                                logger.info(f"Using cached temporary Speaker for {member_id_str}")
+                                logger.info(f"Using cached temporary Speaker for {member_id_int}")
                             else:
                                 # Create a temporary Speaker object (not persisted to database)
                                 from sqlalchemy import inspect
                                 member = Speaker()
                                 member.id = -1  # Temporary ID
-                                member.name = f"Unknown Speaker ({member_id_str[:8]})"
-                                member.parliament_id = member_id_str
-                                member.image_url = ""
+                                member.member_id = member_id_int  # Use the integer member_id
+                                member.name = f"Unknown Speaker (ID: {member_id_int})"
+                                member.parliament_id = str(member_id_int)
+                                member.photo_url = ""
                                 
                                 # Cache this temporary member for future use in this export session
                                 temp_members_cache[temp_member_key] = member
-                                logger.info(f"Created temporary Speaker for {member_id_str}")
+                                logger.info(f"Created temporary Speaker for {member_id_int}")
                         except Exception as e:
                             logger.error(f"Error creating temporary Speaker: {str(e)}")
                             import traceback
@@ -975,27 +975,14 @@ class ParliamentClipsIntegrationService:
                 logger.warning(f"No valid speaker appearances to export to Supabase for video ID {video_id}")
                 return {"success": False, "error": "No valid speaker appearances to export"}
             
-            # Check if we have any UUID member IDs that need to be synced
-            uuid_member_ids_detected = False
-            for appearance in recognition_results['speaker_appearances']:
-                member_id_str = str(appearance['member_id'])
-                try:
-                    uuid_obj = uuid.UUID(member_id_str)
-                    uuid_member_ids_detected = True
-                    logger.info(f"Detected UUID member_id: {member_id_str}")
-                    break
-                except ValueError:
-                    pass
-            
-            # If UUID member IDs are detected, run the sync script to ensure they have Speaker records
-            if uuid_member_ids_detected:
-                logger.info("UUID member IDs detected, running sync script to ensure Speaker records exist")
-                sync_result = self._run_sync_parliament_clip_member_ids(db)
-                if sync_result.get("success"):
-                    logger.info("Successfully synchronized member IDs with Speaker records")
-                else:
-                    logger.warning(f"Failed to synchronize member IDs: {sync_result.get('error')}")
-                    logger.warning("Continuing with export anyway, but some member IDs may not be properly mapped")
+            # Run the sync script to ensure all member IDs have Speaker records
+            logger.info("Running sync script to ensure Speaker records exist for all member IDs")
+            sync_result = self._run_sync_parliament_clip_member_ids(db)
+            if sync_result.get("success"):
+                logger.info("Successfully synchronized member IDs with Speaker records")
+            else:
+                logger.warning(f"Failed to synchronize member IDs: {sync_result.get('error')}")
+                logger.warning("Continuing with export anyway, but some member IDs may not be properly mapped")
             
             # Export and upload to Supabase
             logger.info(f"Preparing to export {len(recognition_results['speaker_appearances'])} appearances to Supabase")
@@ -1005,18 +992,18 @@ class ParliamentClipsIntegrationService:
             
             try:
                 # First, ensure we have the correct member_id mapping
-                # Run the sync script to ensure all UUID member IDs have corresponding Speaker records
-                sync_result = self._run_sync_parliament_clip_member_ids(db)
-                if not sync_result.get("success"):
-                    logger.warning(f"Member ID sync failed: {sync_result.get('error')}")
+                # We already ran the sync script earlier, so we don't need to run it again
                 
                 # Prepare clips with proper member_id format for Supabase
                 clips_to_export = []
+                skipped_clips_count = 0
+                member_id_types = {}
                 for clip in recognition_results['speaker_appearances']:
                     # Get the member_id from the clip
                     member_id = clip.get('member_id')
                     if not member_id:
                         logger.warning(f"Skipping clip without member_id: {clip}")
+                        skipped_clips_count += 1
                         continue
                         
                     # Create a properly formatted clip for Supabase
@@ -1024,18 +1011,26 @@ class ParliamentClipsIntegrationService:
                     # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
                     
                     # Ensure member_id is an integer
-                    # This should be handled by the sync script, but we'll ensure it here as well
                     if not isinstance(member_id, int):
                         try:
-                            # Convert to integer if it's a string representation of a number
+                            # Try direct conversion to integer
                             member_id = int(member_id)
                             logger.info(f"Converted member_id to integer: {member_id}")
-                        except (ValueError, TypeError):
-                            logger.error(f"Invalid member_id format: {member_id} - must be an integer")
-                            continue  # Skip this clip
+                        except (ValueError, TypeError) as e:
+                            logger.error(f"Invalid member_id format: {member_id} (type: {type(member_id).__name__}) - {str(e)}")
+                            # Skip this clip if we can't convert to integer
+                            logger.warning(f"Skipping clip with invalid member_id: {member_id}")
+                            skipped_clips_count += 1
+                            continue
                     
                     # Log the member_id for debugging
                     logger.info(f"Preparing clip with member_id: {member_id} (type: {type(member_id).__name__})")
+                    
+                    # Track member_id types for debugging
+                    member_id_type = type(member_id).__name__
+                    if member_id_type not in member_id_types:
+                        member_id_types[member_id_type] = 0
+                    member_id_types[member_id_type] += 1
                     
                     clips_to_export.append({
                         "video_id": str(video_id),
@@ -1051,12 +1046,17 @@ class ParliamentClipsIntegrationService:
                             "recognition_method": "facial",
                             "matched_by": "parliament_clips",
                             "clip_id": clip.get('id'),
-                            "combined_av_url": video_path,
-                            "original_uuid": str(member_id)  # Store the original UUID for reference
+                            "combined_av_url": video_path
                         }
                     })
                 
-                logger.info(f"Prepared {len(clips_to_export)} clips for export to Supabase")
+                logger.info(f"Prepared {len(clips_to_export)} clips for export to Supabase, skipped {skipped_clips_count} clips")
+                logger.info(f"Member ID types encountered: {member_id_types}")
+                
+                # Check if we have any clips to export
+                if len(clips_to_export) == 0:
+                    logger.error("No valid clips after cleaning. All clips were filtered out.")
+                    return {"success": False, "error": "No valid clips after cleaning"}
                 
                 # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
                 result = self.supabase_service.add_to_clip_creation_queue(clips_to_export)

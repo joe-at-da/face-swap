@@ -104,13 +104,6 @@ def format_clips_for_supabase(
             
         # Try to convert string to integer
         try:
-            # If it's a UUID, extract just the numeric part if possible
-            if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:
-                logger.warning(f"Converting UUID member_id {member_id} to numeric ID")
-                # Try to find a numeric ID in the member_id string
-                # This is a fallback and should be avoided in production
-                return -1  # Return special ID for UUIDs that can't be converted
-                
             # Standard conversion to integer
             return int(member_id)
         except (ValueError, TypeError):

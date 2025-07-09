@@ -482,10 +482,6 @@ class SupabaseService:
                                 # If it's a string that can be converted to int, do so
                                 elif isinstance(value, str) and value.isdigit():
                                     clean_clip[key] = int(value)
-                                # Handle UUID format by using special ID
-                                elif isinstance(value, str) and '-' in value and len(value) > 30:
-                                    logger.warning(f"Found UUID member_id {value}, using special ID -1")
-                                    clean_clip[key] = -1
                                 # For any other format, use special ID
                                 else:
                                     logger.warning(f"Unrecognized member_id format: {value}, using special ID -1")
