@@ -543,17 +543,35 @@ class SupabaseService:
                             logger.info(f"Allowing special member ID -1 for unknown speaker")
                             # Keep the -1 as is, don't replace with fallback
                         elif valid_member_ids:
-                            # Member ID should already be an integer at this point
-                            if not isinstance(member_id, int):
-                                logger.error(f"Member ID {member_id} is not an integer (type: {type(member_id).__name__}). This should have been handled earlier.")
+                            # CRITICAL FIX: Ensure member_id is an integer for comparison
+                            try:
+                                if not isinstance(member_id, int):
+                                    logger.warning(f"Converting member_id {member_id} (type: {type(member_id).__name__}) to integer for validation")
+                                    member_id = int(member_id)
+                                    # Update the member_id in the clip data
+                                    clean_clip['member_id'] = member_id
+                            except (ValueError, TypeError) as e:
+                                logger.error(f"Failed to convert member_id {member_id} to integer: {str(e)}")
                                 logger.warning(f"Skipping clip with non-integer member ID {member_id}")
                                 continue
                                 
+                            # Convert valid_member_ids to integers if needed
+                            int_valid_member_ids = []
+                            for valid_id in valid_member_ids:
+                                try:
+                                    if not isinstance(valid_id, int):
+                                        int_valid_member_ids.append(int(valid_id))
+                                    else:
+                                        int_valid_member_ids.append(valid_id)
+                                except (ValueError, TypeError):
+                                    # Skip invalid IDs in the valid list
+                                    pass
+                            
                             # Check if the member_id is in valid_member_ids
-                            if member_id not in valid_member_ids:
+                            if member_id not in int_valid_member_ids:
                                 # For non-special IDs that aren't valid, log a clear warning
                                 logger.warning(f"Member ID {member_id} not found in parliament_members table")
-                                logger.warning(f"Valid member IDs: {valid_member_ids[:10]}... (showing first 10)")
+                                logger.warning(f"Valid member IDs: {int_valid_member_ids[:10]}... (showing first 10)")
                                 logger.warning(f"Skipping clip with invalid member ID {member_id}")
                                 continue
                         else:

@@ -97,9 +97,9 @@ def get_unique_member_ids_from_sqlite():
         return [], {}
 
 def check_speaker_exists(db_session, member_id):
-    """Check if a Speaker record exists for the given member_id"""
+    """Check if a speaker with the given member_id already exists"""
     try:
-        # Always convert member_id to integer for consistent comparison
+        # Convert member_id to integer for consistent querying
         try:
             # If it's already an integer, use it directly
             if isinstance(member_id, int):
@@ -107,34 +107,43 @@ def check_speaker_exists(db_session, member_id):
             else:
                 # Try to convert to integer
                 numeric_id = int(member_id)
-                
+            
             # Log the conversion
             if not isinstance(member_id, int):
-                logger.info(f"Checking speaker with member_id converted from {type(member_id).__name__} '{member_id}' to int {numeric_id}")
+                logger.info(f"Converted member_id from {type(member_id).__name__} '{member_id}' to int {numeric_id}")
         except (ValueError, TypeError):
-            # For invalid member_id, use -1 and log warning
+            # For invalid or unknown member_id, use -1
             numeric_id = -1
             logger.warning(f"Invalid member_id format for check: {member_id}, using -1 instead")
         
-        # First check by numeric member_id (preferred method)
-        result = db_session.execute(
-            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id"),
-            {"member_id": numeric_id}
-        ).fetchone()
-        
-        if result:
-            return True, result
-        
-        # Then try by parliament_id as fallback
-        result = db_session.execute(
-            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE parliament_id = :member_id"),
-            {"member_id": str(numeric_id)}
-        ).fetchone()
-        
-        if result:
-            return True, result
+        # Check by numeric member_id (now that we've ensured the column is INTEGER)
+        try:
+            result = db_session.execute(
+                text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id"),
+                {"member_id": numeric_id}
+            ).fetchone()
             
-        return False, None
+            if result:
+                logger.info(f"Found speaker with member_id {numeric_id}: {result}")
+                return True, result
+                
+            # Then try by parliament_id as fallback
+            result = db_session.execute(
+                text("SELECT id, name, parliament_id, member_id FROM speakers WHERE parliament_id = :member_id"),
+                {"member_id": str(numeric_id)}
+            ).fetchone()
+            
+            if result:
+                logger.info(f"Found speaker with parliament_id {numeric_id}: {result}")
+                return True, result
+                
+            logger.info(f"No speaker found for member_id {numeric_id}")
+            return False, None
+        except Exception as query_error:
+            # If there's an error in the query, log it and rollback
+            logger.error(f"Error querying speakers table: {query_error}")
+            db_session.rollback()
+            return False, None
     except Exception as e:
         logger.error(f"Error checking if speaker exists: {e}")
         return False, None
@@ -223,18 +232,114 @@ def create_speaker_for_member_id(db_session, member_id, member_info=None):
         logger.error(traceback.format_exc())
         return False, None
 
+def ensure_member_id_is_integer(engine):
+    """Ensure that the member_id column in the speakers table is INTEGER type"""
+    try:
+        with engine.connect() as conn:
+            # Check the current data type of member_id column
+            data_type = conn.execute(text("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name = 'speakers' AND column_name = 'member_id'
+            """)).scalar()
+            
+            logger.info(f"Current member_id column type: {data_type}")
+            
+            # If the column is not integer type, alter it
+            if data_type and 'integer' not in data_type.lower():
+                logger.info(f"Converting member_id column from {data_type} to INTEGER")
+                
+                # First, create a temporary backup of the data
+                conn.execute(text("""
+                    CREATE TEMP TABLE speakers_backup AS 
+                    SELECT * FROM speakers
+                """))
+                
+                # Try to alter the column type directly
+                try:
+                    # First convert any non-numeric values to -1
+                    conn.execute(text("""
+                        UPDATE speakers 
+                        SET member_id = '-1' 
+                        WHERE member_id ~ '[^0-9]' OR member_id IS NULL
+                    """))
+                    
+                    # Then alter the column type
+                    conn.execute(text("""
+                        ALTER TABLE speakers 
+                        ALTER COLUMN member_id TYPE INTEGER USING (member_id::integer)
+                    """))
+                    
+                    conn.commit()
+                    logger.info("Successfully converted member_id column to INTEGER")
+                    return True
+                except Exception as e:
+                    conn.rollback()
+                    logger.error(f"Error converting column directly: {e}")
+                    
+                    # If direct conversion fails, try recreating the table
+                    try:
+                        # Rename the old table
+                        conn.execute(text("ALTER TABLE speakers RENAME TO speakers_old"))
+                        
+                        # Create new table with correct schema
+                        conn.execute(text("""
+                            CREATE TABLE speakers (
+                                id SERIAL PRIMARY KEY,
+                                name VARCHAR(255) NOT NULL,
+                                photo_url TEXT,
+                                party VARCHAR(255),
+                                constituency VARCHAR(255),
+                                member_id INTEGER,
+                                parliament_id VARCHAR(255),
+                                created_at TIMESTAMP DEFAULT NOW(),
+                                updated_at TIMESTAMP DEFAULT NOW()
+                            )
+                        """))
+                        
+                        # Copy data with conversion
+                        conn.execute(text("""
+                            INSERT INTO speakers (id, name, photo_url, party, constituency, member_id, parliament_id, created_at, updated_at)
+                            SELECT id, name, photo_url, party, constituency, 
+                                CASE 
+                                    WHEN member_id ~ '^[0-9]+$' THEN member_id::integer 
+                                    ELSE -1 
+                                END, 
+                                parliament_id, created_at, updated_at
+                            FROM speakers_old
+                        """))
+                        
+                        # Drop the old table
+                        conn.execute(text("DROP TABLE speakers_old"))
+                        
+                        conn.commit()
+                        logger.info("Successfully recreated speakers table with INTEGER member_id")
+                        return True
+                    except Exception as recreate_error:
+                        conn.rollback()
+                        logger.error(f"Error recreating table: {recreate_error}")
+                        return False
+            else:
+                logger.info("member_id column is already INTEGER type")
+                return True
+    except Exception as e:
+        logger.error(f"Error checking or altering member_id column: {e}")
+        return False
+
 def ensure_speakers_table_exists(engine):
     """Ensure that the speakers table exists with all required columns"""
     try:
         # Check if the speakers table exists
         with engine.connect() as conn:
-            result = conn.execute(text("""SELECT EXISTS (SELECT FROM information_schema.tables 
-                                      WHERE table_schema = 'public' 
-                                      AND table_name = 'speakers')""")).scalar()
+            result = conn.execute(text("""
+                SELECT EXISTS (SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'speakers')
+            """)).scalar()
             
             if not result:
                 logger.info("Creating speakers table as it doesn't exist")
-                # Create the speakers table
+                # Create the speakers table with INTEGER member_id
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS speakers (
                         id SERIAL PRIMARY KEY,
@@ -248,6 +353,9 @@ def ensure_speakers_table_exists(engine):
                         updated_at TIMESTAMP DEFAULT NOW()
                     )
                 """))
+                
+                conn.commit()
+                logger.info("Successfully created speakers table with INTEGER member_id")
                 
                 # Create the speakers_id_seq sequence if it doesn't exist
                 conn.execute(text("""
@@ -308,7 +416,6 @@ def ensure_speakers_table_exists(engine):
     except Exception as e:
         logger.error(f"Error ensuring speakers table exists: {e}")
         import traceback
-        logger.error(traceback.format_exc())
         return False
 
 def main():
@@ -325,6 +432,14 @@ def main():
     if not ensure_speakers_table_exists(engine):
         logger.error("Failed to ensure speakers table exists")
         return False
+    
+    # Ensure member_id column is INTEGER
+    if not ensure_member_id_is_integer(engine):
+        logger.error("Failed to ensure member_id column is INTEGER")
+        return False
+        
+    # Commit any pending transactions to start with a clean slate
+    db_session.commit()
     
     # Get unique member IDs from SQLite
     member_ids, member_info = get_unique_member_ids_from_sqlite()

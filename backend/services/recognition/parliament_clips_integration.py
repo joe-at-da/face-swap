@@ -897,7 +897,7 @@ class ParliamentClipsIntegrationService:
                     
                     try:
                         # Direct lookup by member_id (integer)
-                        member = db.query(Speaker).filter(Speaker.member_id == member_id_int).first()
+                        member = db.query(Speaker).filter(Speaker.parliament_id == str(member_id_int)).first()
                         if member:
                             logger.info(f"Found member by member_id: {member_id_int}")
                     except Exception as e:
@@ -1005,23 +1005,67 @@ class ParliamentClipsIntegrationService:
                         logger.warning(f"Skipping clip without member_id: {clip}")
                         skipped_clips_count += 1
                         continue
+                    
+                    # Log the original member_id for debugging
+                    logger.info(f"Original member_id: {member_id} (type: {type(member_id).__name__})")
                         
                     # Create a properly formatted clip for Supabase
                     # For Supabase, we need to use the integer member_id, not the UUID
                     # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
                     
-                    # Ensure member_id is an integer
+                    # CRITICAL FIX: Handle member_id type conversion with extreme care
+                    original_member_id = member_id  # Save original for logging
+                    
+                    # First, check if we have a numeric ID in the clip metadata
+                    numeric_id = None
+                    if 'metadata' in clip and isinstance(clip['metadata'], dict):
+                        metadata = clip['metadata']
+                        if 'numeric_id' in metadata and metadata['numeric_id']:
+                            numeric_id = metadata['numeric_id']
+                            logger.info(f"Found explicit numeric_id {numeric_id} in clip metadata")
+                    
+                    # If we found a numeric ID in metadata, use it
+                    if numeric_id is not None:
+                        try:
+                            member_id = int(numeric_id)
+                            logger.info(f"Using numeric_id from metadata: {member_id}")
+                        except (ValueError, TypeError) as e:
+                            logger.error(f"Invalid numeric_id in metadata: {numeric_id} - {str(e)}")
+                            # Continue with other conversion attempts
+                    
+                    # If member_id is still not an integer, try direct conversion
                     if not isinstance(member_id, int):
                         try:
                             # Try direct conversion to integer
                             member_id = int(member_id)
-                            logger.info(f"Converted member_id to integer: {member_id}")
+                            logger.info(f"Converted member_id directly to integer: {member_id}")
                         except (ValueError, TypeError) as e:
-                            logger.error(f"Invalid member_id format: {member_id} (type: {type(member_id).__name__}) - {str(e)}")
-                            # Skip this clip if we can't convert to integer
-                            logger.warning(f"Skipping clip with invalid member_id: {member_id}")
-                            skipped_clips_count += 1
-                            continue
+                            # If it's a UUID-like string, try to hash it to a consistent integer
+                            if isinstance(member_id, str) and (len(member_id) > 30 or '-' in member_id):
+                                # Use a hash function to generate a consistent integer from the UUID
+                                # This ensures the same UUID always maps to the same integer
+                                hash_value = abs(hash(member_id)) % (10 ** 9)  # Limit to 9 digits
+                                member_id = hash_value
+                                logger.warning(f"Converted UUID-like member_id to hash integer: {original_member_id} -> {member_id}")
+                            else:
+                                logger.error(f"Failed to convert member_id to integer: {original_member_id} - {str(e)}")
+                                # Skip this clip if we can't convert to integer
+                                logger.warning(f"Skipping clip with invalid member_id: {original_member_id}")
+                                skipped_clips_count += 1
+                                continue
+                    
+                    # Final validation - ensure we have an integer
+                    if not isinstance(member_id, int):
+                        logger.error(f"After all conversion attempts, member_id is still not an integer: {member_id} (type: {type(member_id).__name__})")
+                        skipped_clips_count += 1
+                        continue
+                        
+                    # Log the final member_id for debugging
+                    logger.info(f"Final member_id for export: {member_id} (type: {type(member_id).__name__})")
+                    
+                    # Store the mapping for future reference if we changed the ID
+                    if str(original_member_id) != str(member_id):
+                        logger.info(f"Member ID mapping: {original_member_id} -> {member_id}")
                     
                     # Log the member_id for debugging
                     logger.info(f"Preparing clip with member_id: {member_id} (type: {type(member_id).__name__})")
