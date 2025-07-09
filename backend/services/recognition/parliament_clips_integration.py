@@ -1032,6 +1032,17 @@ class ParliamentClipsIntegrationService:
                         member_id_types[member_id_type] = 0
                     member_id_types[member_id_type] += 1
                     
+                    # IMPORTANT: Always use the full_video_path (combined audio+video) for Supabase exports
+                    # The video_path may contain only video without audio, which is not what we want
+                    # full_video_path is the combined AV file that should be used for all Supabase operations
+                    full_video_path = clip.get('full_video_path')
+                    
+                    # If full_video_path is missing, skip this clip - no fallbacks
+                    if not full_video_path:
+                        logger.error(f"❌ Missing full_video_path (combined AV file) for clip. Skipping.")
+                        skipped_clips_count += 1
+                        continue
+                    
                     clips_to_export.append({
                         "video_id": str(video_id),
                         "start_timestamp": clip.get('start_timestamp'),
@@ -1041,12 +1052,14 @@ class ParliamentClipsIntegrationService:
                         "confidence": clip.get('confidence_score', 0.0),
                         "transcript": clip.get('transcript', ''),
                         "face_image_url": '',
-                        "full_video_path": clip.get('full_video_path', video_path),
+                        "full_video_path": full_video_path,  # Combined audio+video file
+                        "video_export_path": full_video_path,  # IMPORTANT: Always use full_video_path (combined AV) for video_export_path
                         "metadata": {
                             "recognition_method": "facial",
                             "matched_by": "parliament_clips",
                             "clip_id": clip.get('id'),
-                            "combined_av_url": video_path
+                            "combined_av_url": full_video_path,  # Combined audio+video file
+                            "video_export_path": full_video_path  # IMPORTANT: Always use full_video_path (combined AV) for all paths
                         }
                     })
                 

@@ -297,11 +297,18 @@ class SupabaseIntegration:
             export_result["video_export_path"] = video_export_path
             export_result["clips_export_path"] = clips_export_path
         
+        # Ensure export_paths is properly structured for verification
         result = {
-            "export_paths": export_result,
+            "export_paths": {
+                "video_export_path": export_result.get("video_export_path"),
+                "clips_export_path": export_result.get("clips_export_path")
+            },
             "supabase_urls": {},
             "queue_responses": {}
         }
+        
+        # Log the export paths for debugging
+        logger.info(f"Export paths: {result['export_paths']}")
         
         # Skip uploading JSON files to Supabase
         logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
@@ -334,12 +341,16 @@ class SupabaseIntegration:
                         if combined_url:
                             break
         
-            # If still not found, check if video_path might contain the combined file
-            if not combined_url and "video_path" in export_result and export_result["video_path"]:
-                video_path = export_result["video_path"]
-                if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
-                    logger.warning(f"🔍 Using video_path as fallback for combined AV file: {video_path}")
-                    combined_url = video_path
+            # IMPORTANT: We should always use full_video_path (combined AV) for Supabase
+            # No fallbacks - if combined AV is not found, we should error
+            if not combined_url:
+                error_msg = "Combined AV file not found. Cannot proceed with export."
+                logger.error(f"❌ {error_msg}")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "export_paths": result["export_paths"]
+                }
             
             # Verify if the combined URL is valid and file exists
             if combined_url:
@@ -407,6 +418,7 @@ class SupabaseIntegration:
                         # Update the database with the Supabase URL if we have a session
                         if db_session:
                             try:
+                                import json
                                 from backend.db.models import CaptureSession, RecognitionProcess
                                 
                                 # Try to find the capture session
@@ -444,59 +456,52 @@ class SupabaseIntegration:
                                     # Check if the URL was properly saved
                                     if isinstance(capture.capture_metadata, dict) and capture.capture_metadata.get("supabase_url") == supabase_url:
                                         logger.info(f"Successfully updated CaptureSession {video_id} with Supabase URL")
-                                    else:
-                                        logger.error(f"Failed to update CaptureSession {video_id} with Supabase URL. Value not saved correctly.")
-                                else:
-                                    logger.warning(f"Could not find CaptureSession with ID {video_id}")
-                                    
-                                    # Try to update RecognitionProcess as fallback
-                                    rec_process = db_session.query(RecognitionProcess).filter(
-                                        RecognitionProcess.video_id == video_id
-                                    ).first()
-                                    
-                                    if rec_process:
-                                        logger.info(f"Updating RecognitionProcess for video {video_id} with Supabase URL")
                                         
-                                        # Store URL in recognition_results JSON field
-                                        if not rec_process.recognition_results:
-                                            rec_process.recognition_results = {}
-                                        elif isinstance(rec_process.recognition_results, str):
-                                            try:
-                                                rec_process.recognition_results = json.loads(rec_process.recognition_results)
-                                            except json.JSONDecodeError:
+                                        # Also update the RecognitionProcess if it exists
+                                        import json  # Ensure json is available in this scope
+                                        rec_process = db_session.query(RecognitionProcess).filter(RecognitionProcess.video_id == video_id).first()
+                                        if rec_process:
+                                            logger.info(f"Updating RecognitionProcess for video {video_id} with Supabase URL")
+                                            # Store URL in recognition_results JSON field
+                                            if not rec_process.recognition_results:
                                                 rec_process.recognition_results = {}
+                                            elif isinstance(rec_process.recognition_results, str):
+                                                try:
+                                                    rec_process.recognition_results = json.loads(rec_process.recognition_results)
+                                                except json.JSONDecodeError:
+                                                    rec_process.recognition_results = {}
                                         
-                                        # Ensure recognition_results is a dictionary
-                                        if not isinstance(rec_process.recognition_results, dict):
-                                            rec_process.recognition_results = {}
-                                        
-                                        # Create supabase_urls dict if it doesn't exist
-                                        if "supabase_urls" not in rec_process.recognition_results:
-                                            rec_process.recognition_results["supabase_urls"] = {}
-                                        
-                                        # Log before value
-                                        logger.info(f"Before update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
-                                        
-                                        # Update and commit
-                                        rec_process.recognition_results["supabase_urls"]["combined_av_url"] = supabase_url
-                                        
-                                        # Convert to JSON string before saving to database
-                                        if isinstance(rec_process.recognition_results, dict):
-                                            rec_process.recognition_results = json.dumps(rec_process.recognition_results)
+                                            # Ensure recognition_results is a dictionary
+                                            if not isinstance(rec_process.recognition_results, dict):
+                                                rec_process.recognition_results = {}
                                             
-                                        db_session.commit()
-                                        
-                                        # Verify the update
-                                        db_session.refresh(rec_process)
-                                        logger.info(f"After update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
-                                        
-                                        # Check if the URL was properly saved
-                                        if isinstance(rec_process.recognition_results, dict) and \
-                                           isinstance(rec_process.recognition_results.get("supabase_urls"), dict) and \
-                                           rec_process.recognition_results["supabase_urls"].get("combined_av_url") == supabase_url:
-                                            logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
-                                        else:
-                                            logger.error(f"Failed to update RecognitionProcess with Supabase URL. Value not saved correctly.")
+                                            # Create supabase_urls dict if it doesn't exist
+                                            if "supabase_urls" not in rec_process.recognition_results:
+                                                rec_process.recognition_results["supabase_urls"] = {}
+                                            
+                                            # Log before value
+                                            logger.info(f"Before update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
+                                            
+                                            # Update and commit
+                                            rec_process.recognition_results["supabase_urls"]["combined_av_url"] = supabase_url
+                                            
+                                            # Convert to JSON string before saving to database
+                                            if isinstance(rec_process.recognition_results, dict):
+                                                rec_process.recognition_results = json.dumps(rec_process.recognition_results)
+                                                
+                                            db_session.commit()
+                                            
+                                            # Verify the update
+                                            db_session.refresh(rec_process)
+                                            logger.info(f"After update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
+                                            
+                                            # Check if the URL was properly saved
+                                            if isinstance(rec_process.recognition_results, dict) and \
+                                               isinstance(rec_process.recognition_results.get("supabase_urls"), dict) and \
+                                               rec_process.recognition_results["supabase_urls"].get("combined_av_url") == supabase_url:
+                                                logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
+                                            else:
+                                                logger.error(f"Failed to update RecognitionProcess with Supabase URL. Value not saved correctly.")
                                     else:
                                         logger.error(f"Could not find either CaptureSession or RecognitionProcess for video {video_id}")
                             except Exception as db_e:
@@ -529,6 +534,7 @@ class SupabaseIntegration:
                         # Update database with the new URL
                         if db_session:
                             try:
+                                import json
                                 from backend.db.models import CaptureSession
                                 capture = db_session.query(CaptureSession).filter(CaptureSession.id == video_id).first()
                                 if capture:
@@ -568,7 +574,10 @@ class SupabaseIntegration:
                 import json
                 video_data = json.load(f)
             
-            with open(export_result["clips_export_path"], "r") as f:
+            # Use the properly structured clips_export_path
+            clips_export_path = result["export_paths"]["clips_export_path"]
+            logger.info(f"Reading clips from: {clips_export_path}")
+            with open(clips_export_path, "r") as f:
                 clips_data_raw = json.load(f)
                 
             # Sanitize clips data to ensure it's JSON serializable
@@ -650,11 +659,11 @@ class SupabaseIntegration:
                                     missing_fields.remove('member_id')
                                     break
                     
-                    if 'full_video_path' in missing_fields and 'video_path' in clip and clip['video_path']:
-                        # Use video_path as fallback for full_video_path
-                        clip['full_video_path'] = clip['video_path']
-                        logger.info(f"Using video_path as fallback for full_video_path: {clip['full_video_path']}")
-                        missing_fields.remove('full_video_path')
+                    # IMPORTANT: We should always use full_video_path (combined AV) for Supabase
+                    # No fallbacks - if full_video_path is missing, skip the clip
+                    if 'full_video_path' in missing_fields:
+                        logger.error(f"❌ Missing full_video_path (combined AV file) for clip. Skipping.")
+                        # Keep full_video_path in missing_fields so the clip will be skipped
                     
                     # If still missing required fields, skip this clip
                     if missing_fields:
@@ -717,7 +726,7 @@ class SupabaseIntegration:
                 'confidence': 'confidence_score',
                 'duration': 'duration_seconds',
                 'full_video_url': 'full_video_path',
-                'video_path': 'full_video_path',  # Map video_path to full_video_path
+                'video_path': 'full_video_path',  # IMPORTANT: Always map video_path to full_video_path (combined AV)
                 'start_time': 'start_timestamp',  # Use timestamp fields instead of time fields
                 'end_time': 'end_timestamp',
                 'speaker_id': 'member_id'  # Map speaker_id to member_id
