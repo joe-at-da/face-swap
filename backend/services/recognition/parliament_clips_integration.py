@@ -640,6 +640,49 @@ class ParliamentClipsIntegrationService:
             Dict with sync results
         """
         try:
+            # First, check for existing member IDs in SQLite and PostgreSQL
+            logger.info("Checking for member ID synchronization issues between SQLite and PostgreSQL...")
+            
+            # Check SQLite member IDs
+            sqlite_member_ids = set()
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT DISTINCT member_id FROM parliament_clips")
+                for row in cursor.fetchall():
+                    member_id = row[0]
+                    sqlite_member_ids.add(member_id)
+                    logger.info(f"SQLite member_id: {member_id} (type: {type(member_id).__name__})")
+                conn.close()
+                logger.info(f"Found {len(sqlite_member_ids)} unique member IDs in SQLite")
+            except Exception as e:
+                logger.error(f"Error checking SQLite member IDs: {str(e)}")
+            
+            # Check PostgreSQL Speaker records
+            from backend.db.models import Speaker
+            postgres_member_ids = set()
+            try:
+                speakers = db.query(Speaker).all()
+                for speaker in speakers:
+                    if speaker.parliament_id:
+                        postgres_member_ids.add(speaker.parliament_id)
+                        logger.info(f"PostgreSQL Speaker parliament_id: {speaker.parliament_id} (name: {speaker.name})")
+                logger.info(f"Found {len(postgres_member_ids)} unique parliament_ids in PostgreSQL Speakers")
+            except Exception as e:
+                logger.error(f"Error checking PostgreSQL Speaker records: {str(e)}")
+            
+            # Check for missing member IDs
+            missing_ids = set()
+            for sqlite_id in sqlite_member_ids:
+                # Convert to string for comparison with PostgreSQL
+                sqlite_id_str = str(sqlite_id)
+                if sqlite_id_str not in postgres_member_ids:
+                    missing_ids.add(sqlite_id)
+                    logger.warning(f"Member ID {sqlite_id} exists in SQLite but not in PostgreSQL Speakers")
+            
+            logger.info(f"Found {len(missing_ids)} member IDs in SQLite that don't exist in PostgreSQL")
+            
+            # Run the synchronization script
             logger.info("Running sync_parliament_clip_member_ids.py script to ensure all member IDs have Speaker records")
             import subprocess
             import sys
@@ -663,10 +706,36 @@ class ParliamentClipsIntegrationService:
             if result.returncode == 0:
                 logger.info("Successfully ran sync_parliament_clip_member_ids.py script")
                 logger.info(f"Script output: {result.stdout}")
-                return {"success": True, "output": result.stdout}
+                
+                # Verify synchronization after running the script
+                try:
+                    # Check PostgreSQL Speaker records again
+                    speakers = db.query(Speaker).all()
+                    postgres_member_ids_after = set()
+                    for speaker in speakers:
+                        if speaker.parliament_id:
+                            postgres_member_ids_after.add(speaker.parliament_id)
+                    
+                    # Check for any remaining missing IDs
+                    still_missing = set()
+                    for sqlite_id in sqlite_member_ids:
+                        sqlite_id_str = str(sqlite_id)
+                        if sqlite_id_str not in postgres_member_ids_after:
+                            still_missing.add(sqlite_id)
+                    
+                    if still_missing:
+                        logger.warning(f"After synchronization, {len(still_missing)} member IDs are still missing in PostgreSQL")
+                        for missing_id in still_missing:
+                            logger.warning(f"Still missing member ID: {missing_id}")
+                    else:
+                        logger.info("All SQLite member IDs now have corresponding Speaker records in PostgreSQL")
+                except Exception as e:
+                    logger.error(f"Error verifying synchronization: {str(e)}")
+                
+                return {"success": True, "output": result.stdout, "missing_before": len(missing_ids), "missing_after": len(still_missing) if 'still_missing' in locals() else 0}
             else:
                 logger.error(f"Error running sync_parliament_clip_member_ids.py script: {result.stderr}")
-                return {"success": False, "error": result.stderr}
+                return {"success": False, "error": result.stderr, "missing_ids": list(missing_ids)}
         except Exception as e:
             logger.error(f"Error running sync_parliament_clip_member_ids.py script: {str(e)}")
             import traceback
@@ -856,8 +925,26 @@ class ParliamentClipsIntegrationService:
                     logger.info(f"Skipping clip with unknown speaker member_id: {clip['member_id']}")
                     continue
                 
-                # Log the member ID for debugging
+                # Enhanced logging for member ID debugging
                 logger.info(f"Processing clip with member_id: {clip['member_id']} (type: {type(clip['member_id']).__name__})")
+                
+                # Log additional clip details for better diagnostics
+                clip_details = {
+                    "clip_id": clip['id'],
+                    "member_id": clip['member_id'],
+                    "member_id_type": type(clip['member_id']).__name__,
+                    "start_time": clip['start_timestamp'],
+                    "end_time": clip['end_timestamp'],
+                    "confidence": clip['confidence_score'],
+                    "matched_by": clip['metadata'].get('matched_by', 'unknown')
+                }
+                logger.info(f"Clip details: {json.dumps(clip_details)}")
+                
+                # Log any potential issues with the member ID
+                if not isinstance(clip['member_id'], int):
+                    logger.warning(f"Non-integer member_id: {clip['member_id']} will be converted to int if possible")
+                if clip['member_id'] == -1 or clip['member_id'] == "-1":
+                    logger.warning(f"Default unknown member ID (-1) detected, this may cause export issues")
                 
                 # Set a minimum confidence threshold for including clips
                 if clip['confidence_score'] < 0.15:  # Lowered threshold to include existing clips

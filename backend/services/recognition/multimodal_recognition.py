@@ -504,12 +504,37 @@ class MultimodalRecognitionService:
                         correlations.append(correlation)
                         speaker_to_face_profile[speaker] = correlation
             
-            # Store recognition events in the timeline
+            # Store recognition events in the timeline with enhanced logging
+            face_events_count = 0
+            speaker_events_count = 0
+            member_id_types = {}
+            
             for event in recognition_events:
                 if event.get("type") == "face":
+                    # Log member ID information for face events
+                    member_id = event.get("member_id")
+                    if member_id is not None:
+                        member_id_type = type(member_id).__name__
+                        member_id_types[member_id_type] = member_id_types.get(member_id_type, 0) + 1
+                        logger.info(f"Face event at {event.get('timestamp', 0):.2f}s: member_id={member_id} (type: {member_id_type}), name={event.get('name', 'Unknown')}")
+                    
                     self.timeline_service.store_face_detection(db, video_id, event)
+                    face_events_count += 1
+                    
                 elif event.get("type") == "speaker":
+                    # Log member ID information for speaker events
+                    member_id = event.get("member_id")
+                    if member_id is not None:
+                        member_id_type = type(member_id).__name__
+                        member_id_types[member_id_type] = member_id_types.get(member_id_type, 0) + 1
+                        logger.info(f"Speaker event {event.get('start_time', 0):.2f}s-{event.get('end_time', 0):.2f}s: member_id={member_id} (type: {member_id_type}), name={event.get('name', 'Unknown')}")
+                    
                     self.timeline_service.store_speaker_segment(db, video_id, event)
+                    speaker_events_count += 1
+            
+            # Log summary of member ID types
+            logger.info(f"Recognition events summary: {face_events_count} face events, {speaker_events_count} speaker events")
+            logger.info(f"Member ID types encountered: {member_id_types}")
                     
             # Update the timeline data with correlations
             timeline = self.timeline_service.update_timeline_data(db, video_id)
@@ -868,15 +893,23 @@ class MultimodalRecognitionService:
                 if match_result and match_result.get("matched"):
                     # Use the matched member information
                     member_id = match_result.get("member_id")
-                    member_name = match_result.get("member_name")
+                    member_name = match_result.get("name")  # Use 'name' instead of 'member_name'
                     confidence = match_result.get("confidence")
+                    confidence_gap = match_result.get("confidence_gap", 0)
+                    alternatives = match_result.get("alternatives", [])
                     
                     best_detection["member_id"] = member_id
                     best_detection["name"] = member_name
                     best_detection["confidence"] = confidence
+                    best_detection["confidence_gap"] = confidence_gap
                     best_detection["matched_by"] = "parliament_member_matcher"
+                    best_detection["alternatives"] = alternatives
                     
-                    logger.info(f"✅ Successfully matched face to member {member_name} (ID: {member_id}) with confidence {confidence:.4f}")
+                    # Enhanced logging with member ID type and alternatives
+                    logger.info(f"✅ Successfully matched face to member {member_name} (ID: {member_id}, type: {type(member_id).__name__}) with confidence {confidence:.4f}, gap: {confidence_gap:.4f}")
+                    if alternatives and len(alternatives) > 0:
+                        alt_info = ", ".join([f"{name} ({conf:.4f})" for name, conf in alternatives[:3]])
+                        logger.info(f"   Alternative matches: {alt_info}")
                 else:
                     logger.warning(f"⚠️ Failed to match face with ParliamentMemberMatcher")
                     if match_result:
