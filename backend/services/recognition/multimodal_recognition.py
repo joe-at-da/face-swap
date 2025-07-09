@@ -521,7 +521,8 @@ class MultimodalRecognitionService:
                     self.member_matcher = ParliamentMemberMatcher(db)
                 
                 # Match unidentified speakers using our improved matcher
-                match_result = self.member_matcher.match_unidentified_speakers(video_id, save_unmatched=True)
+                # Note: match_unidentified_speakers only accepts clip_id parameter
+                match_result = self.member_matcher.match_unidentified_speakers(str(video_id))
                 
                 if match_result:
                     logger.info(f"Matched {match_result.get('matched_count', 0)} speakers using ParliamentMemberMatcher")

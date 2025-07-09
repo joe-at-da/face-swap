@@ -527,7 +527,101 @@ class ParliamentClipsIntegrationService:
     
     # End of get_parliament_clips_for_video method
     
-    def _run_sync_parliament_clip_member_ids(self, db_session):
+    def _cleanup_exported_clips(self, video_id: int, db: Session) -> Dict[str, Any]:
+        """
+        Clean up clips that have been successfully exported to Supabase.
+        This removes clips from both the SQLite parliament_clips database and
+        the PostgreSQL database to prevent duplicate uploads in future exports.
+        
+        Args:
+            video_id: ID of the video whose clips should be cleaned up
+            db: SQLAlchemy database session for PostgreSQL operations
+            
+        Returns:
+            Dict with cleanup status and results
+        """
+        logger.info(f"===== CLEANING UP EXPORTED CLIPS =====")
+        logger.info(f"Cleaning up clips for video ID: {video_id}")
+        
+        results = {
+            "sqlite_clips_removed": 0,
+            "postgres_events_removed": 0,
+            "errors": []
+        }
+        
+        # 1. Clean up clips from SQLite parliament_clips database
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # First count how many clips we'll be removing
+            cursor.execute("""
+                SELECT COUNT(*) FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = ?
+            """, (str(video_id),))
+            
+            count = cursor.fetchone()[0]
+            logger.info(f"Found {count} clips to remove from SQLite database")
+            
+            # Delete clips for this video_id
+            cursor.execute("""
+                DELETE FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = ?
+            """, (str(video_id),))
+            
+            # Get number of rows affected
+            results["sqlite_clips_removed"] = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Removed {results['sqlite_clips_removed']} clips from SQLite database")
+        except Exception as e:
+            error_msg = f"Error cleaning up SQLite clips: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            logger.error(traceback.format_exc())
+            results["errors"].append(error_msg)
+        
+        # 2. Clean up recognition events from PostgreSQL database
+        try:
+            from backend.db.models import RecognitionEvent
+            
+            # Count how many events we'll be removing
+            event_count = db.query(RecognitionEvent).filter(
+                RecognitionEvent.video_id == video_id,
+                RecognitionEvent.type == "speaker"
+            ).count()
+            
+            logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
+            
+            # Delete recognition events for this video_id
+            deleted_count = db.query(RecognitionEvent).filter(
+                RecognitionEvent.video_id == video_id,
+                RecognitionEvent.type == "speaker"
+            ).delete(synchronize_session=False)
+            
+            db.commit()
+            
+            results["postgres_events_removed"] = deleted_count
+            logger.info(f"Removed {deleted_count} recognition events from PostgreSQL database")
+        except Exception as e:
+            error_msg = f"Error cleaning up PostgreSQL recognition events: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            logger.error(traceback.format_exc())
+            results["errors"].append(error_msg)
+        
+        # Set overall success status
+        results["success"] = len(results["errors"]) == 0
+        
+        if results["success"]:
+            logger.info(f"✅ Successfully cleaned up {results['sqlite_clips_removed']} SQLite clips and {results['postgres_events_removed']} PostgreSQL events")
+        else:
+            logger.warning(f"⚠️ Cleanup completed with {len(results['errors'])} errors")
+        
+        return results
+        
+    def _run_sync_parliament_clip_member_ids(self, db: Session) -> Dict[str, Any]:
         """
         Run the sync_parliament_clip_member_ids.py script to ensure all member IDs in SQLite
         have corresponding Speaker records in PostgreSQL.
@@ -949,7 +1043,48 @@ class ParliamentClipsIntegrationService:
                 # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
                 result = self.supabase_service.add_to_clip_creation_queue(clips_to_export)
                 
-                logger.info(f"Supabase export result: {result}")
+                # Log detailed information about the result for debugging
+                logger.info(f"Supabase export result type: {type(result).__name__}")
+                if isinstance(result, dict):
+                    logger.info(f"Result keys: {list(result.keys())}")
+                    logger.info(f"Success key present: {('success' in result)}")
+                    logger.info(f"Success value: {result.get('success')}")
+                elif hasattr(result, 'data'):
+                    logger.info(f"Result has data attribute: {bool(result.data)}")
+                    if result.data:
+                        logger.info(f"Data type: {type(result.data).__name__}")
+                        if isinstance(result.data, dict):
+                            logger.info(f"Data keys: {list(result.data.keys())}")
+                        elif isinstance(result.data, list):
+                            logger.info(f"Data length: {len(result.data)}")
+                else:
+                    logger.info(f"Raw result: {result}")
+                
+                # Improved success condition check
+                export_success = False
+                
+                # Check various success conditions
+                if isinstance(result, dict):
+                    export_success = result.get("success", False)
+                elif hasattr(result, "data") and result.data:
+                    export_success = True
+                elif result is not None:
+                    # Consider any non-None, non-empty result as success
+                    # This is a fallback for when the Supabase client returns unexpected formats
+                    if isinstance(result, (list, dict)) and len(result) > 0:
+                        export_success = True
+                    elif not isinstance(result, (list, dict)) and bool(result):
+                        export_success = True
+                
+                logger.info(f"Export success determination: {export_success}")
+                
+                # If export was successful, clean up clips from both databases
+                if export_success:
+                    logger.info(f"Export successful, cleaning up clips from databases")
+                    cleanup_result = self._cleanup_exported_clips(video_id, db)
+                    logger.info(f"Cleanup result: {cleanup_result}")
+                    return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result}
+                
                 return {"success": True, "supabase_result": result}
             except Exception as e:
                 logger.error(f"Error in Supabase export: {str(e)}")
