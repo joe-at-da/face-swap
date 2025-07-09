@@ -99,45 +99,40 @@ def get_unique_member_ids_from_sqlite():
 def check_speaker_exists(db_session, member_id):
     """Check if a Speaker record exists for the given member_id"""
     try:
-        # Try to convert member_id to integer if possible for consistent comparison
+        # Always convert member_id to integer for consistent comparison
         try:
-            numeric_id = int(member_id)
-            member_id_str = str(numeric_id)
+            # If it's already an integer, use it directly
+            if isinstance(member_id, int):
+                numeric_id = member_id
+            else:
+                # Try to convert to integer
+                numeric_id = int(member_id)
+                
+            # Log the conversion
+            if not isinstance(member_id, int):
+                logger.info(f"Checking speaker with member_id converted from {type(member_id).__name__} '{member_id}' to int {numeric_id}")
         except (ValueError, TypeError):
-            member_id_str = str(member_id)
-            numeric_id = None
+            # For invalid member_id, use -1 and log warning
+            numeric_id = -1
+            logger.warning(f"Invalid member_id format for check: {member_id}, using -1 instead")
         
         # First check by numeric member_id (preferred method)
-        if numeric_id is not None:
-            result = db_session.execute(
-                text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id"),
-                {"member_id": member_id_str}
-            ).fetchone()
-            
-            if result:
-                return True, result
-        
-        # Then try by parliament_id
         result = db_session.execute(
-            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE parliament_id = :member_id"),
-            {"member_id": member_id_str}
+            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id"),
+            {"member_id": numeric_id}
         ).fetchone()
         
         if result:
             return True, result
         
-        # Try to match by UUID if the member_id is a UUID
-        if '-' in member_id_str and len(member_id_str) > 30:
-            try:
-                result = db_session.execute(
-                    text("SELECT id, name, parliament_id, member_id FROM speakers WHERE id::text = :uuid_str"),
-                    {"uuid_str": member_id_str}
-                ).fetchone()
-                if result:
-                    return True, result
-            except Exception:
-                pass  # Ignore UUID parsing errors
-            pass
+        # Then try by parliament_id as fallback
+        result = db_session.execute(
+            text("SELECT id, name, parliament_id, member_id FROM speakers WHERE parliament_id = :member_id"),
+            {"member_id": str(numeric_id)}
+        ).fetchone()
+        
+        if result:
+            return True, result
             
         return False, None
     except Exception as e:
@@ -153,19 +148,22 @@ def create_speaker_for_member_id(db_session, member_id, member_info=None):
             logger.info(f"Speaker already exists for member_id {member_id}: {speaker}")
             return True, speaker
         
-        # Try to convert member_id to integer if possible for consistent storage
+        # Always convert member_id to integer for consistent storage
         try:
-            numeric_id = int(member_id)
-            member_id_str = str(numeric_id)
-        except (ValueError, TypeError):
-            # If conversion fails and it's a UUID, keep as is
-            if isinstance(member_id, str) and '-' in member_id and len(member_id) > 30:
-                member_id_str = member_id
-                logger.warning(f"Using UUID as member_id: {member_id_str}")
+            # If it's already an integer, use it directly
+            if isinstance(member_id, int):
+                numeric_id = member_id
             else:
-                # For invalid or unknown member_id, use -1
-                member_id_str = "-1"
-                logger.warning(f"Invalid member_id format: {member_id}, using -1 instead")
+                # Try to convert to integer
+                numeric_id = int(member_id)
+            
+            # Log the conversion
+            if not isinstance(member_id, int):
+                logger.info(f"Converted member_id from {type(member_id).__name__} '{member_id}' to int {numeric_id}")
+        except (ValueError, TypeError):
+            # For invalid or unknown member_id, use -1
+            numeric_id = -1
+            logger.warning(f"Invalid member_id format: {member_id}, using -1 instead")
         
         # Generate a name for the speaker
         name = "Unknown Speaker"
@@ -201,8 +199,8 @@ def create_speaker_for_member_id(db_session, member_id, member_info=None):
                 "photo_url": photo_url,
                 "party": "Unknown",  # Default party
                 "constituency": "Unknown",  # Default constituency
-                "member_id": member_id_str,  # Use numeric ID when possible
-                "parliament_id": member_id_str,
+                "member_id": numeric_id,  # Use integer for member_id
+                "parliament_id": str(numeric_id),  # Keep parliament_id as string for backward compatibility
                 "created_at": datetime.now(),
                 "updated_at": datetime.now()
             }
@@ -244,7 +242,7 @@ def ensure_speakers_table_exists(engine):
                         photo_url TEXT,
                         party VARCHAR(255),
                         constituency VARCHAR(255),
-                        member_id VARCHAR(255),
+                        member_id INTEGER,
                         parliament_id VARCHAR(255),
                         created_at TIMESTAMP DEFAULT NOW(),
                         updated_at TIMESTAMP DEFAULT NOW()
