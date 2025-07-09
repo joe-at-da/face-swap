@@ -1077,182 +1077,172 @@ class ParliamentClipsIntegrationService:
             # Log the full recognition results for debugging
             logger.debug(f"Recognition results: {json.dumps(recognition_results, indent=2)}")
             
-            try:
-                # First, ensure we have the correct member_id mapping
-                # We already ran the sync script earlier, so we don't need to run it again
+            # Prepare clips with proper member_id format for Supabase
+            clips_to_export = []
+            skipped_clips_count = 0
+            member_id_types = {}
+            for clip in recognition_results['speaker_appearances']:
+                # Get the member_id from the clip
+                member_id = clip.get('member_id')
+                if not member_id:
+                    logger.warning(f"Skipping clip without member_id: {clip}")
+                    skipped_clips_count += 1
+                    continue
                 
-                # Prepare clips with proper member_id format for Supabase
-                clips_to_export = []
-                skipped_clips_count = 0
-                member_id_types = {}
-                for clip in recognition_results['speaker_appearances']:
-                    # Get the member_id from the clip
-                    member_id = clip.get('member_id')
-                    if not member_id:
-                        logger.warning(f"Skipping clip without member_id: {clip}")
-                        skipped_clips_count += 1
-                        continue
-                    
-                    # Log the original member_id for debugging
-                    logger.info(f"Original member_id: {member_id} (type: {type(member_id).__name__})")
-                        
-                    # Create a properly formatted clip for Supabase
-                    # For Supabase, we need to use the integer member_id, not the UUID
-                    # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
-                    
-                    # CRITICAL FIX: Handle member_id type conversion with extreme care
-                    original_member_id = member_id  # Save original for logging
-                    
-                    # First, check if we have a numeric ID in the clip metadata
-                    numeric_id = None
-                    if 'metadata' in clip and isinstance(clip['metadata'], dict):
-                        metadata = clip['metadata']
-                        if 'numeric_id' in metadata and metadata['numeric_id']:
-                            numeric_id = metadata['numeric_id']
-                            logger.info(f"Found explicit numeric_id {numeric_id} in clip metadata")
-                    
-                    # If we found a numeric ID in metadata, use it
-                    if numeric_id is not None:
-                        try:
-                            member_id = int(numeric_id)
-                            logger.info(f"Using numeric_id from metadata: {member_id}")
-                        except (ValueError, TypeError) as e:
-                            logger.error(f"Invalid numeric_id in metadata: {numeric_id} - {str(e)}")
-                            # Continue with other conversion attempts
-                    
-                    # If member_id is still not an integer, try direct conversion
-                    if not isinstance(member_id, int):
-                        try:
-                            # Try direct conversion to integer
-                            member_id = int(member_id)
-                            logger.info(f"Converted member_id directly to integer: {member_id}")
-                        except (ValueError, TypeError) as e:
-                            # If it's a UUID-like string, try to hash it to a consistent integer
-                            if isinstance(member_id, str) and (len(member_id) > 30 or '-' in member_id):
-                                # Use a hash function to generate a consistent integer from the UUID
-                                # This ensures the same UUID always maps to the same integer
-                                hash_value = abs(hash(member_id)) % (10 ** 9)  # Limit to 9 digits
-                                member_id = hash_value
-                                logger.warning(f"Converted UUID-like member_id to hash integer: {original_member_id} -> {member_id}")
-                            else:
-                                logger.error(f"Failed to convert member_id to integer: {original_member_id} - {str(e)}")
-                                # Skip this clip if we can't convert to integer
-                                logger.warning(f"Skipping clip with invalid member_id: {original_member_id}")
-                                skipped_clips_count += 1
-                                continue
-                    
-                    # Final validation - ensure we have an integer
-                    if not isinstance(member_id, int):
-                        logger.error(f"After all conversion attempts, member_id is still not an integer: {member_id} (type: {type(member_id).__name__})")
-                        skipped_clips_count += 1
-                        continue
-                        
-                    # Log the final member_id for debugging
-                    logger.info(f"Final member_id for export: {member_id} (type: {type(member_id).__name__})")
-                    
-                    # Store the mapping for future reference if we changed the ID
-                    if str(original_member_id) != str(member_id):
-                        logger.info(f"Member ID mapping: {original_member_id} -> {member_id}")
-                    
-                    # Log the member_id for debugging
-                    logger.info(f"Preparing clip with member_id: {member_id} (type: {type(member_id).__name__})")
-                    
-                    # Track member_id types for debugging
-                    member_id_type = type(member_id).__name__
-                    if member_id_type not in member_id_types:
-                        member_id_types[member_id_type] = 0
-                    member_id_types[member_id_type] += 1
-                    
-                    # IMPORTANT: Always use the full_video_path (combined audio+video) for Supabase exports
-                    # The video_path may contain only video without audio, which is not what we want
-                    # full_video_path is the combined AV file that should be used for all Supabase operations
-                    full_video_path = clip.get('full_video_path')
-                    
-                    # If full_video_path is missing, skip this clip - no fallbacks
-                    if not full_video_path:
-                        logger.error(f"❌ Missing full_video_path (combined AV file) for clip. Skipping.")
-                        skipped_clips_count += 1
-                        continue
-                    
-                    clips_to_export.append({
-                        "video_id": str(video_id),
-                        "start_timestamp": clip.get('start_timestamp'),
-                        "end_timestamp": clip.get('end_timestamp'),
-                        "member_id": member_id,  # Should now be an integer if conversion was successful
-                        "speaker_name": clip.get('member_name', 'Unknown'),
-                        "confidence": clip.get('confidence_score', 0.0),
-                        "transcript": clip.get('transcript', ''),
-                        "face_image_url": '',
-                        "full_video_path": full_video_path,  # Combined audio+video file
-                        "video_export_path": full_video_path,  # IMPORTANT: Always use full_video_path (combined AV) for video_export_path
-                        "metadata": {
-                            "recognition_method": "facial",
-                            "matched_by": "parliament_clips",
-                            "clip_id": clip.get('id'),
-                            "combined_av_url": full_video_path,  # Combined audio+video file
-                            "video_export_path": full_video_path  # IMPORTANT: Always use full_video_path (combined AV) for all paths
-                        }
-                    })
+                # Log the original member_id for debugging
+                logger.info(f"Original member_id: {member_id} (type: {type(member_id).__name__})")
                 
-                logger.info(f"Prepared {len(clips_to_export)} clips for export to Supabase, skipped {skipped_clips_count} clips")
-                logger.info(f"Member ID types encountered: {member_id_types}")
+                # Create a properly formatted clip for Supabase
+                # For Supabase, we need to use the integer member_id, not the UUID
+                # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
                 
-                # Check if we have any clips to export
-                if len(clips_to_export) == 0:
-                    logger.error("No valid clips after cleaning. All clips were filtered out.")
-                    return {"success": False, "error": "No valid clips after cleaning"}
+                # CRITICAL FIX: Handle member_id type conversion with extreme care
+                original_member_id = member_id  # Save original for logging
                 
-                # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
-                result = self.supabase_service.add_to_clip_creation_queue(clips_to_export)
+                # First, check if we have a numeric ID in the clip metadata
+                numeric_id = None
+                if 'metadata' in clip and isinstance(clip['metadata'], dict):
+                    metadata = clip['metadata']
+                    if 'numeric_id' in metadata and metadata['numeric_id']:
+                        numeric_id = metadata['numeric_id']
+                        logger.info(f"Found explicit numeric_id {numeric_id} in clip metadata")
                 
-                # Log detailed information about the result for debugging
-                logger.info(f"Supabase export result type: {type(result).__name__}")
-                if isinstance(result, dict):
-                    logger.info(f"Result keys: {list(result.keys())}")
-                    logger.info(f"Success key present: {('success' in result)}")
-                    logger.info(f"Success value: {result.get('success')}")
-                elif hasattr(result, 'data'):
-                    logger.info(f"Result has data attribute: {bool(result.data)}")
-                    if result.data:
-                        logger.info(f"Data type: {type(result.data).__name__}")
-                        if isinstance(result.data, dict):
-                            logger.info(f"Data keys: {list(result.data.keys())}")
-                        elif isinstance(result.data, list):
-                            logger.info(f"Data length: {len(result.data)}")
+                # If we found a numeric ID in metadata, use it
+                if numeric_id is not None:
+                    try:
+                        member_id = int(numeric_id)
+                        logger.info(f"Using numeric_id from metadata: {member_id}")
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Invalid numeric_id in metadata: {numeric_id} - {str(e)}")
+                        # Continue with other conversion attempts
+                
+                # If member_id is still not an integer, try direct conversion
+                if not isinstance(member_id, int):
+                    try:
+                        # Try direct conversion to integer
+                        member_id = int(member_id)
+                        logger.info(f"Converted member_id directly to integer: {member_id}")
+                    except (ValueError, TypeError) as e:
+                        # If it's a UUID-like string, try to hash it to a consistent integer
+                        if isinstance(member_id, str) and (len(member_id) > 30 or '-' in member_id):
+                            # Use a hash function to generate a consistent integer from the UUID
+                            # This ensures the same UUID always maps to the same integer
+                            hash_value = abs(hash(member_id)) % (10 ** 9)  # Limit to 9 digits
+                            logger.warning(f"Converted UUID-like member_id to hash integer: {original_member_id} -> {hash_value}")
+                            member_id = hash_value
+                        else:
+                            logger.error(f"Failed to convert member_id to integer: {original_member_id} - {str(e)}")
+                            # Skip this clip if we can't convert to integer
+                            logger.warning(f"Skipping clip with invalid member_id: {original_member_id}")
+                            skipped_clips_count += 1
+                            continue
+                
+                # Final validation - ensure we have an integer
+                if not isinstance(member_id, int):
+                    logger.error(f"After all conversion attempts, member_id is still not an integer: {member_id} (type: {type(member_id).__name__})")
+                    skipped_clips_count += 1
+                    continue
+                
+                # Log the final member_id for debugging
+                logger.info(f"Final member_id for export: {member_id} (type: {type(member_id).__name__})")
+                
+                # Ensure timestamps are properly formatted as strings
+                start_timestamp = clip.get('start_time') or clip.get('start_timestamp')
+                end_timestamp = clip.get('end_time') or clip.get('end_timestamp')
+                
+                logger.info(f"Raw timestamps: start={start_timestamp} (type: {type(start_timestamp).__name__ if start_timestamp is not None else 'None'}), end={end_timestamp} (type: {type(end_timestamp).__name__ if end_timestamp is not None else 'None'})")
+                
+                # Convert timestamps to string if they're numeric
+                if start_timestamp is not None:
+                    if isinstance(start_timestamp, (int, float)):
+                        start_timestamp = str(start_timestamp)
                 else:
-                    logger.info(f"Raw result: {result}")
+                    logger.warning(f"Missing start_timestamp for clip, using default value")
+                    start_timestamp = "0"  # Default to 0 if missing
+                    
+                if end_timestamp is not None:
+                    if isinstance(end_timestamp, (int, float)):
+                        end_timestamp = str(end_timestamp)
+                else:
+                    logger.warning(f"Missing end_timestamp for clip, using default value")
+                    end_timestamp = "0"  # Default to 0 if missing
                 
-                # Improved success condition check
-                export_success = False
+                # Log the timestamps for debugging
+                logger.info(f"Final clip timestamps: start={start_timestamp} (type: {type(start_timestamp).__name__}), end={end_timestamp} (type: {type(end_timestamp).__name__})")
                 
-                # Check various success conditions
-                if isinstance(result, dict):
-                    export_success = result.get("success", False)
-                elif hasattr(result, "data") and result.data:
+                export_clip = {
+                    "video_id": str(video_id),
+                    "start_timestamp": start_timestamp,
+                    "end_timestamp": end_timestamp,
+                    "member_id": member_id,  # Should now be an integer if conversion was successful
+                    "speaker_name": clip.get('member_name', 'Unknown'),
+                    "confidence": clip.get('confidence_score', 0.0),
+                    "transcript": clip.get('transcript', ''),
+                    "face_image_url": '',
+                    "full_video_path": video_path,  # Combined audio+video file
+                    "video_export_path": video_path,  # IMPORTANT: Always use full_video_path (combined AV) for video_export_path
+                    "metadata": {
+                        "recognition_method": "facial",
+                        "matched_by": "parliament_clips",
+                        "clip_id": clip.get('id'),
+                        "combined_av_url": video_path,  # Combined audio+video file
+                        "video_export_path": video_path  # IMPORTANT: Always use full_video_path (combined AV) for all paths
+                    }
+                }
+                
+                logger.info(f"Prepared clip for export: {export_clip}")
+                clips_to_export.append(export_clip)
+            
+            logger.info(f"Prepared {len(clips_to_export)} clips for export to Supabase, skipped {skipped_clips_count} clips")
+            logger.info(f"Member ID types encountered: {member_id_types}")
+            
+            # Check if we have any clips to export
+            if len(clips_to_export) == 0:
+                logger.error("No valid clips after cleaning. All clips were filtered out.")
+                return {"success": False, "error": "No valid clips after cleaning"}
+            
+            # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
+            logger.info(f"Calling Supabase to insert {len(clips_to_export)} clips")
+            result = self.supabase_service.add_to_clip_creation_queue(clips_to_export)
+            
+            # Log detailed information about the result for debugging
+            logger.info(f"Supabase export result: {result}")
+            
+            # Improved success condition check
+            export_success = False
+            
+            # Check various success conditions
+            if isinstance(result, dict):
+                export_success = result.get("success", False)
+                logger.info(f"Result is dict, success field: {export_success}")
+            elif hasattr(result, "data") and result.data:
+                export_success = True
+                logger.info(f"Result has data attribute: {result.data}")
+                if isinstance(result.data, dict):
+                    logger.info(f"Data keys: {list(result.data.keys())}")
+                elif isinstance(result.data, list):
+                    logger.info(f"Data length: {len(result.data)}")
+            elif result is not None:
+                # Consider any non-None, non-empty result as success
+                # This is a fallback for when the Supabase client returns unexpected formats
+                if isinstance(result, (list, dict)) and len(result) > 0:
                     export_success = True
-                elif result is not None:
-                    # Consider any non-None, non-empty result as success
-                    # This is a fallback for when the Supabase client returns unexpected formats
-                    if isinstance(result, (list, dict)) and len(result) > 0:
-                        export_success = True
-                    elif not isinstance(result, (list, dict)) and bool(result):
-                        export_success = True
-                
-                logger.info(f"Export success determination: {export_success}")
-                
-                # If export was successful, clean up clips from both databases
-                if export_success:
-                    logger.info(f"Export successful, cleaning up clips from databases")
-                    cleanup_result = self._cleanup_exported_clips(video_id, db)
-                    logger.info(f"Cleanup result: {cleanup_result}")
-                    return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result}
-                
-                return {"success": True, "supabase_result": result}
-            except Exception as e:
-                logger.error(f"Error in Supabase export: {str(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-                return {"success": False, "error": f"Supabase export error: {str(e)}"}
+                    logger.info(f"Result is non-empty list/dict, treating as success")
+                elif not isinstance(result, (list, dict)) and bool(result):
+                    export_success = True
+                    logger.info(f"Result is truthy value, treating as success")
+            
+            logger.info(f"Export success determination: {export_success}")
+            logger.info(f"========== COMPLETED SUPABASE EXPORT for video {video_id} ==========")
+            
+            # If export was successful, clean up clips from both databases
+            if export_success:
+                logger.info(f"Export successful, cleaning up clips from databases")
+                cleanup_result = self._cleanup_exported_clips(video_id, None)  # No db session needed
+                logger.info(f"Cleanup result: {cleanup_result}")
+                return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result}
+            
+            return {"success": export_success, "supabase_result": result}
             
         except Exception as e:
             logger.error(f"Error exporting clips to Supabase: {str(e)}")
