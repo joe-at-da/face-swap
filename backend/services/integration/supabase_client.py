@@ -546,16 +546,23 @@ class SupabaseService:
                         if member_id == -1:
                             logger.info(f"Allowing special member ID -1 for unknown speaker")
                             # Keep the -1 as is, don't replace with fallback
-                        elif valid_member_ids and member_id not in valid_member_ids:
-                            if valid_member_ids:
+                        elif valid_member_ids:
+                            # Member ID should already be an integer at this point
+                            if not isinstance(member_id, int):
+                                logger.error(f"Member ID {member_id} is not an integer (type: {type(member_id).__name__}). This should have been handled earlier.")
+                                logger.warning(f"Skipping clip with non-integer member ID {member_id}")
+                                continue
+                                
+                            # Check if the member_id is in valid_member_ids
+                            if member_id not in valid_member_ids:
                                 # For non-special IDs that aren't valid, log a clear warning
                                 logger.warning(f"Member ID {member_id} not found in parliament_members table")
-                                # Don't use a fallback - this would mask the real issue
+                                logger.warning(f"Valid member IDs: {valid_member_ids[:10]}... (showing first 10)")
                                 logger.warning(f"Skipping clip with invalid member ID {member_id}")
                                 continue
-                            else:
-                                logger.warning(f"Member ID {member_id} not found and no fallbacks available. Skipping clip.")
-                                continue
+                        else:
+                            logger.warning(f"Member ID {member_id} not found and no fallbacks available. Skipping clip.")
+                            continue
                 except Exception as e:
                     logger.warning(f"Error checking member_id: {str(e)}. Skipping clip.")
                     continue

@@ -68,7 +68,7 @@ class ParliamentClipsIntegrationService:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS parliament_clips (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    member_id TEXT NOT NULL,
+                    member_id INTEGER NOT NULL,
                     transcript TEXT,
                     full_video_path TEXT,
                     start_timestamp TEXT,
@@ -170,9 +170,16 @@ class ParliamentClipsIntegrationService:
             member_id = event.get("member_id", "")
             confidence = event.get("confidence", 0.0)
             
-            # Ensure member_id is stored as a string to handle UUIDs properly
+            # Ensure member_id is stored as an integer as per the SQLite schema
             if member_id:
-                member_id = str(member_id)
+                try:
+                    # Convert to integer if it's not already
+                    if not isinstance(member_id, int):
+                        member_id = int(member_id)
+                except (ValueError, TypeError):
+                    logger.error(f"Invalid member_id format: {member_id} - must be convertible to integer")
+                    errors.append(f"Event at {start_time}-{end_time} has invalid member_id format")
+                    continue
             
             # Count member IDs for debugging
             member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
@@ -1016,6 +1023,17 @@ class ParliamentClipsIntegrationService:
                     # For Supabase, we need to use the integer member_id, not the UUID
                     # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
                     
+                    # Ensure member_id is an integer
+                    # This should be handled by the sync script, but we'll ensure it here as well
+                    if not isinstance(member_id, int):
+                        try:
+                            # Convert to integer if it's a string representation of a number
+                            member_id = int(member_id)
+                            logger.info(f"Converted member_id to integer: {member_id}")
+                        except (ValueError, TypeError):
+                            logger.error(f"Invalid member_id format: {member_id} - must be an integer")
+                            continue  # Skip this clip
+                    
                     # Log the member_id for debugging
                     logger.info(f"Preparing clip with member_id: {member_id} (type: {type(member_id).__name__})")
                     
@@ -1023,7 +1041,7 @@ class ParliamentClipsIntegrationService:
                         "video_id": str(video_id),
                         "start_timestamp": clip.get('start_timestamp'),
                         "end_timestamp": clip.get('end_timestamp'),
-                        "member_id": member_id,  # This will be converted to integer in add_to_clip_creation_queue
+                        "member_id": member_id,  # Should now be an integer if conversion was successful
                         "speaker_name": clip.get('member_name', 'Unknown'),
                         "confidence": clip.get('confidence_score', 0.0),
                         "transcript": clip.get('transcript', ''),
