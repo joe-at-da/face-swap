@@ -463,7 +463,7 @@ class SupabaseIntegration:
                                         if rec_process:
                                             logger.info(f"Updating RecognitionProcess for video {video_id} with Supabase URL")
                                             # Store URL in recognition_results JSON field
-                                            if not rec_process.recognition_results:
+                                            if not hasattr(rec_process, 'recognition_results') or not rec_process.recognition_results:
                                                 rec_process.recognition_results = {}
                                             elif isinstance(rec_process.recognition_results, str):
                                                 try:

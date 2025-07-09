@@ -24,6 +24,9 @@ from backend.services.recognition.member_matching.database import (
 
 logger = logging.getLogger(__name__)
 
+# Global variable to track if UnidentifiedSpeaker is available
+UNIDENTIFIED_SPEAKER_AVAILABLE = False
+
 class ParliamentMemberMatcher:
     """
     Class for matching unidentified speakers with parliament members
@@ -500,6 +503,10 @@ class ParliamentMemberMatcher:
                     # Try backend.db.models path
                     from backend.db.models.unidentified_speaker import UnidentifiedSpeaker
             
+            if not UNIDENTIFIED_SPEAKER_AVAILABLE:
+                logger.warning("UnidentifiedSpeaker model not available, skipping query")
+                return {}
+                
             unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
                 UnidentifiedSpeaker.clip_id == clip_id
             ).all()
@@ -628,6 +635,10 @@ class ParliamentMemberMatcher:
                 from backend.db.models.parliament_clip import ParliamentClip
         
         # Get distinct clip IDs with unidentified speakers
+        if not UNIDENTIFIED_SPEAKER_AVAILABLE:
+            logger.warning("UnidentifiedSpeaker model not available, skipping query")
+            return []
+            
         clip_ids = self.db.query(UnidentifiedSpeaker.clip_id).distinct().all()
         clip_ids = [c[0] for c in clip_ids]
         
