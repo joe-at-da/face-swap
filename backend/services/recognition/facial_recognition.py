@@ -38,9 +38,45 @@ class FacialRecognitionService:
         # Create directories if they don't exist
         self.mp_photos_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize OpenCV YuNet face detector
+        try:
+            model_paths = [
+                "/app/models/face_recognition/face_detection_yunet_2023mar.onnx",  # Docker container path
+                "/app/models/face_detection_yunet_2023mar.onnx",  # Alternative path
+                str(Path("/app/models/face_detection_yunet_2023mar.onnx")),  # Path object
+                str(Path(__file__).parent.parent.parent.parent / "models" / "face_recognition" / "face_detection_yunet_2023mar.onnx")  # Relative to this file
+            ]
+            
+            # Try each path until we find one that exists
+            model_path = None
+            for path in model_paths:
+                if os.path.exists(path):
+                    model_path = path
+                    logger.info(f"Found YuNet model at: {model_path}")
+                    break
+            
+            if model_path is None:
+                logger.error("YuNet model file not found in any of the expected locations")
+                logger.info("Falling back to face_recognition library for face detection")
+                self.use_yunet = False
+            else:
+                self.face_detector = cv2.FaceDetectorYN.create(
+                    model=model_path,
+                    config="",
+                    input_size=(320, 320),
+                    score_threshold=0.3,  # Lower threshold for better detection
+                    nms_threshold=0.3,
+                    top_k=5000
+                )
+                self.use_yunet = True
+        except Exception as e:
+            logger.exception(f"Error initializing YuNet face detector: {str(e)}")
+            logger.info("Falling back to face_recognition library for face detection")
+            self.use_yunet = False
+        
     def detect_faces_in_image(self, image_path: str) -> Dict[str, Any]:
         """
-        Detect faces in an image file.
+        Detect faces in an image file using OpenCV YuNet detector.
         
         Args:
             image_path: Path to the image file
@@ -59,14 +95,11 @@ class FacialRecognitionService:
                     "error": f"Image file not found: {image_path}",
                     "detections": []
                 }
-                
-            # Load the image
-            image = face_recognition.load_image_file(image_path)
             
-            # Find all faces in the image
-            face_locations = face_recognition.face_locations(image)
+            # Use our improved detect_faces method which uses OpenCV YuNet detector
+            face_results = self.detect_faces(image_path)
             
-            if not face_locations:
+            if not face_results:
                 logger.warning(f"No faces detected in {image_path}")
                 # Save a debug copy of the image
                 debug_dir = "/app/data/temp/debug"
@@ -81,17 +114,62 @@ class FacialRecognitionService:
                     "detections": []
                 }
             
-            face_encodings = face_recognition.face_encodings(image, face_locations)
+            # Process the face results from detect_faces method
             detections = []
             
-            logger.info(f"Detected {len(face_locations)} faces in image {image_path}")
+            logger.info(f"Detected {len(face_results)} faces in image {image_path}")
             
-            for i, (face_location, face_encoding) in enumerate(zip(face_locations, face_encodings)):
-                top, right, bottom, left = face_location
-                box = [left, top, right - left, bottom - top]
+            for i, face in enumerate(face_results):
+                # Extract face information
+                box = face.get('box', [])
+                confidence = face.get('confidence', 0.0)
+                landmarks = face.get('landmarks', [])
+                
+                # Get face embedding using the face region
+                x, y, w, h = box
+                
+                # Load the image
+                image = cv2.imread(image_path)
+                if image is None:
+                    logger.error(f"Failed to load image: {image_path}")
+                    continue
+                    
+                # Extract face region with some margin
+                margin = 0.2  # 20% margin
+                x_margin = int(w * margin)
+                y_margin = int(h * margin)
+                
+                # Ensure coordinates are within image bounds
+                height, width = image.shape[:2]
+                x1 = max(0, x - x_margin)
+                y1 = max(0, y - y_margin)
+                x2 = min(width, x + w + x_margin)
+                y2 = min(height, y + h + y_margin)
+                
+                face_img = image[y1:y2, x1:x2]
+                
+                # Skip if face region is empty
+                if face_img.size == 0:
+                    logger.warning(f"Empty face region for face {i}")
+                    continue
+                
+                # Get face embedding using face_recognition on the extracted face region
+                face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                face_locations = face_recognition.face_locations(face_rgb)
+                
+                if not face_locations:
+                    logger.warning(f"Failed to locate face in extracted region for face {i}")
+                    continue
+                    
+                face_encodings = face_recognition.face_encodings(face_rgb, face_locations)
+                
+                if not face_encodings:
+                    logger.warning(f"Failed to extract embedding for face {i}")
+                    continue
+                    
+                face_embedding = np.array(face_encodings[0])
                 
                 # Ensure the embedding is properly normalized
-                face_embedding = np.array(face_encoding)
                 norm = np.linalg.norm(face_embedding)
                 if norm > 0:
                     face_embedding = face_embedding / norm
@@ -107,6 +185,9 @@ class FacialRecognitionService:
                 # Log embedding stats for debugging
                 logger.debug(f"Face {i} embedding stats: length={len(embedding_list)}, min={min(embedding_list):.4f}, max={max(embedding_list):.4f}")
                 
+                # Get the face location from face_locations (top, right, bottom, left format)
+                face_top, face_right, face_bottom, face_left = face_locations[0] if face_locations else (0, 0, 0, 0)
+                
                 detections.append({
                     "id": f"face_{i}",
                     "confidence": 1.0,  # Default confidence
@@ -114,10 +195,10 @@ class FacialRecognitionService:
                     "embedding": embedding_list,  # Use the normalized embedding list
                     "source": "dlib_face_recognition",  # Add source information for debugging
                     "face_location": {
-                        "top": top,
-                        "right": right,
-                        "bottom": bottom,
-                        "left": left
+                        "top": face_top,
+                        "right": face_right,
+                        "bottom": face_bottom,
+                        "left": face_left
                     },
                 })
                 
@@ -129,9 +210,9 @@ class FacialRecognitionService:
                     # Load image with OpenCV to crop face
                     cv_image = cv2.imread(image_path)
                     if cv_image is not None:
-                        face_width = right - left
-                        face_height = bottom - top
-                        face_crop = cv_image[top:top+face_height, left:left+face_width]
+                        face_width = face_right - face_left
+                        face_height = face_bottom - face_top
+                        face_crop = cv_image[face_top:face_top+face_height, face_left:face_left+face_width]
                         face_path = f"{debug_dir}/face_{i}_{os.path.basename(image_path)}"
                         cv2.imwrite(face_path, face_crop)
                         logger.debug(f"Saved face crop {i} to {face_path}")
@@ -155,6 +236,119 @@ class FacialRecognitionService:
                 "detections": []
             }
     
+    def detect_faces(self, image_path: str) -> List[Dict[str, Any]]:
+        """
+        Detect faces in an image using OpenCV YuNet detector with fallback to face_recognition.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            List of dictionaries with face detection results
+        """
+        try:
+            # Read the image
+            image = cv2.imread(image_path)
+            if image is None:
+                logger.error(f"Failed to read image: {image_path}")
+                return []
+            
+            # If YuNet initialization failed, use face_recognition library
+            if not hasattr(self, 'use_yunet') or not self.use_yunet:
+                logger.info(f"Using face_recognition library for face detection in {image_path}")
+                # Convert to RGB for face_recognition
+                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                
+                # Find face locations
+                face_locations = face_recognition.face_locations(rgb_image)
+                
+                if not face_locations:
+                    logger.warning(f"No faces detected with face_recognition in {image_path}")
+                    return []
+                
+                face_results = []
+                for face_location in face_locations:
+                    top, right, bottom, left = face_location
+                    face_result = {
+                        "box": [left, top, right - left, bottom - top],
+                        "confidence": 1.0,  # face_recognition doesn't provide confidence scores
+                        "landmarks": []  # face_recognition doesn't provide landmarks in this function
+                    }
+                    face_results.append(face_result)
+                
+                logger.info(f"Detected {len(face_results)} faces with face_recognition in {image_path}")
+                return face_results
+            
+            # Get original image dimensions
+            height, width = image.shape[:2]
+            
+            # Set detector input size to original image dimensions
+            # This is crucial for accurate face detection
+            self.face_detector.setInputSize((width, height))
+            
+            # Resize image for display if needed
+            display_image = cv2.resize(image, (width, height))
+            
+            # Detect faces with YuNet
+            _, faces = self.face_detector.detect(image)
+            
+            # Check if faces were detected
+            if faces is None:
+                logger.warning(f"No faces detected with YuNet in {image_path}")
+                return []
+                
+            face_results = []
+            
+            for face in faces:
+                x, y, w, h, confidence = face[:5]
+                x, y, w, h = int(x), int(y), int(w), int(h)
+                
+                # Skip faces with very low confidence
+                if confidence < 0.3:
+                    continue
+                    
+                # Extract landmarks if available (points 5-14 in the face array)
+                landmarks = []
+                if len(face) > 5:
+                    for i in range(5, min(15, len(face)), 2):
+                        if i+1 < len(face):
+                            landmarks.append((int(face[i]), int(face[i+1])))
+                
+                face_result = {
+                    "box": [x, y, w, h],
+                    "confidence": float(confidence),
+                    "landmarks": landmarks
+                }
+                
+                face_results.append(face_result)
+            
+            logger.info(f"Detected {len(face_results)} faces with YuNet in {image_path}")
+            return face_results
+            
+        except Exception as e:
+            logger.exception(f"Error detecting faces: {str(e)}")
+            # Attempt fallback to face_recognition on exception
+            try:
+                logger.info(f"Attempting fallback to face_recognition after YuNet error")
+                rgb_image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+                face_locations = face_recognition.face_locations(rgb_image)
+                
+                face_results = []
+                for face_location in face_locations:
+                    top, right, bottom, left = face_location
+                    face_result = {
+                        "box": [left, top, right - left, bottom - top],
+                        "confidence": 1.0,
+                        "landmarks": []
+                    }
+                    face_results.append(face_result)
+                
+                logger.info(f"Fallback detected {len(face_results)} faces with face_recognition")
+                return face_results
+            except Exception as fallback_error:
+                logger.exception(f"Fallback face detection also failed: {str(fallback_error)}")
+                return []
+            
     def _extract_video_id_from_path(self, video_path: str) -> Optional[int]:
         """
         Extract video ID from the video file path.
