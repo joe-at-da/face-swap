@@ -29,6 +29,30 @@ def extract_embedding(embedding_data: Union[Dict[str, Any], List[float], np.ndar
     
     return embedding
 
+def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
+    """
+    Normalize an embedding to unit length
+    
+    Args:
+        embedding: Embedding to normalize
+        
+    Returns:
+        Normalized embedding
+    """
+    # Check for NaN or Inf values
+    if np.isnan(embedding).any() or np.isinf(embedding).any():
+        embedding = np.nan_to_num(embedding)
+    
+    # Compute the norm
+    norm = np.linalg.norm(embedding)
+    
+    # Avoid division by zero
+    if norm < 1e-10:
+        return np.zeros_like(embedding)
+    
+    # Normalize
+    return embedding / norm
+
 def compute_similarity(embedding1, embedding2):
     """
     Compute similarity between two face embeddings
@@ -53,27 +77,14 @@ def compute_similarity(embedding1, embedding2):
         if not isinstance(embedding2, np.ndarray):
             embedding2 = np.array(embedding2)
         
-        # Check for NaN or Inf values
-        if np.isnan(embedding1).any() or np.isinf(embedding1).any():
-            embedding1 = np.nan_to_num(embedding1)
-        if np.isnan(embedding2).any() or np.isinf(embedding2).any():
-            embedding2 = np.nan_to_num(embedding2)
-        
         # Normalize the embeddings
-        norm1 = np.linalg.norm(embedding1)
-        norm2 = np.linalg.norm(embedding2)
-        
-        if norm1 < 1e-10 or norm2 < 1e-10:
-            logger.warning("Near-zero norm detected in embedding")
-            return 0.0
-            
-        embedding1 = embedding1 / norm1
-        embedding2 = embedding2 / norm2
+        embedding1 = normalize_embedding(embedding1)
+        embedding2 = normalize_embedding(embedding2)
         
         # Compute cosine similarity
         similarity = np.dot(embedding1, embedding2)
         
-        # Special debug for high similarity
+        # Special debug for Darren Jones
         if similarity > 0.9:
             logger.info(f"High similarity detected: {similarity:.6f}")
             

@@ -11,7 +11,7 @@ from datetime import datetime
 
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.recognition.face_recognition import FaceRecognitionService
-from backend.services.recognition.member_matching.embedding import compute_similarity
+from backend.services.recognition.member_matching.embedding import compute_similarity, normalize_embedding, normalize_embedding
 from backend.services.recognition.member_matching.defaults import get_default_member_for_house
 from backend.services.recognition.member_matching.photo_management import PhotoManager
 from backend.services.recognition.member_matching.database import (
@@ -119,97 +119,44 @@ class ParliamentMemberMatcher:
             return False
     
     def _load_member_embeddings(self):
-        """
-        Load embeddings for all members
-        """
         try:
-            # Check if we have members loaded
-            if not self.members:
-                logger.error("No parliament members loaded. Call load_parliament_members() first.")
+            # Load embeddings from cache if available
+            cache_file = os.path.join(self.cache_dir, 'member_embeddings.json')
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    embeddings = json.load(f)
+                
+                # Process each embedding
+                for member_id, data in embeddings.items():
+                    if isinstance(data, dict) and 'embedding' in data:
+                        # Get the embedding
+                        embedding = data['embedding']
+                        
+                        # Convert to numpy array
+                        if not isinstance(embedding, np.ndarray):
+                            embedding = np.array(embedding)
+                        
+                        # Normalize the embedding
+                        embedding = normalize_embedding(embedding)
+                        
+                        # Store back as list
+                        data['embedding'] = embedding.tolist()
+                        
+                        # Store with string ID as the primary key
+                        self.member_embeddings[str(member_id)] = data
+                        
+                        # Special debug for Darren Jones
+                        if str(member_id) == "4621":
+                            logger.info(f"Loaded Darren Jones embedding: shape={embedding.shape}, norm={np.linalg.norm(embedding):.4f}")
+                
+                logger.info(f"Loaded {len(self.member_embeddings)} member embeddings")
                 return
-            
-            # Reset embeddings
-            self.member_embeddings = {}
-            
-            # Load embeddings for each member
-            for member in self.members:
-                # Prioritize numeric ID over UUID
-                numeric_id = member.get('member_id')  # Numeric ID
-                uuid_id = member.get('id')  # UUID
-                
-                # Skip if no numeric ID
-                if not numeric_id:
-                    logger.warning(f"Member {uuid_id} has no numeric member_id, skipping")
-                    continue
-                
-                # Convert numeric_id to string for consistent key usage
-                member_key = str(numeric_id)
-                
-                # Try to load embedding from file - first check with numeric ID
-                embedding_file = os.path.join(
-                    self.photo_manager.embeddings_dir, 
-                    f"{numeric_id}.json"
-                )
-                
-                # If not found, check the download_mp_photos.py location with numeric ID
-                if not os.path.exists(embedding_file):
-                    embedding_file = os.path.join(
-                        self.mp_photos_dir,
-                        f"{numeric_id}.json"
-                    )
-                
-                # If still not found and we have a UUID, try with that as fallback
-                if not os.path.exists(embedding_file) and uuid_id:
-                    # Try standard location with UUID
-                    embedding_file = os.path.join(
-                        self.photo_manager.embeddings_dir, 
-                        f"{uuid_id}.json"
-                    )
-                    
-                    # If not found, try download_mp_photos.py location with UUID
-                    if not os.path.exists(embedding_file):
-                        embedding_file = os.path.join(
-                            self.mp_photos_dir,
-                            f"{uuid_id}.json"
-                        )
-                
-                if os.path.exists(embedding_file):
-                    try:
-                        with open(embedding_file, 'r') as f:
-                            embedding_data = json.load(f)
-                            
-                        # Handle both formats: direct array or object with 'embedding' key
-                        if isinstance(embedding_data, list):
-                            # Direct array format from download_mp_photos.py
-                            embedding = np.array(embedding_data)
-                        elif isinstance(embedding_data, dict) and 'embedding' in embedding_data:
-                            # Object with 'embedding' key format
-                            embedding = embedding_data['embedding']
-                            if isinstance(embedding, list):
-                                embedding = np.array(embedding)
-                        else:
-                            logger.warning(f"Unknown embedding format for member {member_key}")
-                            continue
-                        
-                        # Store with numeric ID as the primary key
-                        self.member_embeddings[member_key] = {
-                            'embedding': embedding,
-                            'member': member
-                        }
-                        
-                        # Log success
-                        logger.debug(f"Loaded embedding for member {member.get('display_name')} (ID: {member_key})")
-                    except Exception as e:
-                        logger.warning(f"Error loading embedding for member {member_key}: {str(e)}")
-                else:
-                    logger.debug(f"No embedding file found for member {member_key}")
-            
-            logger.info(f"Loaded {len(self.member_embeddings)} member embeddings")
+            else:
+                logger.warning(f"No embeddings cache found at {cache_file}")
         except Exception as e:
             logger.error(f"Error loading member embeddings: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-    
     def match_face_to_member(self, face_embedding, confidence_threshold=0.5, house=None):
         """
         Match a face embedding to a parliament member
@@ -229,22 +176,16 @@ class ParliamentMemberMatcher:
         return self._match_face_to_member(face_data, confidence_threshold, house)
     
     def _match_face_to_member(self, face_data, confidence_threshold=0.5, house=None):
-        """
-        Match a face to a parliament member
-        
-        Args:
-            face_data: Face data
-            confidence_threshold: Confidence threshold
-            house: House ID to filter by
-            
-        Returns:
-            dict: Match result
-        """
         # Get the face embedding
         face_embedding = face_data.get('embedding')
         if face_embedding is None:
             logger.error("No embedding found in face data")
             return {'matched': False}
+        
+        # Ensure face embedding is normalized
+        if not isinstance(face_embedding, np.ndarray):
+            face_embedding = np.array(face_embedding)
+        face_embedding = normalize_embedding(face_embedding)
         
         # Find the best match
         best_match = None
@@ -261,22 +202,30 @@ class ParliamentMemberMatcher:
             
             # Skip members from the wrong house if house is specified
             if house is not None and str(member_house) != str(house):
-                logger.debug(f"Skipping member {member_id} from house {member_house} (looking for {house})")
                 continue
             
             # Skip if no embedding
             if member_id not in self.member_embeddings:
-                logger.debug(f"No embedding for member {member_id}")
                 continue
             
             # Get the member embedding
             member_embedding = self.member_embeddings[member_id].get('embedding')
             if member_embedding is None:
-                logger.debug(f"No embedding data for member {member_id}")
                 continue
             
-            # Compute similarity
-            confidence = compute_similarity(face_embedding, member_embedding)
+            # Ensure member embedding is normalized
+            if not isinstance(member_embedding, np.ndarray):
+                member_embedding = np.array(member_embedding)
+            member_embedding = normalize_embedding(member_embedding)
+            
+            # Compute similarity directly with normalized embeddings
+            confidence = float(np.dot(face_embedding, member_embedding))
+            
+            # Special debug for Darren Jones
+            if member_id == "4621":
+                logger.info(f"Darren Jones similarity: {confidence:.6f}")
+                logger.info(f"Darren Jones embedding norm: {np.linalg.norm(member_embedding):.6f}")
+                logger.info(f"Face embedding norm: {np.linalg.norm(face_embedding):.6f}")
             
             # Add to all matches for debugging
             all_matches.append({
@@ -316,7 +265,6 @@ class ParliamentMemberMatcher:
         
         logger.info(f"Best match {best_match['name']} with confidence {best_match['confidence']:.4f} below threshold {confidence_threshold}")
         return {'matched': False}
-
     def match_unidentified_speakers(self, clip_id: str) -> Dict[str, Any]:
         """
         Match unidentified speakers in a video clip to parliament members
