@@ -47,6 +47,7 @@ class ParliamentMemberMatcher:
     """
     
     def __init__(self, db: Session, cache_dir: str = "/app/data/cache"):
+        
         """
         Initialize the matcher
         
@@ -78,6 +79,9 @@ class ParliamentMemberMatcher:
         self.members = []
         self.member_embeddings = {}
         self.member_cache_file = os.path.join(self.cache_dir, "parliament_members.json")
+        
+        # Always load members on initialization
+        self.load_parliament_members()
     
     def load_parliament_members(self) -> bool:
         """
