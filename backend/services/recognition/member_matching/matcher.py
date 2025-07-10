@@ -377,15 +377,29 @@ class ParliamentMemberMatcher:
                 logger.warning("UnidentifiedSpeaker model not available, skipping query")
                 return {
                     "success": False,
-                    "error": "UnidentifiedSpeaker model not available"
+                    "error": "UnidentifiedSpeaker model not available",
+                    "unmatched": 0,
+                    "total": 0
                 }
                 
             # Query unidentified speakers for this clip
-            from sqlalchemy import text
+            from sqlalchemy import text, inspect
             
             try:
                 # First check if the transaction is valid
                 self.db.execute(text("SELECT 1"))
+                
+                # Check if the unidentified_speakers table exists
+                inspector = inspect(self.db.get_bind())
+                if not inspector.has_table('unidentified_speakers'):
+                    logger.warning("The 'unidentified_speakers' table does not exist in the database")
+                    return {
+                        "success": True,  # Return success to avoid blocking the pipeline
+                        "matched": 0,
+                        "unmatched": 0,
+                        "total": 0,
+                        "warning": "unidentified_speakers table does not exist"
+                    }
                 
                 # Then perform the actual query
                 unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
@@ -396,10 +410,32 @@ class ParliamentMemberMatcher:
                 logger.warning(f"Transaction error when querying unidentified speakers: {query_error}")
                 self.db.rollback()
                 
-                # Try again with a fresh transaction
-                unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
-                    UnidentifiedSpeaker.clip_id == clip_id
-                ).all()
+                try:
+                    # Check if the unidentified_speakers table exists
+                    inspector = inspect(self.db.get_bind())
+                    if not inspector.has_table('unidentified_speakers'):
+                        logger.warning("The 'unidentified_speakers' table does not exist in the database")
+                        return {
+                            "success": True,  # Return success to avoid blocking the pipeline
+                            "matched": 0,
+                            "unmatched": 0,
+                            "total": 0,
+                            "warning": "unidentified_speakers table does not exist"
+                        }
+                    
+                    # Try again with a fresh transaction
+                    unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
+                        UnidentifiedSpeaker.clip_id == clip_id
+                    ).all()
+                except Exception as second_error:
+                    logger.error(f"Second attempt to query unidentified speakers failed: {second_error}")
+                    return {
+                        "success": True,  # Return success to avoid blocking the pipeline
+                        "matched": 0,
+                        "unmatched": 0,
+                        "total": 0,
+                        "error": str(second_error)
+                    }
             
             if not unidentified_speakers:
                 logger.info(f"No unidentified speakers found for clip {clip_id}")

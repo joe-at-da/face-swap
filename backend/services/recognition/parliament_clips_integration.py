@@ -1041,6 +1041,11 @@ class ParliamentClipsIntegrationService:
         logger.info(f"===== EXPORTING CLIPS TO SUPABASE =====")
         logger.info(f"Video ID: {video_id}, Video Path: {video_path}")
         
+        # Import necessary modules
+        import os
+        import json
+        from datetime import datetime
+        
         try:
             # Get video metadata from the database
             from backend.db.session import get_db
@@ -1482,10 +1487,31 @@ class ParliamentClipsIntegrationService:
             logger.info(f"Prepared {len(clips_to_export)} clips for export to Supabase, skipped {skipped_clips_count} clips")
             logger.info(f"Member ID types encountered: {member_id_types}")
             
+            # Create export directory and files even if no clips are found
+            # This ensures that the export paths are properly set and files exist
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            export_dir = os.path.join(self.temp_dir, "supabase_export", str(video_id))
+            os.makedirs(export_dir, exist_ok=True)
+            
+            # Create the export file paths
+            video_export_path = os.path.join(export_dir, f"recognition_export_{video_id}_{timestamp}.json")
+            clips_export_path = os.path.join(export_dir, f"clips_export_{video_id}_{timestamp}.json")
+            
+            # Write empty files or files with content depending on whether we have clips
+            with open(video_export_path, 'w') as f:
+                json.dump({"video_id": video_id, "timestamp": timestamp, "events": recognition_events}, f)
+            
+            with open(clips_export_path, 'w') as f:
+                json.dump({"video_id": video_id, "timestamp": timestamp, "clips": clips_to_export}, f)
+            
+            logger.info(f"Created export files at:\n - {video_export_path}\n - {clips_export_path}")
+            
             # Check if we have any clips to export
             if len(clips_to_export) == 0:
-                logger.error("No valid clips after cleaning. All clips were filtered out.")
-                return {"success": False, "error": "No valid clips after cleaning"}
+                logger.warning("No valid clips after cleaning. All clips were filtered out.")
+                return {"success": False, "error": "No valid clips after cleaning", 
+                        "video_export_path": video_export_path, 
+                        "clips_export_path": clips_export_path}
             
             # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
             logger.info(f"Calling Supabase to insert {len(clips_to_export)} clips")
@@ -1517,21 +1543,124 @@ class ParliamentClipsIntegrationService:
                 elif not isinstance(result, (list, dict)) and bool(result):
                     export_success = True
                     logger.info(f"Result is truthy value, treating as success")
+                    
+            # Verify the export was successful by checking if the files exist and have content
+            # This is a double-check to ensure we don't clean up prematurely
+            if export_success:
+                # Verify export files exist and have content
+                files_exist = True
+                files_have_content = True
+                
+                if video_export_path and os.path.exists(video_export_path):
+                    video_file_size = os.path.getsize(video_export_path)
+                    logger.info(f"Video export file exists with size: {video_file_size} bytes")
+                    if video_file_size <= 10:  # Practically empty JSON
+                        files_have_content = False
+                        logger.warning(f"Video export file appears to be empty or minimal: {video_file_size} bytes")
+                else:
+                    files_exist = False
+                    logger.warning(f"Video export file does not exist: {video_export_path}")
+                
+                if clips_export_path and os.path.exists(clips_export_path):
+                    clips_file_size = os.path.getsize(clips_export_path)
+                    logger.info(f"Clips export file exists with size: {clips_file_size} bytes")
+                    if clips_file_size <= 10:  # Practically empty JSON
+                        files_have_content = False
+                        logger.warning(f"Clips export file appears to be empty or minimal: {clips_file_size} bytes")
+                else:
+                    files_exist = False
+                    logger.warning(f"Clips export file does not exist: {clips_export_path}")
+                
+                # Update export_success based on file verification
+                if not files_exist:
+                    export_success = False
+                    logger.warning("Export marked as unsuccessful because export files do not exist")
+                elif not files_have_content and len(clips) > 0:  # Only care about empty files if we had clips to export
+                    export_success = False
+                    logger.warning("Export marked as unsuccessful because export files exist but appear to be empty")
+                    
+                # If we have no clips but files exist, that's still a success
+                if not clips and files_exist:
+                    export_success = True
+                    logger.info("No clips to export but files were created successfully - marking as success")
+                    
+                # Final verification of export success
+                logger.info(f"Final export success determination after verification: {export_success}")
+                if not export_success:
+                    logger.warning("Export will be marked as unsuccessful, cleanup will NOT be performed")
+                else:
+                    logger.info("Export verified as successful, cleanup WILL be performed")
             
             logger.info(f"Export success determination: {export_success}")
             logger.info(f"========== COMPLETED SUPABASE EXPORT for video {video_id} ==========")
             
             # If export was successful, clean up clips from both databases
             if export_success:
-                logger.info(f"Export successful, cleaning up clips from databases")
-                cleanup_result = self._cleanup_exported_clips(video_id, db)  # Pass the database session
-                logger.info(f"Cleanup result: {cleanup_result}")
-                return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result}
+                # Before cleanup, verify that clips exist in Supabase by checking the result
+                supabase_verification = True
+                
+                # Try to verify clips were actually created in Supabase
+                if isinstance(result, dict) and "clips_created" in result:
+                    clips_created = result.get("clips_created", 0)
+                    logger.info(f"Supabase reports {clips_created} clips created")
+                    
+                    # If we had clips to export but none were created in Supabase, that's a problem
+                    if len(clips) > 0 and clips_created == 0:
+                        supabase_verification = False
+                        logger.warning(f"Had {len(clips)} clips to export but Supabase reports 0 clips created")
+                
+                # Only proceed with cleanup if Supabase verification passes
+                if supabase_verification:
+                    logger.info(f"Export successful and verified, cleaning up clips from databases")
+                    cleanup_result = self._cleanup_exported_clips(video_id, db)  # Pass the database session
+                    logger.info(f"Cleanup result: {cleanup_result}")
+                    return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result, 
+                            "export_paths": {
+                                "video_export_path": video_export_path, 
+                                "clips_export_path": clips_export_path
+                            },
+                            "video_export_path": video_export_path, 
+                            "clips_export_path": clips_export_path}
+                else:
+                    logger.warning("Export appeared successful but Supabase verification failed. Skipping cleanup.")
+                    return {"success": False, "supabase_result": result, "error": "Supabase verification failed", 
+                            "export_paths": {
+                                "video_export_path": video_export_path, 
+                                "clips_export_path": clips_export_path
+                            },
+                            "video_export_path": video_export_path, 
+                            "clips_export_path": clips_export_path}
             
-            return {"success": export_success, "supabase_result": result}
+            return {"success": export_success, "supabase_result": result, 
+                    "video_export_path": video_export_path, 
+                    "clips_export_path": clips_export_path}
             
         except Exception as e:
             logger.error(f"Error exporting clips to Supabase: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return {"success": False, "error": str(e)}
+            logger.exception(e)
+            
+            # Even in case of an exception, try to create the export files
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                export_dir = os.path.join(self.temp_dir, "supabase_export", str(video_id))
+                os.makedirs(export_dir, exist_ok=True)
+                
+                # Create the export file paths
+                video_export_path = os.path.join(export_dir, f"recognition_export_{video_id}_{timestamp}.json")
+                clips_export_path = os.path.join(export_dir, f"clips_export_{video_id}_{timestamp}.json")
+                
+                # Write empty files with error information
+                with open(video_export_path, 'w') as f:
+                    json.dump({"video_id": video_id, "timestamp": timestamp, "events": recognition_events, "error": str(e)}, f)
+                
+                with open(clips_export_path, 'w') as f:
+                    json.dump({"video_id": video_id, "timestamp": timestamp, "clips": [], "error": str(e)}, f)
+                
+                logger.info(f"Created error export files at:\n - {video_export_path}\n - {clips_export_path}")
+                
+                return {"success": False, "error": str(e), 
+                        "video_export_path": video_export_path, 
+                        "clips_export_path": clips_export_path}
+            except Exception as inner_e:
+                logger.error(f"Failed to create error export files: {str(inner_e)}")
+                return {"success": False, "error": f"{str(e)} (and failed to create export files: {str(inner_e)})"}

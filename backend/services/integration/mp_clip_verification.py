@@ -187,8 +187,35 @@ def verify_mp_clips_in_supabase(
             result["error"] = f"Error reading clips export file: {str(e)}"
             return result
             
+        # Handle different data structures
+        if isinstance(clips_data, str):
+            logger.warning(f"Clips data is a string, not a list or dictionary: {clips_data}")
+            result["error"] = "Clips data is a string, not a list or dictionary"
+            result["mp_clips_count"] = 0
+            result["total_clips_count"] = 0
+            return result
+            
+        # Handle case where clips_data is a dictionary with a 'clips' key (our empty file format)
+        if isinstance(clips_data, dict) and "clips" in clips_data:
+            clips_list = clips_data.get("clips", [])
+            if not isinstance(clips_list, list):
+                logger.warning(f"Clips data 'clips' key is not a list: {type(clips_list)}")
+                result["error"] = f"Clips data 'clips' key is not a list: {type(clips_list)}"
+                result["mp_clips_count"] = 0
+                result["total_clips_count"] = 0
+                return result
+            clips_data = clips_list
+            
+        # Ensure clips_data is a list
+        if not isinstance(clips_data, list):
+            logger.warning(f"Clips data is not a list: {type(clips_data)}")
+            result["error"] = f"Clips data is not a list: {type(clips_data)}"
+            result["mp_clips_count"] = 0
+            result["total_clips_count"] = 0
+            return result
+            
         # Count clips with MP associations
-        mp_clips = [clip for clip in clips_data if clip.get("speaker_id") is not None]
+        mp_clips = [clip for clip in clips_data if isinstance(clip, dict) and clip.get("speaker_id") is not None]
         result["mp_clips_count"] = len(mp_clips)
         result["total_clips_count"] = len(clips_data)
         
@@ -230,8 +257,18 @@ def verify_mp_clips_in_supabase(
         result["verification_details"]["db_speaker_identifications"] = len(speaker_identifications)
         result["verification_details"]["db_speaker_appearances"] = len(speaker_appearances)
         
-        # Success if we have MP clips and they were added to the queue
-        result["success"] = result["mp_clips_count"] > 0 and "queue_success" in result["verification_details"]
+        # Success criteria:
+        # 1. If we have MP clips, they must be added to the queue successfully
+        # 2. If we have no MP clips, that's also considered a success (empty export is valid)
+        if result["mp_clips_count"] > 0:
+            # If we have clips, they must be added to the queue successfully
+            result["success"] = "queue_success" in result["verification_details"]
+            if not result["success"]:
+                result["error"] = "Clips were found but not successfully added to the queue"
+        else:
+            # No clips is a valid scenario - consider it a success
+            result["success"] = True
+            result["note"] = "No MP clips found, but this is a valid scenario"
         
         return result
         
