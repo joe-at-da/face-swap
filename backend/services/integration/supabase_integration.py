@@ -125,41 +125,26 @@ class SupabaseIntegration:
     
     def add_to_video_processing_queue(self, video_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Add a job to the video_processing queue.
+        Previously added a job to the video_processing queue.
+        Now just returns success without doing anything since the queue is not needed.
         
         Args:
-            video_data: Video data to process
+            video_data: Video data that would have been processed
             
         Returns:
-            Response from Supabase
+            Success response
         """
-        # Import json at function level to avoid any shadowing issues
-        import json as json_module
+        # Just log and return success
+        video_id = video_data.get('video_id', 'unknown')
+        logger.info(f"Skipping video processing queue for video ID: {video_id}")
         
-        try:
-            # Verify the data is serializable before sending
-            try:
-                json_str = json_module.dumps(video_data)
-                logger.debug(f"Verified video_data is JSON serializable, length: {len(json_str)} bytes")
-            except TypeError as json_error:
-                logger.error(f"Video data failed final serialization check: {str(json_error)}")
-                # Create a minimal valid payload as last resort
-                video_data = {
-                    "video_id": video_data.get("video_id", "unknown"),
-                    "status": "error",
-                    "created_at": str(datetime_module.now()),
-                    "error_message": "Data could not be serialized"
-                }
-                logger.warning(f"Using fallback minimal video data: {video_data}")
-            
-            # Now send to Supabase
-            response = self.supabase.add_to_video_processing_queue(video_data)
-            logger.info(f"Added video to processing queue: {video_data.get('video_id')}")
-            return response
-        except Exception as e:
-            error_msg = f"Error adding video to processing queue: {str(e)}"
-            logger.error(error_msg)
-            return {"error": error_msg}
+        # Return a success response without actually sending to Supabase
+        return {
+            "success": True,
+            "status": "skipped",
+            "message": "Video processing queue is not being used",
+            "video_id": video_id
+        }
     
     def _run_sync_parliament_clip_member_ids(self) -> Dict[str, Any]:
         """
@@ -1153,30 +1138,15 @@ class SupabaseIntegration:
                         }
                         logger.warning(f"Using minimal video data payload: {video_data}")
                 
-                # Now add to the queue
-                try:
-                    # Log the video data we're about to send (excluding large fields)
-                    log_data = {k: (v if not isinstance(v, str) or len(str(v)) < 100 else f"<{len(str(v))} chars>") 
-                               for k, v in video_data.items()}
-                    logger.info(f"Sending video data to queue: {log_data}")
-                    
-                    video_queue_response = self.add_to_video_processing_queue(video_data)
-                    result["queue_responses"]["video_processing"] = video_queue_response
-                    
-                    # Log the response
-                    logger.info(f"Video queue response: {video_queue_response}")
-                    
-                    # Check if we got a table_missing error
-                    if isinstance(video_queue_response, dict) and video_queue_response.get('status') == 'table_missing':
-                        logger.warning("The video_processing_queue table does not exist in Supabase. This is a configuration issue.")
-                        logger.info("Continuing with export process despite missing queue table")
-                        # We'll continue with the export process even though the queue insertion failed
-                except Exception as queue_error:
-                    error_msg = f"Error adding to video processing queue: {str(queue_error)}"
-                    logger.error(error_msg)
-                    result["queue_responses"]["video_processing"] = {"error": error_msg}
+                # Skip adding to the video processing queue as it's not needed
+                logger.info("Skipping video processing queue insertion as requested")
+                result["queue_responses"]["video_processing"] = {
+                    "status": "skipped",
+                    "message": "Video processing queue insertion skipped as requested",
+                    "success": True
+                }
             except Exception as e:
-                logger.error(f"Error preparing video data for queue: {str(e)}")
+                logger.error(f"Error preparing video data: {str(e)}")
                 result["queue_responses"]["video_processing"] = {"error": f"Failed to prepare video data: {str(e)}"}
             
             # Initialize no_clips_found flag if not already set

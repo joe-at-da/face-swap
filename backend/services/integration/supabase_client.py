@@ -505,12 +505,17 @@ class SupabaseService:
                 return response
             except Exception as table_error:
                 error_str = str(table_error)
-                if '404' in error_str or 'not found' in error_str.lower():
+                # Check for various error patterns that indicate the table doesn't exist
+                if ('404' in error_str or 
+                    'not found' in error_str.lower() or 
+                    'relation "public.video_processing_queue" does not exist' in error_str or
+                    '42P01' in error_str):  # PostgreSQL error code for relation not found
                     # Table doesn't exist
                     logger.warning(f"The video_processing_queue table does not exist in Supabase: {error_str}")
                     return {
-                        "error": "The video_processing_queue table does not exist in Supabase. Please create the table before inserting data.",
+                        "error": error_str,
                         "status": "table_missing",
+                        "message": "The video_processing_queue table does not exist in Supabase. Please create the table before inserting data.",
                         "original_data": video_data
                     }
                 else:
