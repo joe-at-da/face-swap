@@ -11,7 +11,7 @@ from datetime import datetime
 
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.recognition.face_recognition import FaceRecognitionService
-from backend.services.recognition.member_matching.embedding import compute_similarity, normalize_embedding, normalize_embedding, normalize_embedding, normalize_embedding
+from backend.services.recognition.member_matching.embedding import compute_similarity, normalize_embedding, normalize_embedding, normalize_embedding, normalize_embedding, normalize_embedding
 from backend.services.recognition.member_matching.defaults import get_default_member_for_house
 from backend.services.recognition.member_matching.photo_management import PhotoManager
 from backend.services.recognition.member_matching.database import (
@@ -153,24 +153,96 @@ class ParliamentMemberMatcher:
             logger.error(f"Error loading member embeddings: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-    def match_face_to_member(self, face_embedding, confidence_threshold=0.5, house=None):
-        """
-        Match a face embedding to a parliament member
+    def match_face_to_member(self, face_embedding, confidence_threshold=0.5, house=None, timestamp=None, video_id=None):
+        """Match a face embedding to a parliament member.
         
         Args:
-            face_embedding: Face embedding
-            confidence_threshold: Confidence threshold
-            house: House ID to filter by
+            face_embedding: The face embedding to match
+            confidence_threshold: The minimum confidence required for a match
+            house: Optional house ID to filter members
+            timestamp: Optional timestamp for temporal consistency
+            video_id: Optional video ID for temporal consistency
             
         Returns:
-            dict: Match result
+            A dictionary with match information
         """
-        # Create face data dictionary
+        # Create face data dictionary for internal method
         face_data = {'embedding': face_embedding}
         
-        # Call internal method
-        return self._match_face_to_member(face_data, confidence_threshold, house)
-    
+        # Call internal method with all parameters
+        match_result = self._match_face_to_member(face_data, confidence_threshold, house)
+        
+        # Apply temporal consistency if timestamp and video_id are provided
+        if timestamp is not None and video_id is not None and hasattr(self, 'recent_matches'):
+            # Initialize recent matches dict if not exists
+            if not hasattr(self, 'recent_matches'):
+                self.recent_matches = {}
+                
+            # Initialize video matches if not exists
+            if video_id not in self.recent_matches:
+                self.recent_matches[video_id] = []
+            
+            # Get recent matches for this video
+            video_matches = self.recent_matches[video_id]
+            
+            # Apply temporal consistency logic
+            if match_result.get('matched', False):
+                # Add this match to recent matches
+                video_matches.append({
+                    'timestamp': timestamp,
+                    'member_id': match_result['member_id'],
+                    'confidence': match_result['confidence']
+                })
+                
+                # Keep only recent matches (last 10 seconds)
+                video_matches = [m for m in video_matches if timestamp - m['timestamp'] < 10.0]
+                self.recent_matches[video_id] = video_matches
+                
+                # Log temporal consistency information
+                logger.info(f"Added match to temporal consistency buffer: {match_result['name']} at {timestamp:.2f}s")
+            else:
+                # Check if we have recent matches for the same person
+                recent_member_matches = {}
+                
+                # Count matches by member_id in the last 5 seconds
+                for m in video_matches:
+                    if timestamp - m['timestamp'] < 5.0:
+                        member_id = m['member_id']
+                        if member_id not in recent_member_matches:
+                            recent_member_matches[member_id] = []
+                        recent_member_matches[member_id].append(m)
+                
+                # Find the member with the most matches
+                best_member_id = None
+                best_count = 0
+                best_avg_confidence = 0
+                
+                for member_id, matches in recent_member_matches.items():
+                    count = len(matches)
+                    avg_confidence = sum(m['confidence'] for m in matches) / count if count > 0 else 0
+                    
+                    if count > best_count or (count == best_count and avg_confidence > best_avg_confidence):
+                        best_count = count
+                        best_member_id = member_id
+                        best_avg_confidence = avg_confidence
+                
+                # If we have a good temporal match, use it
+                if best_count >= 3 and best_avg_confidence >= 0.4:
+                    # Find the member
+                    for member in self.members:
+                        if str(member.get('member_id')) == str(best_member_id):
+                            # Create a match result
+                            match_result = {
+                                'matched': True,
+                                'member_id': best_member_id,
+                                'name': member.get('display_name', 'Unknown'),
+                                'confidence': best_avg_confidence,
+                                'continuity_adjusted': True
+                            }
+                            logger.info(f"Applied temporal consistency: {match_result['name']} with {best_count} recent matches")
+                            break
+        
+        return match_result
     def _match_face_to_member(self, face_data, confidence_threshold=0.5, house=None):
         # Get the face embedding
         face_embedding = face_data.get('embedding')

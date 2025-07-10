@@ -462,12 +462,110 @@ def fix_matcher_module():
     # Find the match_face_to_member method
     match_face_pattern = "    def match_face_to_member(self, face_embedding, confidence_threshold="
     if match_face_pattern in content:
-        # Replace the default confidence threshold
-        content = content.replace(
-            "    def match_face_to_member(self, face_embedding, confidence_threshold=0.1", 
-            "    def match_face_to_member(self, face_embedding, confidence_threshold=0.5"
-        )
-        logger.info("Updated default confidence threshold in match_face_to_member")
+        # Find the start of the method
+        start_idx = content.find(match_face_pattern)
+        
+        # Find the end of the method (next def or end of file)
+        next_def_idx = content.find("    def ", start_idx + 1)
+        if next_def_idx == -1:
+            next_def_idx = len(content)
+        
+        # Replace the method with our fixed version that accepts timestamp and video_id
+        new_match_face_to_member = """    def match_face_to_member(self, face_embedding, confidence_threshold=0.5, house=None, timestamp=None, video_id=None):
+        \"\"\"Match a face embedding to a parliament member.
+        
+        Args:
+            face_embedding: The face embedding to match
+            confidence_threshold: The minimum confidence required for a match
+            house: Optional house ID to filter members
+            timestamp: Optional timestamp for temporal consistency
+            video_id: Optional video ID for temporal consistency
+            
+        Returns:
+            A dictionary with match information
+        \"\"\"
+        # Create face data dictionary for internal method
+        face_data = {'embedding': face_embedding}
+        
+        # Call internal method with all parameters
+        match_result = self._match_face_to_member(face_data, confidence_threshold, house)
+        
+        # Apply temporal consistency if timestamp and video_id are provided
+        if timestamp is not None and video_id is not None and hasattr(self, 'recent_matches'):
+            # Initialize recent matches dict if not exists
+            if not hasattr(self, 'recent_matches'):
+                self.recent_matches = {}
+                
+            # Initialize video matches if not exists
+            if video_id not in self.recent_matches:
+                self.recent_matches[video_id] = []
+            
+            # Get recent matches for this video
+            video_matches = self.recent_matches[video_id]
+            
+            # Apply temporal consistency logic
+            if match_result.get('matched', False):
+                # Add this match to recent matches
+                video_matches.append({
+                    'timestamp': timestamp,
+                    'member_id': match_result['member_id'],
+                    'confidence': match_result['confidence']
+                })
+                
+                # Keep only recent matches (last 10 seconds)
+                video_matches = [m for m in video_matches if timestamp - m['timestamp'] < 10.0]
+                self.recent_matches[video_id] = video_matches
+                
+                # Log temporal consistency information
+                logger.info(f"Added match to temporal consistency buffer: {match_result['name']} at {timestamp:.2f}s")
+            else:
+                # Check if we have recent matches for the same person
+                recent_member_matches = {}
+                
+                # Count matches by member_id in the last 5 seconds
+                for m in video_matches:
+                    if timestamp - m['timestamp'] < 5.0:
+                        member_id = m['member_id']
+                        if member_id not in recent_member_matches:
+                            recent_member_matches[member_id] = []
+                        recent_member_matches[member_id].append(m)
+                
+                # Find the member with the most matches
+                best_member_id = None
+                best_count = 0
+                best_avg_confidence = 0
+                
+                for member_id, matches in recent_member_matches.items():
+                    count = len(matches)
+                    avg_confidence = sum(m['confidence'] for m in matches) / count if count > 0 else 0
+                    
+                    if count > best_count or (count == best_count and avg_confidence > best_avg_confidence):
+                        best_count = count
+                        best_member_id = member_id
+                        best_avg_confidence = avg_confidence
+                
+                # If we have a good temporal match, use it
+                if best_count >= 3 and best_avg_confidence >= 0.4:
+                    # Find the member
+                    for member in self.members:
+                        if str(member.get('member_id')) == str(best_member_id):
+                            # Create a match result
+                            match_result = {
+                                'matched': True,
+                                'member_id': best_member_id,
+                                'name': member.get('display_name', 'Unknown'),
+                                'confidence': best_avg_confidence,
+                                'continuity_adjusted': True
+                            }
+                            logger.info(f"Applied temporal consistency: {match_result['name']} with {best_count} recent matches")
+                            break
+        
+        return match_result
+"""
+        
+        # Replace the method
+        content = content[:start_idx] + new_match_face_to_member + content[next_def_idx:]
+        logger.info("Patched match_face_to_member method to handle timestamp and video_id parameters")
     else:
         logger.warning("Could not find match_face_to_member method in matcher.py")
     
@@ -698,6 +796,48 @@ def test_fix():
                 break
             else:
                 logger.info(f"No match found above threshold {threshold}")
+        
+        # Test temporal consistency
+        logger.info("\nTesting temporal consistency:")
+        
+        # Create a test video ID
+        test_video_id = "test_video_123"
+        
+        # Simulate a sequence of frames with timestamps
+        timestamps = [10.0, 11.0, 12.0, 13.0, 14.0]
+        
+        # First match should be normal
+        first_match = matcher.match_face_to_member(
+            frame_embedding, 
+            confidence_threshold=0.5, 
+            house=1,
+            timestamp=timestamps[0], 
+            video_id=test_video_id
+        )
+        
+        if first_match.get('matched', False):
+            logger.info(f"First match: {first_match['name']} (ID: {first_match['member_id']}) with confidence {first_match['confidence']}")
+            
+            # Now test with a lower threshold that would normally fail
+            # but should succeed with temporal consistency
+            for i, ts in enumerate(timestamps[1:]):
+                # Use a very high threshold that would normally fail
+                match_result = matcher.match_face_to_member(
+                    frame_embedding, 
+                    confidence_threshold=0.99,  # Very high threshold to force temporal consistency
+                    house=1,
+                    timestamp=ts, 
+                    video_id=test_video_id
+                )
+                
+                logger.info(f"Frame {i+2} at {ts}s: {'✅ Match with temporal consistency' if match_result.get('matched', False) else '❌ No match'}")
+                
+                if match_result.get('matched', False):
+                    logger.info(f"  Member: {match_result['name']} (ID: {match_result['member_id']})")
+                    logger.info(f"  Confidence: {match_result['confidence']}")
+                    logger.info(f"  Continuity adjusted: {match_result.get('continuity_adjusted', False)}")
+        else:
+            logger.info("No initial match found for temporal consistency test")
         
         return True
     except Exception as e:
