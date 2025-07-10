@@ -497,13 +497,26 @@ class SupabaseIntegration:
                                             # Log before value
                                             logger.info(f"Before update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
                                             
-                                            # Update and commit
-                                            rec_process.recognition_results["supabase_urls"]["combined_av_url"] = supabase_url
+                                            # Ensure recognition_results is a dictionary
+                                            if isinstance(rec_process.recognition_results, str):
+                                                try:
+                                                    recognition_results_dict = json_module.loads(rec_process.recognition_results)
+                                                except json_module.JSONDecodeError:
+                                                    recognition_results_dict = {"supabase_urls": {}}
+                                            else:
+                                                recognition_results_dict = rec_process.recognition_results if isinstance(rec_process.recognition_results, dict) else {"supabase_urls": {}}
+                                            
+                                            # Ensure supabase_urls exists
+                                            if "supabase_urls" not in recognition_results_dict:
+                                                recognition_results_dict["supabase_urls"] = {}
+                                                
+                                            # Update the URL
+                                            recognition_results_dict["supabase_urls"]["combined_av_url"] = supabase_url
                                             
                                             # Convert to JSON string before saving to database
-                                            if isinstance(rec_process.recognition_results, dict):
-                                                rec_process.recognition_results = json_module.dumps(rec_process.recognition_results)
-                                                
+                                            rec_process.recognition_results = json_module.dumps(recognition_results_dict)
+                                            
+                                            # Commit the changes
                                             db_session.commit()
                                             
                                             # Verify the update
@@ -511,11 +524,15 @@ class SupabaseIntegration:
                                             logger.info(f"After update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
                                             
                                             # Check if the URL was properly saved
-                                            if isinstance(rec_process.recognition_results, dict) and \
-                                               isinstance(rec_process.recognition_results.get("supabase_urls"), dict) and \
-                                               rec_process.recognition_results["supabase_urls"].get("combined_av_url") == supabase_url:
-                                                logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
-                                            else:
+                                            try:
+                                                # Parse the JSON string to check the values
+                                                saved_results = json_module.loads(rec_process.recognition_results) if isinstance(rec_process.recognition_results, str) else rec_process.recognition_results
+                                                if saved_results.get("supabase_urls", {}).get("combined_av_url") == supabase_url:
+                                                    logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
+                                                else:
+                                                    logger.error(f"Failed to update RecognitionProcess with Supabase URL. Value not saved correctly.")
+                                            except Exception as e:
+                                                logger.error(f"Error verifying RecognitionProcess update: {str(e)}")
                                                 logger.error(f"Failed to update RecognitionProcess with Supabase URL. Value not saved correctly.")
                                     else:
                                         logger.error(f"Could not find either CaptureSession or RecognitionProcess for video {video_id}")
