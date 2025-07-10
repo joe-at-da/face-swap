@@ -29,8 +29,7 @@ def extract_embedding(embedding_data: Union[Dict[str, Any], List[float], np.ndar
     
     return embedding
 
-def compute_similarity(embedding1: Union[Dict[str, Any], List[float], np.ndarray], 
-                       embedding2: Union[Dict[str, Any], List[float], np.ndarray]) -> float:
+def compute_similarity(embedding1, embedding2):
     """
     Compute similarity between two face embeddings
     
@@ -43,61 +42,40 @@ def compute_similarity(embedding1: Union[Dict[str, Any], List[float], np.ndarray
     """
     try:
         # Extract and convert embeddings
-        embedding1_array = extract_embedding(embedding1)
-        embedding2_array = extract_embedding(embedding2)
+        if isinstance(embedding1, dict) and 'embedding' in embedding1:
+            embedding1 = embedding1['embedding']
+        if isinstance(embedding2, dict) and 'embedding' in embedding2:
+            embedding2 = embedding2['embedding']
         
-        # Check embedding dimensions
-        if embedding1_array.size == 0 or embedding2_array.size == 0:
-            logger.error(f"Empty embedding detected: embedding1 size={embedding1_array.size}, embedding2 size={embedding2_array.size}")
-            return 0.0
+        # Convert to numpy arrays if they aren't already
+        if not isinstance(embedding1, np.ndarray):
+            embedding1 = np.array(embedding1)
+        if not isinstance(embedding2, np.ndarray):
+            embedding2 = np.array(embedding2)
         
-        # Log embedding details for debugging
-        try:
-            logger.debug(f"Embedding1: shape={embedding1_array.shape}, min={np.min(embedding1_array):.4f}, max={np.max(embedding1_array):.4f}")
-            logger.debug(f"Embedding2: shape={embedding2_array.shape}, min={np.min(embedding2_array):.4f}, max={np.max(embedding2_array):.4f}")
-        except Exception as debug_error:
-            logger.debug(f"Could not log embedding details: {str(debug_error)}")
-        
-        # Handle embeddings from different sources (dlib vs OpenCV)
-        # If sizes don't match, we need to adapt the comparison strategy
-        if embedding1_array.size != embedding2_array.size:
-            logger.warning(f"Embedding size mismatch: {embedding1_array.size} vs {embedding2_array.size}")
-            
-            # If one is 128 (dlib) and the other is different (likely OpenCV), 
-            # we need to use a different comparison approach
-            if embedding1_array.size == 128 or embedding2_array.size == 128:
-                logger.info("Detected potential dlib vs OpenCV embedding comparison")
-                
-                # For mismatched embedding types, we'll use a lower threshold
-                # and normalize each separately before computing similarity on the 
-                # first min(size1, size2) dimensions
-                min_size = min(embedding1_array.size, embedding2_array.size)
-                embedding1_array = embedding1_array[:min_size]
-                embedding2_array = embedding2_array[:min_size]
-                logger.info(f"Using first {min_size} dimensions for comparison")
-            else:
-                logger.error(f"Cannot compare embeddings with incompatible sizes: {embedding1_array.size} vs {embedding2_array.size}")
-                return 0.0
+        # Check for NaN or Inf values
+        if np.isnan(embedding1).any() or np.isinf(embedding1).any():
+            embedding1 = np.nan_to_num(embedding1)
+        if np.isnan(embedding2).any() or np.isinf(embedding2).any():
+            embedding2 = np.nan_to_num(embedding2)
         
         # Normalize the embeddings
-        norm1 = np.linalg.norm(embedding1_array)
-        norm2 = np.linalg.norm(embedding2_array)
+        norm1 = np.linalg.norm(embedding1)
+        norm2 = np.linalg.norm(embedding2)
         
         if norm1 < 1e-10 or norm2 < 1e-10:
             logger.warning("Near-zero norm detected in embedding")
             return 0.0
             
-        embedding1_array = embedding1_array / norm1
-        embedding2_array = embedding2_array / norm2
+        embedding1 = embedding1 / norm1
+        embedding2 = embedding2 / norm2
         
         # Compute cosine similarity
-        similarity = np.dot(embedding1_array, embedding2_array)
+        similarity = np.dot(embedding1, embedding2)
         
-        # Adjust similarity score for cross-model comparisons
-        # Empirically, dlib vs OpenCV comparisons tend to have lower similarity scores
-        # even for the same face, so we apply a small boost to compensate
-        if embedding1_array.size != embedding2_array.size:
-            similarity = min(1.0, similarity * 1.2)  # Apply a 20% boost, capped at 1.0
+        # Special debug for high similarity
+        if similarity > 0.9:
+            logger.info(f"High similarity detected: {similarity:.6f}")
             
         return float(similarity)
     except Exception as e:
