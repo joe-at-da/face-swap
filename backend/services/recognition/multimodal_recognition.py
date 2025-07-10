@@ -865,14 +865,10 @@ class MultimodalRecognitionService:
                 else:
                     logger.warning(f"Face embedding is not a list but {type(face_embedding).__name__}")
                 
-                # Get the house from the video metadata if available
-                house = "unknown"  # Default house
-                logger.info(f"Using house: {house} for matching")
+                # Set house to Commons (1) to filter for MPs
+                house = "1"  # House of Commons
+                logger.info(f"Using house: {house} for matching (filtering for MPs)")
                 
-                # Match the face to a parliament member
-                logger.info(f"Matching face to parliament member with threshold: {threshold}")
-                
-                # Pass timestamp and video_id for temporal consistency checks if available
                 if timestamp is not None and video_id is not None:
                     logger.info(f"Using temporal consistency with timestamp {timestamp:.2f}s for video {video_id}")
                 
