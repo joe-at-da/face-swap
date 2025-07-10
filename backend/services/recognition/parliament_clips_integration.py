@@ -631,7 +631,7 @@ class ParliamentClipsIntegrationService:
         
         return results
         
-    def _cleanup_exported_clips(self, video_id: int, db_session=None) -> Dict[str, Any]:
+    def _cleanup_exported_clips(self, video_id: int, db_session: Session = None) -> Dict[str, Any]:
         """
         Clean up clips that have been successfully exported to Supabase.
         This removes clips from both the SQLite parliament_clips database and
@@ -639,7 +639,7 @@ class ParliamentClipsIntegrationService:
         
         Args:
             video_id: ID of the video whose clips should be cleaned up
-            db: SQLAlchemy database session for PostgreSQL operations
+            db_session: SQLAlchemy database session for PostgreSQL operations
             
         Returns:
             Dict with cleanup status and results
@@ -688,26 +688,31 @@ class ParliamentClipsIntegrationService:
         
         # 2. Clean up recognition events from PostgreSQL database
         try:
-            from backend.db.models import RecognitionEvent
-            
-            # Count how many events we'll be removing
-            event_count = db.query(RecognitionEvent).filter(
-                RecognitionEvent.video_id == video_id,
-                RecognitionEvent.type == "speaker"
-            ).count()
-            
-            logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
-            
-            # Delete recognition events for this video_id
-            deleted_count = db.query(RecognitionEvent).filter(
-                RecognitionEvent.video_id == video_id,
-                RecognitionEvent.type == "speaker"
-            ).delete(synchronize_session=False)
-            
-            db.commit()
-            
-            results["postgres_events_removed"] = deleted_count
-            logger.info(f"Removed {deleted_count} recognition events from PostgreSQL database")
+            # Skip PostgreSQL cleanup if no database session provided
+            if db_session is None:
+                logger.info("No database session provided, skipping PostgreSQL cleanup")
+                results["postgres_events_removed"] = 0
+            else:
+                from backend.db.models import RecognitionEvent
+                
+                # Count how many events we'll be removing
+                event_count = db_session.query(RecognitionEvent).filter(
+                    RecognitionEvent.video_id == video_id,
+                    RecognitionEvent.type == "speaker"
+                ).count()
+                
+                logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
+                
+                # Delete recognition events for this video_id
+                deleted_count = db_session.query(RecognitionEvent).filter(
+                    RecognitionEvent.video_id == video_id,
+                    RecognitionEvent.type == "speaker"
+                ).delete(synchronize_session=False)
+                
+                db_session.commit()
+                
+                results["postgres_events_removed"] = deleted_count
+                logger.info(f"Removed {deleted_count} recognition events from PostgreSQL database")
         except Exception as e:
             error_msg = f"Error cleaning up PostgreSQL recognition events: {str(e)}"
             logger.error(error_msg)
@@ -1338,7 +1343,7 @@ class ParliamentClipsIntegrationService:
             # If export was successful, clean up clips from both databases
             if export_success:
                 logger.info(f"Export successful, cleaning up clips from databases")
-                cleanup_result = self._cleanup_exported_clips(video_id, None)  # No db session needed
+                cleanup_result = self._cleanup_exported_clips(video_id, db)  # Pass the database session
                 logger.info(f"Cleanup result: {cleanup_result}")
                 return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result}
             
