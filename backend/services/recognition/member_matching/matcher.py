@@ -256,32 +256,31 @@ class ParliamentMemberMatcher:
             Dictionary with match information
         """
         try:
-            # Check if we have member embeddings loaded
             if not self.member_embeddings:
                 logger.error("No member embeddings loaded. Call load_parliament_members() first.")
                 return {'matched': False, 'error': 'No member embeddings loaded'}
-                
-            # Get face embedding
+            
             if 'embedding' not in face_data:
                 logger.error("No embedding found in face data")
                 return {'matched': False, 'error': 'No embedding in face data'}
-                
-            face_embedding = face_data['embedding']
             
-            # Calculate similarity with members, filtering by house if specified
+            face_embedding = face_data['embedding']
             similarities = []
             
+            # Normalize house parameter to string for comparison
+            normalized_house = str(house).lower() if house is not None else "unknown"
+            
             for member_id, member_data in self.member_embeddings.items():
-                # Skip if no embedding
                 if 'embedding' not in member_data:
                     continue
                     
-                # Get member house_id
+                # Get member house_id and normalize to string for comparison
                 member_house = member_data['member'].get('house_id', 'unknown')
+                normalized_member_house = str(member_house).lower() if member_house is not None else "unknown"
                 
                 # Filter by house if specified (and not 'unknown')
                 # This ensures we only match MPs for Commons and Lords for Lords
-                if house != "unknown" and member_house != "unknown" and house != member_house:
+                if normalized_house != "unknown" and normalized_member_house != "unknown" and normalized_house != normalized_member_house:
                     logger.info(f"Skipping member {member_id} from house {member_house} (looking for {house})")
                     continue
                     
