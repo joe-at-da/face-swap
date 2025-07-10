@@ -534,7 +534,52 @@ class ParliamentClipsIntegrationService:
     
     # End of get_parliament_clips_for_video method
     
-    def _cleanup_exported_clips(self, video_id: int, db: Session) -> Dict[str, Any]:
+    def _run_sync_parliament_clip_member_ids(self, db_session):
+        """
+        Run the sync_parliament_clip_member_ids.py script to ensure all member IDs in SQLite
+        have corresponding Speaker records in PostgreSQL.
+        
+        Args:
+            db_session: SQLAlchemy database session
+            
+        Returns:
+            Dict with sync results
+        """
+        try:
+            logger.info("Running sync_parliament_clip_member_ids.py script to ensure all member IDs have Speaker records")
+            import subprocess
+            import sys
+            import os
+            
+            # Get the path to the script
+            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+                                      "backend/scripts/sync_parliament_clip_member_ids.py")
+            
+            # Check if we're running in Docker or locally
+            if os.path.exists("/app/backend/scripts/sync_parliament_clip_member_ids.py"):
+                script_path = "/app/backend/scripts/sync_parliament_clip_member_ids.py"
+                
+            logger.info(f"Sync script path: {script_path}")
+            
+            # Run the script using the Python interpreter
+            result = subprocess.run([sys.executable, script_path], 
+                                   capture_output=True, 
+                                   text=True)
+            
+            if result.returncode == 0:
+                logger.info("Successfully ran sync_parliament_clip_member_ids.py script")
+                logger.info(f"Script output: {result.stdout}")
+                return {"success": True, "output": result.stdout}
+            else:
+                logger.error(f"Error running sync_parliament_clip_member_ids.py script: {result.stderr}")
+                return {"success": False, "error": result.stderr}
+        except Exception as e:
+            logger.error(f"Error running sync_parliament_clip_member_ids.py script: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+    
+    def _cleanup_exported_clips(self, video_id: int, db_session=None) -> Dict[str, Any]:
         """
         Clean up clips that have been successfully exported to Supabase.
         This removes clips from both the SQLite parliament_clips database and
@@ -1062,16 +1107,19 @@ class ParliamentClipsIntegrationService:
                 logger.warning(f"No valid speaker appearances to export to Supabase for video ID {video_id}")
                 return {"success": False, "error": "No valid speaker appearances to export"}
             
-            # Run the sync script to ensure all member IDs have Speaker records
-            logger.info("Running sync script to ensure Speaker records exist for all member IDs")
-            sync_result = self._run_sync_parliament_clip_member_ids(db)
-            if sync_result.get("success"):
-                logger.info("Successfully synchronized member IDs with Speaker records")
-            else:
-                logger.warning(f"Failed to synchronize member IDs: {sync_result.get('error')}")
-                logger.warning("Continuing with export anyway, but some member IDs may not be properly mapped")
+            # CRITICAL ADDITION: First, ensure we have the correct member_id mapping
+            # by running the sync script to ensure all member IDs have corresponding Speaker records
+            from backend.db.session import get_db
+            db_generator = get_db()
+            db = next(db_generator)
             
-            # Export and upload to Supabase
+            sync_result = self._run_sync_parliament_clip_member_ids(db)
+            if not sync_result.get("success"):
+                logger.warning(f"Member ID sync failed: {sync_result.get('error')}")
+                logger.warning("Continuing with export anyway, but some member IDs may not be properly mapped")
+            else:
+                logger.info("Successfully synchronized member IDs between SQLite and PostgreSQL")
+            
             logger.info(f"Preparing to export {len(recognition_results['speaker_appearances'])} appearances to Supabase")
             
             # Log the full recognition results for debugging
@@ -1092,50 +1140,49 @@ class ParliamentClipsIntegrationService:
                 # Log the original member_id for debugging
                 logger.info(f"Original member_id: {member_id} (type: {type(member_id).__name__})")
                 
-                # Create a properly formatted clip for Supabase
-                # For Supabase, we need to use the integer member_id, not the UUID
-                # The UUID is stored in the member_id field in SQLite, but Supabase expects an integer
+                # SIMPLIFIED APPROACH: For Supabase, we need to use the integer member_id
+                # After running the sync script, we should be able to find the corresponding integer member_id
+                # in the parliament_members table
                 
-                # CRITICAL FIX: Handle member_id type conversion with extreme care
-                original_member_id = member_id  # Save original for logging
-                
-                # First, check if we have a numeric ID in the clip metadata
-                numeric_id = None
-                if 'metadata' in clip and isinstance(clip['metadata'], dict):
-                    metadata = clip['metadata']
-                    if 'numeric_id' in metadata and metadata['numeric_id']:
-                        numeric_id = metadata['numeric_id']
-                        logger.info(f"Found explicit numeric_id {numeric_id} in clip metadata")
-                
-                # If we found a numeric ID in metadata, use it
-                if numeric_id is not None:
-                    try:
-                        member_id = int(numeric_id)
-                        logger.info(f"Using numeric_id from metadata: {member_id}")
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Invalid numeric_id in metadata: {numeric_id} - {str(e)}")
-                        # Continue with other conversion attempts
-                
-                # If member_id is still not an integer, try direct conversion
-                if not isinstance(member_id, int):
-                    try:
-                        # Try direct conversion to integer
-                        member_id = int(member_id)
-                        logger.info(f"Converted member_id directly to integer: {member_id}")
-                    except (ValueError, TypeError) as e:
-                        # If it's a UUID-like string, try to hash it to a consistent integer
-                        if isinstance(member_id, str) and (len(member_id) > 30 or '-' in member_id):
-                            # Use a hash function to generate a consistent integer from the UUID
-                            # This ensures the same UUID always maps to the same integer
-                            hash_value = abs(hash(member_id)) % (10 ** 9)  # Limit to 9 digits
-                            logger.warning(f"Converted UUID-like member_id to hash integer: {original_member_id} -> {hash_value}")
-                            member_id = hash_value
-                        else:
-                            logger.error(f"Failed to convert member_id to integer: {original_member_id} - {str(e)}")
-                            # Skip this clip if we can't convert to integer
-                            logger.warning(f"Skipping clip with invalid member_id: {original_member_id}")
+                # Try to convert member_id to integer directly if possible
+                try:
+                    if isinstance(member_id, str) and (len(member_id) > 30 or '-' in member_id):
+                        # This looks like a UUID, query the parliament_members table to get the integer member_id
+                        try:
+                            # Query the Speaker table to find the corresponding integer member_id
+                            from backend.db.models import Speaker
+                            speaker = db.query(Speaker).filter(Speaker.id == member_id).first()
+                            
+                            if speaker and speaker.member_id:
+                                member_id = speaker.member_id
+                                logger.info(f"Found integer member_id {member_id} for UUID {clip.get('member_id')}")
+                            else:
+                                # Try to find by parliament_id
+                                speaker = db.query(Speaker).filter(Speaker.parliament_id == str(member_id)).first()
+                                if speaker and speaker.member_id:
+                                    member_id = speaker.member_id
+                                    logger.info(f"Found integer member_id {member_id} using parliament_id match")
+                                else:
+                                    # If we can't find a match, try direct conversion
+                                    try:
+                                        member_id = int(member_id)
+                                        logger.info(f"Converted member_id directly to integer: {member_id}")
+                                    except (ValueError, TypeError):
+                                        logger.warning(f"Could not find or convert member_id {member_id} to integer, skipping clip")
+                                        skipped_clips_count += 1
+                                        continue
+                        except Exception as e:
+                            logger.error(f"Error looking up Speaker for member_id {member_id}: {str(e)}")
                             skipped_clips_count += 1
                             continue
+                    else:
+                        # Try direct conversion for non-UUID strings
+                        member_id = int(member_id)
+                        logger.info(f"Converted member_id directly to integer: {member_id}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Failed to convert member_id to integer: {member_id} - {str(e)}")
+                    skipped_clips_count += 1
+                    continue
                 
                 # Final validation - ensure we have an integer
                 if not isinstance(member_id, int):
@@ -1186,7 +1233,8 @@ class ParliamentClipsIntegrationService:
                         "matched_by": "parliament_clips",
                         "clip_id": clip.get('id'),
                         "combined_av_url": video_path,  # Combined audio+video file
-                        "video_export_path": video_path  # IMPORTANT: Always use full_video_path (combined AV) for all paths
+                        "video_export_path": video_path,  # IMPORTANT: Always use full_video_path (combined AV) for all paths
+                        "original_id": str(clip.get('member_id'))  # Store the original ID for reference
                     }
                 }
                 
