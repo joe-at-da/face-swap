@@ -35,6 +35,19 @@ class ParliamentClipsIntegrationService:
         # Initialize Supabase service
         self.supabase_service = SupabaseService(use_service_role=True)
         
+        # Define paths for data storage
+        self.docker_temp_dir = "/app/data/temp"  # Path in Docker container
+        self.local_temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data/temp")  # Local path
+        
+        # Use the temp directory that exists
+        if os.path.exists(self.docker_temp_dir):
+            self.temp_dir = self.docker_temp_dir
+            logger.info(f"Using Docker temp directory: {self.temp_dir}")
+        else:
+            self.temp_dir = self.local_temp_dir
+            os.makedirs(self.temp_dir, exist_ok=True)
+            logger.info(f"Using local temp directory: {self.temp_dir}")
+        
         # Define database paths with correct location
         self.docker_db_path = "/app/backend/parliament_clips.db"  # Path in Docker container
         self.local_db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "backend/parliament_clips.db")  # Local path

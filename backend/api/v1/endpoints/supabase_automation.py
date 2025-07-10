@@ -639,12 +639,13 @@ async def process_parliament_tv_to_supabase(
                                         capture.capture_metadata = {}
                                     
                                     # Store verification results
+                                    from datetime import datetime as dt
                                     capture.capture_metadata["mp_verification"] = {
                                         "success": verification_result.get("success"),
                                         "mp_clips_count": verification_result.get("mp_clips_count"),
                                         "total_clips_count": verification_result.get("total_clips_count"),
                                         "mp_ids_found": verification_result.get("mp_ids_found"),
-                                        "verified_at": datetime.now().isoformat()
+                                        "verified_at": dt.now().isoformat()
                                     }
                                     db.commit()
                                     logger.info(f"Updated capture session with verification results")
