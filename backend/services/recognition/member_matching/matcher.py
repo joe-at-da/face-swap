@@ -243,7 +243,7 @@ class ParliamentMemberMatcher:
             return None
     
     def _match_face_to_member(self, face_data: Dict[str, Any], house: str = "unknown", 
-                          confidence_threshold: float = 0.1) -> Dict[str, Any]:
+                          confidence_threshold: float = 0.3) -> Dict[str, Any]:
         """
         Internal method to match a face to a parliament member
         
