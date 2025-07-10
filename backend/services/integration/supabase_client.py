@@ -395,25 +395,128 @@ class SupabaseService:
         Returns:
             Response from Supabase
         """
+        import json
+        import uuid
+        from datetime import datetime
+        
         try:
+            # First, ensure the data is JSON serializable
+            try:
+                # Create a sanitized copy of the data
+                sanitized_data = {}
+                
+                # Define required fields for the video_processing_queue table
+                required_fields = ['video_id', 'status']
+                
+                # Helper function to sanitize values recursively
+                def sanitize_value(value):
+                    if isinstance(value, dict):
+                        result = {}
+                        for k, v in value.items():
+                            try:
+                                json.dumps({k: v})
+                                result[k] = v
+                            except TypeError:
+                                sanitized_v = sanitize_value(v)
+                                if sanitized_v is not None:
+                                    result[k] = sanitized_v
+                        return result
+                    elif isinstance(value, list):
+                        result = []
+                        for item in value:
+                            try:
+                                json.dumps(item)
+                                result.append(item)
+                            except TypeError:
+                                sanitized_item = sanitize_value(item)
+                                if sanitized_item is not None:
+                                    result.append(sanitized_item)
+                        return result
+                    else:
+                        try:
+                            json.dumps(value)
+                            return value
+                        except TypeError:
+                            try:
+                                return str(value)
+                            except:
+                                return None
+                
+                # Process each field in the input data
+                for key, value in video_data.items():
+                    try:
+                        # Test if this key-value pair can be serialized
+                        json.dumps({key: value})
+                        sanitized_data[key] = value
+                    except TypeError:
+                        # Try to sanitize the value
+                        sanitized_value = sanitize_value(value)
+                        if sanitized_value is not None:
+                            sanitized_data[key] = sanitized_value
+                        else:
+                            logger.warning(f"Skipping non-serializable field '{key}'")
+                
+                # Ensure required fields are present
+                for field in required_fields:
+                    if field not in sanitized_data:
+                        if field == 'video_id':
+                            sanitized_data[field] = video_data.get('video_id', str(uuid.uuid4()))
+                        elif field == 'status':
+                            sanitized_data[field] = 'pending'
+                
+                # Add timestamps if missing
+                if 'created_at' not in sanitized_data:
+                    sanitized_data['created_at'] = datetime.now().isoformat()
+                
+                # Add a unique ID if missing
+                if 'id' not in sanitized_data:
+                    sanitized_data['id'] = str(uuid.uuid4())
+                
+                # Verify the sanitized data is serializable
+                json_str = json.dumps(sanitized_data)
+                logger.debug(f"Sanitized video data is JSON serializable, length: {len(json_str)} bytes")
+                
+                # Use the sanitized data
+                video_data = sanitized_data
+            except Exception as json_error:
+                logger.error(f"Failed to sanitize video data: {str(json_error)}")
+                # Create a minimal valid payload as fallback
+                video_data = {
+                    "id": str(uuid.uuid4()),
+                    "video_id": video_data.get("video_id", str(uuid.uuid4())),
+                    "status": "error",
+                    "created_at": datetime.now().isoformat(),
+                    "error_message": "Data could not be serialized"
+                }
+                logger.warning(f"Using minimal fallback video data: {video_data}")
+            
             # Check if the table exists first
-            tables = self.client.table('').select('*').limit(1).execute()
-            logger.debug(f"Available tables: {tables}")
+            try:
+                tables = self.client.table('').select('*').limit(1).execute()
+                logger.debug(f"Available tables: {tables}")
+            except Exception as e:
+                logger.warning(f"Could not check available tables: {str(e)}")
             
             # Try to create the table if it doesn't exist
             try:
                 # Create a minimal schema for the queue if it doesn't exist
-                self.client.table('video_processing_queue').insert({"id": "test", "created_at": "now()", "status": "pending"}).execute()
+                self.client.table('video_processing_queue').insert({"id": str(uuid.uuid4()), "created_at": datetime.now().isoformat(), "status": "pending"}).execute()
                 logger.info("Created video_processing_queue table")
             except Exception as table_error:
                 logger.warning(f"Could not create table: {str(table_error)}")
             
+            # Log what we're sending to Supabase
+            logger.info(f"Sending to video_processing_queue: {json.dumps(video_data)}")
+            
             # Now try to insert the actual data
-            return self.client.table('video_processing_queue').insert(video_data).execute()
+            response = self.client.table('video_processing_queue').insert(video_data).execute()
+            logger.info(f"Successfully added video to processing queue: {video_data.get('video_id')}")
+            return response
         except Exception as e:
-            logger.error(f"Error adding to video processing queue: {str(e)}")
+            error_msg = f"Error adding to video processing queue: {str(e)}"
+            logger.error(error_msg)
             # Continue without failing the whole process
-            return {"error": str(e)}
+            return {"error": error_msg}
     
     def add_to_clip_creation_queue(self, clip_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

@@ -1185,6 +1185,17 @@ class SupabaseIntegration:
                 # Log that we're skipping clip upload due to no clips found
                 logger.info(f"Skipping clip upload for video ID {video_id} because no clips were found")
                 
+                # Ensure video_data has proper structure even when no clips are found
+                # This helps prevent JSON serialization issues
+                if 'events' in video_data and not video_data['events']:
+                    # Replace empty events array with null to avoid serialization issues
+                    video_data['events'] = None
+                    logger.info("Replaced empty events array with null to avoid serialization issues")
+                
+                # Add additional context about the empty clips
+                video_data['note'] = video_data.get('note', 'No recognition events found for export')
+                video_data['status'] = 'no_clips'
+                
                 # Still mark the process as successful since we've created export files
                 # This avoids pipeline failures when no clips are found
                 result["clips_processed"] = 0
