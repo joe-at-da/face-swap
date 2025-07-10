@@ -41,9 +41,10 @@ The Parliament Clips export process involves:
    - Fields that should not be inserted are excluded (`is_deleted`, `deleted_at`, etc.)
 
 4. **Member ID Validation**
-   - `member_id` is validated against the `parliament_members` table
-   - If a `member_id` is not found, a fallback to a valid ID is used
-   - UUID string `member_id`s are replaced with valid integer IDs
+   - `member_id` must be a valid integer
+   - Non-numeric member IDs are rejected with clear error messages
+   - The system validates that the integer `member_id` exists in the `parliament_members` table
+   - If validation fails, the clip is not exported and an error is logged
 
 5. **Insertion**
    - Batch insertion is attempted first
@@ -51,9 +52,30 @@ The Parliament Clips export process involves:
 
 ## Important Notes
 
-- The `member_id` field in `parliament_member_clips` must be an integer that matches a `member_id` (not the UUID `id`) in the `parliament_members` table
+- The `member_id` field in `parliament_member_clips` must be an integer that matches a `member_id` in the `parliament_members` table
+- The system strictly enforces numeric member IDs - no UUIDs or other formats are accepted
+- No fallback mechanisms are used for invalid member IDs - errors are reported transparently
 - The `status` field uses an enum with valid values like `pending_review`
-- The system uses UUIDs for clip `id` but requires integer `member_id`s
+
+## Synchronization Tools
+
+### sync_parliament_clip_member_ids.py
+
+This script synchronizes member IDs between the SQLite database and PostgreSQL:
+
+```bash
+# Run the synchronization script
+python backend/scripts/sync_parliament_clip_member_ids.py
+
+# Run with debug logging
+python backend/scripts/sync_parliament_clip_member_ids.py --debug
+```
+
+The script performs the following operations:
+- Filters out non-numeric member IDs from the SQLite database
+- Ensures all numeric member IDs have corresponding Speaker records in PostgreSQL
+- Creates Speaker records for valid member IDs if they don't exist
+- Provides detailed logging of all operations and errors
 
 ## Verification Tools
 
@@ -83,12 +105,12 @@ The script performs the following checks:
 ### Common Issues
 
 1. **Invalid input syntax for type integer**
-   - Cause: `member_id` is a UUID string instead of an integer
-   - Solution: Use the integer `member_id` field from `parliament_members`, not the UUID `id`
+   - Cause: `member_id` is not a valid integer
+   - Solution: Ensure all member IDs in the SQLite database are valid integers
 
 2. **Foreign key constraint violation**
    - Cause: `member_id` does not exist in the `parliament_members` table
-   - Solution: Validate `member_id` against `parliament_members` and use a fallback if needed
+   - Solution: Run the sync_parliament_clip_member_ids.py script to create Speaker records
 
 3. **JSON serialization errors**
    - Cause: Non-serializable data types in clip records
@@ -96,4 +118,8 @@ The script performs the following checks:
 
 4. **Missing required fields**
    - Cause: Required fields not present in clip data
-   - Solution: Validate required fields and provide defaults where possible
+   - Solution: Validate required fields before export
+
+5. **Export path validation errors**
+   - Cause: Invalid or missing export paths
+   - Solution: Check that export paths are correctly generated and accessible

@@ -821,54 +821,23 @@ class SupabaseIntegration:
                                     # Already an integer, use as is
                                     pass
                                 elif isinstance(member_id, str):
-                                    if '-' in member_id:  # Looks like a UUID
-                                        # Try to find the corresponding integer member_id
-                                        try:
-                                            # First check local DB
-                                            speaker = None
-                                            try:
-                                                with self.db_session() as session:
-                                                    speaker = session.query(Speaker).filter(Speaker.id == member_id).first()
-                                                    if speaker:
-                                                        member_id = speaker.member_id
-                                                        logger.info(f"Found Speaker record for UUID {event.get('member_id')}, using member_id {member_id}")
-                                            except Exception as e:
-                                                logger.error(f"Error querying Speaker record: {str(e)}")
-                                            
-                                            # If no Speaker found, check Supabase
-                                            if not speaker:
-                                                response = supabase_service.client.table('parliament_members').select('member_id').eq('id', member_id).execute()
-                                                members = response.data if hasattr(response, 'data') else []
-                                                
-                                                if members and len(members) > 0 and 'member_id' in members[0]:
-                                                    member_id = members[0]['member_id']
-                                                    logger.info(f"Found member_id {member_id} in Supabase for UUID {event.get('member_id')}")
-                                                else:
-                                                    # No valid member_id found - don't use fallbacks or test data
-                                                    logger.error(f"No valid member_id found for UUID {event.get('member_id')}, skipping clip")
-                                                    logger.error(f"This is likely due to a missing mapping between UUID and integer member_id")
-                                                    logger.error(f"Run the sync_parliament_clip_member_ids.py script to create proper mappings")
-                                                    skipped_clips += 1
-                                                    continue
-                                        except Exception as e:
-                                            logger.error(f"Error processing member_id {event.get('member_id')}: {str(e)}, skipping clip")
-                                            skipped_clips += 1
-                                            continue
-                                    else:
-                                        # Try to convert string to int
-                                        try:
-                                            member_id = int(member_id)
-                                        except (ValueError, TypeError):
-                                            logger.error(f"Cannot convert member_id {member_id} to integer, skipping clip")
-                                            skipped_clips += 1
-                                            continue
+                                    # Try to convert string to int directly
+                                    try:
+                                        member_id = int(member_id)
+                                        logger.info(f"Converted string member_id '{event.get('member_id')}' to integer {member_id}")
+                                    except (ValueError, TypeError):
+                                        # If we can't convert to int, skip this clip
+                                        logger.error(f"Cannot convert member_id '{member_id}' to integer, skipping clip")
+                                        logger.error("Member IDs must be numeric integers, not UUIDs or other formats")
+                                        skipped_clips += 1
+                                        continue
                                 else:
                                     logger.error(f"Invalid member_id type: {type(member_id)}, skipping clip")
                                     skipped_clips += 1
                                     continue
                             else:
-                                # No member_id provided, try to get a valid one from Supabase
-                                logger.warning("No member_id provided, skipping clip")
+                                # No member_id provided
+                                logger.error("No member_id provided, skipping clip")
                                 skipped_clips += 1
                                 continue
                             

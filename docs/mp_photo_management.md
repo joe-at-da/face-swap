@@ -22,7 +22,7 @@ Photos are named according to the MP's unique identifier:
 {member_id}.jpg
 ```
 
-Where `member_id` is the UUID of the parliament member as stored in the database.
+Where `member_id` is the integer identifier of the parliament member as stored in the database.
 
 ## Photo Acquisition Process
 

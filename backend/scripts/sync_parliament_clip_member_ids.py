@@ -4,9 +4,9 @@ Script to synchronize member IDs between SQLite clips database and PostgreSQL Sp
 This script ensures that each unique member_id in the SQLite database has a corresponding
 Speaker record in PostgreSQL, allowing for proper export to Supabase.
 
-UPDATED: This script now prioritizes numeric member IDs and uses -1 as a special ID for
-unknown members (previously "default_unknown"). It converts UUIDs to numeric IDs where possible
-and ensures consistent ID handling between SQLite and PostgreSQL databases.
+UPDATED: This script now requires numeric member IDs and uses -1 as a special ID for
+unknown members. It ensures consistent ID handling between SQLite and PostgreSQL databases.
+UUIDs are not supported - all member IDs must be numeric integers.
 """
 
 import os
@@ -56,7 +56,23 @@ def get_unique_member_ids_from_sqlite():
         
         # Get all unique member_ids
         cursor.execute("SELECT DISTINCT member_id FROM parliament_clips")
-        member_ids = [row[0] for row in cursor.fetchall()]
+        all_member_ids = [row[0] for row in cursor.fetchall()]
+        
+        # Filter for numeric member IDs only
+        member_ids = []
+        for mid in all_member_ids:
+            try:
+                if mid is not None:
+                    # Try to convert to integer
+                    int(mid)
+                    member_ids.append(mid)
+            except (ValueError, TypeError):
+                logger.warning(f"Skipping non-numeric member_id: {mid}")
+        
+        logger.info(f"Filtered {len(all_member_ids)} total member IDs to {len(member_ids)} numeric member IDs")
+        if len(all_member_ids) > len(member_ids):
+            logger.warning(f"Skipped {len(all_member_ids) - len(member_ids)} non-numeric member IDs")
+            logger.warning("Member IDs must be numeric integers, not UUIDs or other formats")
         
         # Get additional information for each member_id
         member_info = {}
@@ -112,11 +128,11 @@ def check_speaker_exists(db_session, member_id):
             if not isinstance(member_id, int):
                 logger.info(f"Converted member_id from {type(member_id).__name__} '{member_id}' to int {numeric_id}")
         except (ValueError, TypeError):
-            # For invalid or unknown member_id, use -1
-            numeric_id = -1
-            logger.warning(f"Invalid member_id format for check: {member_id}, using -1 instead")
+            # For invalid member_id, log error and return False
+            logger.error(f"Invalid member_id format: {member_id}. Member IDs must be numeric integers.")
+            return False, None
         
-        # Check by numeric member_id (now that we've ensured the column is INTEGER)
+        # Check by numeric member_id
         try:
             result = db_session.execute(
                 text("SELECT id, name, parliament_id, member_id FROM speakers WHERE member_id = :member_id"),
@@ -170,9 +186,9 @@ def create_speaker_for_member_id(db_session, member_id, member_info=None):
             if not isinstance(member_id, int):
                 logger.info(f"Converted member_id from {type(member_id).__name__} '{member_id}' to int {numeric_id}")
         except (ValueError, TypeError):
-            # For invalid or unknown member_id, use -1
-            numeric_id = -1
-            logger.warning(f"Invalid member_id format: {member_id}, using -1 instead")
+            # For invalid member_id, log error and return False
+            logger.error(f"Invalid member_id format: {member_id}. Member IDs must be numeric integers.")
+            return False, None
         
         # Generate a name for the speaker
         name = "Unknown Speaker"
@@ -459,9 +475,19 @@ def main():
             logger.warning(f"Skipping empty member_id")
             continue
         
-        # Handle special case for default_unknown - map to -1 instead of skipping
-        if member_id == "default_unknown":
-            logger.info(f"Found default_unknown member_id, creating special record with ID -1")
+        # Handle special case for non-numeric member IDs
+        try:
+            # Try to convert to integer
+            numeric_id = int(member_id) if not isinstance(member_id, int) else member_id
+        except (ValueError, TypeError):
+            logger.error(f"Skipping non-numeric member_id: {member_id}. Member IDs must be numeric integers.")
+            failure_count += 1
+            failed_member_ids.append(str(member_id))
+            continue
+            
+        # Special handling for unknown members (ID -1)
+        if numeric_id == -1:
+            logger.info(f"Found special ID -1 for unknown members")
             # Check if -1 already exists
             exists, speaker = check_speaker_exists(db_session, -1)
             if exists:
@@ -478,7 +504,7 @@ def main():
                 special_cases_count += 1
             else:
                 failure_count += 1
-                failed_member_ids.append("default_unknown")
+                failed_member_ids.append("-1")
             continue
             
         info = member_info.get(member_id, {})
@@ -489,39 +515,8 @@ def main():
             already_exists_count += 1
             continue
         
-        # Special handling for member_id 4621 which was failing in logs
-        if member_id == 4621 or member_id == "4621":
-            logger.info(f"Special handling for problematic member_id 4621")
-            try:
-                # Force create with explicit values
-                new_id = db_session.execute(text("SELECT nextval('speakers_id_seq')")).scalar()
-                db_session.execute(
-                    text("""
-                        INSERT INTO speakers 
-                        (id, name, photo_url, party, constituency, member_id, parliament_id, created_at, updated_at) 
-                        VALUES 
-                        (:id, :name, :photo_url, :party, :constituency, :member_id, :parliament_id, :created_at, :updated_at)
-                    """),
-                    {
-                        "id": new_id,
-                        "name": "MP 4621",
-                        "photo_url": "",
-                        "party": "Unknown",
-                        "constituency": "Unknown",
-                        "member_id": 4621,
-                        "parliament_id": "4621",
-                        "created_at": datetime.now(),
-                        "updated_at": datetime.now()
-                    }
-                )
-                db_session.commit()
-                logger.info(f"Successfully created special record for member_id 4621")
-                success_count += 1
-                continue
-            except Exception as e:
-                logger.error(f"Failed special handling for member_id 4621: {e}")
-                db_session.rollback()
-                # Continue with normal flow to try standard approach
+        # No special handling for specific member IDs - all should go through the same process
+        # This ensures consistent handling of all numeric member IDs
             
         success, new_speaker = create_speaker_for_member_id(db_session, member_id, info)
         if success:

@@ -237,8 +237,16 @@ class MultimodalRecognitionService:
             error_msg = f"Error in start_combined_recognition: {str(e)}"
             logger.exception(error_msg)
             
+            # First, try to rollback the current transaction if it exists
             try:
-                # Try to update the database records if possible
+                if 'db' in locals() and db is not None:
+                    logger.info("Rolling back current transaction due to error")
+                    db.rollback()
+            except Exception as rollback_error:
+                logger.exception(f"Error during rollback: {str(rollback_error)}")
+            
+            try:
+                # Get a fresh database session to avoid transaction issues
                 db_generator = get_db()
                 db: Session = next(db_generator)
                 
@@ -262,6 +270,12 @@ class MultimodalRecognitionService:
                     db.commit()
             except Exception as db_error:
                 logger.exception(f"Failed to update database after recognition error: {str(db_error)}")
+                # Make sure to rollback if there's an error
+                try:
+                    if db is not None:
+                        db.rollback()
+                except Exception:
+                    pass
                 
             return {"success": False, "error": error_msg}
             
