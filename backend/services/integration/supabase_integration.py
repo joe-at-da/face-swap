@@ -1165,6 +1165,12 @@ class SupabaseIntegration:
                     
                     # Log the response
                     logger.info(f"Video queue response: {video_queue_response}")
+                    
+                    # Check if we got a table_missing error
+                    if isinstance(video_queue_response, dict) and video_queue_response.get('status') == 'table_missing':
+                        logger.warning("The video_processing_queue table does not exist in Supabase. This is a configuration issue.")
+                        logger.info("Continuing with export process despite missing queue table")
+                        # We'll continue with the export process even though the queue insertion failed
                 except Exception as queue_error:
                     error_msg = f"Error adding to video processing queue: {str(queue_error)}"
                     logger.error(error_msg)

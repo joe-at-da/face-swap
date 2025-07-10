@@ -493,10 +493,30 @@ class SupabaseService:
             # Log what we're sending to Supabase
             logger.info(f"Sending to video_processing_queue: {json.dumps(video_data)}")
             
-            # Insert the data into the existing table (no table creation)
-            response = self.client.table('video_processing_queue').insert(video_data).execute()
-            logger.info(f"Successfully added video to processing queue: {video_data.get('video_id')}")
-            return response
+            # Check if the table exists before attempting to insert
+            try:
+                # First try a simple count query to check if the table exists
+                check_response = self.client.table('video_processing_queue').select('count', count='exact').limit(1).execute()
+                logger.info("Confirmed video_processing_queue table exists in Supabase")
+                
+                # Table exists, proceed with insertion
+                response = self.client.table('video_processing_queue').insert(video_data).execute()
+                logger.info(f"Successfully added video to processing queue: {video_data.get('video_id')}")
+                return response
+            except Exception as table_error:
+                error_str = str(table_error)
+                if '404' in error_str or 'not found' in error_str.lower():
+                    # Table doesn't exist
+                    logger.warning(f"The video_processing_queue table does not exist in Supabase: {error_str}")
+                    return {
+                        "error": "The video_processing_queue table does not exist in Supabase. Please create the table before inserting data.",
+                        "status": "table_missing",
+                        "original_data": video_data
+                    }
+                else:
+                    # Some other error occurred
+                    logger.error(f"Error checking/inserting into video_processing_queue: {error_str}")
+                    raise
         except Exception as e:
             error_msg = f"Error adding to video processing queue: {str(e)}"
             logger.error(error_msg)
