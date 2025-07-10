@@ -210,37 +210,31 @@ class ParliamentMemberMatcher:
             import traceback
             logger.error(traceback.format_exc())
     
-    def match_face_to_member(self, face_embedding, confidence_threshold=0.1, house="unknown", timestamp=None, video_id=None):
-        """Match a face embedding to a parliament member.
+    def match_face_to_member(self, face_embedding, confidence_threshold=0.1, house="unknown", timestamp=None, video_id=None) -> Dict[str, Any]:
+        """
+        Match a face embedding to a parliament member.
         
         Args:
             face_embedding: Face embedding vector
             confidence_threshold: Confidence threshold for matching
             house: House ID to filter members by
-            timestamp: Optional timestamp of the current frame (for temporal consistency)
-            video_id: Optional video ID for tracking speaker history
+            timestamp: Timestamp of the face detection
+            video_id: ID of the video
             
         Returns:
             Dict with match information or None if no match
         """
         try:
-            # Initialize speaker history tracking if not already done
-            if not hasattr(self, '_speaker_history'):
-                self._speaker_history = {}
-                logger.info("Initialized speaker history tracking")
-                
-            # Initialize confidence adjustment tracking if not already done
-            if not hasattr(self, '_confidence_adjustments'):
-                self._confidence_adjustments = {}
-                logger.info("Initialized confidence adjustment tracking")
-                
-            # Get the match result
-            match_result = self._match_face_to_member({'embedding': face_embedding}, house, confidence_threshold)
+            # Create face data dictionary
+            face_data = {'embedding': face_embedding}
             
-            # Apply temporal consistency if we have timestamp and video_id
-            if timestamp is not None and video_id is not None and match_result:
+            # Match face to member - pass the house parameter to filter by house
+            match_result = self._match_face_to_member(face_data, house=house, confidence_threshold=confidence_threshold)
+            
+            # Apply temporal consistency if timestamp and video_id are provided
+            if match_result.get('matched', False) and timestamp is not None and video_id is not None:
                 match_result = self._apply_temporal_consistency(match_result, timestamp, video_id)
-                
+            
             return match_result
         except Exception as e:
             logger.error(f"Error matching face to member: {str(e)}")
@@ -249,7 +243,7 @@ class ParliamentMemberMatcher:
             return None
     
     def _match_face_to_member(self, face_data: Dict[str, Any], house: str = "unknown", 
-                              confidence_threshold: float = 0.1) -> Dict[str, Any]:
+                          confidence_threshold: float = 0.1) -> Dict[str, Any]:
         """
         Internal method to match a face to a parliament member
         
@@ -274,12 +268,21 @@ class ParliamentMemberMatcher:
                 
             face_embedding = face_data['embedding']
             
-            # Calculate similarity with all members
+            # Calculate similarity with members, filtering by house if specified
             similarities = []
             
             for member_id, member_data in self.member_embeddings.items():
                 # Skip if no embedding
                 if 'embedding' not in member_data:
+                    continue
+                    
+                # Get member house_id
+                member_house = member_data['member'].get('house_id', 'unknown')
+                
+                # Filter by house if specified (and not 'unknown')
+                # This ensures we only match MPs for Commons and Lords for Lords
+                if house != "unknown" and member_house != "unknown" and house != member_house:
+                    logger.debug(f"Skipping member {member_id} from house {member_house} (looking for {house})")
                     continue
                     
                 # Calculate similarity
@@ -301,7 +304,7 @@ class ParliamentMemberMatcher:
                     'member_id': numeric_id,  # Always use numeric ID
                     'name': member_name,
                     'confidence': float(similarity),
-                    'house_id': member_data['member'].get('house_id', house)
+                    'house_id': member_house
                 })
             
             # Sort by confidence (highest first)
