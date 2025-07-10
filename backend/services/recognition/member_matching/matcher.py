@@ -349,20 +349,38 @@ class ParliamentMemberMatcher:
             
             # Get unidentified speaker metadata for this clip
             # Import locally to avoid circular imports
+            global UNIDENTIFIED_SPEAKER_AVAILABLE
+            
             try:
-                from backend.models.unidentified_speaker import UnidentifiedSpeaker
-            except ImportError:
+                from backend.db.models.unidentified_speaker import UnidentifiedSpeaker
+                UNIDENTIFIED_SPEAKER_AVAILABLE = True
+                logger.info("Successfully imported UnidentifiedSpeaker from backend.db.models")
+            except ImportError as e:
+                logger.warning(f"Could not import UnidentifiedSpeaker from backend.db.models: {e}")
                 try:
                     # Try alternative import path for Docker environment
                     from models.unidentified_speaker import UnidentifiedSpeaker
-                except ImportError:
-                    # Try backend.db.models path
-                    from backend.db.models.unidentified_speaker import UnidentifiedSpeaker
+                    UNIDENTIFIED_SPEAKER_AVAILABLE = True
+                    logger.info("Successfully imported UnidentifiedSpeaker from models")
+                except ImportError as e:
+                    logger.warning(f"Could not import UnidentifiedSpeaker from models: {e}")
+                    try:
+                        # Try backend.models path
+                        from backend.models.unidentified_speaker import UnidentifiedSpeaker
+                        UNIDENTIFIED_SPEAKER_AVAILABLE = True
+                        logger.info("Successfully imported UnidentifiedSpeaker from backend.models")
+                    except ImportError as e:
+                        logger.error(f"Failed to import UnidentifiedSpeaker from any path: {e}")
+                        UNIDENTIFIED_SPEAKER_AVAILABLE = False
             
             if not UNIDENTIFIED_SPEAKER_AVAILABLE:
                 logger.warning("UnidentifiedSpeaker model not available, skipping query")
-                return {}
+                return {
+                    "success": False,
+                    "error": "UnidentifiedSpeaker model not available"
+                }
                 
+            # Query unidentified speakers for this clip
             unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
                 UnidentifiedSpeaker.clip_id == clip_id
             ).all()
@@ -477,23 +495,37 @@ class ParliamentMemberMatcher:
         
         # Get all clips with unidentified speakers
         # Import locally to avoid circular imports
+        global UNIDENTIFIED_SPEAKER_AVAILABLE
+        
         try:
-            from backend.models.unidentified_speaker import UnidentifiedSpeaker
-            from backend.models.parliament_clip import ParliamentClip
-        except ImportError:
+            from backend.db.models.unidentified_speaker import UnidentifiedSpeaker
+            from backend.db.models.parliament_clip import ParliamentClip
+            UNIDENTIFIED_SPEAKER_AVAILABLE = True
+            logger.info("Successfully imported UnidentifiedSpeaker from backend.db.models")
+        except ImportError as e:
+            logger.warning(f"Could not import UnidentifiedSpeaker from backend.db.models: {e}")
             try:
                 # Try alternative import path for Docker environment
                 from models.unidentified_speaker import UnidentifiedSpeaker
                 from models.parliament_clip import ParliamentClip
-            except ImportError:
-                # Try backend.db.models path
-                from backend.db.models.unidentified_speaker import UnidentifiedSpeaker
-                from backend.db.models.parliament_clip import ParliamentClip
+                UNIDENTIFIED_SPEAKER_AVAILABLE = True
+                logger.info("Successfully imported UnidentifiedSpeaker from models")
+            except ImportError as e:
+                logger.warning(f"Could not import UnidentifiedSpeaker from models: {e}")
+                try:
+                    # Try backend.models path
+                    from backend.models.unidentified_speaker import UnidentifiedSpeaker
+                    from backend.models.parliament_clip import ParliamentClip
+                    UNIDENTIFIED_SPEAKER_AVAILABLE = True
+                    logger.info("Successfully imported UnidentifiedSpeaker from backend.models")
+                except ImportError as e:
+                    logger.error(f"Failed to import UnidentifiedSpeaker from any path: {e}")
+                    UNIDENTIFIED_SPEAKER_AVAILABLE = False
         
         # Get distinct clip IDs with unidentified speakers
         if not UNIDENTIFIED_SPEAKER_AVAILABLE:
             logger.warning("UnidentifiedSpeaker model not available, skipping query")
-            return []
+            return {"success": False, "error": "UnidentifiedSpeaker model not available"}
             
         clip_ids = self.db.query(UnidentifiedSpeaker.clip_id).distinct().all()
         clip_ids = [c[0] for c in clip_ids]

@@ -506,17 +506,127 @@ async def process_parliament_tv_to_supabase(
                 # Verify MP clips in Supabase export
                 try:
                     from backend.services.integration.mp_clip_verification import verify_mp_clips_in_supabase
-                    verification_result = verify_mp_clips_in_supabase(capture_id, db, export_result)
                     
-                    if verification_result.get("success", False):
-                        logger.info(f"Successfully verified {verification_result.get('mp_clips_count', 0)} MP clips in Supabase export")
-                        logger.info(f"MP IDs found: {verification_result.get('mp_ids_found', [])}")
-                        logger.info(f"MP names found: {verification_result.get('mp_names_found', [])}")
+                    # Ensure export_result has a consistent structure with all required paths
+                    if "export_paths" not in export_result:
+                        logger.warning("export_paths not found in export_result, creating it now")
+                        export_result["export_paths"] = {
+                            "clips_export_path": export_result.get("clips_export_path"),
+                            "video_export_path": export_result.get("video_export_path"),
+                            "recognition_export_path": export_result.get("recognition_export_path"),
+                            "combined_av_path": export_result.get("combined_av_path")
+                        }
+                    
+                    # Ensure all paths in export_paths are also available at the root level for backward compatibility
+                    for key, value in export_result["export_paths"].items():
+                        if value:  # Only set if value is not None/empty
+                            export_result[key] = value
+                    
+                    # Log the export paths for debugging
+                    logger.info(f"Export paths for verification: {export_result.get('export_paths')}")
+                    
+                    # Validate that all required export paths exist and are accessible
+                    for path_key, path_value in export_result["export_paths"].items():
+                        if path_value:
+                            file_exists = os.path.exists(path_value)
+                            file_size = os.path.getsize(path_value) if file_exists else 0
+                            logger.info(f"Export path validation - {path_key}: exists={file_exists}, size={file_size}, path={path_value}")
+                    
+                    # Check if clips_export_path exists and is valid
+                    clips_export_path = export_result.get("export_paths", {}).get("clips_export_path")
+                    if not clips_export_path or not os.path.exists(clips_export_path):
+                        logger.warning(f"Clips export path is missing or invalid: {clips_export_path}")
+                        
+                        # Try to find alternative paths that might contain clip data
+                        for key, path in export_result.items():
+                            if isinstance(path, str) and "clip" in key.lower() and os.path.exists(path) and path.endswith(".json"):
+                                logger.info(f"Found alternative clips export path: {key} -> {path}")
+                                export_result["export_paths"]["clips_export_path"] = path
+                                export_result["clips_export_path"] = path  # Also update at root level
+                                break
+                                
+                        # Look for clips JSON files in common export directories
+                        if not clips_export_path or not os.path.exists(clips_export_path):
+                            data_dir = "/app/data"
+                            export_dirs = [
+                                os.path.join(data_dir, "temp", "supabase_export"),
+                                os.path.join(data_dir, "exports"),
+                                os.path.join(data_dir, "temp")
+                            ]
+                            
+                            for export_dir in export_dirs:
+                                if os.path.exists(export_dir):
+                                    import glob
+                                    # Try to find clips export files with patterns
+                                    patterns = [
+                                        f"*clip*{capture_id}*.json",
+                                        f"*{capture_id}*clip*.json",
+                                        "*clips_export*.json"
+                                    ]
+                                    
+                                    for pattern in patterns:
+                                        matches = glob.glob(os.path.join(export_dir, pattern))
+                                        if matches:
+                                            # Sort by modification time (newest first)
+                                            matches.sort(key=os.path.getmtime, reverse=True)
+                                            clips_export_path = matches[0]
+                                            logger.info(f"Found clips export file via pattern search: {clips_export_path}")
+                                            export_result["export_paths"]["clips_export_path"] = clips_export_path
+                                            export_result["clips_export_path"] = clips_export_path
+                                            break
+                                    
+                                    if clips_export_path and os.path.exists(clips_export_path):
+                                        break
+                    
+                    # Validate export_result before verification
+                    if not export_result.get("export_paths", {}).get("clips_export_path") or not os.path.exists(export_result.get("export_paths", {}).get("clips_export_path")):
+                        logger.error("Cannot verify MP clips: No valid clips export path found after all attempts")
                     else:
-                        logger.warning(f"MP clip verification failed: {verification_result.get('error', 'Unknown error')}")
-                        logger.warning(f"MP clips count: {verification_result.get('mp_clips_count', 0)}, Total clips: {verification_result.get('total_clips_count', 0)}")
+                        verification_result = verify_mp_clips_in_supabase(capture_id, db, export_result)
+                        
+                        if verification_result.get("success", False):
+                            logger.info(f"Successfully verified {verification_result.get('mp_clips_count', 0)} MP clips in Supabase export")
+                            logger.info(f"MP IDs found: {verification_result.get('mp_ids_found', [])}")
+                            logger.info(f"MP names found: {verification_result.get('mp_names_found', [])}")
+                            
+                            # Update capture session with verification results
+                            try:
+                                capture = db.query(CaptureSession).filter(CaptureSession.id == capture_id).first()
+                                if capture:
+                                    # Store verification results in capture_metadata JSON field
+                                    if not capture.capture_metadata:
+                                        capture.capture_metadata = {}
+                                    elif isinstance(capture.capture_metadata, str):
+                                        try:
+                                            import json
+                                            capture.capture_metadata = json.loads(capture.capture_metadata)
+                                        except json.JSONDecodeError:
+                                            capture.capture_metadata = {}
+                                    
+                                    # Ensure capture_metadata is a dictionary
+                                    if not isinstance(capture.capture_metadata, dict):
+                                        capture.capture_metadata = {}
+                                    
+                                    # Store verification results
+                                    capture.capture_metadata["mp_verification"] = {
+                                        "success": verification_result.get("success"),
+                                        "mp_clips_count": verification_result.get("mp_clips_count"),
+                                        "total_clips_count": verification_result.get("total_clips_count"),
+                                        "mp_ids_found": verification_result.get("mp_ids_found"),
+                                        "verified_at": datetime.now().isoformat()
+                                    }
+                                    db.commit()
+                                    logger.info(f"Updated capture session with verification results")
+                            except Exception as e:
+                                logger.error(f"Error updating capture session with verification results: {str(e)}")
+                        else:
+                            logger.warning(f"MP clip verification failed: {verification_result.get('error', 'Unknown error')}")
+                            logger.warning(f"MP clips count: {verification_result.get('mp_clips_count', 0)}, Total clips: {verification_result.get('total_clips_count', 0)}")
+                            logger.warning(f"Verification details: {verification_result}")
                 except Exception as e:
                     logger.error(f"Error verifying MP clips: {str(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 # Update capture status with external ID
                 capture.external_id = f"parliament_tv_{capture_id}"

@@ -289,30 +289,50 @@ class SupabaseIntegration:
             db_session=db_session
         )
         
-        # Add export paths to the result for compatibility
-        if "export_path" not in export_result:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            video_export_path = os.path.join(export_dir, f"recognition_export_{video_id}_{timestamp}.json")
-            clips_export_path = os.path.join(export_dir, f"clips_export_{video_id}_{timestamp}.json")
-            export_result["video_export_path"] = video_export_path
-            export_result["clips_export_path"] = clips_export_path
-        
-        # Ensure export_paths is properly structured for verification
+        # Ensure export_result has a consistent structure with all required paths
         result = {
             "export_paths": {
                 "video_export_path": export_result.get("video_export_path"),
-                "clips_export_path": export_result.get("clips_export_path")
+                "clips_export_path": export_result.get("clips_export_path"),
+                "recognition_export_path": export_result.get("recognition_export_path"),
+                "combined_av_path": export_result.get("combined_av_path")
             },
             "supabase_urls": {},
             "queue_responses": {}
         }
         
-        # Log the export paths for debugging
-        logger.info(f"Export paths: {result['export_paths']}")
+        # If export_result has an export_paths dictionary, use those values with priority
+        if "export_paths" in export_result and isinstance(export_result["export_paths"], dict):
+            for key, value in export_result["export_paths"].items():
+                if value:  # Only update if value is not None/empty
+                    result["export_paths"][key] = value
         
-        # Skip uploading JSON files to Supabase
-        logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
+        # Ensure all paths in export_paths are also available at the root level for backward compatibility
+        for key, value in result["export_paths"].items():
+            if value:  # Only set if value is not None/empty
+                export_result[key] = value
+        
+        # Generate any missing paths with timestamps for uniqueness
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Ensure video_export_path exists
+        if not result["export_paths"]["video_export_path"]:
+            result["export_paths"]["video_export_path"] = os.path.join(export_dir, f"recognition_export_{video_id}_{timestamp}.json")
+            export_result["video_export_path"] = result["export_paths"]["video_export_path"]
+        
+        # Ensure clips_export_path exists
+        if not result["export_paths"]["clips_export_path"]:
+            result["export_paths"]["clips_export_path"] = os.path.join(export_dir, f"clips_export_{video_id}_{timestamp}.json")
+            export_result["clips_export_path"] = result["export_paths"]["clips_export_path"]
+            logger.info("Skipping JSON file uploads - only combined AV files will be uploaded")
         export_urls = {}
+        
+        # Validate that all required export paths exist and are accessible
+        for path_key, path_value in result["export_paths"].items():
+            if path_value:
+                file_exists = os.path.exists(path_value)
+                file_size = os.path.getsize(path_value) if file_exists else 0
+                logger.info(f"Export path validation - {path_key}: exists={file_exists}, size={file_size}, path={path_value}")
         
         # Upload ONLY the combined AV file if requested
         if upload_media:
@@ -574,11 +594,46 @@ class SupabaseIntegration:
                 import json
                 video_data = json.load(f)
             
-            # Use the properly structured clips_export_path
+            # Use the properly structured clips_export_path with validation
             clips_export_path = result["export_paths"]["clips_export_path"]
             logger.info(f"Reading clips from: {clips_export_path}")
-            with open(clips_export_path, "r") as f:
-                clips_data_raw = json.load(f)
+            
+            # Validate clips export path
+            if not clips_export_path or not os.path.exists(clips_export_path):
+                logger.error(f"Clips export file does not exist at path: {clips_export_path}")
+                # Try to find an alternative path
+                for key, path in export_result.items():
+                    if isinstance(path, str) and "clip" in key.lower() and os.path.exists(path) and path.endswith(".json"):
+                        logger.info(f"Found alternative clips export path: {key} -> {path}")
+                        clips_export_path = path
+                        result["export_paths"]["clips_export_path"] = path
+                        break
+                        
+                if not clips_export_path or not os.path.exists(clips_export_path):
+                    logger.error("Could not find any valid clips export path")
+                    return {
+                        "success": False,
+                        "error": "Clips export file not found",
+                        "export_paths": result["export_paths"]
+                    }
+            
+            try:
+                with open(clips_export_path, "r") as f:
+                    clips_data_raw = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in clips export file: {str(e)}")
+                return {
+                    "success": False,
+                    "error": f"Invalid JSON in clips export file: {str(e)}",
+                    "export_paths": result["export_paths"]
+                }
+            except Exception as e:
+                logger.error(f"Error reading clips export file: {str(e)}")
+                return {
+                    "success": False,
+                    "error": f"Error reading clips export file: {str(e)}",
+                    "export_paths": result["export_paths"]
+                }
                 
             # Sanitize clips data to ensure it's JSON serializable
             from datetime import datetime, date
@@ -789,17 +844,12 @@ class SupabaseIntegration:
                                                     member_id = members[0]['member_id']
                                                     logger.info(f"Found member_id {member_id} in Supabase for UUID {event.get('member_id')}")
                                                 else:
-                                                    # Get any valid member_id as fallback
-                                                    fallback_response = supabase_service.client.table('parliament_members').select('member_id').limit(1).execute()
-                                                    fallback_members = fallback_response.data if hasattr(fallback_response, 'data') else []
-                                                    
-                                                    if fallback_members and len(fallback_members) > 0 and 'member_id' in fallback_members[0]:
-                                                        member_id = fallback_members[0]['member_id']
-                                                        logger.warning(f"Using fallback member_id {member_id} for UUID {event.get('member_id')}")
-                                                    else:
-                                                        logger.error(f"No valid member_id found for UUID {event.get('member_id')}, skipping clip")
-                                                        skipped_clips += 1
-                                                        continue
+                                                    # No valid member_id found - don't use fallbacks or test data
+                                                    logger.error(f"No valid member_id found for UUID {event.get('member_id')}, skipping clip")
+                                                    logger.error(f"This is likely due to a missing mapping between UUID and integer member_id")
+                                                    logger.error(f"Run the sync_parliament_clip_member_ids.py script to create proper mappings")
+                                                    skipped_clips += 1
+                                                    continue
                                         except Exception as e:
                                             logger.error(f"Error processing member_id {event.get('member_id')}: {str(e)}, skipping clip")
                                             skipped_clips += 1

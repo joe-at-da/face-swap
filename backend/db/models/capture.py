@@ -13,7 +13,7 @@ class CaptureSession(Base):
     description = Column(Text, nullable=True)
     source_url = Column(Text, nullable=True)  # Using Text type to handle longer URLs
     status = Column(String(50), index=True)  # active, scheduled, completed, failed, processing
-    error_message = Column(String(255), nullable=True)
+    error_message = Column(Text, nullable=True)  # Changed from String(255) to Text to allow longer error messages
     file_path = Column(String(255), nullable=True)  # Legacy field - use video_path instead
     video_path = Column(String(255), nullable=True)  # Path to the video file
     audio_path = Column(String(255), nullable=True)  # Path to the audio file

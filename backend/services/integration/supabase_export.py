@@ -540,14 +540,22 @@ def export_recognition_results(
     
     logger.info(f"Exported recognition results for video {video_file_id} to {export_dir}")
     
-    # Ensure combined_url is properly set in the return value
+    # Ensure all export paths are properly set in the return value
     result = {
         "video_export_path": video_export_path,
         "clips_export_path": clips_export_path,
         "recognition_export_path": recognition_export_path,
         "combined_av_url": combined_url,
-        "combined_av_path": combined_url,  # Add both keys for compatibility
+        "combined_av_path": combined_av_path,  # Use the actual file path, not the URL
         "has_transcription": transcription_data is not None
+    }
+    
+    # Add export_paths dictionary for compatibility with mp_clip_verification
+    result["export_paths"] = {
+        "video_export_path": video_export_path,
+        "clips_export_path": clips_export_path,
+        "recognition_export_path": recognition_export_path,
+        "combined_av_path": combined_av_path
     }
     
     logger.info(f"Returning export result with combined AV path: {combined_url}")
