@@ -253,7 +253,8 @@ class SupabaseService:
                 
                 bucket_exists = False
                 for bucket in buckets:
-                    if bucket.get('name') == self.full_videos_bucket:
+                    # SyncBucket objects have a name attribute, not a dictionary key
+                    if hasattr(bucket, 'name') and bucket.name == self.full_videos_bucket:
                         bucket_exists = True
                         logger.info(f"Bucket '{self.full_videos_bucket}' already exists")
                         break

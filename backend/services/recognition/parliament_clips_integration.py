@@ -803,25 +803,25 @@ class ParliamentClipsIntegrationService:
                 # Count how many recognition events we'll be removing
                 try:
                     event_count = db_session.query(RecognitionEvent).filter(
-                        RecognitionEvent.video_id == video_id,
-                        RecognitionEvent.type == "speaker"
+                        RecognitionEvent.capture_session_id == video_id,
+                        RecognitionEvent.event_type == "speaker"
                     ).count()
                     
                     logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
                     
                     # Get a sample of the recognition events for debugging
                     sample_events = db_session.query(RecognitionEvent).filter(
-                        RecognitionEvent.video_id == video_id,
-                        RecognitionEvent.type == "speaker"
+                        RecognitionEvent.capture_session_id == video_id,
+                        RecognitionEvent.event_type == "speaker"
                     ).limit(2).all()
                     
                     if sample_events:
-                        logger.info(f"Sample recognition event: ID={sample_events[0].id}, Type={sample_events[0].type}, Start={sample_events[0].start_time}")
+                        logger.info(f"Sample recognition event: ID={sample_events[0].id}, Type={sample_events[0].event_type}, Start={sample_events[0].start_time}")
                     
                     # Delete recognition events for this video_id
                     deleted_count = db_session.query(RecognitionEvent).filter(
-                        RecognitionEvent.video_id == video_id,
-                        RecognitionEvent.type == "speaker"
+                        RecognitionEvent.capture_session_id == video_id,
+                        RecognitionEvent.event_type == "speaker"
                     ).delete(synchronize_session=False)
                     
                     try:
@@ -848,8 +848,8 @@ class ParliamentClipsIntegrationService:
                 
                 # Verify deletion was successful
                 verification_count = db_session.query(RecognitionEvent).filter(
-                    RecognitionEvent.video_id == video_id,
-                    RecognitionEvent.type == "speaker"
+                    RecognitionEvent.capture_session_id == video_id,
+                    RecognitionEvent.event_type == "speaker"
                 ).count()
                 
                 if verification_count > 0:
