@@ -777,38 +777,71 @@ class ParliamentClipsIntegrationService:
                     logger.warning(f"Could not check ParliamentMemberClip records: {str(e)}")
                     parliament_clip_count = "unknown"
                 
-                # Count how many recognition events we'll be removing
-                event_count = db_session.query(RecognitionEvent).filter(
-                    RecognitionEvent.video_id == video_id,
-                    RecognitionEvent.type == "speaker"
-                ).count()
-                
-                logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
-                
-                # Get a sample of the recognition events for debugging
-                sample_events = db_session.query(RecognitionEvent).filter(
-                    RecognitionEvent.video_id == video_id,
-                    RecognitionEvent.type == "speaker"
-                ).limit(2).all()
-                
-                if sample_events:
-                    logger.info(f"Sample recognition event: ID={sample_events[0].id}, Type={sample_events[0].type}, Start={sample_events[0].start_time}")
-                
-                # Delete recognition events for this video_id
-                deleted_count = db_session.query(RecognitionEvent).filter(
-                    RecognitionEvent.video_id == video_id,
-                    RecognitionEvent.type == "speaker"
-                ).delete(synchronize_session=False)
-                
+                # First check if the transaction is still valid
                 try:
-                    db_session.commit()
-                    logger.info(f"Successfully committed PostgreSQL deletion")
-                except Exception as commit_error:
-                    error_msg = f"Error committing PostgreSQL deletion: {str(commit_error)}"
+                    # Execute a simple query to test if transaction is valid
+                    db_session.execute("SELECT 1").scalar()
+                except Exception as tx_error:
+                    logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(tx_error)}")
+                    try:
+                        db_session.rollback()
+                        logger.info("Successfully rolled back transaction after detecting failed state")
+                    except Exception as rollback_error:
+                        logger.error(f"Error during transaction rollback: {str(rollback_error)}")
+                    
+                    # Get a fresh session if possible
+                    try:
+                        from backend.db.session import get_db
+                        db_generator = get_db()
+                        db_session = next(db_generator)
+                        logger.info("Created fresh database session after transaction failure")
+                    except Exception as session_error:
+                        logger.error(f"Could not create fresh database session: {str(session_error)}")
+                        results["errors"].append(f"Could not create fresh database session: {str(session_error)}")
+                        return results
+                
+                # Count how many recognition events we'll be removing
+                try:
+                    event_count = db_session.query(RecognitionEvent).filter(
+                        RecognitionEvent.video_id == video_id,
+                        RecognitionEvent.type == "speaker"
+                    ).count()
+                    
+                    logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
+                    
+                    # Get a sample of the recognition events for debugging
+                    sample_events = db_session.query(RecognitionEvent).filter(
+                        RecognitionEvent.video_id == video_id,
+                        RecognitionEvent.type == "speaker"
+                    ).limit(2).all()
+                    
+                    if sample_events:
+                        logger.info(f"Sample recognition event: ID={sample_events[0].id}, Type={sample_events[0].type}, Start={sample_events[0].start_time}")
+                    
+                    # Delete recognition events for this video_id
+                    deleted_count = db_session.query(RecognitionEvent).filter(
+                        RecognitionEvent.video_id == video_id,
+                        RecognitionEvent.type == "speaker"
+                    ).delete(synchronize_session=False)
+                    
+                    try:
+                        db_session.commit()
+                        logger.info(f"Successfully committed PostgreSQL deletion of {deleted_count} events")
+                    except Exception as commit_error:
+                        error_msg = f"Error committing PostgreSQL deletion: {str(commit_error)}"
+                        logger.error(error_msg)
+                        try:
+                            db_session.rollback()
+                            logger.info("Rolled back PostgreSQL transaction after commit error")
+                        except Exception as rollback_error:
+                            logger.error(f"Error rolling back PostgreSQL transaction: {str(rollback_error)}")
+                        results["errors"].append(error_msg)
+                except Exception as query_error:
+                    error_msg = f"Error querying or deleting recognition events: {str(query_error)}"
                     logger.error(error_msg)
                     try:
                         db_session.rollback()
-                        logger.info("Rolled back PostgreSQL transaction after commit error")
+                        logger.info("Rolled back PostgreSQL transaction after query error")
                     except Exception as rollback_error:
                         logger.error(f"Error rolling back PostgreSQL transaction: {str(rollback_error)}")
                     results["errors"].append(error_msg)

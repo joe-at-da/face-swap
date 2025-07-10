@@ -115,21 +115,40 @@ class MultimodalRecognitionService:
                 logger.error(f"Audio file not found: {audio_path}")
                 return {"success": False, "error": f"Audio file not found: {audio_path}"}
             
-            # Create a recognition process record
-            recognition_process = models.RecognitionProcess(
-                video_id=video_id,
-                status="processing",
-                start_time=datetime.now(),
-                process_metadata={"type": "multimodal"}
-            )
-            db.add(recognition_process)
-            
-            # Update the CaptureSession record with recognition status
-            video.recognition_status = "processing"
-            video.recognition_started_at = datetime.now()
-            
-            db.commit()
-            db.refresh(recognition_process)
+            # Create a recognition process record with proper transaction handling
+            try:
+                # First check if the transaction is still valid
+                try:
+                    # Execute a simple query to test if transaction is valid
+                    db.execute("SELECT 1").scalar()
+                except Exception as tx_error:
+                    logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(tx_error)}")
+                    db.rollback()
+                    
+                recognition_process = models.RecognitionProcess(
+                    video_id=video_id,
+                    status="processing",
+                    start_time=datetime.now(),
+                    process_type="multimodal",
+                    process_metadata={"type": "multimodal"}
+                )
+                db.add(recognition_process)
+                
+                # Update the CaptureSession record with recognition status
+                video.recognition_status = "processing"
+                video.recognition_started_at = datetime.now()
+                
+                db.commit()
+                db.refresh(recognition_process)
+                logger.info(f"Created new RecognitionProcess record for video {video_id} and updated CaptureSession status")
+            except Exception as db_error:
+                logger.error(f"Database error when creating RecognitionProcess: {str(db_error)}")
+                try:
+                    db.rollback()
+                    logger.info("Successfully rolled back transaction after database error")
+                except Exception as rollback_error:
+                    logger.error(f"Error during transaction rollback: {str(rollback_error)}")
+                return {"success": False, "error": f"Database error: {str(db_error)}"}
             
             # Process transcription first if not already done
             if not video.transcription_results:
@@ -594,39 +613,57 @@ class MultimodalRecognitionService:
             except Exception as e:
                 logger.error(f"Error matching unidentified speakers: {str(e)}")
             
-            # Update the recognition process status
-            recognition_process = db.query(models.RecognitionProcess).filter(
-                models.RecognitionProcess.video_id == video_id,
-                models.RecognitionProcess.process_type == "multimodal"
-            ).first()
-            
-            if recognition_process:
-                recognition_process.status = "completed"
-                recognition_process.results = json.dumps({
-                    "timeline": timeline,
-                    "correlations": correlations,
-                    "recognition_events": recognition_events,
-                    "speaker_appearances": speaker_appearances
-                })
-                db.commit()
-            else:
-                # Create a new recognition process record if one doesn't exist
-                logger.info(f"Creating new RecognitionProcess record for video {video_id}")
-                recognition_process = models.RecognitionProcess(
-                    video_id=video_id,
-                    process_type="multimodal",
-                    status="completed",
-                    results=json.dumps({
+            # Update the recognition process record - with proper transaction handling
+            try:
+                # First check if the transaction is still valid
+                try:
+                    # Execute a simple query to test if transaction is valid
+                    db.execute("SELECT 1").scalar()
+                except Exception as tx_error:
+                    logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(tx_error)}")
+                    db.rollback()
+                
+                recognition_process = db.query(models.RecognitionProcess).filter(
+                    models.RecognitionProcess.video_id == video_id,
+                    models.RecognitionProcess.process_type == "multimodal"
+                ).first()
+                
+                if recognition_process:
+                    recognition_process.status = "completed"
+                    recognition_process.results = json.dumps({
                         "timeline": timeline,
                         "correlations": correlations,
                         "recognition_events": recognition_events,
                         "speaker_appearances": speaker_appearances
-                    }),
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
-                )
-                db.add(recognition_process)
-                db.commit()
+                    })
+                    db.commit()
+                    logger.info(f"Updated existing RecognitionProcess record for video {video_id}")
+                else:
+                    # Create a new recognition process record if one doesn't exist
+                    logger.info(f"Creating new RecognitionProcess record for video {video_id}")
+                    recognition_process = models.RecognitionProcess(
+                        video_id=video_id,
+                        process_type="multimodal",
+                        status="completed",
+                        results=json.dumps({
+                            "timeline": timeline,
+                            "correlations": correlations,
+                            "recognition_events": recognition_events,
+                            "speaker_appearances": speaker_appearances
+                        }),
+                        created_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow()
+                    )
+                    db.add(recognition_process)
+                    db.commit()
+                    logger.info(f"Created new RecognitionProcess record for video {video_id}")
+            except Exception as db_error:
+                logger.error(f"Database error when updating RecognitionProcess: {str(db_error)}")
+                try:
+                    db.rollback()
+                    logger.info("Successfully rolled back transaction after database error")
+                except Exception as rollback_error:
+                    logger.error(f"Error during transaction rollback: {str(rollback_error)}")
                 
             # Save recognition events to the local SQLite parliament_clips database
             try:
@@ -656,6 +693,13 @@ class MultimodalRecognitionService:
             
         except Exception as e:
             logger.exception(f"Error processing video with transcription: {str(e)}")
+            # Make sure to rollback any active transaction
+            try:
+                if db is not None:
+                    db.rollback()
+                    logger.info("Successfully rolled back transaction after exception")
+            except Exception as rollback_error:
+                logger.error(f"Error during transaction rollback: {str(rollback_error)}")
             return {"success": False, "error": str(e)}
             
     def _parse_timestamp(self, timestamp_str: str) -> float:

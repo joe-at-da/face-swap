@@ -976,12 +976,45 @@ class SupabaseIntegration:
                         # Create an instance of the service
                         clips_service = ParliamentClipsIntegrationService()
                         
-                        # Call the cleanup method
-                        cleanup_result = clips_service._cleanup_exported_clips(video_id, db_session)
+                        # Check if the transaction is still valid before passing it to cleanup
+                        fresh_session = None
+                        if db_session is not None:
+                            try:
+                                # Test if the transaction is still valid
+                                db_session.execute("SELECT 1").scalar()
+                                logger.info("Current transaction is valid for cleanup")
+                            except Exception as tx_error:
+                                logger.warning(f"Transaction appears to be in a failed state before cleanup, rolling back: {str(tx_error)}")
+                                try:
+                                    db_session.rollback()
+                                    logger.info("Successfully rolled back transaction before cleanup")
+                                except Exception as rollback_error:
+                                    logger.error(f"Error during transaction rollback: {str(rollback_error)}")
+                                
+                                # Get a fresh session for cleanup
+                                try:
+                                    from backend.db.session import get_db
+                                    db_generator = get_db()
+                                    fresh_session = next(db_generator)
+                                    logger.info("Created fresh database session for cleanup")
+                                except Exception as session_error:
+                                    logger.error(f"Could not create fresh database session: {str(session_error)}")
+                        
+                        # Call the cleanup method with the appropriate session
+                        cleanup_session = fresh_session if fresh_session is not None else db_session
+                        cleanup_result = clips_service._cleanup_exported_clips(video_id, cleanup_session)
                         logger.info(f"SQLite cleanup result: {cleanup_result}")
                         
                         # Add cleanup result to the overall result
                         result["sqlite_cleanup"] = cleanup_result
+                        
+                        # If we created a fresh session, commit and close it
+                        if fresh_session is not None:
+                            try:
+                                fresh_session.commit()
+                                logger.info("Committed fresh session after cleanup")
+                            except Exception as commit_error:
+                                logger.error(f"Error committing fresh session: {str(commit_error)}")
                     except Exception as cleanup_error:
                         logger.error(f"Error cleaning up SQLite database: {str(cleanup_error)}")
                         import traceback
