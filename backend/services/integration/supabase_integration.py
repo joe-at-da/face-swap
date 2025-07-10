@@ -201,15 +201,10 @@ class SupabaseIntegration:
             logger.error(f"Error adding clips to creation queue: {str(e)}")
             return {"error": str(e)}
     
-    def export_and_upload_recognition(
-        self,
-        video_path: str,
-        recognition_results: Dict[str, Any],
-        video_metadata: Dict[str, Any],
-        db_session: Optional[Session] = None,
-        video_id: Optional[int] = None,
-        upload_media: bool = True
-    ) -> Dict[str, Any]:
+    def export_and_upload_recognition(self, video_path: str, recognition_results: Dict[str, Any], video_metadata: Dict[str, Any], db_session: Optional[Session] = None, video_id: Optional[int] = None, upload_media: bool = True) -> Dict[str, Any]:
+        # Import these at the function level to avoid any shadowing issues
+        import json as json_module
+        from datetime import datetime as datetime_module
         logger.warning(f"🚨 DEBUG: export_and_upload_recognition called for video_id={video_id} - SUPABASE UPLOAD ENTRY POINT")
         """
         Export recognition results, upload to Supabase, and add to queues.
@@ -313,7 +308,7 @@ class SupabaseIntegration:
                 export_result[key] = value
         
         # Generate any missing paths with timestamps for uniqueness
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime_module.now().strftime("%Y%m%d_%H%M%S")
         
         # Ensure video_export_path exists
         if not result["export_paths"]["video_export_path"]:
@@ -451,8 +446,8 @@ class SupabaseIntegration:
                                         capture.capture_metadata = {}
                                     elif isinstance(capture.capture_metadata, str):
                                         try:
-                                            capture.capture_metadata = json.loads(capture.capture_metadata)
-                                        except json.JSONDecodeError:
+                                            capture.capture_metadata = json_module.loads(capture.capture_metadata)
+                                        except json_module.JSONDecodeError:
                                             capture.capture_metadata = {}
                                     
                                     # Ensure capture_metadata is a dictionary
@@ -487,8 +482,8 @@ class SupabaseIntegration:
                                                 rec_process.recognition_results = {}
                                             elif isinstance(rec_process.recognition_results, str):
                                                 try:
-                                                    rec_process.recognition_results = json.loads(rec_process.recognition_results)
-                                                except json.JSONDecodeError:
+                                                    rec_process.recognition_results = json_module.loads(rec_process.recognition_results)
+                                                except json_module.JSONDecodeError:
                                                     rec_process.recognition_results = {}
                                         
                                             # Ensure recognition_results is a dictionary
@@ -507,7 +502,7 @@ class SupabaseIntegration:
                                             
                                             # Convert to JSON string before saving to database
                                             if isinstance(rec_process.recognition_results, dict):
-                                                rec_process.recognition_results = json.dumps(rec_process.recognition_results)
+                                                rec_process.recognition_results = json_module.dumps(rec_process.recognition_results)
                                                 
                                             db_session.commit()
                                             
@@ -563,8 +558,8 @@ class SupabaseIntegration:
                                         capture.capture_metadata = {}
                                     elif isinstance(capture.capture_metadata, str):
                                         try:
-                                            capture.capture_metadata = json.loads(capture.capture_metadata)
-                                        except json.JSONDecodeError:
+                                            capture.capture_metadata = json_module.loads(capture.capture_metadata)
+                                        except json_module.JSONDecodeError:
                                             capture.capture_metadata = {}
                                     
                                     # Ensure capture_metadata is a dictionary
@@ -591,8 +586,7 @@ class SupabaseIntegration:
         # Load exported data
         try:
             with open(export_result["video_export_path"], "r") as f:
-                import json
-                video_data = json.load(f)
+                video_data = json_module.load(f)
             
             # Use the properly structured clips_export_path with validation
             clips_export_path = result["export_paths"]["clips_export_path"]
@@ -619,8 +613,8 @@ class SupabaseIntegration:
             
             try:
                 with open(clips_export_path, "r") as f:
-                    clips_data_raw = json.load(f)
-            except json.JSONDecodeError as e:
+                    clips_data_raw = json_module.load(f)
+            except json_module.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in clips export file: {str(e)}")
                 return {
                     "success": False,
@@ -658,7 +652,7 @@ class SupabaseIntegration:
             # Log the data we're working with
             logger.info(f"Processing {len(clips_data)} clips for Supabase export")
             if clips_data:
-                logger.debug(f"Sample clip data: {json.dumps(clips_data[0] if clips_data else {})}")
+                logger.debug(f"Sample clip data: {json_module.dumps(clips_data[0] if clips_data else {})}")
                 
                 # Log the keys available in the first clip
                 logger.info(f"Available keys in first clip: {list(clips_data[0].keys())}")
@@ -682,7 +676,7 @@ class SupabaseIntegration:
                 
             # Verify the sanitized data is JSON serializable
             try:
-                json.dumps(clips_data)
+                json_module.dumps(clips_data)
                 logger.info("Successfully sanitized clips data for JSON serialization")
             except Exception as e:
                 logger.error(f"Failed to serialize sanitized clips data: {str(e)}")
@@ -700,7 +694,7 @@ class SupabaseIntegration:
                         metadata = clip['metadata']
                         if isinstance(metadata, str):
                             try:
-                                metadata = json.loads(metadata)
+                                metadata = json_module.loads(metadata)
                             except:
                                 pass
                         
@@ -723,7 +717,7 @@ class SupabaseIntegration:
                     # If still missing required fields, skip this clip
                     if missing_fields:
                         logger.warning(f"Clip {clip_id} is missing required fields: {missing_fields}")
-                        logger.warning(f"Clip details: {json.dumps({k: v for k, v in clip.items() if k not in excluded_fields})}")
+                        logger.warning(f"Clip details: {json_module.dumps({k: v for k, v in clip.items() if k not in excluded_fields})}")
                         continue
                     
                     valid_clips.append(clip)  # Verify this clip is serializable
@@ -886,13 +880,13 @@ class SupabaseIntegration:
             # Log the simplified clips
             logger.info(f"Prepared {len(simplified_clips)} simplified clips for Supabase export")
             if simplified_clips:
-                logger.debug(f"Sample simplified clip: {json.dumps(simplified_clips[0])}")
+                logger.debug(f"Sample simplified clip: {json_module.dumps(simplified_clips[0])}")
                 logger.info(f"Keys in first simplified clip: {list(simplified_clips[0].keys())}")
             else:
                 logger.warning("All clips were filtered out during processing!")
                 # If we have no simplified clips but had raw clips, log the first raw clip for debugging
                 if clips_data:
-                    logger.debug(f"First raw clip that was filtered out: {json.dumps(clips_data[0])}")
+                    logger.debug(f"First raw clip that was filtered out: {json_module.dumps(clips_data[0])}")
                     
                     # Check what required fields are missing from the first raw clip
                     first_clip = clips_data[0]
@@ -933,7 +927,7 @@ class SupabaseIntegration:
                         logger.error(f"Failed to synchronize member IDs: {sync_result.get('error')}")
                         
                     # Log details about the first clip for debugging
-                    logger.info(f"Example clip that couldn't be processed: {json.dumps({k: v for k, v in first_clip.items() if k not in excluded_fields})}")
+                    logger.info(f"Example clip that couldn't be processed: {json_module.dumps({k: v for k, v in first_clip.items() if k not in excluded_fields})}")
             
             # Add to queues
             video_queue_response = self.add_to_video_processing_queue(video_data)
@@ -941,7 +935,7 @@ class SupabaseIntegration:
             
             # Verify the simplified clips are JSON serializable
             try:
-                json_str = json.dumps(simplified_clips)
+                json_str = json_module.dumps(simplified_clips)
                 logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
                 
                 # Add a unique identifier to each clip to prevent duplicate detection
@@ -955,7 +949,7 @@ class SupabaseIntegration:
                     clip['id'] = str(uuid.uuid4())
                     
                     # Log the clip being sent to Supabase
-                    logger.debug(f"Sending clip to Supabase: {json.dumps(clip)}")
+                    logger.debug(f"Sending clip to Supabase: {json_module.dumps(clip)}")
                 
                 # Force insert clips into Supabase
                 logger.info(f"Inserting {len(simplified_clips)} clips into Supabase")

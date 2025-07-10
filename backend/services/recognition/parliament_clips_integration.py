@@ -1070,10 +1070,11 @@ class ParliamentClipsIntegrationService:
             cursor = conn.cursor()
             
             # Query clips for the given video ID
+            # Try both numeric and string formats of video_id to handle different storage formats
             cursor.execute("""
                 SELECT * FROM parliament_clips 
-                WHERE json_extract(metadata, '$.video_id') = ?
-            """, (str(video_id),))
+                WHERE json_extract(metadata, '$.video_id') = ? OR json_extract(metadata, '$.video_id') = ?
+            """, (video_id, str(video_id)))
             
             clips = []
             for row in cursor.fetchall():
