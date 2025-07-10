@@ -427,6 +427,33 @@ class SupabaseService:
         """
         import uuid
         from datetime import datetime
+        
+        # Ensure we're not passing any empty data or problematic parameters
+        if not clip_data:
+            logger.warning("No clip data provided to add_to_clip_creation_queue")
+            return {"success": False, "error": "No clip data provided"}
+            
+        # Create a deep copy of the data and ensure all values are JSON serializable
+        import copy
+        import json as json_module
+        from datetime import datetime, date
+        
+        clip_data_copy = copy.deepcopy(clip_data)
+        
+        # Log the initial clip data for diagnostic purposes
+        logger.info(f"Initial clip data count: {len(clip_data_copy)}")
+        for i, clip in enumerate(clip_data_copy):
+            # Log key fields for each clip
+            member_id = clip.get('member_id')
+            transcript = clip.get('transcript')
+            full_video_path = clip.get('full_video_path')
+            start_timestamp = clip.get('start_timestamp')
+            end_timestamp = clip.get('end_timestamp')
+            
+            logger.info(f"Clip {i} initial data: member_id={member_id} (type={type(member_id).__name__}), "
+                       f"has_transcript={bool(transcript)}, full_video_path={full_video_path}, "
+                       f"start_timestamp={start_timestamp}, end_timestamp={end_timestamp}")
+        
         # Cache of valid member IDs to avoid repeated queries
         valid_member_ids = None
         # Define the exact columns that are valid for the parliament_member_clips table
@@ -448,17 +475,8 @@ class SupabaseService:
             'end_timestamp',      # text not null
             'duration_seconds',  # numeric(10, 3) null
         ]
+        
         try:
-            # Ensure we're not passing any empty data or problematic parameters
-            if not clip_data:
-                logger.warning("No clip data provided to add_to_clip_creation_queue")
-                return {"success": False, "error": "No clip data provided"}
-            
-            # Create a deep copy of the data and ensure all values are JSON serializable
-            import copy
-            import json
-            from datetime import datetime, date
-            
             # Clean the data to ensure it's JSON serializable and only contains valid columns
             cleaned_data = []
             for clip in clip_data:
@@ -473,7 +491,7 @@ class SupabaseService:
                         if key == 'member_id' and value is not None:
                             try:
                                 # Handle special case for unknown members
-                                if value == -1:
+                                if value == -1 or value == '-1':
                                     # Use -1 as a special ID for unknown members
                                     clean_clip[key] = -1
                                     logger.info("Using special ID -1 for unknown member")
@@ -481,16 +499,24 @@ class SupabaseService:
                                 elif isinstance(value, int):
                                     clean_clip[key] = value
                                 # If it's a string that can be converted to int, do so
-                                elif isinstance(value, str) and value.isdigit():
-                                    clean_clip[key] = int(value)
-                                # For any other format, use special ID
+                                elif isinstance(value, str):
+                                    try:
+                                        clean_clip[key] = int(value)
+                                        logger.debug(f"Converted string member_id '{value}' to integer: {clean_clip[key]}")
+                                    except ValueError:
+                                        logger.error(f"Cannot convert member_id '{value}' to integer")
+                                        # Skip this clip if we can't convert the member_id
+                                        raise ValueError(f"Cannot convert member_id '{value}' to integer")
+                                # For any other format, report error
                                 else:
-                                    logger.warning(f"Unrecognized member_id format: {value}, using special ID -1")
-                                    clean_clip[key] = -1
+                                    logger.error(f"Unrecognized member_id format: {value} (type: {type(value).__name__})")
+                                    # Skip this clip if we can't convert the member_id
+                                    raise ValueError(f"Unrecognized member_id format: {value}")
                             except (ValueError, TypeError) as e:
-                                # For any conversion error, use special ID
-                                logger.warning(f"Error converting member_id {value}: {e}, using special ID -1")
-                                clean_clip[key] = -1
+                                # For any conversion error, skip this clip
+                                logger.error(f"Error converting member_id {value}: {e}")
+                                # Re-raise to skip this clip
+                                raise
                         elif key == 'session_date' and value:
                             # Ensure date format is correct
                             if isinstance(value, str) and len(value) == 10 and value[4] == '-':
@@ -517,6 +543,18 @@ class SupabaseService:
                 try:
                     # First check if member_id is valid
                     member_id = clean_clip.get('member_id')
+                    logger.info(f"Validating member_id: {member_id} (type: {type(member_id).__name__})")
+                    
+                    # Log the raw member_id value for debugging
+                    if isinstance(member_id, str):
+                        logger.info(f"Member ID is a string: '{member_id}'")
+                    elif isinstance(member_id, int):
+                        logger.info(f"Member ID is already an integer: {member_id}")
+                    elif member_id is None:
+                        logger.info("Member ID is None")
+                    else:
+                        logger.info(f"Member ID is an unexpected type: {type(member_id).__name__}")
+                        
                     if member_id is not None:
                         # If we haven't fetched valid member IDs yet, do it now
                         if valid_member_ids is None:
@@ -525,6 +563,11 @@ class SupabaseService:
                                 member_response = self.client.table('parliament_members').select('member_id').execute()
                                 valid_member_ids = [member['member_id'] for member in member_response.data if 'member_id' in member] if member_response.data else []
                                 logger.info(f"Fetched {len(valid_member_ids)} valid member_ids from parliament_members table")
+                                
+                                # Log the first few valid member IDs for diagnostic purposes
+                                if valid_member_ids:
+                                    sample_ids = valid_member_ids[:10] if len(valid_member_ids) > 10 else valid_member_ids
+                                    logger.info(f"Sample valid member_ids: {sample_ids} (types: {[type(mid).__name__ for mid in sample_ids]})")
                                 
                                 # If we couldn't find any valid member IDs, log an error
                                 if not valid_member_ids:
@@ -544,16 +587,26 @@ class SupabaseService:
                             logger.info(f"Allowing special member ID -1 for unknown speaker")
                             # Keep the -1 as is, don't replace with fallback
                         elif valid_member_ids:
-                            # CRITICAL FIX: Ensure member_id is an integer for comparison
+                            # Ensure member_id is an integer for comparison
                             try:
                                 if not isinstance(member_id, int):
-                                    logger.warning(f"Converting member_id {member_id} (type: {type(member_id).__name__}) to integer for validation")
-                                    member_id = int(member_id)
-                                    # Update the member_id in the clip data
-                                    clean_clip['member_id'] = member_id
-                            except (ValueError, TypeError) as e:
+                                    if isinstance(member_id, str):
+                                        try:
+                                            member_id = int(member_id)
+                                            # Update the member_id in the clip data
+                                            clean_clip['member_id'] = member_id
+                                            logger.info(f"Converted string member_id '{member_id}' to integer for validation")
+                                        except ValueError:
+                                            logger.error(f"Cannot convert member_id string '{member_id}' to integer")
+                                            logger.warning(f"Skipping clip with non-integer member ID '{member_id}'")
+                                            continue
+                                    else:
+                                        logger.error(f"Member ID has unexpected type: {type(member_id).__name__}")
+                                        logger.warning(f"Skipping clip with invalid member ID type")
+                                        continue
+                            except Exception as e:
                                 logger.error(f"Failed to convert member_id {member_id} to integer: {str(e)}")
-                                logger.warning(f"Skipping clip with non-integer member ID {member_id}")
+                                logger.warning(f"Skipping clip with problematic member ID {member_id}")
                                 continue
                                 
                             # Convert valid_member_ids to integers if needed
@@ -584,20 +637,22 @@ class SupabaseService:
                 
                 # Verify this clip is JSON serializable
                 try:
-                    json.dumps(clean_clip)
+                    json_module.dumps(clean_clip)
                     cleaned_data.append(clean_clip)
                 except Exception as e:
                     logger.error(f"Skipping non-serializable clip: {str(e)}")
                     
             if not cleaned_data:
                 logger.error("No valid clips after cleaning for JSON serialization")
-                return {"success": False, "error": "No valid clips after cleaning"}
+                # Log a summary of why clips were rejected
+                logger.error(f"Started with {len(clip_data)} clips, all were filtered out during validation")
+                return {"success": False, "error": "No valid clips after cleaning: All clips were filtered out during validation"}
             
             logger.info(f"Sending {len(cleaned_data)} cleaned clips to Supabase clip_creation_queue")
             
             # Directly convert to JSON string and back to ensure it's serializable
-            json_str = json.dumps(cleaned_data)
-            final_data = json.loads(json_str)
+            json_str = json_module.dumps(cleaned_data)
+            final_data = json_module.loads(json_str)
             
             # Check for existing clips and only insert new ones
             try:
@@ -634,29 +689,42 @@ class SupabaseService:
                     
                     # Ensure member_id is a valid integer
                     if 'member_id' in clip:
-                        # Validate member_id is an integer and exists in parliament_members table
-                        try:
-                            # Ensure it's an integer
-                            if not isinstance(clip['member_id'], int):
-                                clip['member_id'] = int(clip['member_id'])
+                        # Get member_id from the clip for validation
+                        member_id = clip.get('member_id')
+                        
+                        # Special case: Allow member_id -1 for unknown speakers
+                        if member_id == -1 or member_id == '-1':
+                            if member_id == '-1':
+                                clip['member_id'] = -1
+                            logger.info(f"Allowing special member ID -1 for unknown speaker in final validation")
+                            # Keep the -1 as is, don't verify against Supabase
+                        else:
+                            try:
+                                # Try to convert string member_id to integer if needed
+                                if isinstance(member_id, str):
+                                    try:
+                                        clip['member_id'] = int(member_id)
+                                        logger.debug(f"Converted string member_id '{member_id}' to integer: {clip['member_id']}")
+                                    except ValueError:
+                                        logger.error(f"Cannot convert member_id '{member_id}' to integer")
+                                        logger.warning(f"Skipping clip with non-integer member_id '{member_id}'")
+                                        continue  # Skip this clip
+                                elif not isinstance(member_id, int):
+                                    try:
+                                        clip['member_id'] = int(member_id)
+                                    except (ValueError, TypeError):
+                                        logger.error(f"Cannot convert member_id {member_id} to integer")
+                                        continue  # Skip this clip
                                 
-                            # Special case: Allow member_id -1 for unknown speakers
-                            if clip['member_id'] == -1:
-                                logger.info(f"Allowing special member ID -1 for unknown speaker in second validation")
-                                # Keep the -1 as is, don't verify or replace with fallback
-                            else:
                                 # Verify this member_id exists in parliament_members table
                                 member_check = self.client.table('parliament_members').select('member_id').eq('member_id', clip['member_id']).execute()
                                 if not member_check.data or len(member_check.data) == 0:
                                     logger.warning(f"Member ID {clip['member_id']} not found in parliament_members table")
                                     logger.warning(f"Skipping clip with invalid member ID {clip['member_id']}")
                                     continue  # Skip this clip instead of using a fallback ID
-                        except (ValueError, TypeError) as e:
-                            logger.error(f"Invalid member_id format: {e}")
-                            continue  # Skip this clip if member_id is invalid
-                        except Exception as e:
-                            logger.error(f"Error validating member_id: {e}")
-                            continue  # Skip this clip if we can't validate member_id
+                            except Exception as e:
+                                logger.error(f"Error validating member_id: {str(e)}")
+                                continue  # Skip this clip if we can't validate member_id
                     else:
                         logger.error("Clip missing required member_id field")
                         continue  # Skip this clip if member_id is missing
@@ -710,5 +778,8 @@ class SupabaseService:
                 else:
                     return {"error": f"Failed to insert any clips: {str(e)}"}
         except Exception as e:
-            logger.error(f"Error adding to clip creation queue: {str(e)}")
-            return {"error": str(e)}
+            import traceback
+            error_details = f"{type(e).__name__}: {str(e)}"
+            logger.error(f"Error adding to clip creation queue: {error_details}")
+            logger.error(traceback.format_exc())
+            return {"error": error_details}

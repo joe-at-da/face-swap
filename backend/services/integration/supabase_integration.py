@@ -930,6 +930,8 @@ class SupabaseIntegration:
                 logger.info(f"Keys in first simplified clip: {list(simplified_clips[0].keys())}")
             else:
                 logger.warning("All clips were filtered out during processing!")
+                # Set a flag to indicate no clips were found
+                no_clips_found = True
                 # If we have no simplified clips but had raw clips, log the first raw clip for debugging
                 if clips_data:
                     logger.debug(f"First raw clip that was filtered out: {json_module.dumps(clips_data[0])}")
@@ -979,92 +981,114 @@ class SupabaseIntegration:
             video_queue_response = self.add_to_video_processing_queue(video_data)
             result["queue_responses"]["video_processing"] = video_queue_response
             
-            # Verify the simplified clips are JSON serializable
-            try:
-                json_str = json_module.dumps(simplified_clips)
-                logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
+            # Initialize no_clips_found flag if not already set
+            no_clips_found = False if 'no_clips_found' not in locals() else no_clips_found
+            
+            # Check if we have any clips to process
+            if not simplified_clips:
+                logger.warning("No clips to process for Supabase export")
+                result["queue_responses"]["clip_creation"] = {"success": True, "message": "No clips to process"}
+                no_clips_found = True
                 
-                # Add a unique identifier to each clip to prevent duplicate detection
-                for i, clip in enumerate(simplified_clips):
-                    # Add a unique timestamp to each clip's transcript to ensure it's treated as new
-                    timestamp = datetime.now().timestamp() + i
-                    if 'transcript' in clip and clip['transcript']:
-                        clip['transcript'] = f"{clip['transcript']} [Export {timestamp}]"
+                # Log that we're skipping clip upload due to no clips found
+                logger.info(f"Skipping clip upload for video ID {video_id} because no clips were found")
+                
+                # Still mark the process as successful since we've created export files
+                # This avoids pipeline failures when no clips are found
+                result["clips_processed"] = 0
+                result["export_success"] = True
+            else:
+                # We have clips to process - proceed with normal flow
+                try:
+                    # Verify the simplified clips are JSON serializable
+                    json_str = json_module.dumps(simplified_clips)
+                    logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
                     
-                    # Ensure each clip has a unique ID
-                    clip['id'] = str(uuid.uuid4())
+                    # Add a unique identifier to each clip to prevent duplicate detection
+                    for i, clip in enumerate(simplified_clips):
+                        # Add a unique timestamp to each clip's transcript to ensure it's treated as new
+                        timestamp = datetime.now().timestamp() + i
+                        if 'transcript' in clip and clip['transcript']:
+                            clip['transcript'] = f"{clip['transcript']} [Export {timestamp}]"
+                        
+                        # Ensure each clip has a unique ID
+                        clip['id'] = str(uuid.uuid4())
+                        
+                        # Log the clip being sent to Supabase
+                        logger.debug(f"Sending clip to Supabase: {json_module.dumps(clip)}")
                     
-                    # Log the clip being sent to Supabase
-                    logger.debug(f"Sending clip to Supabase: {json_module.dumps(clip)}")
+                    # Force insert clips into Supabase
+                    logger.info(f"Inserting {len(simplified_clips)} clips into Supabase")
+                    clips_queue_response = self.add_to_clip_creation_queue(simplified_clips)
+                    result["queue_responses"]["clip_creation"] = clips_queue_response
                 
-                # Force insert clips into Supabase
-                logger.info(f"Inserting {len(simplified_clips)} clips into Supabase")
-                clips_queue_response = self.add_to_clip_creation_queue(simplified_clips)
-                result["queue_responses"]["clip_creation"] = clips_queue_response
-                
-                # Log the response from Supabase
-                logger.info(f"Supabase clip insertion response: {clips_queue_response}")
-                
-                # Check if the export was successful and clean up the SQLite database
-                if clips_queue_response and (isinstance(clips_queue_response, dict) and clips_queue_response.get("success", False)) or \
-                   (hasattr(clips_queue_response, "data") and clips_queue_response.data):
-                    logger.info(f"Export to Supabase was successful, cleaning up SQLite database for video ID {video_id}")
-                    try:
-                        # Import the parliament clips integration service to clean up SQLite database
-                        from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-                        
-                        # Create an instance of the service
-                        clips_service = ParliamentClipsIntegrationService()
-                        
-                        # Check if the transaction is still valid before passing it to cleanup
-                        fresh_session = None
-                        if db_session is not None:
-                            try:
-                                # Test if the transaction is still valid
-                                db_session.execute("SELECT 1").scalar()
-                                logger.info("Current transaction is valid for cleanup")
-                            except Exception as tx_error:
-                                logger.warning(f"Transaction appears to be in a failed state before cleanup, rolling back: {str(tx_error)}")
+                    # Log the response from Supabase
+                    logger.info(f"Supabase clip insertion response: {clips_queue_response}")
+                    
+                    # Check if the export was successful and clean up the SQLite database
+                    if clips_queue_response and (isinstance(clips_queue_response, dict) and clips_queue_response.get("success", False)) or \
+                       (hasattr(clips_queue_response, "data") and clips_queue_response.data):
+                        logger.info(f"Export to Supabase was successful, cleaning up SQLite database for video ID {video_id}")
+                        try:
+                            # Import the parliament clips integration service to clean up SQLite database
+                            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                            
+                            # Create an instance of the service
+                            clips_service = ParliamentClipsIntegrationService()
+                            
+                            # Check if the transaction is still valid before passing it to cleanup
+                            fresh_session = None
+                            if db_session is not None:
                                 try:
-                                    db_session.rollback()
-                                    logger.info("Successfully rolled back transaction before cleanup")
-                                except Exception as rollback_error:
-                                    logger.error(f"Error during transaction rollback: {str(rollback_error)}")
-                                
-                                # Get a fresh session for cleanup
+                                    # Test if the transaction is still valid
+                                    from sqlalchemy import text
+                                    db_session.execute(text("SELECT 1")).scalar()
+                                    logger.info("Current transaction is valid for cleanup")
+                                except Exception as tx_error:
+                                    logger.warning(f"Transaction appears to be in a failed state before cleanup, rolling back: {str(tx_error)}")
+                                    try:
+                                        db_session.rollback()
+                                        logger.info("Successfully rolled back transaction before cleanup")
+                                    except Exception as rollback_error:
+                                        logger.error(f"Error during transaction rollback: {str(rollback_error)}")
+                                    
+                                    # Get a fresh session for cleanup
+                                    try:
+                                        from backend.db.session import get_db
+                                        db_generator = get_db()
+                                        fresh_session = next(db_generator)
+                                        logger.info("Created fresh database session for cleanup")
+                                    except Exception as session_error:
+                                        logger.error(f"Could not create fresh database session: {str(session_error)}")
+                            
+                            # Call the cleanup method with the appropriate session
+                            cleanup_session = fresh_session if fresh_session is not None else db_session
+                            cleanup_result = clips_service._cleanup_exported_clips(video_id, cleanup_session)
+                            logger.info(f"SQLite cleanup result: {cleanup_result}")
+                            
+                            # Add cleanup result to the overall result
+                            result["sqlite_cleanup"] = cleanup_result
+                            
+                            # If we created a fresh session, commit and close it
+                            if fresh_session is not None:
                                 try:
-                                    from backend.db.session import get_db
-                                    db_generator = get_db()
-                                    fresh_session = next(db_generator)
-                                    logger.info("Created fresh database session for cleanup")
-                                except Exception as session_error:
-                                    logger.error(f"Could not create fresh database session: {str(session_error)}")
-                        
-                        # Call the cleanup method with the appropriate session
-                        cleanup_session = fresh_session if fresh_session is not None else db_session
-                        cleanup_result = clips_service._cleanup_exported_clips(video_id, cleanup_session)
-                        logger.info(f"SQLite cleanup result: {cleanup_result}")
-                        
-                        # Add cleanup result to the overall result
-                        result["sqlite_cleanup"] = cleanup_result
-                        
-                        # If we created a fresh session, commit and close it
-                        if fresh_session is not None:
-                            try:
-                                fresh_session.commit()
-                                logger.info("Committed fresh session after cleanup")
-                            except Exception as commit_error:
-                                logger.error(f"Error committing fresh session: {str(commit_error)}")
-                    except Exception as cleanup_error:
-                        logger.error(f"Error cleaning up SQLite database: {str(cleanup_error)}")
-                        import traceback
-                        logger.error(traceback.format_exc())
-                        result["sqlite_cleanup_error"] = str(cleanup_error)
-            except Exception as e:
-                logger.error(f"JSON serialization error with simplified clips: {str(e)}")
-                result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(e)}"}
+                                    fresh_session.commit()
+                                    logger.info("Committed fresh session after cleanup")
+                                except Exception as commit_error:
+                                    logger.error(f"Error committing fresh session: {str(commit_error)}")
+                        except Exception as cleanup_error:
+                            logger.error(f"Error cleaning up SQLite database: {str(cleanup_error)}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+                            result["sqlite_cleanup_error"] = str(cleanup_error)
+                except Exception as e:
+                    logger.error(f"JSON serialization error with simplified clips: {str(e)}")
+                    result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(e)}"}
         except Exception as e:
-            logger.error(f"Error adding to Supabase queues: {str(e)}")
-            result["queue_responses"]["error"] = str(e)
+            import traceback
+            error_details = f"{type(e).__name__}: {str(e)}"
+            logger.error(f"Error adding to Supabase queues: {error_details}")
+            logger.error(traceback.format_exc())
+            result["queue_responses"]["error"] = error_details
         
         return result
