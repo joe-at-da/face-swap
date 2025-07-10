@@ -381,9 +381,25 @@ class ParliamentMemberMatcher:
                 }
                 
             # Query unidentified speakers for this clip
-            unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
-                UnidentifiedSpeaker.clip_id == clip_id
-            ).all()
+            from sqlalchemy import text
+            
+            try:
+                # First check if the transaction is valid
+                self.db.execute(text("SELECT 1"))
+                
+                # Then perform the actual query
+                unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
+                    UnidentifiedSpeaker.clip_id == clip_id
+                ).all()
+            except Exception as query_error:
+                # If there's an error, rollback the transaction and try again with a fresh transaction
+                logger.warning(f"Transaction error when querying unidentified speakers: {query_error}")
+                self.db.rollback()
+                
+                # Try again with a fresh transaction
+                unidentified_speakers = self.db.query(UnidentifiedSpeaker).filter(
+                    UnidentifiedSpeaker.clip_id == clip_id
+                ).all()
             
             if not unidentified_speakers:
                 logger.info(f"No unidentified speakers found for clip {clip_id}")

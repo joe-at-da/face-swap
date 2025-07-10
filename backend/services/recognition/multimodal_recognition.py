@@ -583,33 +583,43 @@ class MultimodalRecognitionService:
                 match_result = self.member_matcher.match_unidentified_speakers(str(video_id))
                 
                 if match_result:
-                    logger.info(f"Matched {match_result.get('matched_count', 0)} speakers using ParliamentMemberMatcher")
+                    logger.info(f"Matched {match_result.get('matched', 0)} speakers using ParliamentMemberMatcher")
                     
-                    # Get all speaker appearances for this video
-                    speaker_identifications = db.query(models.SpeakerIdentification).filter(
-                        models.SpeakerIdentification.capture_session_id == video_id
-                    ).all()
-                    
-                    for identification in speaker_identifications:
-                        # Get all appearances for this identification
-                        appearances = db.query(models.SpeakerAppearance).filter(
-                            models.SpeakerAppearance.identification_id == identification.id
+                    # Start a new transaction for speaker identifications
+                    try:
+                        # Check if transaction is in a valid state first
+                        from sqlalchemy import text
+                        db.execute(text("SELECT 1"))
+                        
+                        # Get all speaker appearances for this video
+                        speaker_identifications = db.query(models.SpeakerIdentification).filter(
+                            models.SpeakerIdentification.capture_session_id == video_id
                         ).all()
                         
-                        for appearance in appearances:
-                            # Convert to dict for JSON serialization
-                            appearance_dict = {
-                                "id": appearance.id,
-                                "identification_id": appearance.identification_id,
-                                "member_id": appearance.member_id,
-                                "member_name": identification.member_name,
-                                "start_time": appearance.start_time,
-                                "end_time": appearance.end_time,
-                                "confidence": appearance.confidence,
-                                "matched_by": "parliament_member_matcher",
-                                "face_image_url": appearance.face_image_url
-                            }
-                            speaker_appearances.append(appearance_dict)
+                        for identification in speaker_identifications:
+                            # Get all appearances for this identification
+                            appearances = db.query(models.SpeakerAppearance).filter(
+                                models.SpeakerAppearance.identification_id == identification.id
+                            ).all()
+                            
+                            for appearance in appearances:
+                                # Convert to dict for JSON serialization
+                                appearance_dict = {
+                                    "id": appearance.id,
+                                    "identification_id": appearance.identification_id,
+                                    "member_id": appearance.member_id,
+                                    "member_name": identification.member_name,
+                                    "start_time": appearance.start_time,
+                                    "end_time": appearance.end_time,
+                                    "confidence": appearance.confidence,
+                                    "matched_by": "parliament_member_matcher",
+                                    "face_image_url": appearance.face_image_url
+                                }
+                                speaker_appearances.append(appearance_dict)
+                    except Exception as inner_e:
+                        # Roll back the transaction if it's in a failed state
+                        db.rollback()
+                        logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(inner_e)}")
             except Exception as e:
                 logger.error(f"Error matching unidentified speakers: {str(e)}")
             
