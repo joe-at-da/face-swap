@@ -850,91 +850,104 @@ class SupabaseIntegration:
                         # Add field to simplified clip
                         simplified_clip[target_field] = clip[target_field]
 
-                    # Map recognition events to Supabase schema
-                    supabase_clips = []
-                    skipped_clips = 0
+            # Map clips data to Supabase schema
+            supabase_clips = []
+            skipped_clips = 0
+            simplified_clips = []
+            
+            # Process each clip as an event
+            for event in clips_data:
+                # Create a clean clip for Supabase
+                try:
+                    # Generate a unique ID for this clip
+                    clip_id = str(uuid.uuid4())
                     
-                    for event in recognition_events:
-                        # Create a clean clip for Supabase
-                        try:
-                            # Generate a unique ID for this clip
-                            clip_id = str(uuid.uuid4())
-                            
-                            # Check if this clip already exists
-                            signature = f"{event.get('full_video_path', '')}-{event.get('start_timestamp', '')}-{event.get('end_timestamp', '')}" 
-                            if signature in existing_clips:
-                                logger.debug(f"Skipping duplicate clip: {signature}")
+                    # Create a simplified clip for this event
+                    simplified_clip = {}
+                    
+                    # Check if this clip already exists
+                    signature = f"{event.get('full_video_path', '')}-{event.get('start_timestamp', '')}-{event.get('end_timestamp', '')}" 
+                    if signature in existing_clips:
+                        logger.debug(f"Skipping duplicate clip: {signature}")
+                        skipped_clips += 1
+                        continue
+                    
+                    # Process member_id - ensure it's an integer
+                    member_id = event.get('member_id')
+                    if member_id is not None:
+                        if isinstance(member_id, int):
+                            # Already an integer, use as is
+                            simplified_clip['member_id'] = member_id
+                        elif isinstance(member_id, str):
+                            # Try to convert string to int directly
+                            try:
+                                member_id = int(member_id)
+                                logger.info(f"Converted string member_id '{event.get('member_id')}' to integer {member_id}")
+                                simplified_clip['member_id'] = member_id
+                            except (ValueError, TypeError):
+                                # If we can't convert to int, skip this clip
+                                logger.error(f"Cannot convert member_id '{member_id}' to integer, skipping clip")
+                                logger.error("Member IDs must be numeric integers, not UUIDs or other formats")
                                 skipped_clips += 1
                                 continue
-                            
-                            # Process member_id - ensure it's an integer
-                            member_id = event.get('member_id')
-                            if member_id is not None:
-                                if isinstance(member_id, int):
-                                    # Already an integer, use as is
-                                    pass
-                                elif isinstance(member_id, str):
-                                    # Try to convert string to int directly
-                                    try:
-                                        member_id = int(member_id)
-                                        logger.info(f"Converted string member_id '{event.get('member_id')}' to integer {member_id}")
-                                    except (ValueError, TypeError):
-                                        # If we can't convert to int, skip this clip
-                                        logger.error(f"Cannot convert member_id '{member_id}' to integer, skipping clip")
-                                        logger.error("Member IDs must be numeric integers, not UUIDs or other formats")
-                                        skipped_clips += 1
-                                        continue
-                                else:
-                                    logger.error(f"Invalid member_id type: {type(member_id)}, skipping clip")
-                                    skipped_clips += 1
-                                    continue
-                            else:
-                                # No member_id provided
-                                logger.error("No member_id provided, skipping clip")
-                                skipped_clips += 1
-                                continue
-                            
-                            # Calculate duration if we have valid timestamps
-                            start_timestamp = event.get('start_timestamp')
-                            end_timestamp = event.get('end_timestamp')
-                            
-                            if isinstance(start_timestamp, (int, float)) and isinstance(end_timestamp, (int, float)):
-                                # Direct calculation if they're already numeric
-                                simplified_clip['duration_seconds'] = round(float(end_timestamp) - float(start_timestamp), 3)
-                            elif isinstance(start_timestamp, str) and isinstance(end_timestamp, str):
-                                # Try to parse string timestamps (format: HH:MM:SS)
-                                try:
-                                    start_parts = start_timestamp.split(':')
-                                    end_parts = end_timestamp.split(':')
-                                    
-                                    if len(start_parts) == 3 and len(end_parts) == 3:
-                                        start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
-                                        end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
-                                        simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
-                                except Exception as e:
-                                    logger.warning(f"Failed to parse string timestamps: {e}")
-                                    # Try direct conversion as fallback
-                                    try:
-                                        start_seconds = float(start_timestamp)
-                                        end_seconds = float(end_timestamp)
-                                        simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
-                                    except Exception:
-                                        logger.warning(f"Failed to convert timestamps to float: {start_timestamp}, {end_timestamp}")
-                        except Exception as e:
-                            logger.warning(f"Failed to process clip: {e}")
+                        else:
+                            logger.error(f"Invalid member_id type: {type(member_id)}, skipping clip")
                             skipped_clips += 1
                             continue
-                
-                # Ensure all required fields are present
-                missing_required = [field for field in required_fields if field not in simplified_clip]
-                if missing_required:
-                    logger.warning(f"Clip {simplified_clip.get('id', 'unknown')} is missing required fields: {missing_required}")
-                    # Log the current state of the clip for debugging
-                    logger.debug(f"Current clip state: {simplified_clip}")
-                    # Skip clips with missing required fields
+                    else:
+                        # No member_id provided
+                        logger.error("No member_id provided, skipping clip")
+                        skipped_clips += 1
+                        continue
+                    
+                    # Copy other fields from the event to the simplified clip
+                    for field in valid_columns:
+                        if field in event:
+                            simplified_clip[field] = event[field]
+                    
+                    # Calculate duration if we have valid timestamps
+                    start_timestamp = event.get('start_timestamp')
+                    end_timestamp = event.get('end_timestamp')
+                    
+                    if isinstance(start_timestamp, (int, float)) and isinstance(end_timestamp, (int, float)):
+                        # Direct calculation if they're already numeric
+                        simplified_clip['duration_seconds'] = round(float(end_timestamp) - float(start_timestamp), 3)
+                    elif isinstance(start_timestamp, str) and isinstance(end_timestamp, str):
+                        # Try to parse string timestamps (format: HH:MM:SS)
+                        try:
+                            start_parts = start_timestamp.split(':')
+                            end_parts = end_timestamp.split(':')
+                            
+                            if len(start_parts) == 3 and len(end_parts) == 3:
+                                start_seconds = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + float(start_parts[2])
+                                end_seconds = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + float(end_parts[2])
+                                simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse string timestamps: {e}")
+                            # Try direct conversion as fallback
+                            try:
+                                start_seconds = float(start_timestamp)
+                                end_seconds = float(end_timestamp)
+                                simplified_clip['duration_seconds'] = round(end_seconds - start_seconds, 3)
+                            except Exception:
+                                logger.warning(f"Failed to convert timestamps to float: {start_timestamp}, {end_timestamp}")
+                    
+                    # Ensure all required fields are present
+                    missing_required = [field for field in required_fields if field not in simplified_clip]
+                    if missing_required:
+                        logger.warning(f"Clip {simplified_clip.get('id', 'unknown')} is missing required fields: {missing_required}")
+                        # Log the current state of the clip for debugging
+                        logger.debug(f"Current clip state: {simplified_clip}")
+                        # Skip clips with missing required fields
+                        continue
+                    
+                    # Add the simplified clip to our list
+                    simplified_clips.append(simplified_clip)
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to process clip: {e}")
+                    skipped_clips += 1
                     continue
-                
-                simplified_clips.append(simplified_clip)
             
             # Log the simplified clips
             logger.info(f"Prepared {len(simplified_clips)} simplified clips for Supabase export")
