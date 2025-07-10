@@ -490,25 +490,10 @@ class SupabaseService:
                 }
                 logger.warning(f"Using minimal fallback video data: {video_data}")
             
-            # Check if the table exists first
-            try:
-                tables = self.client.table('').select('*').limit(1).execute()
-                logger.debug(f"Available tables: {tables}")
-            except Exception as e:
-                logger.warning(f"Could not check available tables: {str(e)}")
-            
-            # Try to create the table if it doesn't exist
-            try:
-                # Create a minimal schema for the queue if it doesn't exist
-                self.client.table('video_processing_queue').insert({"id": str(uuid.uuid4()), "created_at": datetime.now().isoformat(), "status": "pending"}).execute()
-                logger.info("Created video_processing_queue table")
-            except Exception as table_error:
-                logger.warning(f"Could not create table: {str(table_error)}")
-            
             # Log what we're sending to Supabase
             logger.info(f"Sending to video_processing_queue: {json.dumps(video_data)}")
             
-            # Now try to insert the actual data
+            # Insert the data into the existing table (no table creation)
             response = self.client.table('video_processing_queue').insert(video_data).execute()
             logger.info(f"Successfully added video to processing queue: {video_data.get('video_id')}")
             return response
