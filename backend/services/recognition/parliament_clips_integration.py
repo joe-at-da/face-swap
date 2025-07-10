@@ -658,27 +658,98 @@ class ParliamentClipsIntegrationService:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # First count how many clips we'll be removing
-            cursor.execute("""
-                SELECT COUNT(*) FROM parliament_clips 
-                WHERE json_extract(metadata, '$.video_id') = ?
-            """, (str(video_id),))
+            # First check if the metadata column exists
+            cursor.execute("PRAGMA table_info(parliament_clips)")
+            columns = [col[1] for col in cursor.fetchall()]
+            logger.info(f"SQLite parliament_clips table columns: {columns}")
             
-            count = cursor.fetchone()[0]
-            logger.info(f"Found {count} clips to remove from SQLite database")
+            # Get a sample clip to examine metadata format
+            cursor.execute("SELECT id, metadata FROM parliament_clips LIMIT 1")
+            sample = cursor.fetchone()
+            if sample:
+                logger.info(f"Sample clip metadata format: {sample[1][:100]}...")
             
-            # Delete clips for this video_id
-            cursor.execute("""
-                DELETE FROM parliament_clips 
-                WHERE json_extract(metadata, '$.video_id') = ?
-            """, (str(video_id),))
+            # Try multiple approaches to find and delete clips for this video_id
+            total_deleted = 0
             
-            # Get number of rows affected
-            results["sqlite_clips_removed"] = cursor.rowcount
+            # Approach 1: Try with JSON extraction if metadata is properly formatted
+            if 'metadata' in columns:
+                logger.info("Attempting cleanup using JSON extraction...")
+                cursor.execute("""
+                    SELECT COUNT(*) FROM parliament_clips 
+                    WHERE json_extract(metadata, '$.video_id') = ?
+                """, (str(video_id),))
+                
+                count = cursor.fetchone()[0]
+                logger.info(f"Found {count} clips to remove from SQLite database using JSON extraction")
+                
+                if count > 0:
+                    # Delete clips for this video_id using JSON extraction
+                    cursor.execute("""
+                        DELETE FROM parliament_clips 
+                        WHERE json_extract(metadata, '$.video_id') = ?
+                    """, (str(video_id),))
+                    deleted = cursor.rowcount
+                    logger.info(f"Deleted {deleted} clips using JSON extraction")
+                    total_deleted += deleted
+            
+            # Approach 2: Try string matching in the metadata field
+            if 'metadata' in columns:
+                logger.info("Attempting cleanup using string matching...")
+                cursor.execute("""
+                    SELECT COUNT(*) FROM parliament_clips 
+                    WHERE metadata LIKE ?
+                """, (f'%"video_id": {video_id}%',))
+                
+                count = cursor.fetchone()[0]
+                logger.info(f"Found {count} clips to remove using string search")
+                
+                if count > 0:
+                    cursor.execute("""
+                        DELETE FROM parliament_clips 
+                        WHERE metadata LIKE ?
+                    """, (f'%"video_id": {video_id}%',))
+                    deleted = cursor.rowcount
+                    logger.info(f"Deleted {deleted} clips using string matching")
+                    total_deleted += deleted
+            
+            # Approach 3: Try another string pattern (different JSON format)
+            if 'metadata' in columns:
+                logger.info("Attempting cleanup using alternative string pattern...")
+                cursor.execute("""
+                    SELECT COUNT(*) FROM parliament_clips 
+                    WHERE metadata LIKE ?
+                """, (f'%"video_id":{video_id}%',))  # No space after colon
+                
+                count = cursor.fetchone()[0]
+                logger.info(f"Found {count} clips to remove using alternative string pattern")
+                
+                if count > 0:
+                    cursor.execute("""
+                        DELETE FROM parliament_clips 
+                        WHERE metadata LIKE ?
+                    """, (f'%"video_id":{video_id}%',))
+                    deleted = cursor.rowcount
+                    logger.info(f"Deleted {deleted} clips using alternative string pattern")
+                    total_deleted += deleted
+            
+            # Get final count of clips for this video to verify cleanup
+            cursor.execute("SELECT COUNT(*) FROM parliament_clips")
+            remaining_total = cursor.fetchone()[0]
+            logger.info(f"Total remaining clips in SQLite database: {remaining_total}")
+            
+            # Set the total deleted count
+            results["sqlite_clips_removed"] = total_deleted
             conn.commit()
             conn.close()
             
-            logger.info(f"Removed {results['sqlite_clips_removed']} clips from SQLite database")
+            logger.info(f"Total removed from SQLite database: {total_deleted} clips")
+            
+            # If no clips were deleted, log a warning
+            if total_deleted == 0:
+                warning_msg = f"⚠️ No clips were deleted from SQLite for video ID {video_id}. Check if clips exist with this video ID."
+                logger.warning(warning_msg)
+                results["warnings"] = results.get("warnings", []) + [warning_msg]
         except Exception as e:
             error_msg = f"Error cleaning up SQLite clips: {str(e)}"
             logger.error(error_msg)
@@ -693,9 +764,20 @@ class ParliamentClipsIntegrationService:
                 logger.info("No database session provided, skipping PostgreSQL cleanup")
                 results["postgres_events_removed"] = 0
             else:
-                from backend.db.models import RecognitionEvent
+                from backend.db.models import RecognitionEvent, ParliamentMemberClip
                 
-                # Count how many events we'll be removing
+                # First check if there are any ParliamentMemberClip records for this video
+                # These are the records in Supabase that we've just exported to
+                try:
+                    parliament_clip_count = db_session.query(ParliamentMemberClip).filter(
+                        ParliamentMemberClip.video_id == video_id
+                    ).count()
+                    logger.info(f"Found {parliament_clip_count} ParliamentMemberClip records in PostgreSQL for video ID {video_id}")
+                except Exception as e:
+                    logger.warning(f"Could not check ParliamentMemberClip records: {str(e)}")
+                    parliament_clip_count = "unknown"
+                
+                # Count how many recognition events we'll be removing
                 event_count = db_session.query(RecognitionEvent).filter(
                     RecognitionEvent.video_id == video_id,
                     RecognitionEvent.type == "speaker"
@@ -703,30 +785,95 @@ class ParliamentClipsIntegrationService:
                 
                 logger.info(f"Found {event_count} recognition events to remove from PostgreSQL database")
                 
+                # Get a sample of the recognition events for debugging
+                sample_events = db_session.query(RecognitionEvent).filter(
+                    RecognitionEvent.video_id == video_id,
+                    RecognitionEvent.type == "speaker"
+                ).limit(2).all()
+                
+                if sample_events:
+                    logger.info(f"Sample recognition event: ID={sample_events[0].id}, Type={sample_events[0].type}, Start={sample_events[0].start_time}")
+                
                 # Delete recognition events for this video_id
                 deleted_count = db_session.query(RecognitionEvent).filter(
                     RecognitionEvent.video_id == video_id,
                     RecognitionEvent.type == "speaker"
                 ).delete(synchronize_session=False)
                 
-                db_session.commit()
+                try:
+                    db_session.commit()
+                    logger.info(f"Successfully committed PostgreSQL deletion")
+                except Exception as commit_error:
+                    error_msg = f"Error committing PostgreSQL deletion: {str(commit_error)}"
+                    logger.error(error_msg)
+                    try:
+                        db_session.rollback()
+                        logger.info("Rolled back PostgreSQL transaction after commit error")
+                    except Exception as rollback_error:
+                        logger.error(f"Error rolling back PostgreSQL transaction: {str(rollback_error)}")
+                    results["errors"].append(error_msg)
+                
+                # Verify deletion was successful
+                verification_count = db_session.query(RecognitionEvent).filter(
+                    RecognitionEvent.video_id == video_id,
+                    RecognitionEvent.type == "speaker"
+                ).count()
+                
+                if verification_count > 0:
+                    warning_msg = f"⚠️ After deletion, {verification_count} recognition events still remain for video ID {video_id}"
+                    logger.warning(warning_msg)
+                    results["warnings"] = results.get("warnings", []) + [warning_msg]
+                else:
+                    logger.info(f"✅ Verified all recognition events were deleted for video ID {video_id}")
                 
                 results["postgres_events_removed"] = deleted_count
                 logger.info(f"Removed {deleted_count} recognition events from PostgreSQL database")
+                results["postgres_clips_count"] = parliament_clip_count
         except Exception as e:
             error_msg = f"Error cleaning up PostgreSQL recognition events: {str(e)}"
             logger.error(error_msg)
             import traceback
             logger.error(traceback.format_exc())
             results["errors"].append(error_msg)
+            try:
+                db_session.rollback()
+                logger.info("Rolled back PostgreSQL transaction after error")
+            except Exception as rollback_error:
+                logger.error(f"Error rolling back PostgreSQL transaction: {str(rollback_error)}")
         
         # Set overall success status
         results["success"] = len(results["errors"]) == 0
         
+        # Add warnings count to results
+        if "warnings" in results:
+            results["warnings_count"] = len(results["warnings"])
+        
         if results["success"]:
-            logger.info(f"✅ Successfully cleaned up {results['sqlite_clips_removed']} SQLite clips and {results['postgres_events_removed']} PostgreSQL events")
+            if results["sqlite_clips_removed"] > 0 or results["postgres_events_removed"] > 0:
+                logger.info(f"✅ Successfully cleaned up {results['sqlite_clips_removed']} SQLite clips and {results['postgres_events_removed']} PostgreSQL events")
+            else:
+                logger.warning(f"⚠️ No clips or events were removed during cleanup for video ID {video_id}. Check if they exist.")
+                if "warnings" not in results:
+                    results["warnings"] = []
+                results["warnings"].append(f"No clips or events were removed during cleanup for video ID {video_id}")
         else:
             logger.warning(f"⚠️ Cleanup completed with {len(results['errors'])} errors")
+        
+        # Log a summary of the cleanup operation
+        logger.info(f"===== CLEANUP SUMMARY =====")
+        logger.info(f"Video ID: {video_id}")
+        logger.info(f"SQLite clips removed: {results['sqlite_clips_removed']}")
+        logger.info(f"PostgreSQL events removed: {results['postgres_events_removed']}")
+        if "postgres_clips_count" in results:
+            logger.info(f"PostgreSQL parliament clips count: {results['postgres_clips_count']}")
+        if "warnings" in results and results["warnings"]:
+            logger.warning(f"Warnings: {len(results['warnings'])}")
+            for warning in results["warnings"]:
+                logger.warning(f"  - {warning}")
+        if results["errors"]:
+            logger.error(f"Errors: {len(results['errors'])}")
+            for error in results["errors"]:
+                logger.error(f"  - {error}")
         
         return results
         

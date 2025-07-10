@@ -964,6 +964,29 @@ class SupabaseIntegration:
                 
                 # Log the response from Supabase
                 logger.info(f"Supabase clip insertion response: {clips_queue_response}")
+                
+                # Check if the export was successful and clean up the SQLite database
+                if clips_queue_response and (isinstance(clips_queue_response, dict) and clips_queue_response.get("success", False)) or \
+                   (hasattr(clips_queue_response, "data") and clips_queue_response.data):
+                    logger.info(f"Export to Supabase was successful, cleaning up SQLite database for video ID {video_id}")
+                    try:
+                        # Import the parliament clips integration service to clean up SQLite database
+                        from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                        
+                        # Create an instance of the service
+                        clips_service = ParliamentClipsIntegrationService()
+                        
+                        # Call the cleanup method
+                        cleanup_result = clips_service._cleanup_exported_clips(video_id, db_session)
+                        logger.info(f"SQLite cleanup result: {cleanup_result}")
+                        
+                        # Add cleanup result to the overall result
+                        result["sqlite_cleanup"] = cleanup_result
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up SQLite database: {str(cleanup_error)}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        result["sqlite_cleanup_error"] = str(cleanup_error)
             except Exception as e:
                 logger.error(f"JSON serialization error with simplified clips: {str(e)}")
                 result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(e)}"}
