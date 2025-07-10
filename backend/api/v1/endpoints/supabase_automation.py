@@ -639,15 +639,31 @@ async def process_parliament_tv_to_supabase(
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 
-                # Update capture status
-                capture.status = "failed"
-                capture.error_message = str(e)
-                db.commit()
+                # First rollback any failed transaction
+                try:
+                    db.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Error during rollback: {str(rollback_error)}")
+                
+                # Update capture status with a fresh transaction
+                try:
+                    capture.status = "failed"
+                    capture.error_message = str(e)
+                    db.commit()
+                except Exception as commit_error:
+                    logger.error(f"Error updating capture status: {str(commit_error)}")
+                    db.rollback()
                 
         except Exception as e:
             logger.error(f"Error in Parliament TV processing task: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Ensure any failed transaction is rolled back
+            try:
+                db.rollback()
+            except Exception as rollback_error:
+                logger.error(f"Error during rollback in outer exception handler: {str(rollback_error)}")
     
     # Start the background task
     background_tasks.add_task(process_parliament_tv_task)
