@@ -14,7 +14,7 @@ import shutil
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime as datetime_module
 
 from sqlalchemy.orm import Session
 
@@ -133,13 +133,33 @@ class SupabaseIntegration:
         Returns:
             Response from Supabase
         """
+        # Import json at function level to avoid any shadowing issues
+        import json as json_module
+        
         try:
+            # Verify the data is serializable before sending
+            try:
+                json_str = json_module.dumps(video_data)
+                logger.debug(f"Verified video_data is JSON serializable, length: {len(json_str)} bytes")
+            except TypeError as json_error:
+                logger.error(f"Video data failed final serialization check: {str(json_error)}")
+                # Create a minimal valid payload as last resort
+                video_data = {
+                    "video_id": video_data.get("video_id", "unknown"),
+                    "status": "error",
+                    "created_at": str(datetime_module.now()),
+                    "error_message": "Data could not be serialized"
+                }
+                logger.warning(f"Using fallback minimal video data: {video_data}")
+            
+            # Now send to Supabase
             response = self.supabase.add_to_video_processing_queue(video_data)
             logger.info(f"Added video to processing queue: {video_data.get('video_id')}")
             return response
         except Exception as e:
-            logger.error(f"Error adding video to processing queue: {str(e)}")
-            return {"error": str(e)}
+            error_msg = f"Error adding video to processing queue: {str(e)}"
+            logger.error(error_msg)
+            return {"error": error_msg}
     
     def _run_sync_parliament_clip_member_ids(self) -> Dict[str, Any]:
         """
@@ -193,13 +213,28 @@ class SupabaseIntegration:
         Returns:
             Response from Supabase
         """
+        # Import json at function level to avoid any shadowing issues
+        import json as json_module
+        
         try:
+            # Verify the data is serializable before sending
+            try:
+                json_str = json_module.dumps(clip_data)
+                logger.debug(f"Verified clip_data is JSON serializable, length: {len(json_str)} bytes")
+            except TypeError as json_error:
+                logger.error(f"Clip data failed final serialization check: {str(json_error)}")
+                # This is a critical error as we've already done sanitization before calling this method
+                # Return error without attempting to send to Supabase
+                return {"error": f"JSON serialization error in add_to_clip_creation_queue: {str(json_error)}"}
+            
+            # Now send to Supabase
             response = self.supabase.add_to_clip_creation_queue(clip_data)
             logger.info(f"Added {len(clip_data)} clips to creation queue")
             return response
         except Exception as e:
-            logger.error(f"Error adding clips to creation queue: {str(e)}")
-            return {"error": str(e)}
+            error_msg = f"Error adding clips to creation queue: {str(e)}"
+            logger.error(error_msg)
+            return {"error": error_msg}
     
     def export_and_upload_recognition(self, video_path: str, recognition_results: Dict[str, Any], video_metadata: Dict[str, Any], db_session: Optional[Session] = None, video_id: Optional[int] = None, upload_media: bool = True) -> Dict[str, Any]:
         # Import these at the function level to avoid any shadowing issues
@@ -700,7 +735,16 @@ class SupabaseIntegration:
                     return str(obj)
             
             # Create a sanitized copy of clips_data
-            clips_data = sanitize_for_json(clips_data_raw)
+            clips_data_sanitized = sanitize_for_json(clips_data_raw)
+            
+            # Extract the clips array if clips_data_raw is a dictionary with a 'clips' key
+            if isinstance(clips_data_sanitized, dict) and 'clips' in clips_data_sanitized:
+                logger.info(f"Found clips array in JSON structure with {len(clips_data_sanitized['clips'])} clips")
+                clips_data = clips_data_sanitized['clips']
+            else:
+                # If it's already an array or doesn't have the expected structure, use as is
+                clips_data = clips_data_sanitized if isinstance(clips_data_sanitized, list) else []
+                logger.info(f"Using direct clips data structure with {len(clips_data)} clips")
             
             # Log the data we're working with
             clip_count = len(clips_data) if clips_data else 0
@@ -709,10 +753,21 @@ class SupabaseIntegration:
             # Only try to access clips_data[0] if we have at least one clip
             if clip_count > 0:
                 try:
-                    logger.debug(f"Sample clip data: {json_module.dumps(clips_data[0])}")
-                    logger.info(f"Available keys in first clip: {list(clips_data[0].keys())}")
+                    first_clip = clips_data[0]
+                    logger.debug(f"Sample clip data: {json_module.dumps(first_clip)}")
+                    
+                    if isinstance(first_clip, dict):
+                        logger.info(f"Available keys in first clip: {list(first_clip.keys())}")
+                    else:
+                        logger.warning(f"First clip is not a dictionary but a {type(first_clip).__name__}: {first_clip}")
                 except (IndexError, KeyError) as e:
-                    logger.error(f"Error accessing clip data: {str(e)}")
+                    logger.error(f"Error accessing clip data index: {str(e)}")
+                    logger.debug(f"Raw clips_data type: {type(clips_data)}, content: {clips_data}")
+                except TypeError as e:
+                    logger.error(f"TypeError accessing clip data: {str(e)}")
+                    logger.debug(f"Raw clips_data type: {type(clips_data)}, content: {clips_data}")
+                except Exception as e:
+                    logger.error(f"Unexpected error accessing clip data: {str(e)}")
                     logger.debug(f"Raw clips_data type: {type(clips_data)}, content: {clips_data}")
             else:
                 logger.debug("No clips data available for sample display")
@@ -742,6 +797,11 @@ class SupabaseIntegration:
                 # Filter out clips without required fields
                 valid_clips = []
                 for clip_id, clip in enumerate(clips_data):
+                    # Skip non-dictionary clips
+                    if not isinstance(clip, dict):
+                        logger.error(f"Skipping non-dictionary clip at index {clip_id}: {type(clip)}, value: {clip}")
+                        continue
+                        
                     missing_fields = []
                     for required_field in required_fields:
                         if required_field not in clip or clip[required_field] is None:
@@ -840,16 +900,6 @@ class SupabaseIntegration:
                 'speaker_id': 'member_id'  # Map speaker_id to member_id
             }
             
-            for clip in clips_data:
-                simplified_clip = {}
-                
-                # Process each valid column
-                for target_field in valid_columns:
-                    # Check if the field is in the clip data directly
-                    if target_field in clip:
-                        # Add field to simplified clip
-                        simplified_clip[target_field] = clip[target_field]
-
             # Map clips data to Supabase schema
             supabase_clips = []
             skipped_clips = 0
@@ -859,14 +909,25 @@ class SupabaseIntegration:
             for event in clips_data:
                 # Create a clean clip for Supabase
                 try:
+                    # Check if event is a dictionary
+                    if not isinstance(event, dict):
+                        logger.error(f"Skipping non-dictionary clip data: {type(event)}, value: {event}")
+                        skipped_clips += 1
+                        continue
+                        
                     # Generate a unique ID for this clip
                     clip_id = str(uuid.uuid4())
                     
                     # Create a simplified clip for this event
                     simplified_clip = {}
                     
+                    # Safely get values with fallbacks
+                    full_video_path = event.get('full_video_path', '')
+                    start_timestamp = event.get('start_timestamp', '')
+                    end_timestamp = event.get('end_timestamp', '')
+                    
                     # Check if this clip already exists
-                    signature = f"{event.get('full_video_path', '')}-{event.get('start_timestamp', '')}-{event.get('end_timestamp', '')}" 
+                    signature = f"{full_video_path}-{start_timestamp}-{end_timestamp}" 
                     if signature in existing_clips:
                         logger.debug(f"Skipping duplicate clip: {signature}")
                         skipped_clips += 1
@@ -1008,8 +1069,109 @@ class SupabaseIntegration:
                     logger.info(f"Example clip that couldn't be processed: {json_module.dumps({k: v for k, v in first_clip.items() if k not in excluded_fields})}")
             
             # Add to queues
-            video_queue_response = self.add_to_video_processing_queue(video_data)
-            result["queue_responses"]["video_processing"] = video_queue_response
+            try:
+                # Ensure video_data is JSON serializable
+                # First try to serialize it to detect any issues
+                try:
+                    json_module.dumps(video_data)
+                    logger.debug("Video data is JSON serializable")
+                except TypeError as json_error:
+                    logger.error(f"Video data is not JSON serializable: {str(json_error)}")
+                    
+                    # Create a sanitized copy that can be serialized
+                    sanitized_video_data = {}
+                    
+                    # Helper function to recursively sanitize nested objects
+                    def sanitize_value(value):
+                        if isinstance(value, dict):
+                            # Handle dictionary recursively
+                            result = {}
+                            for k, v in value.items():
+                                try:
+                                    # Test if this key-value pair can be serialized
+                                    json_module.dumps({k: v})
+                                    result[k] = v
+                                except TypeError:
+                                    # Try to sanitize the value
+                                    sanitized_v = sanitize_value(v)
+                                    if sanitized_v is not None:
+                                        result[k] = sanitized_v
+                                    else:
+                                        logger.warning(f"Skipping non-serializable nested field '{k}'")
+                            return result
+                        elif isinstance(value, list):
+                            # Handle list recursively
+                            result = []
+                            for item in value:
+                                try:
+                                    json_module.dumps(item)
+                                    result.append(item)
+                                except TypeError:
+                                    sanitized_item = sanitize_value(item)
+                                    if sanitized_item is not None:
+                                        result.append(sanitized_item)
+                            return result
+                        else:
+                            # Try to convert to string for primitive types
+                            try:
+                                return str(value)
+                            except:
+                                return None
+                    
+                    # Sanitize each top-level field
+                    for key, value in video_data.items():
+                        try:
+                            # Test if this key-value pair can be serialized
+                            json_module.dumps({key: value})
+                            sanitized_video_data[key] = value
+                        except TypeError:
+                            logger.warning(f"Sanitizing non-serializable field '{key}' from video_data")
+                            # Try to sanitize the value
+                            sanitized_value = sanitize_value(value)
+                            if sanitized_value is not None:
+                                sanitized_video_data[key] = sanitized_value
+                                logger.info(f"Sanitized field '{key}' to serializable format")
+                            else:
+                                logger.warning(f"Could not sanitize field '{key}', skipping")
+                    
+                    # Use the sanitized data instead
+                    video_data = sanitized_video_data
+                    logger.info(f"Using sanitized video data with keys: {list(video_data.keys())}")
+                    
+                    # Verify the sanitized data is actually serializable
+                    try:
+                        json_str = json_module.dumps(video_data)
+                        logger.info(f"Successfully sanitized video data, JSON length: {len(json_str)} characters")
+                    except TypeError as e:
+                        logger.error(f"Failed to sanitize video data completely: {str(e)}")
+                        # Last resort: create a minimal valid payload
+                        video_data = {
+                            "video_id": video_data.get("video_id", video_id),
+                            "status": "pending",
+                            "created_at": str(datetime_module.now()),
+                            "error": "Original data could not be serialized"
+                        }
+                        logger.warning(f"Using minimal video data payload: {video_data}")
+                
+                # Now add to the queue
+                try:
+                    # Log the video data we're about to send (excluding large fields)
+                    log_data = {k: (v if not isinstance(v, str) or len(str(v)) < 100 else f"<{len(str(v))} chars>") 
+                               for k, v in video_data.items()}
+                    logger.info(f"Sending video data to queue: {log_data}")
+                    
+                    video_queue_response = self.add_to_video_processing_queue(video_data)
+                    result["queue_responses"]["video_processing"] = video_queue_response
+                    
+                    # Log the response
+                    logger.info(f"Video queue response: {video_queue_response}")
+                except Exception as queue_error:
+                    error_msg = f"Error adding to video processing queue: {str(queue_error)}"
+                    logger.error(error_msg)
+                    result["queue_responses"]["video_processing"] = {"error": error_msg}
+            except Exception as e:
+                logger.error(f"Error preparing video data for queue: {str(e)}")
+                result["queue_responses"]["video_processing"] = {"error": f"Failed to prepare video data: {str(e)}"}
             
             # Initialize no_clips_found flag if not already set
             no_clips_found = False if 'no_clips_found' not in locals() else no_clips_found
@@ -1031,26 +1193,124 @@ class SupabaseIntegration:
                 # We have clips to process - proceed with normal flow
                 try:
                     # Verify the simplified clips are JSON serializable
-                    json_str = json_module.dumps(simplified_clips)
-                    logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
-                    
-                    # Add a unique identifier to each clip to prevent duplicate detection
-                    for i, clip in enumerate(simplified_clips):
-                        # Add a unique timestamp to each clip's transcript to ensure it's treated as new
-                        timestamp = datetime.now().timestamp() + i
-                        if 'transcript' in clip and clip['transcript']:
-                            clip['transcript'] = f"{clip['transcript']} [Export {timestamp}]"
+                    try:
+                        json_str = json_module.dumps(simplified_clips)
+                        logger.info(f"Successfully serialized simplified clips to JSON (length: {len(json_str)} characters)")
                         
-                        # Ensure each clip has a unique ID
-                        clip['id'] = str(uuid.uuid4())
+                        # Define helper function for sanitizing values (same as used for video_data)
+                        def sanitize_value(value):
+                            if isinstance(value, dict):
+                                # Handle dictionary recursively
+                                result = {}
+                                for k, v in value.items():
+                                    try:
+                                        # Test if this key-value pair can be serialized
+                                        json_module.dumps({k: v})
+                                        result[k] = v
+                                    except TypeError:
+                                        # Try to sanitize the value
+                                        sanitized_v = sanitize_value(v)
+                                        if sanitized_v is not None:
+                                            result[k] = sanitized_v
+                                        else:
+                                            logger.warning(f"Skipping non-serializable nested field '{k}'")
+                                return result
+                            elif isinstance(value, list):
+                                # Handle list recursively
+                                result = []
+                                for item in value:
+                                    try:
+                                        json_module.dumps(item)
+                                        result.append(item)
+                                    except TypeError:
+                                        sanitized_item = sanitize_value(item)
+                                        if sanitized_item is not None:
+                                            result.append(sanitized_item)
+                                return result
+                            else:
+                                # Try to convert to string for primitive types
+                                try:
+                                    return str(value)
+                                except:
+                                    return None
                         
-                        # Log the clip being sent to Supabase
-                        logger.debug(f"Sending clip to Supabase: {json_module.dumps(clip)}")
-                    
-                    # Force insert clips into Supabase
-                    logger.info(f"Inserting {len(simplified_clips)} clips into Supabase")
-                    clips_queue_response = self.add_to_clip_creation_queue(simplified_clips)
-                    result["queue_responses"]["clip_creation"] = clips_queue_response
+                        # Add a unique identifier to each clip to prevent duplicate detection
+                        for i, clip in enumerate(simplified_clips):
+                            # Ensure each clip is a dictionary
+                            if not isinstance(clip, dict):
+                                logger.error(f"Skipping non-dictionary clip at index {i}: {type(clip)}, value: {clip}")
+                                continue
+                                
+                            # Add a unique timestamp to each clip's transcript to ensure it's treated as new
+                            timestamp = datetime_module.now().timestamp() + i
+                            if 'transcript' in clip and clip['transcript']:
+                                clip['transcript'] = f"{clip['transcript']} [Export {timestamp}]"
+                            
+                            # Ensure each clip has a unique ID
+                            clip['id'] = str(uuid.uuid4())
+                            
+                            # Verify each individual clip is serializable
+                            try:
+                                clip_json = json_module.dumps(clip)
+                                logger.debug(f"Sending clip to Supabase: {clip_json[:200]}..." if len(clip_json) > 200 else clip_json)
+                            except TypeError as e:
+                                logger.error(f"Clip at index {i} is not JSON serializable: {str(e)}")
+                                # Create a sanitized copy using our recursive sanitizer
+                                sanitized_clip = {}
+                                for key, value in clip.items():
+                                    try:
+                                        json_module.dumps({key: value})
+                                        sanitized_clip[key] = value
+                                    except TypeError:
+                                        # Try to sanitize the value
+                                        sanitized_value = sanitize_value(value)
+                                        if sanitized_value is not None:
+                                            sanitized_clip[key] = sanitized_value
+                                            logger.info(f"Sanitized field '{key}' in clip {i} to serializable format")
+                                        else:
+                                            logger.warning(f"Could not sanitize field '{key}' in clip {i}, skipping")
+                                
+                                # Replace the original clip with the sanitized version
+                                simplified_clips[i] = sanitized_clip
+                                
+                                # Verify the sanitized clip is actually serializable
+                                try:
+                                    json_module.dumps(sanitized_clip)
+                                    logger.info(f"Successfully sanitized clip {i}")
+                                except TypeError as e2:
+                                    logger.error(f"Failed to fully sanitize clip {i}, removing from list: {str(e2)}")
+                                    # Mark for removal
+                                    simplified_clips[i] = None
+                        
+                        # Remove any clips that couldn't be sanitized
+                        simplified_clips = [c for c in simplified_clips if c is not None]
+                        
+                        # Force insert clips into Supabase
+                        logger.info(f"Inserting {len(simplified_clips)} clips into Supabase")
+                        
+                        # Final check that the entire array is serializable
+                        try:
+                            final_json = json_module.dumps(simplified_clips)
+                            logger.info(f"Final clips array is serializable, length: {len(final_json)} characters")
+                            
+                            # Only proceed if we have clips to send
+                            if simplified_clips:
+                                clips_queue_response = self.add_to_clip_creation_queue(simplified_clips)
+                                result["queue_responses"]["clip_creation"] = clips_queue_response
+                                logger.info(f"Clip queue response: {clips_queue_response}")
+                            else:
+                                logger.warning("No clips left after sanitization, skipping queue insertion")
+                                result["queue_responses"]["clip_creation"] = {"success": True, "message": "No clips to process after sanitization"}
+                        except TypeError as final_error:
+                            logger.error(f"Final clips array is not serializable: {str(final_error)}")
+                            result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(final_error)}"}
+                            # Continue with the process but mark as failed
+                            result["export_success"] = False
+                    except TypeError as json_error:
+                        logger.error(f"Failed to serialize clips data: {str(json_error)}")
+                        result["queue_responses"]["clip_creation"] = {"error": f"JSON serialization error: {str(json_error)}"}
+                        # Continue with the process but mark as failed
+                        result["export_success"] = False
                 
                     # Log the response from Supabase
                     logger.info(f"Supabase clip insertion response: {clips_queue_response}")
