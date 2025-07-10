@@ -282,7 +282,7 @@ class ParliamentMemberMatcher:
                 # Filter by house if specified (and not 'unknown')
                 # This ensures we only match MPs for Commons and Lords for Lords
                 if house != "unknown" and member_house != "unknown" and house != member_house:
-                    logger.debug(f"Skipping member {member_id} from house {member_house} (looking for {house})")
+                    logger.info(f"Skipping member {member_id} from house {member_house} (looking for {house})")
                     continue
                     
                 # Calculate similarity
