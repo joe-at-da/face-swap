@@ -11,7 +11,7 @@ from datetime import datetime
 
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.recognition.face_recognition import FaceRecognitionService
-from backend.services.recognition.member_matching.embedding import compute_similarity, normalize_embedding, normalize_embedding
+from backend.services.recognition.member_matching.embedding import compute_similarity, normalize_embedding, normalize_embedding, normalize_embedding, normalize_embedding
 from backend.services.recognition.member_matching.defaults import get_default_member_for_house
 from backend.services.recognition.member_matching.photo_management import PhotoManager
 from backend.services.recognition.member_matching.database import (
@@ -144,10 +144,6 @@ class ParliamentMemberMatcher:
                         
                         # Store with string ID as the primary key
                         self.member_embeddings[str(member_id)] = data
-                        
-                        # Special debug for Darren Jones
-                        if str(member_id) == "4621":
-                            logger.info(f"Loaded Darren Jones embedding: shape={embedding.shape}, norm={np.linalg.norm(embedding):.4f}")
                 
                 logger.info(f"Loaded {len(self.member_embeddings)} member embeddings")
                 return
@@ -220,12 +216,6 @@ class ParliamentMemberMatcher:
             
             # Compute similarity directly with normalized embeddings
             confidence = float(np.dot(face_embedding, member_embedding))
-            
-            # Special debug for Darren Jones
-            if member_id == "4621":
-                logger.info(f"Darren Jones similarity: {confidence:.6f}")
-                logger.info(f"Darren Jones embedding norm: {np.linalg.norm(member_embedding):.6f}")
-                logger.info(f"Face embedding norm: {np.linalg.norm(face_embedding):.6f}")
             
             # Add to all matches for debugging
             all_matches.append({

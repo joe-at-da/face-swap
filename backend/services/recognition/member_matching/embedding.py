@@ -84,9 +84,9 @@ def compute_similarity(embedding1, embedding2):
         # Compute cosine similarity
         similarity = np.dot(embedding1, embedding2)
         
-        # Special debug for Darren Jones
+        # Log high similarity matches for debugging
         if similarity > 0.9:
-            logger.info(f"High similarity detected: {similarity:.6f}")
+            logger.debug(f"High similarity detected: {similarity:.6f}")
             
         return float(similarity)
     except Exception as e:
