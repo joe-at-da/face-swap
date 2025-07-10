@@ -97,36 +97,63 @@ def clean_database():
         try:
             import sqlite3
             import os
+            from pathlib import Path
             
-            # Path to SQLite database
-            sqlite_db_path = "/app/backend/parliament_clips.db"
+            # Try multiple possible paths for the SQLite database
+            possible_paths = [
+                "/app/backend/parliament_clips.db",  # Docker container path
+                str(Path(__file__).resolve().parent.parent / "backend" / "parliament_clips.db"),  # Local development path
+                str(Path.home() / "Veedoo" / "Development" / "the-mp" / "backend" / "parliament_clips.db")  # User-specific path
+            ]
             
-            if os.path.exists(sqlite_db_path):
+            sqlite_db_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    sqlite_db_path = path
+                    break
+            
+            if sqlite_db_path:
                 logger.info(f"Cleaning SQLite database at {sqlite_db_path}")
                 conn = sqlite3.connect(sqlite_db_path)
                 cursor = conn.cursor()
                 
-                # Get list of tables
+                # First check if parliament_clips table exists
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='parliament_clips'")
+                if cursor.fetchone():
+                    # Count clips before deletion
+                    cursor.execute("SELECT COUNT(*) FROM parliament_clips")
+                    count = cursor.fetchone()[0]
+                    logger.info(f"Found {count} clips in parliament_clips table")
+                    
+                    # Delete all clips
+                    cursor.execute("DELETE FROM parliament_clips")
+                    logger.info(f"Deleted {cursor.rowcount} clips from parliament_clips table")
+                else:
+                    logger.info("parliament_clips table not found in SQLite database")
+                
+                # Also check and clean other tables
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 sqlite_tables = cursor.fetchall()
                 
                 for table in sqlite_tables:
                     table_name = table[0]
-                    if table_name != 'sqlite_sequence':  # Skip internal SQLite table
+                    if table_name != 'sqlite_sequence' and table_name != 'parliament_clips':  # Skip already processed tables
                         try:
                             cursor.execute(f"DELETE FROM {table_name}")
                             logger.info(f"Cleaned SQLite table: {table_name}")
                         except Exception as e:
                             logger.error(f"Error cleaning SQLite table {table_name}: {str(e)}")
                 
-                # Also reset the autoincrement counters
+                # Reset the autoincrement counters
                 cursor.execute("DELETE FROM sqlite_sequence")
                 
                 conn.commit()
                 conn.close()
                 logger.info("Successfully cleaned SQLite database")
             else:
-                logger.info(f"SQLite database not found at {sqlite_db_path}, skipping")
+                logger.warning("SQLite parliament_clips database not found in any of the expected locations")
+                for path in possible_paths:
+                    logger.info(f"Tried path: {path}")
                 
         except Exception as e:
             logger.error(f"Error cleaning SQLite database: {str(e)}")

@@ -579,6 +579,58 @@ class ParliamentClipsIntegrationService:
             logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
     
+    def _clear_all_local_clips(self) -> Dict[str, Any]:
+        """
+        Clear all clips from the local SQLite database without affecting Supabase data.
+        This is a safety method to clean up all local clips when needed.
+        
+        Returns:
+            Dict with cleanup status and results
+        """
+        logger.info(f"===== CLEARING ALL LOCAL CLIPS =====")
+        
+        results = {
+            "sqlite_clips_removed": 0,
+            "errors": []
+        }
+        
+        # Clean up all clips from SQLite parliament_clips database
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # First count how many clips we'll be removing
+            cursor.execute("SELECT COUNT(*) FROM parliament_clips")
+            
+            count = cursor.fetchone()[0]
+            logger.info(f"Found {count} clips to remove from SQLite database")
+            
+            # Delete all clips
+            cursor.execute("DELETE FROM parliament_clips")
+            
+            # Get number of rows affected
+            results["sqlite_clips_removed"] = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Removed {results['sqlite_clips_removed']} clips from SQLite database")
+        except Exception as e:
+            error_msg = f"Error cleaning up SQLite clips: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            logger.error(traceback.format_exc())
+            results["errors"].append(error_msg)
+        
+        # Set overall success status
+        results["success"] = len(results["errors"]) == 0
+        
+        if results["success"]:
+            logger.info(f"✅ Successfully cleared {results['sqlite_clips_removed']} SQLite clips")
+        else:
+            logger.warning(f"⚠️ Cleanup completed with {len(results['errors'])} errors")
+        
+        return results
+        
     def _cleanup_exported_clips(self, video_id: int, db_session=None) -> Dict[str, Any]:
         """
         Clean up clips that have been successfully exported to Supabase.
