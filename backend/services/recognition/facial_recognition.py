@@ -155,16 +155,33 @@ class FacialRecognitionService:
                 
                 # Get face embedding using face_recognition on the extracted face region
                 face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                
+                # Try with different face detection parameters
+                # First attempt with default parameters
                 face_locations = face_recognition.face_locations(face_rgb)
                 
+                # If that fails, try with a more lenient model (HOG instead of CNN)
                 if not face_locations:
-                    logger.warning(f"Failed to locate face in extracted region for face {i}")
-                    continue
-                    
-                face_encodings = face_recognition.face_encodings(face_rgb, face_locations)
+                    try:
+                        face_locations = face_recognition.face_locations(face_rgb, model="hog")
+                    except Exception as e:
+                        logger.debug(f"HOG model fallback failed: {str(e)}")
                 
-                if not face_encodings:
-                    logger.warning(f"Failed to extract embedding for face {i}")
+                # If still no face detected, try with the original box coordinates directly
+                if not face_locations:
+                    logger.info(f"Using original detection box as face location for face {i}")
+                    # Create a face location in (top, right, bottom, left) format from the box
+                    face_locations = [(y, x + w, y + h, x)]  # Convert from (x,y,w,h) to (top,right,bottom,left)
+                
+                # Try to generate face encodings
+                try:
+                    face_encodings = face_recognition.face_encodings(face_rgb, face_locations)
+                    
+                    if not face_encodings:
+                        logger.warning(f"Failed to extract embedding for face {i} despite multiple attempts")
+                        continue
+                except Exception as encoding_error:
+                    logger.warning(f"Error extracting face embedding: {str(encoding_error)}")
                     continue
                     
                 face_embedding = np.array(face_encodings[0])
@@ -259,11 +276,25 @@ class FacialRecognitionService:
                 # Convert to RGB for face_recognition
                 rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 
-                # Find face locations
-                face_locations = face_recognition.face_locations(rgb_image)
+                # Try multiple detection models in sequence for better results
+                face_locations = []
+                
+                # First try with default model (usually CNN if available)
+                try:
+                    face_locations = face_recognition.face_locations(rgb_image)
+                except Exception as e:
+                    logger.warning(f"Default face detection failed: {str(e)}")
+                
+                # If that fails, try with HOG model which is faster but less accurate
+                if not face_locations:
+                    try:
+                        logger.info(f"Trying HOG model for face detection in {image_path}")
+                        face_locations = face_recognition.face_locations(rgb_image, model="hog")
+                    except Exception as e:
+                        logger.warning(f"HOG face detection failed: {str(e)}")
                 
                 if not face_locations:
-                    logger.warning(f"No faces detected with face_recognition in {image_path}")
+                    logger.warning(f"No faces detected with any method in {image_path}")
                     return []
                 
                 face_results = []
@@ -286,15 +317,43 @@ class FacialRecognitionService:
             # This is crucial for accurate face detection
             self.face_detector.setInputSize((width, height))
             
-            # Resize image for display if needed
-            display_image = cv2.resize(image, (width, height))
-            
-            # Detect faces with YuNet
-            _, faces = self.face_detector.detect(image)
-            
-            # Check if faces were detected
-            if faces is None:
-                logger.warning(f"No faces detected with YuNet in {image_path}")
+            # Try YuNet detection with different parameters if needed
+            try:
+                # First attempt with default parameters
+                _, faces = self.face_detector.detect(image)
+                
+                # Check if faces were detected
+                if faces is None or len(faces) == 0:
+                    logger.warning(f"No faces detected with YuNet in {image_path} using default parameters")
+                    
+                    # Try with lower score threshold for better detection
+                    original_threshold = self.face_detector.getScoreThreshold()
+                    self.face_detector.setScoreThreshold(0.2)  # Lower threshold to detect more faces
+                    
+                    try:
+                        _, faces = self.face_detector.detect(image)
+                        logger.info(f"Retried YuNet detection with lower threshold: {0.2}")
+                    finally:
+                        # Restore original threshold
+                        self.face_detector.setScoreThreshold(original_threshold)
+                    
+                    if faces is None or len(faces) == 0:
+                        logger.warning(f"No faces detected with YuNet in {image_path} even with lower threshold")
+                        # Fall back to face_recognition library
+                        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                        face_locations = face_recognition.face_locations(rgb_image)
+                        
+                        if not face_locations:
+                            return []
+                        
+                        # Convert face_locations to YuNet-like format
+                        faces = []
+                        for top, right, bottom, left in face_locations:
+                            w = right - left
+                            h = bottom - top
+                            faces.append([left, top, w, h, 1.0])  # Confidence set to 1.0
+            except Exception as e:
+                logger.error(f"Error in YuNet face detection: {str(e)}")
                 return []
                 
             face_results = []
@@ -644,6 +703,19 @@ class FacialRecognitionService:
         Returns:
             Dict with identification results including both identified and unidentified faces
         """
+        # Track problematic frames to avoid repeated processing
+        problematic_frames_cache_file = f"{os.path.splitext(video_path)[0]}_problematic_frames.json"
+        problematic_frames = set()
+        
+        # Load previously identified problematic frames if the cache file exists
+        if os.path.exists(problematic_frames_cache_file):
+            try:
+                with open(problematic_frames_cache_file, 'r') as f:
+                    problematic_frames = set(json.load(f))
+                logger.info(f"Loaded {len(problematic_frames)} problematic frames from cache")
+            except Exception as e:
+                logger.warning(f"Failed to load problematic frames cache: {str(e)}")
+        
         logger.info(f"Identifying speakers in video: {video_path}")
         
         # Check if the video file exists
@@ -709,6 +781,18 @@ class FacialRecognitionService:
             unidentified_dir = os.path.join(video_dir, f"{video_name}_unidentified_faces")
             os.makedirs(unidentified_dir, exist_ok=True)
         
+        # Create a temporary file with problematic frames information if needed
+        problematic_frames_temp_file = None
+        if problematic_frames:
+            problematic_frames_temp_file = f"{os.path.splitext(video_path)[0]}_problematic_frames_temp.json"
+            try:
+                with open(problematic_frames_temp_file, 'w') as f:
+                    json.dump(list(problematic_frames), f)
+                logger.info(f"Saved {len(problematic_frames)} problematic frames to temp file for script")
+            except Exception as e:
+                logger.warning(f"Failed to save problematic frames temp file: {str(e)}")
+                problematic_frames_temp_file = None
+        
         # Prepare the command
         cmd = [
             "python",
@@ -723,6 +807,10 @@ class FacialRecognitionService:
         
         if store_unidentified and unidentified_dir and "identify_and_store_faces.py" in str(script_path):
             cmd.extend(["--unidentified-dir", unidentified_dir])
+        
+        # Add problematic frames file if available
+        if problematic_frames_temp_file:
+            cmd.extend(["--skip-frames", problematic_frames_temp_file])
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
@@ -753,6 +841,29 @@ class FacialRecognitionService:
                 "output_file": None,
                 "results_file": None
             }
+            
+        # Update problematic frames from results if available
+        try:
+            with open(results_file, 'r') as f:
+                results_data = json.load(f)
+                if 'problematic_frames' in results_data:
+                    new_problematic_frames = set(results_data['problematic_frames'])
+                    problematic_frames.update(new_problematic_frames)
+                    logger.info(f"Updated problematic frames with {len(new_problematic_frames)} new entries")
+                    
+                    # Save updated problematic frames cache
+                    with open(problematic_frames_cache_file, 'w') as cache_f:
+                        json.dump(list(problematic_frames), cache_f)
+                    logger.info(f"Saved {len(problematic_frames)} problematic frames to cache")
+        except Exception as e:
+            logger.warning(f"Failed to update problematic frames from results: {str(e)}")
+            
+        # Clean up temporary file
+        if problematic_frames_temp_file and os.path.exists(problematic_frames_temp_file):
+            try:
+                os.remove(problematic_frames_temp_file)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary problematic frames file: {str(e)}")
         
         logger.info(f"Speaker identification completed successfully")
             

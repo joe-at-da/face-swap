@@ -73,8 +73,16 @@ def save_unidentified_face(face_image, face_location, output_dir):
         face_filename = os.path.join(output_dir, f"unidentified_face_{face_id}.jpg")
         cv2.imwrite(face_filename, cv2.cvtColor(face, cv2.COLOR_RGB2BGR))
         
-        # Generate face encoding
-        face_encoding = face_recognition.face_encodings(face_image, [face_location])[0]
+        # Generate face encoding with proper error handling
+        try:
+            face_encodings = face_recognition.face_encodings(face_image, [face_location])
+            if not face_encodings:
+                logger.warning(f"Failed to locate face in extracted region at {face_location}")
+                return None, None
+            face_encoding = face_encodings[0]
+        except Exception as encoding_error:
+            logger.warning(f"Failed to generate face encoding: {str(encoding_error)}")
+            return None, None
         
         # Save the face metadata
         # Use just the filename without the path for easier access from the frontend
@@ -98,7 +106,7 @@ def save_unidentified_face(face_image, face_location, output_dir):
         logger.error(f"Error saving unidentified face: {str(e)}")
         return None, None
 
-def process_video(video_path, encodings_file, results_file, output_file=None, unidentified_dir=None):
+def process_video(video_path, encodings_file, results_file, output_file=None, unidentified_dir=None, skip_frames_file=None):
     """Process a video to identify known faces and store unidentified faces."""
     # Load known face encodings
     known_data = load_encodings(encodings_file)
@@ -107,6 +115,9 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             "success": False,
             "error": "Failed to load known face encodings"
         }
+    
+    # Track problematic frames that should be skipped
+    problematic_frames = set()
     
     # Open the video
     video = cv2.VideoCapture(video_path)
@@ -135,8 +146,19 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
         "speakers": [],
         "unidentified_faces": [],
         "total_frames": total_frames,
-        "processed_frames": 0
+        "processed_frames": 0,
+        "problematic_frames": []
     }
+    
+    # Load frames to skip if provided
+    frames_to_skip = set()
+    if skip_frames_file and os.path.exists(skip_frames_file):
+        try:
+            with open(skip_frames_file, 'r') as f:
+                frames_to_skip = set(json.load(f))
+            logger.info(f"Loaded {len(frames_to_skip)} frames to skip from {skip_frames_file}")
+        except Exception as e:
+            logger.warning(f"Error loading skip frames file: {str(e)}")
     
     # Process every 30th frame (adjust as needed for performance)
     frame_interval = 30
@@ -154,8 +176,10 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             
             frame_count += 1
             
-            # Process every Nth frame
-            if frame_count % frame_interval != 0:
+            # Process every Nth frame and skip problematic frames
+            if frame_count % frame_interval != 0 or frame_count in frames_to_skip:
+                if frame_count in frames_to_skip:
+                    logger.info(f"Skipping problematic frame {frame_count}")
                 if video_writer:
                     video_writer.write(frame)
                 continue
@@ -163,12 +187,57 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             # Convert frame from BGR to RGB (face_recognition uses RGB)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
+            # Skip this frame if it's been marked as problematic
+            if frame_count in problematic_frames:
+                logger.info(f"Skipping previously problematic frame {frame_count}")
+                if video_writer:
+                    video_writer.write(frame)
+                continue
+                
             # Find all faces in the frame
-            face_locations = face_recognition.face_locations(rgb_frame)
-            
+            try:
+                # First try with default model (CNN)
+                face_locations = face_recognition.face_locations(rgb_frame, model="cnn")
+                
+                # If no faces detected with CNN, try with HOG model as fallback
+                if not face_locations:
+                    logger.warning(f"No faces detected with CNN model in frame {frame_count}, trying HOG model")
+                    face_locations = face_recognition.face_locations(rgb_frame, model="hog")
+                
+                if not face_locations:
+                    logger.warning(f"No faces detected in frame {frame_count} with either model")
+                    # Mark as problematic for future runs
+                    results["problematic_frames"].append(frame_count)
+                    if video_writer:
+                        video_writer.write(frame)
+                    continue
+            except Exception as e:
+                logger.warning(f"Error detecting faces in frame {frame_count}: {str(e)}")
+                # Mark as problematic for future runs
+                results["problematic_frames"].append(frame_count)
+                if video_writer:
+                    video_writer.write(frame)
+                continue
+                
             if face_locations:
-                # Generate face encodings for all faces in the frame
-                face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+                # Generate face encodings with error handling
+                try:
+                    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+                    
+                    # Check if we got encodings for all detected faces
+                    if len(face_encodings) != len(face_locations):
+                        logger.warning(f"Got {len(face_encodings)} encodings for {len(face_locations)} faces in frame {frame_count}")
+                        # Mark frames with encoding issues as problematic
+                        results["problematic_frames"].append(frame_count)
+                        if video_writer:
+                            video_writer.write(frame)
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error generating face encodings in frame {frame_count}: {str(e)}")
+                    results["problematic_frames"].append(frame_count)
+                    if video_writer:
+                        video_writer.write(frame)
+                    continue
                 
                 # Identify faces
                 def identify_faces(frame, face_locations, known_face_encodings, known_face_names, known_parliament_ids=None):
@@ -265,7 +334,6 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                         # Save it if unidentified_dir is specified
                         if unidentified_dir:
                             # Generate a unique ID for this face if we haven't seen it before
-                            # For simplicity, we're just using the face location as a key
                             face_key = f"{face_location}"
                             
                             if face_key not in unidentified_faces:
@@ -282,6 +350,10 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                                             "face_location": face_location
                                         }]
                                     }
+                                else:
+                                    # If face extraction failed, mark this frame as problematic
+                                    logger.warning(f"Failed to save unidentified face in frame {frame_count}")
+                                    results["problematic_frames"].append(frame_count)
                             else:
                                 # We've seen this face before, just add another appearance
                                 timestamp = frame_count / fps
@@ -402,6 +474,7 @@ def main():
     parser.add_argument("--results", required=True, help="Path to save the results JSON file")
     parser.add_argument("--output", help="Path to save the output video with face boxes")
     parser.add_argument("--unidentified-dir", help="Directory to save unidentified faces")
+    parser.add_argument("--skip-frames", help="Path to a JSON file containing frame numbers to skip")
     
     args = parser.parse_args()
     
@@ -411,7 +484,8 @@ def main():
         args.encodings,
         args.results,
         args.output,
-        args.unidentified_dir
+        args.unidentified_dir,
+        args.skip_frames
     )
     
     if result["success"]:
