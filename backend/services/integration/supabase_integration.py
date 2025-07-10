@@ -698,11 +698,12 @@ class SupabaseIntegration:
             # Log the data we're working with
             logger.info(f"Processing {len(clips_data)} clips for Supabase export")
             if clips_data:
-                logger.debug(f"Sample clip data: {json_module.dumps(clips_data[0] if clips_data else {})}")
+                logger.debug(f"Sample clip data: {json_module.dumps(clips_data[0])}")
                 
                 # Log the keys available in the first clip
                 logger.info(f"Available keys in first clip: {list(clips_data[0].keys())}")
             else:
+                logger.debug("No clips data available for sample display")
                 logger.warning("No clips data available to process")
                 
             # Run the sync script proactively to ensure all member IDs have corresponding Speaker records
