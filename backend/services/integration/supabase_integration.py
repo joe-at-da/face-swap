@@ -658,22 +658,29 @@ class SupabaseIntegration:
             
             # Now try to read the clips export file
             try:
-                with open(clips_export_path, "r") as f:
-                    clips_data_raw = json_module.load(f)
+                # Check if file exists and has content
+                if os.path.exists(clips_export_path) and os.path.getsize(clips_export_path) > 0:
+                    with open(clips_export_path, "r") as f:
+                        clips_data_raw = json_module.load(f)
+                else:
+                    logger.warning(f"Clips export file is empty or does not exist at path: {clips_export_path}")
+                    # Initialize with empty array instead of failing
+                    clips_data_raw = []
+                    
+                    # Log file details for debugging
+                    file_exists = os.path.exists(clips_export_path)
+                    file_size = os.path.getsize(clips_export_path) if file_exists else 0
+                    logger.info(f"Export path validation - clips_export_path: exists={file_exists}, size={file_size}, path={clips_export_path}")
             except json_module.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in clips export file: {str(e)}")
-                return {
-                    "success": False,
-                    "error": f"Invalid JSON in clips export file: {str(e)}",
-                    "export_paths": result["export_paths"]
-                }
+                # Initialize with empty array instead of failing
+                clips_data_raw = []
+                logger.warning("Proceeding with empty clips data due to JSON decode error")
             except Exception as e:
                 logger.error(f"Error reading clips export file: {str(e)}")
-                return {
-                    "success": False,
-                    "error": f"Error reading clips export file: {str(e)}",
-                    "export_paths": result["export_paths"]
-                }
+                # Initialize with empty array instead of failing
+                clips_data_raw = []
+                logger.warning("Proceeding with empty clips data due to file read error")
                 
             # Sanitize clips data to ensure it's JSON serializable
             from datetime import datetime, date
@@ -696,12 +703,17 @@ class SupabaseIntegration:
             clips_data = sanitize_for_json(clips_data_raw)
             
             # Log the data we're working with
-            logger.info(f"Processing {len(clips_data)} clips for Supabase export")
-            if clips_data:
-                logger.debug(f"Sample clip data: {json_module.dumps(clips_data[0])}")
-                
-                # Log the keys available in the first clip
-                logger.info(f"Available keys in first clip: {list(clips_data[0].keys())}")
+            clip_count = len(clips_data) if clips_data else 0
+            logger.info(f"Processing {clip_count} clips for Supabase export")
+            
+            # Only try to access clips_data[0] if we have at least one clip
+            if clip_count > 0:
+                try:
+                    logger.debug(f"Sample clip data: {json_module.dumps(clips_data[0])}")
+                    logger.info(f"Available keys in first clip: {list(clips_data[0].keys())}")
+                except (IndexError, KeyError) as e:
+                    logger.error(f"Error accessing clip data: {str(e)}")
+                    logger.debug(f"Raw clips_data type: {type(clips_data)}, content: {clips_data}")
             else:
                 logger.debug("No clips data available for sample display")
                 logger.warning("No clips data available to process")
@@ -934,25 +946,29 @@ class SupabaseIntegration:
                 # Set a flag to indicate no clips were found
                 no_clips_found = True
                 # If we have no simplified clips but had raw clips, log the first raw clip for debugging
-                if clips_data:
-                    logger.debug(f"First raw clip that was filtered out: {json_module.dumps(clips_data[0])}")
-                    
-                    # Check what required fields are missing from the first raw clip
-                    first_clip = clips_data[0]
-                    missing_in_first = []
-                    for req_field in required_fields:
-                        if req_field not in first_clip:
-                            # Check if it could be mapped from another field
-                            mapped = False
-                            for orig_field, target_field in field_mapping.items():
-                                if target_field == req_field and orig_field in first_clip:
-                                    mapped = True
-                                    break
+                if clips_data and len(clips_data) > 0:
+                    try:
+                        logger.debug(f"First raw clip that was filtered out: {json_module.dumps(clips_data[0])}")
+                        
+                        # Check what required fields are missing from the first raw clip
+                        first_clip = clips_data[0]
+                        missing_in_first = []
+                        for req_field in required_fields:
+                            if req_field not in first_clip:
+                                # Check if it could be mapped from another field
+                                mapped = False
+                                for orig_field, target_field in field_mapping.items():
+                                    if target_field == req_field and orig_field in first_clip:
+                                        mapped = True
+                                        break
                             if not mapped:
                                 missing_in_first.append(req_field)
-                    
-                    logger.warning(f"First raw clip is missing these required fields: {missing_in_first}")
-                    logger.warning(f"Available fields in first raw clip: {list(first_clip.keys())}")
+                        
+                        logger.warning(f"First raw clip is missing these required fields: {missing_in_first}")
+                        logger.warning(f"Available fields in first raw clip: {list(first_clip.keys())}")
+                    except (IndexError, KeyError) as e:
+                        logger.error(f"Error accessing first raw clip: {str(e)}")
+                        logger.debug(f"Raw clips_data type: {type(clips_data)}, content: {clips_data}")
                     
                     # Instead of creating debug clips, log the issue and run the sync script automatically
                     logger.warning("No valid clips found. This may be due to member_id mapping issues.")
