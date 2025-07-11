@@ -424,7 +424,9 @@ class ParliamentMemberMatcher:
             return {'matched': False}
         
         logger.info(f"Best match {best_match['name']} with adjusted confidence {best_match['adjusted_confidence']:.4f} below threshold {confidence_threshold}")
-        return {'matched': False}    def match_unidentified_speakers(self, clip_id: str) -> Dict[str, Any]:
+        return {'matched': False}
+
+    def match_unidentified_speakers(self, clip_id: str) -> Dict[str, Any]:
         """
         Match unidentified speakers in a video clip to parliament members
         
