@@ -82,6 +82,12 @@ class ParliamentMemberMatcher:
         self.member_embeddings = {}
         self.member_cache_file = os.path.join(self.cache_dir, "parliament_members.json")
         
+        # Initialize member cooldown tracking for diversity promotion
+        self.member_match_history = {}
+        self.member_match_counts = {}
+        self.last_matched_member_id = None
+        self.consecutive_same_matches = 0
+        
         # Always load members on initialization
         self.load_parliament_members()
     
@@ -262,6 +268,11 @@ class ParliamentMemberMatcher:
         
         # Track all matches for debugging
         all_matches = []
+        original_confidences = {}
+        adjusted_confidences = {}
+        
+        # Get current timestamp for cooldown calculations
+        current_time = datetime.now().timestamp()
         
         # Process all members
         for member in self.members:
@@ -288,52 +299,117 @@ class ParliamentMemberMatcher:
             member_embedding = normalize_embedding(member_embedding)
             
             # Compute similarity directly with normalized embeddings
-            confidence = float(np.dot(face_embedding, member_embedding))
+            original_confidence = float(np.dot(face_embedding, member_embedding))
+            original_confidences[member_id] = original_confidence
             
-            # Add to all matches for debugging
+            # Apply cooldown and diversity adjustments
+            adjusted_confidence = original_confidence
+            cooldown_factor = 1.0
+            diversity_boost = 0.0
+            
+            # Apply cooldown if this member was recently matched
+            if member_id in self.member_match_history:
+                last_match_time = self.member_match_history[member_id]
+                time_since_last_match = current_time - last_match_time
+                
+                # Cooldown effect decreases over time (30 seconds cooldown period)
+                if time_since_last_match < 30:
+                    cooldown_factor = 0.7 + (0.3 * (time_since_last_match / 30))
+                    adjusted_confidence *= cooldown_factor
+            
+            # Apply diversity boost for members who haven't been matched often
+            match_count = self.member_match_counts.get(member_id, 0)
+            if match_count == 0:
+                # Significant boost for never-matched members
+                diversity_boost = 0.05
+            elif match_count < 3:
+                # Smaller boost for rarely-matched members
+                diversity_boost = 0.03
+            
+            # Apply extra penalty if this is the same as the last matched member
+            if member_id == self.last_matched_member_id and self.consecutive_same_matches > 2:
+                # Increasing penalty for consecutive matches of the same member
+                repeat_penalty = min(0.1 * (self.consecutive_same_matches - 2), 0.3)
+                adjusted_confidence *= (1.0 - repeat_penalty)
+            
+            # Apply the diversity boost
+            adjusted_confidence += diversity_boost
+            
+            # Store the adjusted confidence
+            adjusted_confidences[member_id] = adjusted_confidence
+            
+            # Add to all matches for debugging with both original and adjusted confidence
             all_matches.append({
                 'member_id': member_id,
                 'name': member_name,
-                'confidence': confidence
+                'original_confidence': original_confidence,
+                'adjusted_confidence': adjusted_confidence,
+                'cooldown_factor': cooldown_factor,
+                'diversity_boost': diversity_boost,
+                'confidence': adjusted_confidence  # Use adjusted confidence for sorting
             })
             
-            # Update best match if this is better
-            if confidence > best_confidence:
+            # Update best match if this is better (using adjusted confidence)
+            if adjusted_confidence > best_confidence:
                 # Current best becomes second best
                 second_best_confidence = best_confidence
                 # Update best
-                best_confidence = confidence
+                best_confidence = adjusted_confidence
                 best_match = {
                     'member_id': member_id,
                     'name': member_name,
-                    'confidence': confidence
+                    'confidence': original_confidence,  # Store original confidence
+                    'adjusted_confidence': adjusted_confidence  # Also store adjusted confidence
                 }
             # Update second best if this is better than current second best but not better than best
-            elif confidence > second_best_confidence:
-                second_best_confidence = confidence
+            elif adjusted_confidence > second_best_confidence:
+                second_best_confidence = adjusted_confidence
         
-        # Sort all matches for debugging
+        # Sort all matches for debugging (by adjusted confidence)
         all_matches.sort(key=lambda x: x['confidence'], reverse=True)
         
-        # Log top 5 matches for debugging
+        # Log top 5 matches for debugging with adjustment details
         if all_matches:
-            logger.info(f"Top 5 matches:")
+            logger.info(f"Top 5 matches (with diversity adjustments):")
             for i, match in enumerate(all_matches[:5]):
-                logger.info(f"{i+1}. {match['name']} (ID: {match['member_id']}): {match['confidence']:.6f}")
+                logger.info(f"{i+1}. {match['name']} (ID: {match['member_id']}): "
+                          f"orig={match['original_confidence']:.4f}, "
+                          f"adj={match['adjusted_confidence']:.4f}, "
+                          f"cooldown={match['cooldown_factor']:.2f}, "
+                          f"boost={match['diversity_boost']:.2f}")
         
-        # Calculate confidence gap between best and second best
+        # Calculate confidence gap between best and second best (using adjusted confidences)
         confidence_gap = best_confidence - second_best_confidence
         
         # Check if the best match is above the threshold and has sufficient gap
         min_gap = 0.1  # Require at least 0.1 gap for reliable matching
-        if best_match and best_match['confidence'] >= confidence_threshold:
+        if best_match and best_match['adjusted_confidence'] >= confidence_threshold:
             # Add confidence gap to the result
             best_match['matched'] = True
             best_match['confidence_gap'] = confidence_gap
             
-            # Log match details with confidence gap
-            logger.info(f"Matched {best_match['name']} with confidence {best_match['confidence']:.4f} "
+            # Update match history for this member
+            member_id = best_match['member_id']
+            self.member_match_history[member_id] = current_time
+            self.member_match_counts[member_id] = self.member_match_counts.get(member_id, 0) + 1
+            
+            # Track consecutive matches of the same member
+            if member_id == self.last_matched_member_id:
+                self.consecutive_same_matches += 1
+                logger.info(f"Consecutive match #{self.consecutive_same_matches} for member {member_id}")
+            else:
+                self.consecutive_same_matches = 1
+                self.last_matched_member_id = member_id
+            
+            # Log match details with confidence gap and adjustments
+            logger.info(f"Matched {best_match['name']} with original confidence {best_match['confidence']:.4f}, "
+                      f"adjusted to {best_match['adjusted_confidence']:.4f} "
                       f"(threshold: {confidence_threshold:.4f}, gap: {confidence_gap:.4f})")
+            
+            # Log diversity statistics
+            total_matches = sum(self.member_match_counts.values())
+            unique_members = len(self.member_match_counts)
+            logger.info(f"Diversity stats: {unique_members} unique members matched out of {total_matches} total matches")
             
             # If gap is too small, log a warning but still return the match
             if confidence_gap < min_gap:
@@ -347,9 +423,8 @@ class ParliamentMemberMatcher:
             logger.warning(f"No match found above threshold {confidence_threshold}")
             return {'matched': False}
         
-        logger.info(f"Best match {best_match['name']} with confidence {best_match['confidence']:.4f} below threshold {confidence_threshold}")
-        return {'matched': False}
-    def match_unidentified_speakers(self, clip_id: str) -> Dict[str, Any]:
+        logger.info(f"Best match {best_match['name']} with adjusted confidence {best_match['adjusted_confidence']:.4f} below threshold {confidence_threshold}")
+        return {'matched': False}    def match_unidentified_speakers(self, clip_id: str) -> Dict[str, Any]:
         """
         Match unidentified speakers in a video clip to parliament members
         
