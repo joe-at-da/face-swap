@@ -1613,12 +1613,12 @@ class ParliamentClipsIntegrationService:
                         supabase_verification = False
                         logger.warning(f"Had {len(clips)} clips to export but Supabase reports 0 clips created")
                 
-                # Only proceed with cleanup if Supabase verification passes
+                # Check Supabase verification status
                 if supabase_verification:
-                    logger.info(f"Export successful and verified, cleaning up clips from databases")
-                    cleanup_result = self._cleanup_exported_clips(video_id, db)  # Pass the database session
-                    logger.info(f"Cleanup result: {cleanup_result}")
-                    return {"success": True, "supabase_result": result, "cleanup_result": cleanup_result, 
+                    # Skip cleanup to preserve clips in SQLite database for future reference
+                    logger.info(f"Export successful and verified, but SKIPPING cleanup to preserve clips in SQLite database")
+                    logger.info(f"This ensures clips remain available for future reference and debugging")
+                    return {"success": True, "supabase_result": result, "cleanup_skipped": True, 
                             "export_paths": {
                                 "video_export_path": video_export_path, 
                                 "clips_export_path": clips_export_path
