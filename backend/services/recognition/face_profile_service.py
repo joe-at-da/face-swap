@@ -274,16 +274,17 @@ class FaceProfileService:
                             
                             # Size component (bigger is better, up to a point)
                             size_score = min(face_size / (frame_width * frame_height) * 20, 1.0)
-                            quality_score += size_score * 0.4
+                            quality_score += size_score * 0.3
                             
                             # Center proximity component (closer to center is better)
                             if prioritize_center:
-                                center_score = 1.0 - min(distance_from_center * 2, 1.0)
-                                quality_score += center_score * 0.3
+                                # Enhanced center prioritization with stronger weighting and sharper falloff
+                                center_score = 1.0 - min(distance_from_center * 2.5, 1.0)  # Sharper falloff
+                                quality_score += center_score * 0.5  # Increased weight from 0.3 to 0.5
                             
                             # Sharpness component (sharper is better)
                             sharpness_score = min(sharpness / 1000, 1.0)
-                            quality_score += sharpness_score * 0.3
+                            quality_score += sharpness_score * 0.2  # Reduced weight from 0.3 to 0.2
                             
                             timestamp = current_frame / fps
                             

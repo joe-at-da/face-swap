@@ -730,11 +730,11 @@ class MultimodalRecognitionService:
                 return 0.0
                 
     def _process_segments_with_intelligent_face_extraction(self, segments: List[Dict], video_path: str, 
-                                            output_dir: str, video_id: int, db: Session,
-                                            faces_by_time: Dict, faces_by_speaker: Dict, 
-                                            recognition_events: List) -> None:
+                                                 output_dir: str, video_id: int, db: Session,
+                                                 faces_by_time: Dict, faces_by_speaker: Dict, 
+                                                 recognition_events: List) -> None:
         """
-        Process segments using intelligent face extraction method.
+        Process segments using intelligent face extraction method with enhanced center-frame detection.
         
         Args:
             segments: List of transcription segments
@@ -751,14 +751,14 @@ class MultimodalRecognitionService:
             video_dir = os.path.join(output_dir, f"video_{video_id}")
             os.makedirs(video_dir, exist_ok=True)
             
-            # Extract high-quality faces from the entire video
-            logger.info(f"Extracting high-quality faces from video {video_id}")
+            # Extract high-quality faces from the entire video with enhanced center-frame prioritization
+            logger.info(f"Extracting high-quality faces from video {video_id} with enhanced center-frame prioritization")
             extraction_result = self.face_profile_service.extract_faces_from_video(
                 video_path=video_path,
                 output_dir=video_dir,
-                interval=1.0,  # Base interval, but our method will select best frames
+                interval=0.5,  # Reduced interval for more frequent sampling
                 min_confidence=0.6,
-                prioritize_center=True,
+                prioritize_center=True,  # Enable center-frame prioritization
                 select_best_frames=True
             )
             
@@ -771,9 +771,15 @@ class MultimodalRecognitionService:
                 matched_faces = 0
                 processed_faces = set()  # Track processed faces to avoid duplicates
                 
+                # Group faces by segment for better speaker attribution
+                segment_faces = {}  # Dictionary to store faces by segment
+                
+                # First pass: Group faces by segment and collect quality scores
+                logger.info("First pass: Grouping faces by segment and collecting quality scores")
                 for face_info in face_data:
                     face_time = face_info.get("timestamp", 0)
                     face_path = face_info.get("path", "")
+                    quality_score = face_info.get("quality_score", 0)
                     
                     # Skip if we've already processed this face (deduplication)
                     if face_path in processed_faces:
@@ -787,15 +793,44 @@ class MultimodalRecognitionService:
                         end_time = segment.get("end", 0)
                         if start_time <= face_time <= end_time:
                             matching_segment = segment
+                            segment_id = segment.get("id", f"{start_time}-{end_time}")
+                            
+                            # Add to segment faces dictionary
+                            if segment_id not in segment_faces:
+                                segment_faces[segment_id] = []
+                            
+                            # Store face info with segment
+                            segment_faces[segment_id].append({
+                                "face_info": face_info,
+                                "face_time": face_time,
+                                "face_path": face_path,
+                                "quality_score": quality_score,
+                                "segment": segment
+                            })
                             break
+                
+                # Second pass: Process each segment and select the best face based on quality score
+                logger.info("Second pass: Processing segments and selecting best faces based on quality scores")
+                for segment_id, faces in segment_faces.items():
+                    if not faces:
+                        continue
+                        
+                    # Sort faces by quality score (highest first)
+                    faces.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
                     
-                    if matching_segment and os.path.exists(face_path):
+                    # Get the best face (highest quality score, prioritizing center-frame)
+                    best_face = faces[0]
+                    face_path = best_face.get("face_path")
+                    face_time = best_face.get("face_time")
+                    matching_segment = best_face.get("segment")
+                    
+                    logger.info(f"Selected best face for segment {segment_id} with quality score {best_face.get('quality_score', 0):.2f}")
+                    
+                    if os.path.exists(face_path):
                         # Process this high-quality face
                         logger.info(f"Processing high-quality face at {face_time:.2f}s")
                         
                         # Identify speaker in the high-quality face image
-                        # Pass timestamp and video_id for temporal consistency checks
-                        # Using very low threshold as requested to ensure we capture all potential matches
                         face_result = self.identify_speaker_in_frame(
                             db, 
                             face_path, 
@@ -811,7 +846,7 @@ class MultimodalRecognitionService:
                             speaker = matching_segment.get("speaker", "unknown")
                             face_data["segment_speaker"] = speaker
                             
-                            # Add to recognition events with comprehensive structure
+                            # Add to recognition events with comprehensive structure and enhanced quality score
                             recognition_event = {
                                 "type": "speaker",
                                 "start_time": face_time,
@@ -821,21 +856,26 @@ class MultimodalRecognitionService:
                                 "confidence": face_data.get("confidence", 0.0),
                                 "face_image_url": face_path,
                                 "text": matching_segment.get("text", ""),
-                                "recognition_method": "facial",
+                                "recognition_method": "facial_center_frame",  # Updated method to indicate center-frame prioritization
                                 "matched_by": face_data.get("matched_by", "unknown"),
                                 "profile_id": face_data.get("profile_id"),
                                 "segment_speaker": speaker,
                                 "time": face_time,  # Add time field for backward compatibility
-                                "quality_score": face_info.get("quality_score", 0)
+                                "quality_score": best_face.get("quality_score", 0),  # Use the quality score from best face
+                                "center_frame_priority": True  # Flag to indicate this was selected with center-frame prioritization
                             }
                             
                             recognition_events.append(recognition_event)
                             matched_faces += 1
                             
-                            # Store face by time for later reference
+                            # Store face by time for later reference with enhanced quality score
                             time_key = int(face_time)
                             if time_key not in faces_by_time:
                                 faces_by_time[time_key] = []
+                            
+                            # Add quality score and center-frame info to face data
+                            face_data["quality_score"] = best_face.get("quality_score", 0)
+                            face_data["center_frame_priority"] = True
                             faces_by_time[time_key].append(face_data)
                             
                             # Store face by speaker for later correlation
@@ -845,18 +885,27 @@ class MultimodalRecognitionService:
                             
                             # Mark this face as processed to avoid duplicates
                             processed_faces.add(face_path)
+                            
+                            # Log detailed information about the selected face
+                            logger.info(f"Selected face for segment {segment_id}: "
+                                       f"member_id={face_data.get('member_id')}, "
+                                       f"name={face_data.get('name', 'Unknown')}, "
+                                       f"quality_score={best_face.get('quality_score', 0):.2f}, "
+                                       f"confidence={face_data.get('confidence', 0.0):.2f}")
                         else:
                             logger.warning(f"Failed to identify speaker in frame {face_path}: {face_result.get('error', 'Unknown error')}")
                     else:
-                        if not matching_segment:
-                            logger.debug(f"No matching segment found for face at {face_time:.2f}s")
                         if not os.path.exists(face_path):
                             logger.warning(f"Face image file not found: {face_path}")
+                
+                # Perform timeline-based speaker analysis to improve attribution
+                logger.info("Performing timeline-based speaker analysis to improve attribution")
+                self._perform_timeline_speaker_analysis(recognition_events, segments)
                 
                 logger.info(f"Matched {matched_faces} faces to segments out of {extracted_faces} extracted faces")
                 logger.info(f"Processed {len(processed_faces)} unique faces (after deduplication)")
                 
-                # If we didn't find any faces, log a warning
+                # If we didn't find any faces, log a warning but continue processing
                 if matched_faces == 0:
                     logger.warning("No faces matched to segments. Check face extraction and matching parameters.")
             else:
@@ -866,6 +915,113 @@ class MultimodalRecognitionService:
             logger.exception(f"Error in _process_segments_with_intelligent_face_extraction: {str(e)}")
             # Continue processing despite errors to maintain robustness
             
+    def _perform_timeline_speaker_analysis(self, recognition_events: List[Dict], segments: List[Dict]) -> None:
+        """
+        Perform timeline-based speaker analysis to improve attribution accuracy.
+        
+        This method analyzes the timeline of speakers to detect transitions and improve
+        attribution of transcripts to speakers, especially prioritizing center-frame speakers.
+        
+        Args:
+            recognition_events: List of recognition events
+            segments: List of transcription segments
+        """
+        try:
+            logger.info("Starting timeline-based speaker analysis")
+            
+            # Sort events by time for timeline analysis
+            sorted_events = sorted(recognition_events, key=lambda x: x.get("start_time", 0))
+            
+            # Group events by segment time ranges
+            segment_events = {}
+            for segment in segments:
+                segment_id = segment.get("id", f"{segment.get('start', 0)}-{segment.get('end', 0)}")
+                segment_events[segment_id] = []
+            
+            # Assign events to segments
+            for event in sorted_events:
+                start_time = event.get("start_time", 0)
+                for segment in segments:
+                    segment_start = segment.get("start", 0)
+                    segment_end = segment.get("end", 0)
+                    if segment_start <= start_time <= segment_end:
+                        segment_id = segment.get("id", f"{segment_start}-{segment_end}")
+                        segment_events[segment_id].append(event)
+                        break
+            
+            # Analyze each segment for speaker transitions
+            for segment_id, events in segment_events.items():
+                if not events:
+                    continue
+                    
+                # Sort events by quality score and center-frame priority
+                events.sort(key=lambda x: (x.get("center_frame_priority", False), x.get("quality_score", 0)), reverse=True)
+                
+                # Select the best event (highest quality, center-frame prioritized)
+                best_event = events[0]
+                
+                # Update all events in this segment with the best speaker information
+                best_member_id = best_event.get("member_id")
+                best_name = best_event.get("name", "Unknown")
+                
+                if best_member_id:
+                    for event in events:
+                        # Only update events with lower quality or no member_id
+                        if (not event.get("member_id") or 
+                            event.get("quality_score", 0) < best_event.get("quality_score", 0)):
+                            event["member_id"] = best_member_id
+                            event["name"] = best_name
+                            event["updated_by_timeline"] = True
+                            
+                    logger.info(f"Timeline analysis: Updated segment {segment_id} with best speaker: "
+                              f"member_id={best_member_id}, name={best_name}, "
+                              f"quality_score={best_event.get('quality_score', 0):.2f}")
+            
+            # Analyze speaker transitions across adjacent segments
+            segment_ids = list(segment_events.keys())
+            segment_ids.sort(key=lambda x: float(x.split('-')[0]) if '-' in x else 0)
+            
+            for i in range(1, len(segment_ids)):
+                prev_id = segment_ids[i-1]
+                curr_id = segment_ids[i]
+                
+                prev_events = segment_events[prev_id]
+                curr_events = segment_events[curr_id]
+                
+                if not prev_events or not curr_events:
+                    continue
+                
+                # Get best events from each segment
+                prev_best = max(prev_events, key=lambda x: x.get("quality_score", 0), default=None)
+                curr_best = max(curr_events, key=lambda x: x.get("quality_score", 0), default=None)
+                
+                if prev_best and curr_best:
+                    # Check if there's a speaker transition
+                    prev_member_id = prev_best.get("member_id")
+                    curr_member_id = curr_best.get("member_id")
+                    
+                    # If current segment has no identified speaker but previous does, and they're close in time
+                    # (within 2 seconds), assume it's the same speaker continuing
+                    if prev_member_id and not curr_member_id:
+                        prev_end = float(prev_id.split('-')[1]) if '-' in prev_id else 0
+                        curr_start = float(curr_id.split('-')[0]) if '-' in curr_id else 0
+                        
+                        if curr_start - prev_end < 2.0:  # Within 2 seconds
+                            for event in curr_events:
+                                event["member_id"] = prev_member_id
+                                event["name"] = prev_best.get("name", "Unknown")
+                                event["updated_by_timeline"] = True
+                                event["timeline_continuity"] = True
+                            
+                            logger.info(f"Timeline continuity: Updated segment {curr_id} with previous speaker: "
+                                      f"member_id={prev_member_id}, name={prev_best.get('name', 'Unknown')}")
+            
+            logger.info("Completed timeline-based speaker analysis")
+            
+        except Exception as e:
+            logger.exception(f"Error in timeline-based speaker analysis: {str(e)}")
+            # Continue processing despite errors
+    
     def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.1, timestamp: float = None, video_id: str = None) -> Dict[str, Any]:
         """Identify speakers in a frame using facial recognition and ParliamentMemberMatcher."""
         try:
