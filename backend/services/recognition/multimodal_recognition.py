@@ -834,7 +834,7 @@ class MultimodalRecognitionService:
                         face_result = self.identify_speaker_in_frame(
                             db, 
                             face_path, 
-                            threshold=0.1,  # Lower threshold to match more faces
+                            threshold=0.45,  # Higher threshold for more accurate matches
                             timestamp=face_time, 
                             video_id=str(video_id)  # Convert to string as expected by the matcher
                         )
@@ -954,8 +954,11 @@ class MultimodalRecognitionService:
                 if not events:
                     continue
                     
-                # Sort events by quality score and center-frame priority
-                events.sort(key=lambda x: (x.get("center_frame_priority", False), x.get("quality_score", 0)), reverse=True)
+                # Sort events by confidence gap, quality score and center-frame priority
+                events.sort(key=lambda x: (x.get("center_frame_priority", False), 
+                                        x.get("confidence_gap", 0), 
+                                        x.get("quality_score", 0)), 
+                          reverse=True)
                 
                 # Select the best event (highest quality, center-frame prioritized)
                 best_event = events[0]
@@ -1022,7 +1025,7 @@ class MultimodalRecognitionService:
             logger.exception(f"Error in timeline-based speaker analysis: {str(e)}")
             # Continue processing despite errors
     
-    def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.1, timestamp: float = None, video_id: str = None) -> Dict[str, Any]:
+    def identify_speaker_in_frame(self, db: Session, frame_path: str, threshold: float = 0.45, timestamp: float = None, video_id: str = None) -> Dict[str, Any]:
         """Identify speakers in a frame using facial recognition and ParliamentMemberMatcher."""
         try:
             logger.info(f"===== IDENTIFYING SPEAKER IN FRAME: {frame_path} =====")
@@ -1323,7 +1326,7 @@ class MultimodalRecognitionService:
                         face_result = self.identify_speaker_in_frame(
                             db, 
                             frame_path, 
-                            threshold=0.1,  # Lower threshold to match more faces
+                            threshold=0.45,  # Higher threshold for more accurate matches
                             timestamp=frame_time, 
                             video_id=str(video_id)  # Convert to string as expected by the matcher
                         )

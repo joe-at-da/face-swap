@@ -255,9 +255,10 @@ class ParliamentMemberMatcher:
             face_embedding = np.array(face_embedding)
         face_embedding = normalize_embedding(face_embedding)
         
-        # Find the best match
+        # Find the best match and track second best for confidence gap analysis
         best_match = None
         best_confidence = 0
+        second_best_confidence = 0
         
         # Track all matches for debugging
         all_matches = []
@@ -298,12 +299,18 @@ class ParliamentMemberMatcher:
             
             # Update best match if this is better
             if confidence > best_confidence:
+                # Current best becomes second best
+                second_best_confidence = best_confidence
+                # Update best
                 best_confidence = confidence
                 best_match = {
                     'member_id': member_id,
                     'name': member_name,
                     'confidence': confidence
                 }
+            # Update second best if this is better than current second best but not better than best
+            elif confidence > second_best_confidence:
+                second_best_confidence = confidence
         
         # Sort all matches for debugging
         all_matches.sort(key=lambda x: x['confidence'], reverse=True)
@@ -314,10 +321,25 @@ class ParliamentMemberMatcher:
             for i, match in enumerate(all_matches[:5]):
                 logger.info(f"{i+1}. {match['name']} (ID: {match['member_id']}): {match['confidence']:.6f}")
         
-        # Check if the best match is above the threshold
+        # Calculate confidence gap between best and second best
+        confidence_gap = best_confidence - second_best_confidence
+        
+        # Check if the best match is above the threshold and has sufficient gap
+        min_gap = 0.1  # Require at least 0.1 gap for reliable matching
         if best_match and best_match['confidence'] >= confidence_threshold:
+            # Add confidence gap to the result
             best_match['matched'] = True
-            logger.info(f"Matched {best_match['name']} with confidence {best_match['confidence']:.4f} (threshold: {confidence_threshold:.4f})")
+            best_match['confidence_gap'] = confidence_gap
+            
+            # Log match details with confidence gap
+            logger.info(f"Matched {best_match['name']} with confidence {best_match['confidence']:.4f} "
+                      f"(threshold: {confidence_threshold:.4f}, gap: {confidence_gap:.4f})")
+            
+            # If gap is too small, log a warning but still return the match
+            if confidence_gap < min_gap:
+                logger.warning(f"Low confidence gap ({confidence_gap:.4f}) for match to {best_match['name']}. "
+                             f"Second best confidence: {second_best_confidence:.4f}")
+            
             return best_match
         
         # If no match found, return transparent error
