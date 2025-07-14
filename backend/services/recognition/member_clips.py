@@ -225,9 +225,12 @@ def save_member_clips_to_supabase(
     def is_sentence_complete(text):
         """Check if text appears to end with sentence-ending punctuation."""
         if not text:
-            return True
-        # Check for sentence-ending punctuation
-        return text.rstrip().endswith(('.', '!', '?', ':', '"', '"'))
+            return False
+        # Strip whitespace and check for sentence-ending punctuation
+        text = text.strip()
+        if not text:
+            return False
+        return text[-1] in ['.', '!', '?', ':', '"']
     
     # Merge segments by the same speaker if they are close together (less than 60 seconds apart)
     # or if the previous segment's transcript doesn't end with sentence-ending punctuation
@@ -278,20 +281,39 @@ def save_member_clips_to_supabase(
             current = segments[i]
             next_seg = segments[i + 1]
             
-            # If same speaker and current segment doesn't end with sentence-ending punctuation
+            should_merge = False
+            
+            # Case 1: Same speaker with incomplete sentence
             if (current["speaker_id"] == next_seg["speaker_id"] and 
                 not is_sentence_complete(current["transcript"])):
                 
                 # Merge with next segment if gap is reasonable (within 2 minutes)
-                if next_seg["start_time"] - current["end_time"] <= 120:  # 2 minute max
-                    merged = current.copy()
-                    merged["end_time"] = next_seg["end_time"]
-                    merged["transcript"] += " " + next_seg["transcript"]
-                    merged["confidence"] = max(current["confidence"], next_seg["confidence"])
-                    
-                    result.append(merged)
-                    i += 2  # Skip both segments as they're now merged
-                    continue
+                if next_seg["start_time"] - current["end_time"] <= EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE:
+                    should_merge = True
+            
+            # Case 2: Check for sentence continuity between segments
+            elif (current["speaker_id"] == next_seg["speaker_id"] and
+                  next_seg["start_time"] - current["end_time"] <= MAX_GAP_SECONDS):
+                  
+                # Check if they might be part of the same speech (look for sentence continuity)
+                if current["transcript"] and next_seg["transcript"]:
+                    # If the next segment doesn't start with a capital letter, it's likely a continuation
+                    if len(next_seg["transcript"]) > 0 and not next_seg["transcript"].strip()[0].isupper():
+                        should_merge = True
+            
+            if should_merge:
+                merged = current.copy()
+                merged["end_time"] = next_seg["end_time"]
+                if next_seg["transcript"]:
+                    if merged["transcript"]:
+                        merged["transcript"] += " " + next_seg["transcript"]
+                    else:
+                        merged["transcript"] = next_seg["transcript"]
+                merged["confidence"] = max(current["confidence"], next_seg["confidence"])
+                
+                result.append(merged)
+                i += 2  # Skip both segments as they're now merged
+                continue
                     
             result.append(current)
             i += 1

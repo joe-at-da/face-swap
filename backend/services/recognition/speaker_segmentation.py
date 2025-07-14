@@ -73,9 +73,12 @@ class SpeakerSegmentation:
                     def is_sentence_complete(text):
                         """Check if text appears to end with sentence-ending punctuation."""
                         if not text:
-                            return True
-                        # Check for sentence-ending punctuation
-                        return text.rstrip().endswith(('.', '!', '?', ':', '"', '"'))
+                            return False
+                        # Strip whitespace and check for sentence-ending punctuation
+                        text = text.strip()
+                        if not text:
+                            return False
+                        return text[-1] in ['.', '!', '?', ':', '"']
                     
                     # Check if current segment's transcript is a complete sentence
                     sentence_complete = is_sentence_complete(current_segment.get("transcript", ""))
@@ -118,43 +121,71 @@ class SpeakerSegmentation:
             # Sort segments by start time
             speaker_segments.sort(key=lambda x: x["start_time"])
             
-            # Post-process segments to further avoid splitting sentences
+            # Post-process segments to avoid splitting sentences
             def post_process_segments(segments):
                 """Post-process segments to avoid splitting sentences."""
                 result = []
                 i = 0
+                
+                # Constants for time thresholds
+                MAX_GAP_SECONDS = 60
+                EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE = 120  # 2 minutes for incomplete sentences
+                
+                # Helper function to check if a transcript appears to end with sentence-ending punctuation
+                def is_sentence_complete(text):
+                    """Check if text appears to end with sentence-ending punctuation."""
+                    if not text:
+                        return False
+                    # Strip whitespace and check for sentence-ending punctuation
+                    text = text.strip()
+                    if not text:
+                        return False
+                    return text[-1] in ['.', '!', '?', ':', '"']
+                
                 while i < len(segments) - 1:
                     current = segments[i]
                     next_seg = segments[i + 1]
                     
-                    # Helper function to check if a transcript appears to end with sentence-ending punctuation
-                    def is_sentence_complete(text):
-                        """Check if text appears to end with sentence-ending punctuation."""
-                        if not text:
-                            return True
-                        # Check for sentence-ending punctuation
-                        return text.rstrip().endswith(('.', '!', '?', ':', '"', '"'))
+                    should_merge = False
                     
-                    # If same speaker and current segment doesn't end with sentence-ending punctuation
+                    # Case 1: Same speaker with incomplete sentence
                     if (current["speaker_id"] == next_seg["speaker_id"] and 
                         not is_sentence_complete(current.get("transcript", ""))):
                         
-                        # Merge with next segment if gap is reasonable (within 2 minutes)
-                        if next_seg["start_time"] - current["end_time"] <= 120:  # 2 minute max
-                            merged = current.copy()
-                            merged["end_time"] = next_seg["end_time"]
-                            
-                            # Merge transcripts if available
-                            if next_seg.get("transcript") and merged.get("transcript"):
+                        # Merge with next segment if gap is reasonable (within extended gap)
+                        if next_seg["start_time"] - current["end_time"] <= EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE:
+                            should_merge = True
+                    
+                    # Case 2: Check for sentence continuity between segments
+                    elif (current["speaker_id"] == next_seg["speaker_id"] and
+                          next_seg["start_time"] - current["end_time"] <= MAX_GAP_SECONDS):
+                          
+                        # Check if they might be part of the same speech (look for sentence continuity)
+                        curr_transcript = current.get("transcript", "")
+                        next_transcript = next_seg.get("transcript", "")
+                        
+                        if curr_transcript and next_transcript:
+                            # If the next segment doesn't start with a capital letter, it's likely a continuation
+                            if len(next_transcript) > 0 and not next_transcript.strip()[0].isupper():
+                                should_merge = True
+                    
+                    if should_merge:
+                        merged = current.copy()
+                        merged["end_time"] = next_seg["end_time"]
+                        
+                        # Merge transcripts if available
+                        if "transcript" in next_seg:
+                            if "transcript" in merged and merged["transcript"]:
                                 merged["transcript"] += " " + next_seg["transcript"]
-                            elif next_seg.get("transcript"):
+                            else:
                                 merged["transcript"] = next_seg["transcript"]
-                                
-                            merged["confidence"] = max(current["confidence"], next_seg["confidence"])
-                            
-                            result.append(merged)
-                            i += 2  # Skip both segments as they're now merged
-                            continue
+                        
+                        # Update confidence
+                        merged["confidence"] = max(current["confidence"], next_seg["confidence"])
+                        
+                        result.append(merged)
+                        i += 2  # Skip both segments as they're now merged
+                        continue
                             
                     result.append(current)
                     i += 1
