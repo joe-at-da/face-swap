@@ -752,50 +752,69 @@ class ParliamentMemberMatcher:
             logger.error(f"Error updating match history: {str(e)}")
             # Continue execution despite errors in match history tracking
     
-    def _get_member_info(self, member_id: str) -> Dict[str, Any]:
+    def _get_member_info(self, member_id: Union[str, int, None]) -> Dict[str, Any]:
         """Get member information from the members list.
         
         Args:
-            member_id: The UUID or numeric ID of the member
+            member_id: The member ID (numeric preferred)
             
         Returns:
-            Dict with member information or default info if not found
+            Dict with member information, always containing at least 'id', 'member_id', 'name', and 'house' keys
         """
-        # First check if we have the member in our list
+        if member_id is None:
+            logger.warning("Received None member_id in _get_member_info")
+            return {
+                'id': None,
+                'member_id': None,
+                'name': 'Unknown (None)',
+                'house': 'Unknown'
+            }
+        
+        # Convert to string for comparison if it's not already
+        member_id_str = str(member_id)
+        
+        # First try direct lookup by member_id (numeric ID preferred)
         for member in self.members:
-            if member.get('id') == member_id or member.get('member_id') == member_id:
-                return member
+            # Check if the member_id matches (prioritize numeric IDs)
+            if str(member.get('member_id')) == member_id_str:
+                # Return a copy with guaranteed keys
+                member_info = member.copy()
+                if 'name' not in member_info:
+                    logger.warning(f"Member with ID {member_id} found but missing 'name' key")
+                    member_info['name'] = f"Unknown Member ({member_id})"
+                if 'house' not in member_info:
+                    member_info['house'] = 'Unknown'
+                if 'member_id' not in member_info:
+                    member_info['member_id'] = member_id
+                if 'id' not in member_info:
+                    member_info['id'] = member_id
+                return member_info
         
-        # If not found, check if we have a UUID to member ID mapping
-        if hasattr(self, 'uuid_to_member_id') and member_id in self.uuid_to_member_id:
-            mapped_id = self.uuid_to_member_id[member_id]
-            # Check if we have the mapped ID in our members list
-            for member in self.members:
-                if member.get('id') == mapped_id or member.get('member_id') == mapped_id:
-                    # Return a copy with the original ID to maintain consistency
-                    member_info = member.copy()
-                    member_info['id'] = member_id  # Keep the original ID for consistency
-                    return member_info
-        
-        # Try to find by numeric member_id
-        if member_id and isinstance(member_id, str) and member_id.isdigit():
-            for member in self.members:
-                if str(member.get('member_id')) == member_id:
-                    return {
-                        'id': member_id,
-                        'member_id': member.get('member_id'),
-                        'name': member.get('name', 'Unknown'),
-                        'house': member.get('house', 'Unknown')
-                    }
+        # If not found by member_id, try by id as fallback
+        for member in self.members:
+            if str(member.get('id')) == member_id_str:
+                # Return a copy with guaranteed keys
+                member_info = member.copy()
+                if 'name' not in member_info:
+                    logger.warning(f"Member with ID {member_id} found but missing 'name' key")
+                    member_info['name'] = f"Unknown Member ({member_id})"
+                if 'house' not in member_info:
+                    member_info['house'] = 'Unknown'
+                if 'member_id' not in member_info:
+                    member_info['member_id'] = member_id
+                if 'id' not in member_info:
+                    member_info['id'] = member_id
+                return member_info
         
         # Log that we couldn't find member info
         logger.warning(f"Could not find member info for ID: {member_id}")
         
         # Return default info if not found
+        member_id_display = str(member_id)[:8] if member_id is not None else 'None'
         return {
             'id': member_id,
             'member_id': member_id,
-            'name': f"Unknown ({member_id[:8] if member_id and isinstance(member_id, str) else 'None'})",
+            'name': f"Unknown ({member_id_display})",
             'house': 'Unknown'
         }
     
