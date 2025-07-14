@@ -221,8 +221,18 @@ def save_member_clips_to_supabase(
     # Sort segments by start time
     speaker_segments.sort(key=lambda x: x["start_time"])
     
+    # Helper function to check if a transcript appears to end with sentence-ending punctuation
+    def is_sentence_complete(text):
+        """Check if text appears to end with sentence-ending punctuation."""
+        if not text:
+            return True
+        # Check for sentence-ending punctuation
+        return text.rstrip().endswith(('.', '!', '?', ':', '"', '"'))
+    
     # Merge segments by the same speaker if they are close together (less than 60 seconds apart)
+    # or if the previous segment's transcript doesn't end with sentence-ending punctuation
     MAX_GAP_SECONDS = 60
+    EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE = 120  # 2 minutes for incomplete sentences
     merged_segments = []
     
     current_segment = None
@@ -231,9 +241,15 @@ def save_member_clips_to_supabase(
             current_segment = segment.copy()
             continue
             
-        # If same speaker and gap is small enough, merge segments
+        # Determine if current segment's transcript is a complete sentence
+        sentence_complete = is_sentence_complete(current_segment["transcript"])
+        
+        # Use extended gap threshold for incomplete sentences
+        threshold = EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE if not sentence_complete else MAX_GAP_SECONDS
+        
+        # If same speaker and either gap is small enough OR sentence is incomplete, merge segments
         if (segment["speaker_id"] == current_segment["speaker_id"] and 
-            segment["start_time"] - current_segment["end_time"] <= MAX_GAP_SECONDS):
+            (segment["start_time"] - current_segment["end_time"] <= threshold or not sentence_complete)):
             
             # Merge transcripts if available
             if segment["transcript"] and current_segment["transcript"]:
@@ -252,6 +268,42 @@ def save_member_clips_to_supabase(
     # Add the last segment if there is one
     if current_segment is not None:
         merged_segments.append(current_segment)
+        
+    # Post-process segments to further avoid splitting sentences
+    def post_process_segments(segments):
+        """Post-process segments to avoid splitting sentences."""
+        result = []
+        i = 0
+        while i < len(segments) - 1:
+            current = segments[i]
+            next_seg = segments[i + 1]
+            
+            # If same speaker and current segment doesn't end with sentence-ending punctuation
+            if (current["speaker_id"] == next_seg["speaker_id"] and 
+                not is_sentence_complete(current["transcript"])):
+                
+                # Merge with next segment if gap is reasonable (within 2 minutes)
+                if next_seg["start_time"] - current["end_time"] <= 120:  # 2 minute max
+                    merged = current.copy()
+                    merged["end_time"] = next_seg["end_time"]
+                    merged["transcript"] += " " + next_seg["transcript"]
+                    merged["confidence"] = max(current["confidence"], next_seg["confidence"])
+                    
+                    result.append(merged)
+                    i += 2  # Skip both segments as they're now merged
+                    continue
+                    
+            result.append(current)
+            i += 1
+            
+        # Add the last segment if we didn't merge it
+        if i == len(segments) - 1:
+            result.append(segments[i])
+            
+        return result
+
+    # Apply post-processing to further merge segments with incomplete sentences
+    merged_segments = post_process_segments(merged_segments)
     
     # Create clips for Supabase parliament_member_clips table
     member_clips = []
