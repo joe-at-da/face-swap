@@ -38,10 +38,14 @@ class ParliamentMemberMatcher:
         self.member_embeddings = {}
         
         # Initialize photo manager for local embeddings
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
+        # Use the correct paths for Docker container
+        data_dir = '/app/data'
         photos_dir = os.path.join(data_dir, 'mp_photos')
-        embeddings_dir = os.path.join(data_dir, 'mp_embeddings')
+        embeddings_dir = os.path.join(data_dir, 'member_embeddings')
         self.photo_manager = PhotoManager(photos_dir, embeddings_dir)
+        
+        # Also store the path to the main encodings file
+        self.mp_encodings_file = os.path.join(data_dir, 'mp_encodings.json')
         
         # Matching parameters
         self.min_confidence_threshold = 0.5
@@ -98,7 +102,20 @@ class ParliamentMemberMatcher:
             valid_embeddings = 0
             invalid_embeddings = 0
             local_embeddings_loaded = 0
+            mp_encodings_loaded = 0
             
+            # First try to load all embeddings from mp_encodings.json
+            mp_encodings_data = {}
+            try:
+                if os.path.exists(self.mp_encodings_file):
+                    logger.info(f"Loading embeddings from {self.mp_encodings_file}")
+                    with open(self.mp_encodings_file, 'r') as f:
+                        mp_encodings_data = json.load(f)
+                    logger.info(f"Loaded embeddings data with {len(mp_encodings_data.get('encodings', []))} entries")
+            except Exception as e:
+                logger.error(f"Error loading mp_encodings.json: {str(e)}")
+            
+            # Process each member
             for member in self.members:
                 member_id = member.get('id')
                 
@@ -108,7 +125,45 @@ class ParliamentMemberMatcher:
                     invalid_embeddings += 1
                     continue
                 
-                # First try to load from local storage using PhotoManager
+                # Try to find the member in mp_encodings.json
+                if mp_encodings_data and 'encodings' in mp_encodings_data:
+                    found = False
+                    for encoding_entry in mp_encodings_data.get('encodings', []):
+                        # Check if this entry matches our member
+                        if 'id' in encoding_entry and encoding_entry['id'] == member_id:
+                            # Found a match in mp_encodings.json
+                            try:
+                                # Extract embedding from the entry
+                                if 'embedding' in encoding_entry:
+                                    embedding = encoding_entry['embedding']
+                                    normalized_embedding = self._normalize_embedding(embedding)
+                                    
+                                    # Check if embedding is valid
+                                    if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
+                                        logger.warning(f"Invalid mp_encodings embedding for member {member_id}: contains zeros, NaN, or Inf")
+                                    else:
+                                        # Store as a list for JSON serialization
+                                        embedding_list = normalized_embedding.tolist()
+                                        
+                                        # Store the embedding and metadata
+                                        self.member_embeddings[member_id] = {
+                                            'embedding': embedding_list,
+                                            'member_id': member.get('member_id', member_id),
+                                            'name': member.get('name', encoding_entry.get('name', f'Member {member_id}')),
+                                            'house': member.get('house', '1'),
+                                            'source': 'mp_encodings'
+                                        }
+                                        valid_embeddings += 1
+                                        mp_encodings_loaded += 1
+                                        found = True
+                                        break
+                            except Exception as e:
+                                logger.warning(f"Error processing mp_encodings embedding for member {member_id}: {str(e)}")
+                    
+                    if found:
+                        continue  # Skip to next member since we found a valid embedding
+            
+                # If we get here, try to load from local storage using PhotoManager
                 local_embedding = self.photo_manager.load_embedding(member_id)
                 if local_embedding is not None:
                     # Successfully loaded local embedding
@@ -136,9 +191,8 @@ class ParliamentMemberMatcher:
                             continue  # Skip to next member since we have a valid embedding
                     except Exception as e:
                         logger.warning(f"Error processing local embedding for member {member_id}: {str(e)}")
-                
-                # If we get here, we couldn't load a valid local embedding
-                # Since Supabase doesn't have embeddings, we'll create a zero embedding as a last resort
+            
+                # If we get here, we couldn't load a valid embedding from any source
                 logger.warning(f"No valid embedding found for member {member_id}, using zero vector")
                 
                 # Create a zero embedding as a last resort
@@ -155,7 +209,7 @@ class ParliamentMemberMatcher:
                 invalid_embeddings += 1
             
             # Log summary
-            logger.info(f"Loaded {len(self.members)} parliament members with {valid_embeddings} valid embeddings ({local_embeddings_loaded} from local storage) and {invalid_embeddings} invalid embeddings")
+            logger.info(f"Loaded {len(self.members)} parliament members with {valid_embeddings} valid embeddings ({local_embeddings_loaded} from local storage, {mp_encodings_loaded} from mp_encodings.json) and {invalid_embeddings} invalid embeddings")
             
             # Check if we have enough valid embeddings
             if valid_embeddings == 0:
@@ -286,13 +340,7 @@ class ParliamentMemberMatcher:
             if member_count > 0:
                 video_penalty = self.diversity_boost_factor * member_count / 5  # More aggressive penalty
                 similarity -= video_penalty
-                
-                # Special case for known problematic member (Darren Jones - ID 4621)
-                if member_id == '4621' and member_count > 2:
-                    # Apply extra penalty for Darren Jones after multiple appearances
-                    similarity -= 0.1  # Additional fixed penalty
-                    logger.debug(f"Applied extra penalty for member 4621 (Darren Jones) - count: {member_count}")
-        
+                        
         # Update video match counts if provided
         if video_id:
             self.video_match_counts[video_id][member_id] += 1
@@ -365,12 +413,7 @@ class ParliamentMemberMatcher:
             if len(matches) > 1 and (matches[0]['confidence'] - matches[1]['confidence']) < self.min_confidence_gap:
                 logger.debug(f"Confidence gap too small: {matches[0]['confidence']:.2f} vs {matches[1]['confidence']:.2f}")
                 return self._get_unidentified_member(house)
-            
-            # Special handling for Darren Jones (ID 4621) who has high false positive rate
-            if top_match['id'] == '4621' and top_match['confidence'] < 0.75:
-                logger.debug(f"Rejecting potential false positive for Darren Jones with confidence {top_match['confidence']:.2f}")
-                return self._get_unidentified_member(house)
-            
+                        
             # Update match history
             self._update_match_history(top_match['id'], video_id)
             
