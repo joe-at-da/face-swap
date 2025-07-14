@@ -145,7 +145,7 @@ class ParliamentMemberMatcher:
         if similarity > self.max_valid_similarity or similarity < self.min_valid_similarity:
             # Clamp to valid range and apply penalty for anomalous values
             adjusted = max(min(similarity, 1.0), -1.0)
-            # Apply extra penalty for extremely anomalous values (like the 1.3+ with Darren Jones)
+            # Apply extra penalty for extremely anomalous values (like the 1.3+)
             if similarity > 1.2 or similarity < -1.2:
                 adjusted *= 0.8  # Apply 20% reduction to highly suspicious matches
             return False, adjusted
@@ -308,17 +308,12 @@ class ParliamentMemberMatcher:
                 # Calculate similarity (dot product of normalized vectors)
                 similarity = np.dot(normalized_face_embedding, member_embedding)
                 
-                # Special handling for Darren Jones (member ID 4621) in video 714
-                is_darren_jones = any(m.get('member_id') == 4621 for m in self.members if m['id'] == member_id)
-                if is_darren_jones and video_id == '714' and similarity > 0.8:
-                    logger.warning(f"Detected anomalous high similarity for Darren Jones in video 714: {similarity:.4f}")
-                    # Apply a strong penalty to the similarity score
-                    similarity *= 0.6  # Reduce by 40%
-                    logger.warning(f"Applied penalty, adjusted similarity: {similarity:.4f}")
+                # Check for anomalous high similarity scores
+                if similarity > 0.95:
+                    logger.debug(f"Very high similarity detected: {similarity:.4f} for member {member_id}")
                 
                 # Validate similarity
-                adjusted_similarity = self._validate_similarity(similarity, member_id, video_id)
-                similarities.append((member_id, adjusted_similarity))
+                is_valid, adjusted_similarity = self._validate_similarity(similarity)
                 if not is_valid:
                     logger.warning(f"Anomalous similarity detected for member {member_id}: {similarity}, adjusted to {adjusted_similarity}")
                     similarity = adjusted_similarity
@@ -370,14 +365,18 @@ class ParliamentMemberMatcher:
             # Calculate confidence gap
             confidence_gap = best_match_adjusted - second_best_adjusted
             
-            # Special handling for Darren Jones in video 714
-            if best_match_id and video_id == '714':
-                member = next((m for m in self.members if m['id'] == best_match_id), None)
-                if member and any(m.get('member_id') == 4621 for m in self.members if m['id'] == best_match_id):
-                    logger.warning(f"Applying stricter threshold for Darren Jones in video 714")
-                    # Require a much higher confidence threshold and gap for Darren Jones in video 714
-                    confidence_threshold = max(confidence_threshold, 0.85)
-                    self.min_confidence_gap = max(self.min_confidence_gap, 0.25)
+            # Apply general threshold adjustment based on confidence gap between top matches
+            if best_match_id and len(sorted_members) >= 2:
+                top_confidence = sorted_members[0][1]["adjusted_confidence"]
+                second_confidence = sorted_members[1][1]["adjusted_confidence"]
+                confidence_gap = top_confidence - second_confidence
+                
+                if confidence_gap < 0.02:  # Very small gap between top matches
+                    confidence_threshold = max(confidence_threshold, 0.92)
+                    logger.info(f"Small confidence gap ({confidence_gap:.4f}), increasing threshold to {confidence_threshold:.4f}")
+                elif confidence_gap < 0.05:  # Small gap between top matches
+                    confidence_threshold = max(confidence_threshold, 0.90)
+                    logger.info(f"Small confidence gap ({confidence_gap:.4f}), increasing threshold to {confidence_threshold:.4f}")
             
             # Check if best match meets threshold and confidence gap
             if best_match_adjusted >= confidence_threshold and confidence_gap >= self.min_confidence_gap:
