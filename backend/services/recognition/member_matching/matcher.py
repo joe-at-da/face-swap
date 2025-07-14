@@ -150,9 +150,26 @@ class ParliamentMemberMatcher:
                     # This will help us match UUIDs to member IDs later
                     uuid_count = 0
                     missing_uuid_count = 0
+                    
+                    # Log the structure of the first few members to understand available fields
+                    if self.members and len(self.members) > 0:
+                        logger.info(f"Member fields available: {list(self.members[0].keys())}")
+                    
+                    # Create alternative ID fields that might be used for matching
+                    member_id_to_name = {}  # Map from member_id to name for potential matching by name
+                    
                     for member in self.members:
                         member_id = member.get('id')
+                        if not member_id:
+                            continue
+                            
+                        # Try to get photo_uuid, but it might not exist
                         photo_uuid = member.get('photo_uuid')
+                        name = member.get('name')
+                        
+                        # Store name mapping for alternative matching
+                        if name:
+                            member_id_to_name[member_id] = name
                         
                         # Log sample member data to help debug
                         if uuid_count < 3 or missing_uuid_count < 3:
@@ -167,6 +184,7 @@ class ParliamentMemberMatcher:
                                     logger.info(f"Available fields for member {member_id}: {list(member.keys())}")
                                     missing_uuid_count += 1
                         
+                        # Only add to UUID mapping if photo_uuid exists
                         if member_id and photo_uuid:
                             uuid_to_member_id[photo_uuid] = member_id
                             
@@ -174,6 +192,9 @@ class ParliamentMemberMatcher:
                             if '-' in photo_uuid:
                                 no_dash_uuid = photo_uuid.replace('-', '')
                                 uuid_to_member_id[no_dash_uuid] = member_id
+                                
+                    # Log how many members have photo_uuid
+                    logger.info(f"Found {uuid_count} members with photo_uuid out of {len(self.members)} total members")
                     
                     logger.info(f"Created mapping for {len(uuid_to_member_id)} members with photo UUIDs out of {len(self.members)} total members")
                     
@@ -186,6 +207,32 @@ class ParliamentMemberMatcher:
                         sample_encoding_uuid = ids[0]
                         sample_member_uuids = list(uuid_to_member_id.keys())[:3]
                         logger.info(f"UUID format mismatch? Encoding UUID: {sample_encoding_uuid}, Member UUIDs: {sample_member_uuids}")
+                    
+                    # If we have very few UUID matches, try to match by name
+                    if matching_uuids < 5 and mp_encodings_data:
+                        logger.info("Attempting name-based matching as fallback strategy")
+                        name_match_count = 0
+                        name_to_uuid = {}
+                        
+                        # Create a mapping from names in mp_encodings to UUIDs
+                        for uuid, data in mp_encodings_data.items():
+                            if isinstance(data, dict) and 'name' in data:
+                                name = data['name']
+                                name_to_uuid[name] = uuid
+                        
+                        # Log how many names we have in mp_encodings
+                        logger.info(f"Found {len(name_to_uuid)} names in mp_encodings.json")
+                        
+                        # Check for name matches between members and mp_encodings
+                        for member_id, name in member_id_to_name.items():
+                            if name in name_to_uuid:
+                                uuid = name_to_uuid[name]
+                                uuid_to_member_id[uuid] = member_id
+                                name_match_count += 1
+                                if name_match_count <= 3:  # Log just a few examples
+                                    logger.info(f"Found matching name in mp_encodings.json: {name} -> UUID {uuid} -> member {member_id}")
+                        
+                        logger.info(f"Found {name_match_count} additional matches by name between mp_encodings.json and members")
                     else:
                         logger.warning("mp_encodings.json does not have expected structure with ids and encodings")
                 else:
@@ -241,14 +288,20 @@ class ParliamentMemberMatcher:
                         # Store as a list for JSON serialization
                         embedding_list = normalized_embedding.tolist()
                         
-                        # Store the embedding and metadata
-                        self.member_embeddings[member_id] = {
+                        # Get member metadata, with fallbacks for missing fields
+                        member_metadata = {
                             'embedding': embedding_list,
                             'member_id': member.get('member_id', member_id),
                             'name': member.get('name', mp_encodings_map[matching_uuid].get('name', f'Member {member_id}')),
-                            'house': member.get('house', '1'),
                             'source': 'mp_encodings'
                         }
+                        
+                        # Only add house if it exists in the member data
+                        if 'house' in member:
+                            member_metadata['house'] = member.get('house', '1')
+                            
+                        # Store the embedding and metadata
+                        self.member_embeddings[member_id] = member_metadata
                         valid_embeddings += 1
                         mp_encodings_loaded += 1
                         embedding_found = True
@@ -267,13 +320,20 @@ class ParliamentMemberMatcher:
                             
                             if not (np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any()):
                                 embedding_list = normalized_embedding.tolist()
-                                self.member_embeddings[member_id] = {
+                                
+                                # Get member metadata, with fallbacks for missing fields
+                                member_metadata = {
                                     'embedding': embedding_list,
                                     'member_id': member.get('member_id', member_id),
                                     'name': member.get('name', mp_encodings_map[uuid].get('name', f'Member {member_id}')),
-                                    'house': member.get('house', '1'),
                                     'source': 'mp_encodings_reverse_lookup'
                                 }
+                                
+                                # Only add house if it exists in the member data
+                                if 'house' in member:
+                                    member_metadata['house'] = member.get('house', '1')
+                                
+                                self.member_embeddings[member_id] = member_metadata
                                 valid_embeddings += 1
                                 mp_encodings_loaded += 1
                                 embedding_found = True
@@ -288,14 +348,20 @@ class ParliamentMemberMatcher:
                 # Create a zero embedding as a last resort
                 zero_embedding = [0.0] * 128
                 
-                # Store the embedding and metadata
-                self.member_embeddings[member_id] = {
+                # Get member metadata, with fallbacks for missing fields
+                member_metadata = {
                     'embedding': zero_embedding,
                     'member_id': member.get('member_id', member_id),  # Fallback to id if member_id is missing
                     'name': member.get('name', f'Member {member_id}'),  # Fallback to generic name if missing
-                    'house': member.get('house', '1'),  # Default to commons if not specified
                     'source': 'fallback'
                 }
+                
+                # Only add house if it exists in the member data
+                if 'house' in member:
+                    member_metadata['house'] = member.get('house', '1')
+                    
+                # Store the embedding and metadata
+                self.member_embeddings[member_id] = member_metadata
                 invalid_embeddings += 1
             
             # Log summary
