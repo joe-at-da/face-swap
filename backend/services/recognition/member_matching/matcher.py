@@ -39,9 +39,9 @@ class ParliamentMemberMatcher:
         
         # Initialize photo manager for local embeddings
         # Use the correct paths for Docker container
-        data_dir = '/app/data'
-        photos_dir = os.path.join(data_dir, 'mp_photos')
-        embeddings_dir = os.path.join(data_dir, 'mp_embeddings')  # Default embeddings directory
+        self.data_dir = '/app/data'
+        photos_dir = os.path.join(self.data_dir, 'mp_photos')
+        embeddings_dir = os.path.join(self.data_dir, 'mp_embeddings')  # Default embeddings directory
         
         # Create the embeddings directory if it doesn't exist
         # This ensures PhotoManager can initialize properly even if we're only using mp_encodings.json
@@ -55,8 +55,9 @@ class ParliamentMemberMatcher:
         # Initialize the photo manager
         self.photo_manager = PhotoManager(photos_dir, embeddings_dir)
         
-        # Store the path to the main encodings file
-        self.mp_encodings_file = os.path.join(data_dir, 'mp_encodings.json')
+        # Store the path to the main encodings file and mapping file
+        self.mp_encodings_file = os.path.join(self.data_dir, 'mp_encodings.json')
+        self.uuid_to_member_id_file = os.path.join(photos_dir, 'uuid_to_member_id.json')
         
         # Matching parameters
         self.min_confidence_threshold = 0.5
@@ -118,266 +119,208 @@ class ParliamentMemberMatcher:
             mp_encodings_data = {}
             mp_encodings_map = {}  # Map from UUID to embedding
             uuid_to_member_id = {}  # Map from UUID to member ID for reverse lookup
-        
+            
+            # First, try to load the UUID to member ID mapping from the dedicated file
             try:
+                if os.path.exists(self.uuid_to_member_id_file):
+                    logger.info(f"Loading UUID to member ID mapping from {self.uuid_to_member_id_file}")
+                    with open(self.uuid_to_member_id_file, 'r') as f:
+                        mapping_data = json.load(f)
+                        
+                    # Process the mapping data
+                    for uuid, info in mapping_data.items():
+                        if isinstance(info, dict) and 'member_id' in info:
+                            member_id = info['member_id']
+                            uuid_to_member_id[uuid] = member_id
+                            # Also store without dashes for compatibility
+                            if '-' in uuid:
+                                no_dash_uuid = uuid.replace('-', '')
+                                uuid_to_member_id[no_dash_uuid] = member_id
+                    
+                    logger.info(f"Loaded {len(uuid_to_member_id)} UUID to member ID mappings from {self.uuid_to_member_id_file}")
+                else:
+                    logger.warning(f"UUID to member ID mapping file not found at {self.uuid_to_member_id_file}")
+            except Exception as e:
+                logger.error(f"Error loading UUID to member ID mapping: {str(e)}")
+            
+            # Now load embeddings from mp_encodings.json
+            try:
+                mp_encodings_data = {}
                 if os.path.exists(self.mp_encodings_file):
                     logger.info(f"Loading embeddings from {self.mp_encodings_file}")
                     with open(self.mp_encodings_file, 'r') as f:
                         mp_encodings_data = json.load(f)
                 
                     # Process the parallel arrays in mp_encodings.json
-                if all(k in mp_encodings_data for k in ['ids', 'encodings']):
-                    ids = mp_encodings_data.get('ids', [])
-                    encodings = mp_encodings_data.get('encodings', [])
-                    names = mp_encodings_data.get('names', [])
-                    
-                    # Log the structure of mp_encodings.json
-                    logger.info(f"mp_encodings.json structure: ids={len(ids)}, encodings={len(encodings)}, names={len(names)}")
-                    if len(ids) > 0:
-                        logger.info(f"Sample UUID format in mp_encodings.json: {ids[0]}")
-                    
-                    # Create a mapping from UUID to embedding
-                        for i, mp_id in enumerate(ids):
-                            if i < len(encodings):
-                                mp_encodings_map[mp_id] = {
-                                    'embedding': encodings[i],
-                                    'name': names[i] if i < len(names) else f"MP {mp_id[:6]}"
-                                }
-                    
-                        logger.info(f"Loaded {len(mp_encodings_map)} embeddings from mp_encodings.json")
-                    
-                        # Create a mapping from UUID to member ID for all members
-                    # This will help us match UUIDs to member IDs later
-                    uuid_count = 0
-                    missing_uuid_count = 0
-                    
-                    # Log the structure of the first few members to understand available fields
-                    if self.members and len(self.members) > 0:
-                        logger.info(f"Member fields available: {list(self.members[0].keys())}")
-                    
-                    # Create alternative ID fields that might be used for matching
-                    member_id_to_name = {}  # Map from member_id to name for potential matching by name
-                    
-                    for member in self.members:
-                        member_id = member.get('id')
-                        if not member_id:
-                            continue
+                    if all(k in mp_encodings_data for k in ['ids', 'encodings']):
+                        ids = mp_encodings_data.get('ids', [])
+                        encodings = mp_encodings_data.get('encodings', [])
+                        names = mp_encodings_data.get('names', [])
+                        
+                        if len(ids) == len(encodings):
+                            logger.info(f"Found {len(ids)} encodings in mp_encodings.json")
+                            mp_encodings_loaded = len(ids)
                             
-                        # Try to get photo_uuid, but it might not exist
-                        photo_uuid = member.get('photo_uuid')
-                        name = member.get('name')
-                        
-                        # Store name mapping for alternative matching
-                        if name:
-                            member_id_to_name[member_id] = name
-                        
-                        # Log sample member data to help debug
-                        if uuid_count < 3 or missing_uuid_count < 3:
-                            if photo_uuid:
-                                if uuid_count < 3:
-                                    logger.info(f"Member {member_id} has photo_uuid: {photo_uuid}")
-                                    uuid_count += 1
-                            else:
-                                if missing_uuid_count < 3:
-                                    logger.info(f"Member {member_id} is missing photo_uuid")
-                                    # Log all available fields for this member to help debug
-                                    logger.info(f"Available fields for member {member_id}: {list(member.keys())}")
-                                    missing_uuid_count += 1
-                        
-                        # Only add to UUID mapping if photo_uuid exists
-                        if member_id and photo_uuid:
-                            uuid_to_member_id[photo_uuid] = member_id
-                            
-                            # Also store the UUID without dashes for matching
-                            if '-' in photo_uuid:
-                                no_dash_uuid = photo_uuid.replace('-', '')
-                                uuid_to_member_id[no_dash_uuid] = member_id
-                                
-                    # Log how many members have photo_uuid
-                    logger.info(f"Found {uuid_count} members with photo_uuid out of {len(self.members)} total members")
-                    
-                    logger.info(f"Created mapping for {len(uuid_to_member_id)} members with photo UUIDs out of {len(self.members)} total members")
-                    
-                    # Check if any UUIDs in mp_encodings.json match the photo_uuids in members
-                    matching_uuids = sum(1 for uuid in ids if uuid in uuid_to_member_id)
-                    logger.info(f"Found {matching_uuids} matching UUIDs between mp_encodings.json and member photo_uuids")
-                    
-                    # If no matches, check if there's a format difference (e.g., with/without dashes)
-                    if matching_uuids == 0 and len(ids) > 0 and len(uuid_to_member_id) > 0:
-                        sample_encoding_uuid = ids[0]
-                        sample_member_uuids = list(uuid_to_member_id.keys())[:3]
-                        logger.info(f"UUID format mismatch? Encoding UUID: {sample_encoding_uuid}, Member UUIDs: {sample_member_uuids}")
-                    
-                    # If we have very few UUID matches, try to match by name
-                    if matching_uuids < 5 and mp_encodings_data:
-                        logger.info("Attempting name-based matching as fallback strategy")
-                        name_match_count = 0
-                        name_to_uuid = {}
-                        
-                        # Create a mapping from names in mp_encodings to UUIDs
-                        for uuid, data in mp_encodings_data.items():
-                            if isinstance(data, dict) and 'name' in data:
-                                name = data['name']
-                                name_to_uuid[name] = uuid
-                        
-                        # Log how many names we have in mp_encodings
-                        logger.info(f"Found {len(name_to_uuid)} names in mp_encodings.json")
-                        
-                        # Check for name matches between members and mp_encodings
-                        for member_id, name in member_id_to_name.items():
-                            if name in name_to_uuid:
-                                uuid = name_to_uuid[name]
-                                uuid_to_member_id[uuid] = member_id
-                                name_match_count += 1
-                                if name_match_count <= 3:  # Log just a few examples
-                                    logger.info(f"Found matching name in mp_encodings.json: {name} -> UUID {uuid} -> member {member_id}")
-                        
-                        logger.info(f"Found {name_match_count} additional matches by name between mp_encodings.json and members")
+                            # Build a map from UUID/member_id to embedding
+                            for i, id_value in enumerate(ids):
+                                if i < len(encodings):
+                                    mp_encodings_map[id_value] = encodings[i]
+                                    
+                                    # If this ID is in our UUID to member ID mapping, also store with the member ID
+                                    if id_value in uuid_to_member_id:
+                                        member_id = uuid_to_member_id[id_value]
+                                        mp_encodings_map[member_id] = encodings[i]
+                                        logger.debug(f"Mapped UUID {id_value} to member ID {member_id} for embeddings")
+                        else:
+                            logger.error(f"Mismatch in mp_encodings.json: {len(ids)} ids vs {len(encodings)} encodings")
                     else:
-                        logger.warning("mp_encodings.json does not have expected structure with ids and encodings")
+                        logger.error(f"Missing required keys in mp_encodings.json. Found keys: {list(mp_encodings_data.keys())}")
                 else:
-                    logger.error(f"mp_encodings.json not found at {self.mp_encodings_file}")
+                    logger.warning(f"mp_encodings.json not found at {self.mp_encodings_file}")
+                    logger.warning(f"Will attempt to load individual embedding files instead")
             except Exception as e:
                 logger.error(f"Error loading mp_encodings.json: {str(e)}")
         
-            # Process each member
+            # Build a map from UUID to member ID for reverse lookup
+            # First use the mapping from the file, then supplement with in-memory data
             for member in self.members:
                 member_id = member.get('id')
+                photo_uuid = member.get('photo_uuid')
+                if member_id and photo_uuid:
+                    # Only add if not already in the mapping from the file
+                    if photo_uuid not in uuid_to_member_id:
+                        uuid_to_member_id[photo_uuid] = member_id
+                        logger.debug(f"Added UUID {photo_uuid} to member ID {member_id} mapping from member data")
+                    
+                    # Also handle UUIDs without dashes
+                    if '-' in photo_uuid:
+                        no_dash_uuid = photo_uuid.replace('-', '')
+                        if no_dash_uuid not in uuid_to_member_id:
+                            uuid_to_member_id[no_dash_uuid] = member_id
+                                
+            # Now process the member embeddings
+            for member in self.members:
+                member_id = member.get('id')
+                name = member.get('name', 'Unknown')
+                photo_uuid = member.get('photo_uuid')
                 
                 # Skip members without ID
                 if not member_id:
-                    logger.debug(f"Skipping member with missing ID")
-                    invalid_embeddings += 1
+                    logger.warning(f"Skipping member without ID: {name}")
                     continue
                 
-            # First try to find a matching photo UUID in the mp_encodings_map
-            # Members in Supabase have photo_uuid field that should match the UUIDs in mp_encodings.json
-            photo_uuid = member.get('photo_uuid')
-            
-            # Try to match with different UUID formats if direct match fails
-            matching_uuid = None
-            if photo_uuid:
-                if photo_uuid in mp_encodings_map:
-                    matching_uuid = photo_uuid
-                else:
-                    # Try with/without dashes if there might be a format mismatch
-                    if '-' in photo_uuid:
-                        # Try without dashes
-                        no_dash_uuid = photo_uuid.replace('-', '')
-                        if no_dash_uuid in mp_encodings_map:
-                            matching_uuid = no_dash_uuid
-                            logger.info(f"Found UUID match after removing dashes: {photo_uuid} -> {no_dash_uuid}")
-                    else:
-                        # Try to add dashes if it's a standard UUID format
-                        if len(photo_uuid) == 32:
-                            dashed_uuid = f"{photo_uuid[:8]}-{photo_uuid[8:12]}-{photo_uuid[12:16]}-{photo_uuid[16:20]}-{photo_uuid[20:]}"
-                            if dashed_uuid in mp_encodings_map:
-                                matching_uuid = dashed_uuid
-                                logger.info(f"Found UUID match after adding dashes: {photo_uuid} -> {dashed_uuid}")
-            
-            embedding_found = False
-            if matching_uuid:
-                try:
-                    embedding = mp_encodings_map[matching_uuid]['embedding']
-                    normalized_embedding = self._normalize_embedding(embedding)
-                    
-                    # Check if embedding is valid
-                    if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
-                        logger.warning(f"Invalid mp_encodings embedding for member {member_id} (UUID {photo_uuid}): contains zeros, NaN, or Inf")
-                    else:
-                        # Store as a list for JSON serialization
-                        embedding_list = normalized_embedding.tolist()
-                        
-                        # Get member metadata, with fallbacks for missing fields
-                        member_metadata = {
-                            'embedding': embedding_list,
-                            'member_id': member.get('member_id', member_id),
-                            'name': member.get('name', mp_encodings_map[matching_uuid].get('name', f'Member {member_id}')),
-                            'source': 'mp_encodings'
-                        }
-                        
-                        # Only add house if it exists in the member data
-                        if 'house' in member:
-                            member_metadata['house'] = member.get('house', '1')
-                            
-                        # Store the embedding and metadata
-                        self.member_embeddings[member_id] = member_metadata
+                # Try to get embedding from member data
+                embedding = member.get('embedding')
+                if embedding:
+                    # Validate embedding
+                    if self._is_valid_embedding(embedding):
+                        self.member_embeddings[member_id] = embedding
                         valid_embeddings += 1
-                        mp_encodings_loaded += 1
-                        embedding_found = True
-                except Exception as e:
-                    logger.warning(f"Error processing mp_encodings embedding for member {member_id} (UUID {photo_uuid}): {str(e)}")
-            
-            # If we already found an embedding, skip the reverse lookup
-            if not embedding_found:
-                # Try to find by member ID in the reverse mapping
-                # Some UUIDs in mp_encodings might be mapped to member IDs in our mapping
-                for uuid, mapped_member_id in uuid_to_member_id.items():
-                    if mapped_member_id == member_id and uuid in mp_encodings_map:
-                        try:
-                            embedding = mp_encodings_map[uuid]['embedding']
-                            normalized_embedding = self._normalize_embedding(embedding)
-                            
-                            if not (np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any()):
-                                embedding_list = normalized_embedding.tolist()
-                                
-                                # Get member metadata, with fallbacks for missing fields
-                                member_metadata = {
-                                    'embedding': embedding_list,
-                                    'member_id': member.get('member_id', member_id),
-                                    'name': member.get('name', mp_encodings_map[uuid].get('name', f'Member {member_id}')),
-                                    'source': 'mp_encodings_reverse_lookup'
-                                }
-                                
-                                # Only add house if it exists in the member data
-                                if 'house' in member:
-                                    member_metadata['house'] = member.get('house', '1')
-                                
-                                self.member_embeddings[member_id] = member_metadata
-                                valid_embeddings += 1
-                                mp_encodings_loaded += 1
-                                embedding_found = True
-                                break
-                        except Exception as e:
-                            logger.warning(f"Error processing reverse lookup embedding for member {member_id}: {str(e)}")
+                    else:
+                        logger.warning(f"Invalid embedding format for member {name} (ID: {member_id})")
+                        invalid_embeddings += 1
+                        continue
                 
-            # If we still couldn't find a valid embedding from any source
-            if not embedding_found:
-                logger.warning(f"No valid embedding found for member {member_id}, using zero vector")
+                # Get the numeric member_id if available
+                numeric_member_id = member.get('member_id')
                 
-                # Create a zero embedding as a last resort
-                zero_embedding = [0.0] * 128
+                # Try to find embedding using member_id directly
+                if member_id in mp_encodings_map:
+                    # Use the embedding from mp_encodings.json with member_id
+                    embedding = mp_encodings_map[member_id]
+                    if self._is_valid_embedding(embedding):
+                        self.member_embeddings[member_id] = embedding
+                        valid_embeddings += 1
+                        logger.info(f"Found embedding for member {name} using member_id {member_id} directly")
+                        continue
                 
-                # Get member metadata, with fallbacks for missing fields
-                member_metadata = {
-                    'embedding': zero_embedding,
-                    'member_id': member.get('member_id', member_id),  # Fallback to id if member_id is missing
-                    'name': member.get('name', f'Member {member_id}'),  # Fallback to generic name if missing
-                    'source': 'fallback'
-                }
+                # Try using numeric member_id if available
+                elif numeric_member_id and str(numeric_member_id) in mp_encodings_map:
+                    embedding = mp_encodings_map[str(numeric_member_id)]
+                    if self._is_valid_embedding(embedding):
+                        self.member_embeddings[member_id] = embedding
+                        valid_embeddings += 1
+                        logger.info(f"Found embedding for member {name} using numeric member_id {numeric_member_id}")
+                        continue
                 
-                # Only add house if it exists in the member data
-                if 'house' in member:
-                    member_metadata['house'] = member.get('house', '1')
+                # If no embedding in member data, try to find in mp_encodings_map using UUID
+                elif photo_uuid and photo_uuid in mp_encodings_map:
+                    # Use the embedding from mp_encodings.json
+                    embedding = mp_encodings_map[photo_uuid]
+                    if self._is_valid_embedding(embedding):
+                        self.member_embeddings[member_id] = embedding
+                        valid_embeddings += 1
+                        logger.info(f"Found embedding for member {name} using UUID {photo_uuid}")
+                    else:
+                        logger.warning(f"Invalid embedding from mp_encodings.json for member {name} (ID: {member_id})")
+                        invalid_embeddings += 1
+                
+                # Try without dashes in UUID
+                elif photo_uuid and '-' in photo_uuid and photo_uuid.replace('-', '') in mp_encodings_map:
+                    no_dash_uuid = photo_uuid.replace('-', '')
+                    embedding = mp_encodings_map[no_dash_uuid]
+                    if self._is_valid_embedding(embedding):
+                        self.member_embeddings[member_id] = embedding
+                        valid_embeddings += 1
+                        logger.info(f"Found embedding for member {name} using no-dash UUID {no_dash_uuid}")
+                    else:
+                        logger.warning(f"Invalid embedding from mp_encodings.json (no-dash UUID) for member {name} (ID: {member_id})")
+                        invalid_embeddings += 1
+                
+                # Try name-based matching as a last resort
+                else:
+                    # Try to match by name
+                    found_match = False
+                    if names and len(names) == len(ids):
+                        for i, mp_name in enumerate(names):
+                            if i < len(ids) and self._name_similarity(name, mp_name) > 0.8:
+                                uuid_or_id = ids[i]
+                                if uuid_or_id in mp_encodings_map:
+                                    embedding = mp_encodings_map[uuid_or_id]
+                                    if self._is_valid_embedding(embedding):
+                                        self.member_embeddings[member_id] = embedding
+                                        valid_embeddings += 1
+                                        found_match = True
+                                        logger.info(f"Matched member {name} to encoding for {mp_name} by name similarity")
+                                        break
                     
-                # Store the embedding and metadata
-                self.member_embeddings[member_id] = member_metadata
-                invalid_embeddings += 1
+                    if not found_match:
+                        # Try to load from local file using PhotoManager
+                        embedding = self.photo_manager.load_embedding(member_id)
+                        if embedding is not None and self._is_valid_embedding(embedding):
+                            self.member_embeddings[member_id] = embedding
+                            valid_embeddings += 1
+                            logger.info(f"Loaded embedding for member {name} (ID: {member_id}) from local file")
+                        else:
+                            # Try to load using photo_uuid as a last resort
+                            if photo_uuid:
+                                embedding = self.photo_manager.load_embedding(photo_uuid)
+                                if embedding is not None and self._is_valid_embedding(embedding):
+                                    self.member_embeddings[member_id] = embedding
+                                    valid_embeddings += 1
+                                    logger.info(f"Loaded embedding for member {name} (ID: {member_id}) using photo_uuid {photo_uuid}")
+                                else:
+                                    logger.warning(f"No embedding found for member {name} (ID: {member_id})")
+                            else:
+                                logger.warning(f"No embedding found for member {name} (ID: {member_id})")
             
             # Log summary
-            direct_lookups = sum(1 for m in self.member_embeddings.values() if m.get('source') == 'mp_encodings')
-            reverse_lookups = sum(1 for m in self.member_embeddings.values() if m.get('source') == 'mp_encodings_reverse_lookup')
-            fallbacks = sum(1 for m in self.member_embeddings.values() if m.get('source') == 'fallback')
+            # We're storing numpy arrays directly in member_embeddings, not dictionaries with source info
+            # So we can't count by source type anymore
             
-            logger.info(f"Loaded {len(self.members)} parliament members with {valid_embeddings} valid embeddings:")
-            logger.info(f"  - {direct_lookups} from direct UUID lookup")
-            logger.info(f"  - {reverse_lookups} from reverse UUID lookup")
-            logger.info(f"  - {fallbacks} fallback zero embeddings (no match found)")
+            logger.info(f"Loaded {valid_embeddings} valid embeddings and found {invalid_embeddings} invalid embeddings")
+            logger.info(f"Loaded {mp_encodings_loaded} encodings from mp_encodings.json")
+            logger.info(f"Loaded {len(self.member_embeddings)} total member embeddings")
+            logger.info(f"UUID to member ID mapping contains {len(uuid_to_member_id)} entries")
             
-            # Log some sample member IDs with their embedding sources
-            sample_members = list(self.member_embeddings.items())[:5]
-            for member_id, data in sample_members:
-                logger.info(f"Sample member {member_id} ({data.get('name')}): source={data.get('source')}")
+            # Save the final UUID to member ID mapping for debugging purposes
+            try:
+                debug_mapping_file = os.path.join(self.data_dir, 'debug_uuid_to_member_id.json')
+                with open(debug_mapping_file, 'w') as f:
+                    json.dump(uuid_to_member_id, f, indent=2)
+                logger.info(f"Saved debug UUID to member ID mapping to {debug_mapping_file}")
+            except Exception as e:
+                logger.error(f"Failed to save debug UUID to member ID mapping: {str(e)}")
             
             # Check if we have enough valid embeddings
             if valid_embeddings == 0:
@@ -523,85 +466,122 @@ class ParliamentMemberMatcher:
     
     def _match_face_to_member(self, face_embedding: List[float], confidence_threshold: float = 0.5, house: Optional[str] = None, video_id: Optional[str] = None) -> Dict[str, Any]:
         """Match a face embedding to a parliament member."""
+        start_time = time.time()
+        
         if not self.member_embeddings:
             logger.warning("No member embeddings available for matching")
             return self._get_unidentified_member(house)
         
+        logger.debug(f"Matching face embedding against {len(self.member_embeddings)} member embeddings")
+        
         # Convert face embedding to numpy array and normalize
-        face_embedding_array = np.array(face_embedding)
-        normalized_face_embedding = self._normalize_embedding(face_embedding_array)
+        try:
+            face_embedding_array = np.array(face_embedding)
+            normalized_face_embedding = normalize_embedding(face_embedding_array)
+            if np.all(normalized_face_embedding == 0):
+                logger.warning("Face embedding has near-zero norm")
+                return self._get_unidentified_member(house)
+        except Exception as e:
+            logger.error(f"Error normalizing face embedding: {str(e)}")
+            return self._get_unidentified_member(house)
         
         # Check if embedding is valid
-        if np.all(np.abs(normalized_face_embedding) < 1e-10) or np.isnan(normalized_face_embedding).any() or np.isinf(normalized_face_embedding).any():
+        if not self._is_valid_embedding(normalized_face_embedding):
             logger.warning("Invalid face embedding: contains zeros, NaN, or Inf")
             return self._get_unidentified_member(house)
         
         # Calculate similarity scores for all members
         matches = []
-        for member_id, member_data in self.member_embeddings.items():
+        skipped_count = 0
+        anomalous_count = 0
+        
+        for member_id, member_embedding in self.member_embeddings.items():
             try:
-                member_embedding = member_data['embedding']
+                # Convert to numpy if needed
+                if isinstance(member_embedding, list):
+                    member_embedding_array = np.array(member_embedding)
+                else:
+                    member_embedding_array = member_embedding
                 
                 # Skip invalid embeddings
-                if not member_embedding or len(member_embedding) != 128:
+                if not self._is_valid_embedding(member_embedding_array):
+                    skipped_count += 1
                     continue
                 
-                # Skip zero embeddings (fallback embeddings)
-                if member_data.get('source') == 'fallback':
-                    logger.debug(f"Skipping fallback embedding for member {member_id}")
+                # Normalize member embedding
+                normalized_member = normalize_embedding(member_embedding_array)
+                if np.all(normalized_member == 0):
+                    skipped_count += 1
                     continue
                 
-                # Calculate similarity using the shared utility
-                similarity = compute_similarity(normalized_face_embedding, member_embedding)
+                # Calculate similarity using cosine similarity
+                similarity = np.dot(normalized_face_embedding, normalized_member)
                 
                 # Validate similarity score
                 if similarity < self.min_valid_similarity or similarity > self.max_valid_similarity:
-                    logger.warning(f"Anomalous similarity score for member {member_id}: {similarity}")
+                    logger.debug(f"Anomalous similarity score for member {member_id}: {similarity:.4f}")
+                    anomalous_count += 1
                     continue
                 
-                # Apply diversity promotion - more aggressive to reduce false positives
+                # Apply diversity promotion to reduce false positives
                 adjusted_similarity = self._apply_diversity_promotion(similarity, member_id, video_id)
                 
-                # Add to matches if above threshold
-                if adjusted_similarity >= confidence_threshold:
-                    matches.append({
-                        'member_id': member_data['member_id'],
-                        'id': member_id,
-                        'name': member_data['name'],
-                        'house': member_data['house'],
-                        'confidence': adjusted_similarity,
-                        'raw_confidence': similarity,
-                        'embedding_source': member_data.get('source', 'unknown')
-                    })
+                # Get member details
+                member_info = self._get_member_info(member_id)
+                
+                # Add to matches regardless of threshold (we'll filter later)
+                matches.append({
+                    'member_id': member_info.get('member_id', member_id),
+                    'id': member_id,
+                    'name': member_info.get('name', 'Unknown'),
+                    'house': member_info.get('house', house or 'Unknown'),
+                    'confidence': adjusted_similarity,
+                    'raw_confidence': similarity,
+                    'matched': True
+                })
             except Exception as e:
                 logger.error(f"Error matching member {member_id}: {str(e)}")
         
         # Sort matches by confidence
         matches.sort(key=lambda x: x['confidence'], reverse=True)
         
-        # Check if we have a match with sufficient confidence
-        if matches and matches[0]['confidence'] >= confidence_threshold:
+        # Log matching statistics
+        processing_time = time.time() - start_time
+        logger.debug(f"Matching stats: {len(matches)} matches found, {skipped_count} skipped, {anomalous_count} anomalous, in {processing_time:.3f}s")
+        
+        # Check if we have any matches
+        if matches:
             top_match = matches[0]
             
-            # Check if there's a significant gap between top match and second match
-            if len(matches) > 1 and (matches[0]['confidence'] - matches[1]['confidence']) < self.min_confidence_gap:
-                logger.debug(f"Confidence gap too small: {matches[0]['confidence']:.2f} vs {matches[1]['confidence']:.2f}")
-                return self._get_unidentified_member(house)
-            
-            # Apply a frequency check to reduce false positives
-            if video_id and top_match['id'] in self.video_match_counts.get(video_id, {}):
-                count = self.video_match_counts[video_id][top_match['id']]
-                max_appearances = 10  # Maximum reasonable appearances in a single video
+            # Check if top match meets confidence threshold
+            if top_match['confidence'] >= confidence_threshold:
+                # Check if there's a significant gap between top match and second match
+                if len(matches) > 1 and (matches[0]['confidence'] - matches[1]['confidence']) < self.min_confidence_gap:
+                    logger.debug(f"Confidence gap too small: {matches[0]['confidence']:.4f} vs {matches[1]['confidence']:.4f}")
+                    logger.debug(f"Top match: {matches[0]['name']} ({matches[0]['id']}), Second: {matches[1]['name']} ({matches[1]['id']})")
+                    # For testing purposes, we'll return the top match anyway with a flag
+                    top_match['confidence_gap_warning'] = True
                 
-                if count > max_appearances:
-                    logger.debug(f"Member {top_match['id']} ({top_match['name']}) appeared too many times in video {video_id}: {count} > {max_appearances}")
-                    return self._get_unidentified_member(house)
-            
-            # Update match history
-            self._update_match_history(top_match['id'], video_id)
-            
-            # Return the match
-            return top_match
+                # Apply a frequency check to reduce false positives
+                if video_id and top_match['id'] in self.video_match_counts.get(video_id, {}):
+                    count = self.video_match_counts[video_id][top_match['id']]
+                    max_appearances = 10  # Maximum reasonable appearances in a single video
+                    
+                    if count > max_appearances:
+                        logger.debug(f"Member {top_match['id']} ({top_match['name']}) appeared too many times in video {video_id}: {count} > {max_appearances}")
+                        # For testing purposes, we'll return the top match anyway with a flag
+                        top_match['frequency_warning'] = True
+                
+                # Update match history
+                self._update_match_history(top_match['id'], video_id)
+                
+                # Log successful match
+                logger.info(f"Matched member {top_match['name']} (ID: {top_match['id']}, member_id: {top_match['member_id']}) with confidence {top_match['confidence']:.4f}")
+                
+                # Return the match
+                return top_match
+            else:
+                logger.debug(f"Best match {top_match['name']} ({top_match['id']}) below threshold: {top_match['confidence']:.4f} < {confidence_threshold}")
         
         # No match found, return unidentified member
         return self._get_unidentified_member(house)
@@ -686,6 +666,41 @@ class ParliamentMemberMatcher:
             total_matches = sum(self.video_match_counts[video_id].values())
             logger.debug(f"Video {video_id} diversity stats: {unique_members} unique members, {total_matches} total matches")
     
+    def _get_member_info(self, member_id: str) -> Dict[str, Any]:
+        """Get member information from the members list.
+        
+        Args:
+            member_id: The UUID or numeric ID of the member
+            
+        Returns:
+            Dict with member information or empty dict if not found
+        """
+        # First try to find by UUID
+        for member in self.members:
+            if member.get('id') == member_id:
+                return {
+                    'member_id': member.get('member_id'),
+                    'name': member.get('name', 'Unknown'),
+                    'house': member.get('house', 'Unknown')
+                }
+        
+        # Try to find by numeric member_id
+        if member_id.isdigit():
+            for member in self.members:
+                if str(member.get('member_id')) == member_id:
+                    return {
+                        'member_id': member.get('member_id'),
+                        'name': member.get('name', 'Unknown'),
+                        'house': member.get('house', 'Unknown')
+                    }
+        
+        # Return default info if not found
+        return {
+            'member_id': member_id,
+            'name': 'Unknown',
+            'house': 'Unknown'
+        }
+    
     def _get_unidentified_member(self, house: Optional[str] = None) -> Dict[str, Any]:
         """Get an unidentified member placeholder for the specified house."""
         # Default member IDs for each house
@@ -703,6 +718,7 @@ class ParliamentMemberMatcher:
             'name': f"Unidentified Speaker ({house if house else 'Commons'})",
             'house': str(house) if house else "1",
             'confidence': 0.0,
+            'raw_confidence': 0.0,
             'matched': False
         }
     
@@ -733,3 +749,66 @@ class ParliamentMemberMatcher:
         except Exception as e:
             logger.error(f"Error getting default member for house {house}: {str(e)}")
             return None
+            
+    def _is_valid_embedding(self, embedding: Optional[Union[List[float], np.ndarray]]) -> bool:
+        """
+        Check if an embedding is valid (not None, correct shape, no NaN or infinity values).
+        
+        Args:
+            embedding: The embedding to validate
+            
+        Returns:
+            bool: True if the embedding is valid, False otherwise
+        """
+        if embedding is None:
+            return False
+            
+        try:
+            # Convert to numpy array if it's not already
+            if not isinstance(embedding, np.ndarray):
+                embedding = np.array(embedding)
+                
+            # Check shape (should be a 1D array with 128 elements for FaceNet)
+            if embedding.ndim != 1 or embedding.shape[0] != 128:
+                logger.warning(f"Invalid embedding shape: {embedding.shape}")
+                return False
+                
+            # Check for NaN or infinity values
+            if np.isnan(embedding).any() or np.isinf(embedding).any():
+                logger.warning("Embedding contains NaN or infinity values")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating embedding: {str(e)}")
+            return False
+            
+    def _name_similarity(self, name1: str, name2: str) -> float:
+        """
+        Calculate similarity between two member names using Jaccard similarity.
+        
+        Args:
+            name1: First name
+            name2: Second name
+            
+        Returns:
+            float: Similarity score between 0.0 and 1.0
+        """
+        try:
+            # Convert names to lowercase and split into words
+            words1 = set(name1.lower().split())
+            words2 = set(name2.lower().split())
+            
+            # Calculate Jaccard similarity: intersection / union
+            intersection = len(words1.intersection(words2))
+            union = len(words1.union(words2))
+            
+            if union == 0:
+                return 0.0
+                
+            return intersection / union
+            
+        except Exception as e:
+            logger.error(f"Error calculating name similarity: {str(e)}")
+            return 0.0

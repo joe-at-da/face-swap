@@ -57,6 +57,10 @@ def download_mp_photos(db):
     mp_photos_dir = "/app/data/mp_photos"
     os.makedirs(mp_photos_dir, exist_ok=True)
     
+    # Directory for MP embeddings - separate from photos
+    mp_embeddings_dir = "/app/data/mp_embeddings"
+    os.makedirs(mp_embeddings_dir, exist_ok=True)
+    
     # Create a backup directory for existing files
     backup_dir = os.path.join(mp_photos_dir, "backup_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
     os.makedirs(backup_dir, exist_ok=True)
@@ -72,6 +76,21 @@ def download_mp_photos(db):
             logger.info(f"Backed up {json_file} to {backup_dir}")
         except Exception as e:
             logger.error(f"Failed to back up {json_file}: {str(e)}")
+            
+    # Also backup embedding files if they exist
+    if os.path.exists(mp_embeddings_dir):
+        embeddings_backup_dir = os.path.join(backup_dir, "embeddings")
+        os.makedirs(embeddings_backup_dir, exist_ok=True)
+        
+        embedding_files = [f for f in os.listdir(mp_embeddings_dir) if f.endswith('.json')]
+        for embedding_file in embedding_files:
+            src_path = os.path.join(mp_embeddings_dir, embedding_file)
+            dst_path = os.path.join(embeddings_backup_dir, embedding_file)
+            try:
+                shutil.copy2(src_path, dst_path)
+                logger.info(f"Backed up embedding file {embedding_file} to {embeddings_backup_dir}")
+            except Exception as e:
+                logger.error(f"Failed to back up embedding file {embedding_file}: {str(e)}")
     
     # Query the database for parliament members
     result = db.execute(text("""
@@ -181,16 +200,16 @@ def download_mp_photos(db):
             continue
         
         if embedding is not None:
-            # Save the embedding to a JSON file named by member_id
-            json_file = os.path.join(mp_photos_dir, f"{member_id}.json")
+            # Save face embedding to JSON file in the embeddings directory
+            json_file = os.path.join(mp_embeddings_dir, f"{member_id}.json")
             try:
                 with open(json_file, "w") as f:
                     # Handle both numpy arrays and lists
                     if hasattr(embedding, 'tolist'):
-                        json.dump(embedding.tolist(), f)
+                        json.dump({"embedding": embedding.tolist()}, f)
                     else:
                         # It's already a list
-                        json.dump(embedding, f)
+                        json.dump({"embedding": embedding}, f)
                 logger.info(f"Saved face embedding for {name} (ID: {member_id}) to {json_file}")
             except Exception as e:
                 logger.error(f"Error generating face embedding for {name}: {str(e)}")
@@ -209,6 +228,46 @@ def download_mp_photos(db):
                 "name": name
             }
     
+    # Also create a consolidated mp_encodings.json file for compatibility
+    try:
+        # Prepare data for mp_encodings.json
+        ids = []
+        encodings = []
+        names = []
+        
+        # Collect all embeddings from the individual files
+        for member in members:
+            member_id = member[1]
+            name = member[2]
+            if member_id:
+                embedding_file = os.path.join(mp_embeddings_dir, f"{member_id}.json")
+                if os.path.exists(embedding_file):
+                    try:
+                        with open(embedding_file, 'r') as f:
+                            data = json.load(f)
+                        
+                        if 'embedding' in data:
+                            ids.append(str(member_id))
+                            encodings.append(data['embedding'])
+                            names.append(name)
+                    except Exception as e:
+                        logger.error(f"Error reading embedding file {embedding_file}: {str(e)}")
+        
+        # Create the mp_encodings.json file
+        mp_encodings_file = os.path.join("/app/data", "mp_encodings.json")
+        with open(mp_encodings_file, 'w') as f:
+            json.dump({
+                "ids": ids,
+                "encodings": encodings,
+                "names": names
+            }, f)
+        logger.info(f"Created consolidated mp_encodings.json with {len(ids)} embeddings")
+    except Exception as e:
+        logger.error(f"Error creating mp_encodings.json: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+    
+    # Save the UUID to member_id mapping
     mapping_file = os.path.join(mp_photos_dir, "uuid_to_member_id.json")
     with open(mapping_file, 'w') as f:
         json.dump(mapping, f, indent=2)

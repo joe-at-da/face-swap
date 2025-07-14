@@ -31,6 +31,13 @@ class PhotoManager:
         # Create directories if they don't exist
         os.makedirs(self.photos_dir, exist_ok=True)
         os.makedirs(self.embeddings_dir, exist_ok=True)
+        
+        # Path to the UUID to member ID mapping file
+        self.uuid_to_member_id_file = os.path.join(self.photos_dir, 'uuid_to_member_id.json')
+        
+        # Load UUID to member ID mapping if available
+        self.uuid_to_member_id = {}
+        self.load_uuid_mapping()
     
     def get_photo_path(self, member_id: str) -> str:
         """
@@ -80,6 +87,31 @@ class PhotoManager:
         """
         return os.path.exists(self.get_embedding_path(member_id))
     
+    def load_uuid_mapping(self):
+        """
+        Load the UUID to member ID mapping from file
+        """
+        if not os.path.exists(self.uuid_to_member_id_file):
+            logger.warning(f"UUID to member ID mapping file not found at {self.uuid_to_member_id_file}")
+            return
+        
+        try:
+            with open(self.uuid_to_member_id_file, 'r') as f:
+                mapping_data = json.load(f)
+            
+            # Process the mapping data
+            for uuid, info in mapping_data.items():
+                if isinstance(info, dict) and 'member_id' in info:
+                    self.uuid_to_member_id[uuid] = info['member_id']
+                    # Also store without dashes for compatibility
+                    if '-' in uuid:
+                        no_dash_uuid = uuid.replace('-', '')
+                        self.uuid_to_member_id[no_dash_uuid] = info['member_id']
+            
+            logger.info(f"Loaded {len(self.uuid_to_member_id)} UUID to member ID mappings")
+        except Exception as e:
+            logger.error(f"Error loading UUID to member ID mapping: {str(e)}")
+    
     def load_embedding(self, member_id: str) -> Optional[np.ndarray]:
         """
         Load an MP's embedding from file
@@ -90,22 +122,37 @@ class PhotoManager:
         Returns:
             Embedding as numpy array or None if not found
         """
+        # First try with the direct member_id
         embedding_path = self.get_embedding_path(member_id)
-        if not os.path.exists(embedding_path):
-            return None
+        if os.path.exists(embedding_path):
+            try:
+                with open(embedding_path, 'r') as f:
+                    embedding_data = json.load(f)
+                
+                if 'embedding' in embedding_data:
+                    return np.array(embedding_data['embedding'])
+            except Exception as e:
+                logger.error(f"Error loading embedding for member {member_id}: {str(e)}")
         
-        try:
-            with open(embedding_path, 'r') as f:
-                embedding_data = json.load(f)
+        # If the member_id is a UUID, try to find the numeric member_id
+        if member_id in self.uuid_to_member_id:
+            numeric_member_id = self.uuid_to_member_id[member_id]
+            logger.info(f"Found mapping from UUID {member_id} to numeric member_id {numeric_member_id}")
             
-            if 'embedding' in embedding_data:
-                return np.array(embedding_data['embedding'])
-            else:
-                logger.error(f"Invalid embedding format for member {member_id}")
-                return None
-        except Exception as e:
-            logger.error(f"Error loading embedding for member {member_id}: {str(e)}")
-            return None
+            # Try loading with the numeric member_id
+            numeric_embedding_path = self.get_embedding_path(numeric_member_id)
+            if os.path.exists(numeric_embedding_path):
+                try:
+                    with open(numeric_embedding_path, 'r') as f:
+                        embedding_data = json.load(f)
+                    
+                    if 'embedding' in embedding_data:
+                        return np.array(embedding_data['embedding'])
+                except Exception as e:
+                    logger.error(f"Error loading embedding for numeric member {numeric_member_id}: {str(e)}")
+        
+        logger.warning(f"No embedding found for member {member_id}")
+        return None
     
     def generate_embedding(self, member_id: str) -> Optional[np.ndarray]:
         """
