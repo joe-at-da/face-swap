@@ -19,6 +19,7 @@ from collections import defaultdict, Counter
 # Import database functions and embedding utilities
 from backend.services.recognition.member_matching.database import load_members_from_supabase
 from backend.services.recognition.member_matching.embedding import extract_embedding, normalize_embedding, compute_similarity
+from backend.services.recognition.member_matching.photo_management import PhotoManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,15 @@ class ParliamentMemberMatcher:
         self.members = []  # Initialize with empty list instead of None
         self.member_embeddings = {}
         
+        # Initialize photo manager for local embeddings
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
+        photos_dir = os.path.join(data_dir, 'mp_photos')
+        embeddings_dir = os.path.join(data_dir, 'mp_embeddings')
+        self.photo_manager = PhotoManager(photos_dir, embeddings_dir)
+        
         # Matching parameters
         self.min_confidence_threshold = 0.5
-        self.min_confidence_gap = 0.15
+        self.min_confidence_gap = 0.15  # Minimum gap between top match and second match
         
         # Diversity promotion parameters
         self.cooldown_period = 60  # seconds
@@ -82,96 +89,84 @@ class ParliamentMemberMatcher:
                         {"id": "2", "name": "Fallback Member 2", "embedding": [0.0] * 128}
                     ]
             
-            # Update members list
+            # Store members
             self.members = loaded_members
-            logger.info(f"Successfully loaded {len(self.members)} parliament members")
+            logger.info(f"Loaded {len(self.members)} parliament members")
             
             # Extract embeddings from members
             self.member_embeddings = {}
             valid_embeddings = 0
             invalid_embeddings = 0
+            local_embeddings_loaded = 0
             
             for member in self.members:
                 member_id = member.get('id')
-                raw_embedding = member.get('embedding')
                 
-                # Skip members without ID or embedding
-                if not member_id or raw_embedding is None:
-                    logger.debug(f"Skipping member {member_id}: missing ID or embedding")
+                # Skip members without ID
+                if not member_id:
+                    logger.debug(f"Skipping member with missing ID")
                     invalid_embeddings += 1
                     continue
                 
-                try:
-                    # Handle string JSON embeddings
-                    if isinstance(raw_embedding, str):
-                        try:
-                            raw_embedding = json.loads(raw_embedding)
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse JSON embedding for member {member_id}: {str(e)}")
-                            invalid_embeddings += 1
-                            continue
-                    
-                    # Use the extract_embedding utility to handle various formats
+                # First try to load from local storage using PhotoManager
+                local_embedding = self.photo_manager.load_embedding(member_id)
+                if local_embedding is not None:
+                    # Successfully loaded local embedding
                     try:
-                        embedding_array = extract_embedding(raw_embedding)
+                        # Normalize the embedding
+                        normalized_embedding = self._normalize_embedding(local_embedding)
+                        
+                        # Check if embedding is valid
+                        if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
+                            logger.warning(f"Invalid local embedding for member {member_id}: contains zeros, NaN, or Inf")
+                        else:
+                            # Store as a list for JSON serialization
+                            embedding_list = normalized_embedding.tolist()
+                            
+                            # Store the embedding and metadata
+                            self.member_embeddings[member_id] = {
+                                'embedding': embedding_list,
+                                'member_id': member.get('member_id', member_id),  # Fallback to id if member_id is missing
+                                'name': member.get('name', f'Member {member_id}'),  # Fallback to generic name if missing
+                                'house': member.get('house', '1'),  # Default to commons if not specified
+                                'source': 'local'
+                            }
+                            valid_embeddings += 1
+                            local_embeddings_loaded += 1
+                            continue  # Skip to next member since we have a valid embedding
                     except Exception as e:
-                        logger.warning(f"Failed to extract embedding for member {member_id}: {str(e)}")
-                        invalid_embeddings += 1
-                        continue
-                    
-                    # Verify embedding dimensions
-                    if len(embedding_array) != 128:
-                        logger.warning(f"Invalid embedding dimensions for member {member_id}: expected 128, got {len(embedding_array)}")
-                        invalid_embeddings += 1
-                        continue
-                    
-                    # Normalize the embedding
-                    normalized_embedding = normalize_embedding(embedding_array)
-                    
-                    # Check if embedding is all zeros or contains NaN/Inf
-                    if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
-                        logger.warning(f"Invalid embedding values for member {member_id}: contains zeros, NaN, or Inf")
-                        invalid_embeddings += 1
-                        continue
-                    
-                    # Store as a list for JSON serialization
-                    embedding_list = normalized_embedding.tolist()
-                    
-                    # Store the embedding and metadata
-                    self.member_embeddings[member_id] = {
-                        'embedding': embedding_list,
-                        'member_id': member.get('member_id', member_id),  # Fallback to id if member_id is missing
-                        'name': member.get('name', 'Unknown'),
-                        'house': member.get('house', 'commons')  # Default to commons if not specified
-                    }
-                    valid_embeddings += 1
-                    
-                except Exception as e:
-                    logger.warning(f"Unexpected error processing embedding for member {member_id}: {str(e)}")
-                    import traceback
-                    logger.warning(traceback.format_exc())
-                    invalid_embeddings += 1
-                    continue
-            
-            # Log embedding extraction statistics
-            logger.info(f"Extracted {valid_embeddings} valid member embeddings")
-            if invalid_embeddings > 0:
-                logger.warning(f"Found {invalid_embeddings} invalid member embeddings")
+                        logger.warning(f"Error processing local embedding for member {member_id}: {str(e)}")
                 
-            if not self.member_embeddings:
-                logger.warning("Failed to extract any valid member embeddings, using minimal fallback")
-                # Create minimal fallback embeddings
-                self.member_embeddings = {
-                    "1": {"embedding": [0.0] * 128, "member_id": "1", "name": "Fallback Member 1"},
-                    "2": {"embedding": [0.0] * 128, "member_id": "2", "name": "Fallback Member 2"}
+                # If we get here, we couldn't load a valid local embedding
+                # Since Supabase doesn't have embeddings, we'll create a zero embedding as a last resort
+                logger.warning(f"No valid embedding found for member {member_id}, using zero vector")
+                
+                # Create a zero embedding as a last resort
+                zero_embedding = [0.0] * 128
+                
+                # Store the embedding and metadata
+                self.member_embeddings[member_id] = {
+                    'embedding': zero_embedding,
+                    'member_id': member.get('member_id', member_id),  # Fallback to id if member_id is missing
+                    'name': member.get('name', f'Member {member_id}'),  # Fallback to generic name if missing
+                    'house': member.get('house', '1'),  # Default to commons if not specified
+                    'source': 'fallback'
                 }
+                invalid_embeddings += 1
             
-            logger.info(f"Extracted {len(self.member_embeddings)} member embeddings")
+            # Log summary
+            logger.info(f"Loaded {len(self.members)} parliament members with {valid_embeddings} valid embeddings ({local_embeddings_loaded} from local storage) and {invalid_embeddings} invalid embeddings")
             
-            # Validate and normalize all stored embeddings
-            self._validate_and_normalize_stored_embeddings()
+            # Check if we have enough valid embeddings
+            if valid_embeddings == 0:
+                logger.error("No valid embeddings found! Face recognition will not work correctly.")
+                return False
+            elif valid_embeddings < 10:
+                logger.warning(f"Only {valid_embeddings} valid embeddings found. Face recognition may not work well.")
             
-            return True
+            # Return True if we have at least some valid embeddings
+            return valid_embeddings > 0
+            
         except Exception as e:
             logger.error(f"Error loading parliament members: {str(e)}")
             import traceback
@@ -185,42 +180,24 @@ class ParliamentMemberMatcher:
                     {"id": "2", "name": "Fallback Member 2", "embedding": [0.0] * 128}
                 ]
                 self.member_embeddings = {
-                    "1": {"embedding": [0.0] * 128, "member_id": "1", "name": "Fallback Member 1"},
-                    "2": {"embedding": [0.0] * 128, "member_id": "2", "name": "Fallback Member 2"}
+                    "1": {"embedding": [0.0] * 128, "member_id": "1", "name": "Fallback Member 1", "house": "1", "source": "fallback"},
+                    "2": {"embedding": [0.0] * 128, "member_id": "2", "name": "Fallback Member 2", "house": "1", "source": "fallback"}
                 }
             
             return len(self.members) > 0
     
-    def _validate_and_normalize_stored_embeddings(self):
-        """Validate and normalize all stored embeddings."""
-        invalid_embeddings = []
-        normalized_count = 0
+    def _normalize_embedding(self, embedding: List[float]) -> np.ndarray:
+        """
+        Normalize an embedding to unit length
         
-        for member_id, data in self.member_embeddings.items():
-            if not isinstance(data, dict) or "embedding" not in data:
-                invalid_embeddings.append(member_id)
-                continue
+        Args:
+            embedding: Embedding to normalize
             
-            embedding = np.array(data["embedding"])
-            
-            # Skip zero embeddings
-            if np.all(np.abs(embedding) < 1e-10):
-                invalid_embeddings.append(member_id)
-                continue
-            
-            # Check if embedding needs normalization
-            norm = np.linalg.norm(embedding)
-            if abs(norm - 1.0) > 1e-5:  # If not already normalized
-                # Normalize the embedding
-                normalized_embedding = normalize_embedding(embedding)
-                data["embedding"] = normalized_embedding.tolist()
-                normalized_count += 1
-        
-        if normalized_count > 0:
-            logger.info(f"Normalized {normalized_count} member embeddings")
-        
-        if invalid_embeddings:
-            logger.warning(f"Found {len(invalid_embeddings)} invalid member embeddings")
+        Returns:
+            Normalized embedding
+        """
+        # Use the shared utility function
+        return normalize_embedding(np.array(embedding))
     
     def _validate_similarity(self, similarity: float) -> Tuple[bool, float]:
         """
@@ -230,14 +207,10 @@ class ParliamentMemberMatcher:
             Tuple[bool, float]: (is_valid, adjusted_similarity)
         """
         # Check if similarity is within valid range
-        if similarity > self.max_valid_similarity or similarity < self.min_valid_similarity:
-            # Clamp to valid range and apply penalty for anomalous values
-            adjusted = max(min(similarity, 1.0), -1.0)
-            # Apply extra penalty for extremely anomalous values (like the 1.3+)
-            if similarity > 1.2 or similarity < -1.2:
-                adjusted *= 0.8  # Apply 20% reduction to highly suspicious matches
-            return False, adjusted
-        
+        if similarity < self.min_valid_similarity or similarity > self.max_valid_similarity:
+            # Clamp to valid range
+            adjusted_similarity = max(self.min_valid_similarity, min(similarity, self.max_valid_similarity))
+            return False, adjusted_similarity
         return True, similarity
     
     def _calculate_confidence(self, similarities: List[Tuple[str, float]]) -> Dict[str, float]:
@@ -250,274 +223,162 @@ class ParliamentMemberMatcher:
         Returns:
             Dict[str, float]: Mapping of member_id to confidence score
         """
-        if not similarities:
-            return {}
-        
-        # Extract valid similarities
-        valid_similarities = []
-        for member_id, similarity in similarities:
-            is_valid = True
-            adjusted_similarity = self._validate_similarity(similarity, member_id)
-            if not is_valid:
-                logger.warning(f"Anomalous similarity detected for member {member_id}: {similarity}, adjusted to {adjusted_similarity}")
-            valid_similarities.append((member_id, adjusted_similarity))
-        
-        if not valid_similarities:
-            logger.warning("No valid similarities found")
-            return {}
-        
-        # Map similarities to confidence scores
-        # Using a sigmoid-like transformation to map [-1,1] to [0,1]
         confidence_scores = {}
-        for member_id, similarity in valid_similarities:
-            # Transform similarity to confidence (0.5 * (similarity + 1))
-            # This maps -1 to 0, 0 to 0.5, and 1 to 1.0
-            confidence = 0.5 * (similarity + 1.0)
+        
+        # If no similarities, return empty dict
+        if not similarities:
+            return confidence_scores
+        
+        # Extract similarity values
+        similarity_values = [s[1] for s in similarities]
+        
+        # Calculate mean and standard deviation
+        mean_similarity = np.mean(similarity_values)
+        std_similarity = np.std(similarity_values) if len(similarity_values) > 1 else 0.1
+        
+        # Calculate confidence scores
+        for member_id, similarity in similarities:
+            # Convert similarity to confidence score (0.0 to 1.0)
+            # Use a sigmoid-like function to map similarity to confidence
+            if std_similarity > 0:
+                z_score = (similarity - mean_similarity) / std_similarity
+                confidence = 1.0 / (1.0 + np.exp(-z_score))
+            else:
+                # If all similarities are the same, use the raw similarity
+                confidence = max(0.0, min(1.0, (similarity + 1.0) / 2.0))
+            
             confidence_scores[member_id] = confidence
         
         return confidence_scores
     
-    def _apply_diversity_adjustments(self, 
-                                    confidence_scores: Dict[str, float], 
-                                    video_id: Optional[str] = None) -> Dict[str, Dict[str, float]]:
-        """
-        Apply diversity-promoting adjustments to confidence scores.
+    def _apply_diversity_promotion(self, similarity: float, member_id: str, video_id: Optional[str] = None) -> float:
+        """Apply diversity promotion to reduce false positives."""
+        current_time = time.time()
         
-        Args:
-            confidence_scores: Mapping of member_id to confidence score
-            video_id: Optional video ID for tracking matches within a video
+        # Initialize tracking for this member if not already present
+        if member_id not in self.last_match_times:
+            self.last_match_times[member_id] = 0
+        if member_id not in self.consecutive_matches:
+            self.consecutive_matches[member_id] = 0
         
-        Returns:
-            Dict[str, Dict[str, float]]: Mapping of member_id to adjustment details
-        """
-        now = time.time()
-        adjustments = {}
+        # Calculate time since last match
+        time_since_last_match = current_time - self.last_match_times[member_id]
         
-        for member_id, confidence in confidence_scores.items():
-            # Initialize adjustment details
-            adjustments[member_id] = {
-                "original_confidence": confidence,
-                "adjusted_confidence": confidence,
-                "cooldown_factor": 1.0,
-                "diversity_boost": 0.0
-            }
+        # Apply cooldown penalty if matched recently - more aggressive to reduce false positives
+        if time_since_last_match < self.cooldown_period:
+            # Penalty increases as time_since_last_match decreases
+            cooldown_factor = 1 - (self.cooldown_period - time_since_last_match) / self.cooldown_period
+            # More aggressive cooldown penalty
+            similarity *= cooldown_factor * 0.9  # Additional 10% reduction
+        
+        # Apply consecutive match penalty - more aggressive
+        if self.consecutive_matches[member_id] > self.max_consecutive_matches:
+            # Penalty increases with each consecutive match beyond the max
+            consecutive_penalty = self.diversity_boost_factor * 2 * (self.consecutive_matches[member_id] - self.max_consecutive_matches)
+            similarity -= consecutive_penalty
+        
+        # Apply video-specific diversity promotion if video_id is provided
+        if video_id:
+            # Get count of this member in this video
+            member_count = self.video_match_counts[video_id][member_id]
             
-            # Apply cooldown based on recent matches
-            last_match_time = self.last_match_times.get(member_id, 0)
-            time_since_last_match = now - last_match_time
-            
-            if time_since_last_match < self.cooldown_period:
-                # Linear cooldown factor (1.0 to 0.7) based on time since last match
-                cooldown_factor = 0.7 + 0.3 * (time_since_last_match / self.cooldown_period)
-                adjustments[member_id]["cooldown_factor"] = cooldown_factor
+            # Apply penalty based on frequency in this video - more aggressive
+            if member_count > 0:
+                video_penalty = self.diversity_boost_factor * member_count / 5  # More aggressive penalty
+                similarity -= video_penalty
                 
-                # Apply cooldown to confidence
-                adjustments[member_id]["adjusted_confidence"] *= cooldown_factor
-            
-            # Apply consecutive match penalty
-            consecutive_matches = self.consecutive_matches.get(member_id, 0)
-            if consecutive_matches >= self.max_consecutive_matches:
-                # Apply stronger penalty for exceeding max consecutive matches
-                consecutive_penalty = 0.2 * (consecutive_matches - self.max_consecutive_matches + 1)
-                consecutive_penalty = min(consecutive_penalty, 0.6)  # Cap at 60% reduction
-                adjustments[member_id]["adjusted_confidence"] -= consecutive_penalty
-                adjustments[member_id]["consecutive_penalty"] = consecutive_penalty
-            
-            # Apply diversity boost for less frequently matched members
-            if video_id:
-                # Count matches for this member in this video
-                member_matches_in_video = self.video_match_counts[video_id].get(member_id, 0)
-                total_matches_in_video = sum(self.video_match_counts[video_id].values())
-                
-                if total_matches_in_video > 0:
-                    # Calculate diversity boost (more boost for less frequently matched members)
-                    if member_matches_in_video == 0:
-                        # Extra boost for members never matched in this video
-                        diversity_boost = self.diversity_boost_factor
-                    else:
-                        # Reduced boost for previously matched members
-                        match_frequency = member_matches_in_video / total_matches_in_video
-                        diversity_boost = self.diversity_boost_factor * (1.0 - match_frequency)
-                    
-                    adjustments[member_id]["diversity_boost"] = diversity_boost
-                    adjustments[member_id]["adjusted_confidence"] += diversity_boost
-            
-            # Ensure confidence stays in valid range
-            adjustments[member_id]["adjusted_confidence"] = max(0.0, min(1.0, adjustments[member_id]["adjusted_confidence"]))
+                # Special case for known problematic member (Darren Jones - ID 4621)
+                if member_id == '4621' and member_count > 2:
+                    # Apply extra penalty for Darren Jones after multiple appearances
+                    similarity -= 0.1  # Additional fixed penalty
+                    logger.debug(f"Applied extra penalty for member 4621 (Darren Jones) - count: {member_count}")
         
-        return adjustments
+        # Update video match counts if provided
+        if video_id:
+            self.video_match_counts[video_id][member_id] += 1
+            
+        return similarity
     
-    def _match_face_to_member(self, 
-                             face_embedding: List[float], 
-                             confidence_threshold: float = 0.5,
-                             house: Optional[str] = None,
-                             video_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Match a face embedding to a parliament member.
+    def _match_face_to_member(self, face_embedding: List[float], confidence_threshold: float = 0.5, house: Optional[str] = None, video_id: Optional[str] = None) -> Dict[str, Any]:
+        """Match a face embedding to a parliament member."""
+        if not self.member_embeddings:
+            logger.warning("No member embeddings available for matching")
+            return self._get_unidentified_member(house)
         
-        Args:
-            face_embedding: Face embedding to match
-            confidence_threshold: Minimum confidence threshold for a match
-            house: Optional house filter (1=Commons, 2=Lords)
-            video_id: Optional video ID for tracking matches within a video
+        # Convert face embedding to numpy array and normalize
+        face_embedding_array = np.array(face_embedding)
+        normalized_face_embedding = self._normalize_embedding(face_embedding_array)
         
-        Returns:
-            Dict[str, Any]: Match result
-        """
-        try:
-            # Use the utility function to normalize the face embedding
-            normalized_face_embedding = normalize_embedding(np.array(face_embedding))
-            
-            # Calculate similarity with all member embeddings
-            similarities = []
-            
-            for member_id, data in self.member_embeddings.items():
-                # Skip if not a dict or no embedding
-                if not isinstance(data, dict) or "embedding" not in data:
-                    continue
-                
-                # Skip if house filter is applied and member is not in the specified house
-                if house is not None:
-                    member = next((m for m in self.members if m["id"] == member_id), None)
-                    if not member or str(member.get("house")) != str(house):
-                        continue
-                
-                # Get member embedding
-                member_embedding = data["embedding"]
-                
-                # Skip zero embeddings
-                if isinstance(member_embedding, (list, np.ndarray)) and np.all(np.abs(np.array(member_embedding)) < 1e-10):
-                    continue
-                
-                # Skip embeddings with different length
-                if isinstance(member_embedding, (list, np.ndarray)) and len(member_embedding) != len(normalized_face_embedding):
-                    continue
-                
-                # Use the utility function to calculate similarity
-                try:
-                    similarity = compute_similarity(normalized_face_embedding, member_embedding)
-                except Exception as e:
-                    logger.warning(f"Error computing similarity for member {member_id}: {str(e)}")
-                    continue
-                
-                # Check for anomalous high similarity scores
-                if similarity > 0.95:
-                    logger.debug(f"Very high similarity detected: {similarity:.4f} for member {member_id}")
-                
-                # Validate similarity
-                is_valid, adjusted_similarity = self._validate_similarity(similarity)
-                if not is_valid:
-                    logger.warning(f"Anomalous similarity detected for member {member_id}: {similarity}, adjusted to {adjusted_similarity}")
-                    similarity = adjusted_similarity
-                
-                similarities.append((member_id, similarity))
-            
-            # Sort similarities in descending order
-            similarities.sort(key=lambda x: x[1], reverse=True)
-            
-            # Calculate confidence scores
-            confidence_scores = self._calculate_confidence(similarities)
-            
-            # Apply diversity adjustments
-            adjustments = self._apply_diversity_adjustments(confidence_scores, video_id)
-            
-            # Sort members by adjusted confidence
-            sorted_members = sorted(
-                adjustments.items(),
-                key=lambda x: x[1]["adjusted_confidence"],
-                reverse=True
-            )
-            
-            # Log top 5 matches with adjustment details
-            logger.info("Top 5 matches (with diversity adjustments):")
-            for i, (member_id, details) in enumerate(sorted_members[:5]):
-                member = next((m for m in self.members if m["id"] == member_id), {"name": "Unknown"})
-                name = member.get("name", "Unknown")
-                orig_conf = details["original_confidence"]
-                adj_conf = details["adjusted_confidence"]
-                cooldown = details["cooldown_factor"]
-                boost = details.get("diversity_boost", 0.0)
-                logger.info(f"{i+1}. {name} (ID: {member_id}): orig={orig_conf:.4f}, adj={adj_conf:.4f}, cooldown={cooldown:.2f}, boost={boost:.2f}")
-            
-            # Check if we have any matches above threshold
-            if not sorted_members:
-                logger.info("No matches found")
-                return {"matched": False}
-            
-            # Get best match
-            best_match_id, best_match_details = sorted_members[0]
-            best_match_confidence = best_match_details["original_confidence"]
-            best_match_adjusted = best_match_details["adjusted_confidence"]
-            
-            # Get second best match for confidence gap calculation
-            second_best_adjusted = 0.0
-            if len(sorted_members) > 1:
-                second_best_adjusted = sorted_members[1][1]["adjusted_confidence"]
-            
-            # Calculate confidence gap
-            confidence_gap = best_match_adjusted - second_best_adjusted
-            
-            # Apply general threshold adjustment based on confidence gap between top matches
-            if best_match_id and len(sorted_members) >= 2:
-                top_confidence = sorted_members[0][1]["adjusted_confidence"]
-                second_confidence = sorted_members[1][1]["adjusted_confidence"]
-                confidence_gap = top_confidence - second_confidence
-                
-                if confidence_gap < 0.02:  # Very small gap between top matches
-                    confidence_threshold = max(confidence_threshold, 0.92)
-                    logger.info(f"Small confidence gap ({confidence_gap:.4f}), increasing threshold to {confidence_threshold:.4f}")
-                elif confidence_gap < 0.05:  # Small gap between top matches
-                    confidence_threshold = max(confidence_threshold, 0.90)
-                    logger.info(f"Small confidence gap ({confidence_gap:.4f}), increasing threshold to {confidence_threshold:.4f}")
-            
-            # Check if best match meets threshold and confidence gap
-            if best_match_adjusted >= confidence_threshold and confidence_gap >= self.min_confidence_gap:
-                # Get member details
-                member = next((m for m in self.members if m["id"] == best_match_id), None)
-                
-                if member:
-                    # Update match history
-                    self.last_match_times[best_match_id] = time.time()
-                    self.consecutive_matches[best_match_id] = self.consecutive_matches.get(best_match_id, 0) + 1
-                    
-                    # Reset consecutive matches for other members
-                    for other_id in self.consecutive_matches:
-                        if other_id != best_match_id:
-                            self.consecutive_matches[other_id] = 0
-                    
-                    # Update video match counts
-                    if video_id:
-                        self.video_match_counts[video_id][best_match_id] += 1
-                    
-                    # Log match details
-                    logger.info(f"Consecutive match #{self.consecutive_matches[best_match_id]} for member {best_match_id}")
-                    logger.info(f"Matched {member['name']} with original confidence {best_match_confidence:.4f}, adjusted to {best_match_adjusted:.4f} (threshold: {confidence_threshold:.4f}, gap: {confidence_gap:.4f})")
-                    
-                    # Log diversity stats
-                    if video_id:
-                        unique_members = len(self.video_match_counts[video_id])
-                        total_matches = sum(self.video_match_counts[video_id].values())
-                        logger.info(f"Diversity stats: {unique_members} unique members matched out of {total_matches} total matches")
-                    
-                    # Return match result
-                    return {
-                        "member_id": best_match_id,
-                        "name": member["name"],
-                        "confidence": best_match_confidence,
-                        "adjusted_confidence": best_match_adjusted,
-                        "matched": True,
-                        "confidence_gap": confidence_gap
-                    }
-            
-            # Log no match
-            logger.info(f"Best match {next((m['name'] for m in self.members if m['id'] == best_match_id), 'Unknown')} with adjusted confidence {best_match_adjusted:.4f} below threshold {confidence_threshold}")
-            return {"matched": False}
+        # Check if embedding is valid
+        if np.all(np.abs(normalized_face_embedding) < 1e-10) or np.isnan(normalized_face_embedding).any() or np.isinf(normalized_face_embedding).any():
+            logger.warning("Invalid face embedding: contains zeros, NaN, or Inf")
+            return self._get_unidentified_member(house)
         
-        except Exception as e:
-            logger.error(f"Error matching face to member: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return {"matched": False, "error": str(e)}
+        # Calculate similarity scores for all members
+        matches = []
+        for member_id, member_data in self.member_embeddings.items():
+            try:
+                member_embedding = member_data['embedding']
+                
+                # Skip invalid embeddings
+                if not member_embedding or len(member_embedding) != 128:
+                    continue
+                
+                # Skip zero embeddings (fallback embeddings)
+                if member_data.get('source') == 'fallback':
+                    logger.debug(f"Skipping fallback embedding for member {member_id}")
+                    continue
+                
+                # Calculate similarity using the shared utility
+                similarity = compute_similarity(normalized_face_embedding, member_embedding)
+                
+                # Validate similarity score
+                if similarity < self.min_valid_similarity or similarity > self.max_valid_similarity:
+                    logger.warning(f"Anomalous similarity score for member {member_id}: {similarity}")
+                    continue
+                
+                # Apply diversity promotion - more aggressive to reduce false positives
+                adjusted_similarity = self._apply_diversity_promotion(similarity, member_id, video_id)
+                
+                # Add to matches if above threshold
+                if adjusted_similarity >= confidence_threshold:
+                    matches.append({
+                        'member_id': member_data['member_id'],
+                        'id': member_id,
+                        'name': member_data['name'],
+                        'house': member_data['house'],
+                        'confidence': adjusted_similarity,
+                        'raw_confidence': similarity,
+                        'embedding_source': member_data.get('source', 'unknown')
+                    })
+            except Exception as e:
+                logger.error(f"Error matching member {member_id}: {str(e)}")
+        
+        # Sort matches by confidence
+        matches.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Check if we have a match with sufficient confidence
+        if matches and matches[0]['confidence'] >= confidence_threshold:
+            top_match = matches[0]
+            
+            # Check if there's a significant gap between top match and second match
+            if len(matches) > 1 and (matches[0]['confidence'] - matches[1]['confidence']) < self.min_confidence_gap:
+                logger.debug(f"Confidence gap too small: {matches[0]['confidence']:.2f} vs {matches[1]['confidence']:.2f}")
+                return self._get_unidentified_member(house)
+            
+            # Special handling for Darren Jones (ID 4621) who has high false positive rate
+            if top_match['id'] == '4621' and top_match['confidence'] < 0.75:
+                logger.debug(f"Rejecting potential false positive for Darren Jones with confidence {top_match['confidence']:.2f}")
+                return self._get_unidentified_member(house)
+            
+            # Update match history
+            self._update_match_history(top_match['id'], video_id)
+            
+            # Return the match
+            return top_match
+        
+        # No match found, return unidentified member
+        return self._get_unidentified_member(house)
     
     def match_face_to_member(self, 
                             face_embedding: List[float], 
@@ -576,6 +437,48 @@ class ParliamentMemberMatcher:
             import traceback
             logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
+    
+    def _update_match_history(self, member_id: str, video_id: Optional[str] = None) -> None:
+        """Update match history for a member."""
+        current_time = time.time()
+        
+        # Update last match time
+        self.last_match_times[member_id] = current_time
+        
+        # Update consecutive matches
+        self.consecutive_matches[member_id] = self.consecutive_matches.get(member_id, 0) + 1
+        
+        # Reset consecutive matches for other members
+        for other_id in self.consecutive_matches:
+            if other_id != member_id:
+                self.consecutive_matches[other_id] = 0
+        
+        # Update video match counts
+        if video_id:
+            self.video_match_counts[video_id][member_id] += 1
+            unique_members = len(self.video_match_counts[video_id])
+            total_matches = sum(self.video_match_counts[video_id].values())
+            logger.debug(f"Video {video_id} diversity stats: {unique_members} unique members, {total_matches} total matches")
+    
+    def _get_unidentified_member(self, house: Optional[str] = None) -> Dict[str, Any]:
+        """Get an unidentified member placeholder for the specified house."""
+        # Default member IDs for each house
+        default_members = {
+            "1": "-1",  # Commons unidentified speaker
+            "2": "-2"   # Lords unidentified speaker
+        }
+        
+        # If house is specified, use the default for that house
+        member_id = default_members.get(str(house)) if house else default_members.get("1")
+        
+        return {
+            'member_id': member_id,
+            'id': member_id,
+            'name': f"Unidentified Speaker ({house if house else 'Commons'})",
+            'house': str(house) if house else "1",
+            'confidence': 0.0,
+            'matched': False
+        }
     
     def _get_default_member_for_house(self, house: Optional[str] = None) -> Optional[str]:
         """
