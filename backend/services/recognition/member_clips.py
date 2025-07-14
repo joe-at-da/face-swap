@@ -24,7 +24,10 @@ def save_member_clips_to_supabase(
     full_video_url: str,
     recognition_results: Dict[str, Any],
     video_metadata: Dict[str, Any],
-    supabase_service: SupabaseService
+    supabase_service: SupabaseService,
+    video_path: Optional[str] = None,
+    audio_path: Optional[str] = None,
+    use_diarization: bool = False
 ) -> Dict[str, Any]:
     """
     Process recognition results and save individual member clips to the Supabase parliament_member_clips table.
@@ -43,6 +46,9 @@ def save_member_clips_to_supabase(
         recognition_results: Recognition results from facial and voice recognition
         video_metadata: Metadata about the video
         supabase_service: Initialized Supabase service with appropriate permissions
+        video_path: Optional path to the video file for diarization
+        audio_path: Optional path to the audio file for diarization
+        use_diarization: Whether to use speaker diarization to enhance speaker segments
         
     Returns:
         Dictionary with results of the clip saving process
@@ -56,6 +62,19 @@ def save_member_clips_to_supabase(
         "description": video_metadata.get("description", ""),
         "original_url": video_metadata.get("original_url", "")
     }
+    
+    # Apply speaker diarization if enabled and audio path is available
+    if use_diarization and audio_path and os.path.exists(audio_path):
+        logger.info(f"Using speaker diarization for video ID: {video_id}")
+        recognition_results = enhance_segments_with_diarization(
+            audio_path=audio_path,
+            recognition_results=recognition_results,
+            video_path=video_path
+        )
+        logger.info("Speaker diarization completed")
+    elif use_diarization:
+        logger.warning(f"Speaker diarization requested but audio path not available or invalid: {audio_path}")
+    
     
     # Get transcription data if available
     transcription = db.query(ParliamentTranscription).filter(
@@ -95,8 +114,22 @@ def save_member_clips_to_supabase(
                     "transcript": ""
                 })
     
+    # Process diarized speaker segments if available
+    if "diarized_speaker_segments" in recognition_results and recognition_results["diarized_speaker_segments"]:
+        logger.info("Processing diarized speaker segments")
+        for segment in recognition_results["diarized_speaker_segments"]:
+            speaker_segments.append({
+                "speaker_id": segment["speaker_id"],
+                "speaker_name": segment["speaker_name"],
+                "start_time": segment["start_time"],
+                "end_time": segment["end_time"],
+                "confidence": segment.get("confidence", 0.7),
+                "recognition_method": "diarizer",
+                "transcript": segment.get("transcript", "")
+            })
+    
     # Process speaker segments from voice recognition if available
-    if transcript_data and "speakers" in transcript_data:
+    elif transcript_data and "speakers" in transcript_data:
         for speaker in transcript_data["speakers"]:
             speaker_id = speaker.get("profile_id") or speaker.get("profileId")
             speaker_name = speaker.get("name")
@@ -426,3 +459,181 @@ def save_member_clips_to_supabase(
         "saved_clips": saved_clips,
         "failed_clips": failed_clips
     }
+
+
+def enhance_segments_with_diarization(
+    audio_path: str, 
+    recognition_results: Dict[str, Any],
+    video_path: Optional[str] = None,
+    max_duration: int = 1800
+) -> Dict[str, Any]:
+    """
+    Use speaker diarization to enhance the accuracy of speaker segments without necessarily
+    identifying the MP. This focuses on distinguishing different speakers based on voice characteristics.
+    
+    Args:
+        audio_path: Path to the audio file
+        recognition_results: Current recognition results
+        video_path: Optional path to the video file
+        max_duration: Maximum duration in seconds for the diarization process
+        
+    Returns:
+        Enhanced recognition results with improved speaker segmentation
+    """
+    logger.info(f"Enhancing speaker segments with diarization for audio: {audio_path}")
+    
+    try:
+        # Import the speaker diarizer
+        from backend.utils.speaker_diarizer import SpeakerDiarizer
+    except ImportError:
+        logger.error("Could not import SpeakerDiarizer. Make sure the module is installed.")
+        return recognition_results
+    
+    if not os.path.exists(audio_path):
+        logger.error(f"Audio file not found: {audio_path}")
+        return recognition_results
+    
+    try:
+        # Extract transcription data from recognition results
+        transcription = {"segments": []}
+        
+        # Convert recognition events to transcription format expected by diarizer
+        if "recognition_events" in recognition_results:
+            events = recognition_results["recognition_events"]
+            if isinstance(events, list):
+                # Sort events by time
+                events.sort(key=lambda x: x.get("time", 0))
+                
+                for event in events:
+                    event_time = event.get("time", 0)
+                    event_text = event.get("segment_text", "")
+                    
+                    if event_text:  # Only add events with text
+                        # Estimate segment duration (2 seconds is a reasonable default)
+                        transcription["segments"].append({
+                            "start": event_time,
+                            "end": event_time + 2.0,
+                            "text": event_text
+                        })
+        
+        # If we have a transcription file, use that instead
+        if "transcription_file" in recognition_results:
+            transcription_file = recognition_results["transcription_file"]
+            if os.path.exists(transcription_file):
+                try:
+                    with open(transcription_file, 'r') as f:
+                        file_transcription = json.load(f)
+                    if "segments" in file_transcription and file_transcription["segments"]:
+                        transcription = file_transcription
+                        logger.info(f"Using transcription from file: {transcription_file}")
+                except Exception as e:
+                    logger.error(f"Error loading transcription file: {str(e)}")
+        
+        # If we don't have any segments, we can't perform diarization
+        if not transcription["segments"]:
+            logger.warning("No transcription segments found for diarization")
+            return recognition_results
+        
+        # Initialize the speaker diarizer
+        diarizer = SpeakerDiarizer()
+        
+        # Run diarization on the audio file
+        # We're using a simple timeout mechanism to prevent hanging
+        import threading
+        import time
+        
+        result = None
+        error = None
+        
+        def run_diarization():
+            nonlocal result, error
+            try:
+                # Use basic speaker identification without requiring voice profiles
+                result = diarizer.diarize(audio_path, transcription, video_path)
+            except Exception as e:
+                error = str(e)
+        
+        # Start diarization in a separate thread
+        thread = threading.Thread(target=run_diarization)
+        thread.daemon = True
+        thread.start()
+        
+        # Wait for the thread to finish or timeout
+        thread.join(timeout=max_duration)
+        
+        if thread.is_alive():
+            logger.error(f"Speaker diarization timed out after {max_duration} seconds")
+            return recognition_results
+        
+        if error:
+            logger.error(f"Error in speaker diarization: {error}")
+            return recognition_results
+        
+        if not result:
+            logger.error("Speaker diarization returned no results")
+            return recognition_results
+        
+        # Process the diarization results
+        diarized_segments = []
+        current_speaker = None
+        current_segment = None
+        
+        # Extract speaker segments from diarized results
+        for segment in result.get("segments", []):
+            if "speaker" not in segment:
+                continue
+                
+            speaker_info = segment["speaker"]
+            speaker_id = speaker_info.get("name", "")  # Use name as ID for anonymous speakers
+            start_time = segment.get("start", 0)
+            end_time = segment.get("end", 0)
+            text = segment.get("text", "")
+            
+            # If this is a new speaker or first segment
+            if current_speaker != speaker_id or not current_segment:
+                # Save the previous segment if it exists
+                if current_segment:
+                    diarized_segments.append(current_segment)
+                
+                # Start a new segment
+                current_speaker = speaker_id
+                current_segment = {
+                    "speaker_id": speaker_id,
+                    "speaker_name": speaker_id,  # For now, just use the speaker ID as the name
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "confidence": speaker_info.get("confidence", 0.7),
+                    "recognition_method": "diarizer",
+                    "transcript": text
+                }
+            else:
+                # Extend the current segment
+                current_segment["end_time"] = end_time
+                if text:
+                    if current_segment["transcript"]:
+                        current_segment["transcript"] += " " + text
+                    else:
+                        current_segment["transcript"] = text
+        
+        # Add the last segment if it exists
+        if current_segment:
+            diarized_segments.append(current_segment)
+        
+        # Create enhanced recognition results
+        enhanced_results = recognition_results.copy()
+        
+        # Replace or merge speaker segments
+        if diarized_segments:
+            logger.info(f"Found {len(diarized_segments)} diarized speaker segments")
+            
+            # For now, we'll completely replace the speaker segments with diarized ones
+            # Later, we could implement a more sophisticated merging strategy
+            enhanced_results["diarized_speaker_segments"] = diarized_segments
+            
+            return enhanced_results
+        
+        return recognition_results
+    
+    except Exception as e:
+        logger.exception(f"Error enhancing segments with diarization: {str(e)}")
+        return recognition_results

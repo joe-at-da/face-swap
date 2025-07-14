@@ -482,13 +482,26 @@ async def process_parliament_tv_to_supabase(
                         except Exception as e:
                             logger.error(f"Error loading recognition_results from database: {str(e)}")
                     
+                    # Add support for speaker diarization
+                    audio_path = video_metadata.get('audio_path')
+                    video_path = video_metadata.get('file_path')
+                    use_diarization = True  # Enable diarization by default
+                    
+                    # Check if audio file exists
+                    if audio_path and not os.path.exists(audio_path):
+                        logger.warning(f"Audio file not found at {audio_path}, diarization will be skipped")
+                        use_diarization = False
+                    
                     save_result = save_member_clips_to_supabase(
                         db=db,
                         video_id=capture_id,
                         full_video_url=full_video_url,
                         recognition_results=recognition_data,
                         video_metadata=video_metadata,
-                        supabase_service=supabase_service
+                        supabase_service=supabase_service,
+                        video_path=video_path,
+                        audio_path=audio_path,
+                        use_diarization=use_diarization
                     )
                     
                     logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
@@ -716,7 +729,10 @@ def save_member_clips_to_supabase(
     full_video_url: Optional[str],
     recognition_results: Dict[str, Any],
     video_metadata: Dict[str, Any],
-    supabase_service: SupabaseService
+    supabase_service: SupabaseService,
+    video_path: Optional[str] = None,
+    audio_path: Optional[str] = None,
+    use_diarization: bool = False
 ) -> Dict[str, Any]:
     """
     Process recognition results and save individual member clips to the Supabase parliament_member_clips table.
@@ -738,399 +754,30 @@ def save_member_clips_to_supabase(
     Returns:
         Dictionary with results of the clip saving process
     """
-    logger.info(f"Processing member clips for video ID: {video_id}")
+    # This is a deprecated wrapper that imports and calls the main implementation from member_clips.py
+    logger.warning("Using deprecated save_member_clips_to_supabase from supabase_automation.py. Please use the version from member_clips.py directly.")
     
-    # Get session information from metadata
-    session_info = {
-        "title": video_metadata.get("title", f"Parliament TV Session {video_id}"),
-        "date": video_metadata.get("capture_date", datetime.now().isoformat()),
-        "description": video_metadata.get("description", ""),
-        "original_url": video_metadata.get("original_url", "")
-    }
-    
-    # Get transcription data if available
-    transcription = db.query(ParliamentTranscription).filter(
-        ParliamentTranscription.capture_session_id == video_id,
-        ParliamentTranscription.status == "completed"
-    ).order_by(ParliamentTranscription.created_at.desc()).first()
-    
-    transcript_data = None
-    if transcription and transcription.output_file and os.path.exists(transcription.output_file):
-        try:
-            with open(transcription.output_file, 'r') as f:
-                transcript_data = json.load(f)
-            logger.info(f"Loaded transcription data from {transcription.output_file}")
-        except Exception as e:
-            logger.error(f"Error loading transcription file: {str(e)}")
-    
-    # Log the full_video_url to help with debugging
-    logger.info(f"Using full_video_url in supabase_automation: {full_video_url}")
-    
-    # Extract speaker segments from recognition results
-    speaker_segments = []
-    
-    # Process identified speakers from facial recognition
-    if "identified_speakers" in recognition_results:
-        logger.info(f"Found {len(recognition_results['identified_speakers'])} identified_speakers in recognition_results")
-        for speaker in recognition_results["identified_speakers"]:
-            speaker_id = speaker.get("mp_id") or speaker.get("profileId")
-            speaker_name = speaker.get("name")
-            
-            if not speaker_id or not speaker_name:
-                continue
-                
-            for segment in speaker.get("segments", []):
-                # Validate required fields
-                if "start_time" not in segment or "end_time" not in segment:
-                    logger.warning(f"Skipping segment missing required time fields: {segment}")
-                    continue
-                    
-                speaker_segments.append({
-                    "speaker_id": speaker_id,
-                    "speaker_name": speaker_name,
-                    "start_time": segment["start_time"],
-                    "end_time": segment["end_time"],
-                    "confidence": segment.get("confidence", 0.0),
-                    "recognition_method": "facial",
-                    "transcript": ""
-                })
-    
-    # Process speaker segments from voice recognition if available
-    if transcript_data and "speakers" in transcript_data:
-        logger.info(f"Found {len(transcript_data['speakers'])} speakers in transcript_data")
-        for speaker in transcript_data["speakers"]:
-            speaker_id = speaker.get("profile_id") or speaker.get("profileId")
-            speaker_name = speaker.get("name")
-            
-            if not speaker_id:
-                continue
-                
-            for segment in speaker.get("segments", []):
-                # Validate required fields
-                if "start_time" not in segment or "end_time" not in segment:
-                    logger.warning(f"Skipping voice segment missing required time fields: {segment}")
-                    continue
-                    
-                # Find corresponding transcript text
-                transcript_text = ""
-                if "segments" in transcript_data:
-                    for transcript_segment in transcript_data["segments"]:
-                        if (transcript_segment["start"] >= segment["start_time"] and 
-                            transcript_segment["end"] <= segment["end_time"]):
-                            transcript_text += " " + transcript_segment["text"]
-                
-                speaker_segments.append({
-                    "speaker_id": speaker_id,
-                    "speaker_name": speaker_name or "Unknown Speaker",
-                    "start_time": segment["start_time"],
-                    "end_time": segment["end_time"],
-                    "confidence": segment.get("confidence", 0.0),
-                    "recognition_method": "voice",
-                    "transcript": transcript_text.strip()
-                })
-    
-    # Sort segments by start time
-    speaker_segments.sort(key=lambda x: x["start_time"])
-    
-    # Merge segments by the same speaker if they are close together (less than 60 seconds apart)
-    MAX_GAP_SECONDS = 60
-    merged_segments = []
-    
-    current_segment = None
-    for segment in speaker_segments:
-        if current_segment is None:
-            current_segment = segment.copy()
-            continue
-            
-        # If same speaker and gap is small enough, merge segments
-        if (segment["speaker_id"] == current_segment["speaker_id"] and 
-            segment["start_time"] - current_segment["end_time"] <= MAX_GAP_SECONDS):
-            
-            # Merge transcripts if available
-            if segment["transcript"] and current_segment["transcript"]:
-                current_segment["transcript"] += " " + segment["transcript"]
-            elif segment["transcript"]:
-                current_segment["transcript"] = segment["transcript"]
-                
-            # Update end time and confidence (use max confidence)
-            current_segment["end_time"] = segment["end_time"]
-            current_segment["confidence"] = max(current_segment["confidence"], segment["confidence"])
-        else:
-            # Different speaker or gap too large, add current segment and start a new one
-            merged_segments.append(current_segment)
-            current_segment = segment.copy()
-    
-    # Add the last segment if there is one
-    if current_segment is not None:
-        merged_segments.append(current_segment)
-    
-    # Process merged segments into clips for Supabase
-    member_clips = []
-    saved_clips = []
-    
-    for segment in merged_segments:
-        clip_id = str(uuid.uuid4())
+    try:
+        # Import the main implementation from member_clips.py
+        from backend.services.recognition.member_clips import save_member_clips_to_supabase as save_member_clips_impl
         
-        # Calculate duration
-        duration = segment["end_time"] - segment["start_time"]
-        
-        # Format timestamps as HH:MM:SS
-        def format_timestamp(seconds):
-            if seconds is None:
-                logger.warning(f"Missing timestamp value for segment: {segment}")
-                return None
-                
-            try:
-                seconds_float = float(seconds)
-                m, s = divmod(seconds_float, 60)
-                h, m = divmod(m, 60)
-                return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
-            except (ValueError, TypeError) as e:
-                logger.error(f"Error formatting timestamp {seconds}: {str(e)}")
-                return None
-        
-        start_timestamp = format_timestamp(segment["start_time"])
-        end_timestamp = format_timestamp(segment["end_time"])
-        
-        # Skip clip if timestamps couldn't be formatted properly
-        if not start_timestamp or not end_timestamp:
-            logger.warning(f"Skipping clip due to invalid timestamps: {segment}")
-            continue
-            
-        # Extract member_id from segment - use directly without UUID conversion
-        member_id = segment["speaker_id"]
-        
-        # Create clip metadata
-        clip_data = {
-            "id": clip_id,
-            "video_id": str(video_id),
-            "member_id": member_id,  # Using speaker_id directly without UUID conversion
-            "member_name": segment["speaker_name"],
-            "start_time": segment["start_time"],
-            "end_time": segment["end_time"],
-            "start_timestamp": start_timestamp,
-            "end_timestamp": end_timestamp,
-            "duration": duration,
-            "transcript": segment["transcript"],
-            "confidence": segment["confidence"],
-            "recognition_method": segment["recognition_method"],
-            "full_video_url": full_video_url.replace("host.docker.internal", "localhost") if full_video_url else "pending_combined_av_upload",
-            "session_title": session_info["title"],
-            "session_date": session_info["date"],
-            "session_description": session_info["description"],
-            "original_url": session_info["original_url"],
-            "created_at": datetime.now().isoformat(),
-            "status": "processed"
-        }
-        
-        member_clips.append(clip_data)
+        # Call the main implementation with all parameters
+        return save_member_clips_impl(
+            db=db,
+            video_id=video_id,
+            full_video_url=full_video_url,
+            recognition_results=recognition_results,
+            video_metadata=video_metadata,
+            supabase_service=supabase_service,
+            video_path=video_path,
+            audio_path=audio_path,
+            use_diarization=use_diarization
+        )
+    except ImportError as e:
+        logger.error(f"Failed to import save_member_clips_to_supabase from member_clips.py: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in save_member_clips_to_supabase wrapper: {str(e)}")
+        raise
     
-    # Save clips to Supabase parliament_member_clips table
-    saved_clips = []
-    failed_clips = []
-    
-    # Log summary of clips before attempting to save
-    logger.info(f"Preparing to save {len(member_clips)} clips to Supabase parliament_member_clips table")
-    
-    # Add detailed debug logging about the clips
-    if not member_clips:
-        logger.warning("No member clips were found to save. Possible reasons:")
-        logger.warning("1. No identified_speakers in recognition_results")
-        logger.warning("2. No parliament_clips in recognition_results")
-        logger.warning("3. Speaker segments couldn't be extracted from the data")
-        
-        # Check if we have raw parliament clips data in the database
-        try:
-            from backend.db.models import ParliamentMemberClip
-            clip_count = db.query(ParliamentMemberClip).filter(ParliamentMemberClip.video_id == video_id).count()
-            logger.info(f"Found {clip_count} ParliamentMemberClip records in SQLite for video_id {video_id}")
-            
-            # If we have clips in SQLite, process them directly
-            if clip_count > 0:
-                logger.info("Processing clips directly from SQLite database")
-                clips = db.query(ParliamentMemberClip).filter(ParliamentMemberClip.video_id == video_id).all()
-                
-                for clip in clips:
-                    # Log the clip details for debugging
-                    clip_dict = {
-                        "id": clip.id,
-                        "video_id": clip.video_id,
-                        "member_id": clip.member_id,
-                        "start_time": clip.start_time,
-                        "end_time": clip.end_time,
-                        "metadata": clip.metadata
-                    }
-                    logger.info(f"Processing SQLite ParliamentMemberClip: {clip_dict}")
-                    
-                    # Generate a unique clip ID
-                    clip_id = str(uuid.uuid4())
-                    
-                    # Calculate duration
-                    duration = clip.end_time - clip.start_time
-                    
-                    # Format timestamps as HH:MM:SS
-                    def format_timestamp(seconds):
-                        if seconds is None:
-                            return None
-                        try:
-                            seconds_float = float(seconds)
-                            m, s = divmod(seconds_float, 60)
-                            h, m = divmod(m, 60)
-                            return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
-                        except (ValueError, TypeError) as e:
-                            logger.error(f"Error formatting timestamp {seconds}: {str(e)}")
-                            return None
-                    
-                    start_timestamp = format_timestamp(clip.start_time)
-                    end_timestamp = format_timestamp(clip.end_time)
-                    
-                    # Skip clip if timestamps couldn't be formatted properly
-                    if start_timestamp is None or end_timestamp is None:
-                        continue
-                    
-                    # Get metadata as dict
-                    metadata = {}
-                    if clip.metadata:
-                        if isinstance(clip.metadata, str):
-                            try:
-                                metadata = json.loads(clip.metadata)
-                            except json.JSONDecodeError:
-                                metadata = {}
-                        elif isinstance(clip.metadata, dict):
-                            metadata = clip.metadata
-                    
-                    # Handle member_id properly - convert UUID to integer if needed
-                    member_id = clip.member_id
-                    
-                    # Check if this is a UUID string that needs to be converted to an integer
-                    try:
-                        # Try to parse as UUID to check if it's a valid UUID string
-                        uuid_obj = uuid.UUID(str(member_id))
-                        is_uuid = True
-                    except (ValueError, TypeError):
-                        is_uuid = False
-                    
-                    # If it's a UUID, look up the corresponding integer member_id
-                    if is_uuid:
-                        logger.info(f"Looking up integer member_id for UUID: {member_id}")
-                        try:
-                            response = supabase_service.client.table('parliament_members').select('member_id').eq('id', str(member_id)).execute()
-                            if response.data and len(response.data) > 0 and 'member_id' in response.data[0]:
-                                member_id = response.data[0]['member_id']
-                                logger.info(f"Found integer member_id {member_id} for UUID {clip.member_id}")
-                            else:
-                                logger.warning(f"No matching member found in Supabase for UUID {clip.member_id}")
-                                # Skip this clip if we can't find a valid member_id
-                                continue
-                        except Exception as e:
-                            logger.error(f"Error looking up member_id for UUID {clip.member_id}: {str(e)}")
-                            # Skip this clip
-                            continue
-                    
-                    # Get member name from metadata or use "Unknown MP"
-                    member_name = metadata.get("member_name", "Unknown MP")
-                    
-                    # Create clip data for Supabase
-                    clip_data = {
-                        "id": clip_id,
-                        "video_id": str(video_id),
-                        "member_id": member_id,
-                        "member_name": member_name,
-                        "start_time": clip.start_time,
-                        "end_time": clip.end_time,
-                        "start_timestamp": start_timestamp,
-                        "end_timestamp": end_timestamp,
-                        "duration": duration,
-                        "transcript": metadata.get("transcript", ""),
-                        "confidence": metadata.get("confidence", 0.0),
-                        "recognition_method": metadata.get("recognition_method", "facial"),
-                        "full_video_url": full_video_url.replace("host.docker.internal", "localhost") if full_video_url else "pending_combined_av_upload",
-                        "session_title": session_info["title"],
-                        "session_date": session_info["date"],
-                        "session_description": session_info["description"],
-                        "original_url": session_info["original_url"],
-                        "created_at": datetime.now().isoformat(),
-                        "status": "processed"
-                    }
-                    
-                    member_clips.append(clip_data)
-                
-                logger.info(f"Processed {len(member_clips)} clips directly from SQLite database")
-        except Exception as e:
-            logger.error(f"Error processing clips from SQLite: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()})")
-    
-    # Skip the member ID sync script since we're using speaker_id directly
-    logger.info("Using speaker_id directly without UUID conversion, matching temp project implementation")
-    
-    for clip in member_clips:
-        try:
-            # Ensure clip data is serializable before inserting
-            # Use the make_json_serializable utility function with explicit parameters to handle circular references
-            try:
-                serializable_clip = make_json_serializable(clip, None, 0)
-            except Exception as serialize_error:
-                logger.error(f"Error serializing clip {clip.get('id', 'unknown')}: {str(serialize_error)}")
-                # Create a simplified version of the clip with essential data
-                serializable_clip = {
-                    "id": clip.get("id"),
-                    "video_id": clip.get("video_id"),
-                    "member_id": clip.get("member_id"),
-                    "member_name": clip.get("member_name"),
-                    "start_time": clip.get("start_time"),
-                    "end_time": clip.get("end_time"),
-                    "duration": clip.get("duration"),
-                    "transcript": clip.get("transcript", "")[:1000],  # Truncate long transcripts
-                    "confidence": clip.get("confidence"),
-                    "recognition_method": clip.get("recognition_method"),
-                    "video_url": clip.get("video_url"),
-                    "created_at": datetime.now().isoformat(),
-                    "error_info": "Serialization error - some data may be missing"
-                }
-            
-            # Final validation check for required fields before inserting
-            required_fields = ["id", "video_id", "member_id", "start_time", "end_time", "start_timestamp", "end_timestamp"]
-            missing_fields = [field for field in required_fields if field not in serializable_clip or serializable_clip[field] is None]
-            
-            if missing_fields:
-                logger.warning(f"Skipping clip {clip.get('id', 'unknown')} due to missing required fields: {missing_fields}")
-                failed_clips.append({
-                    "clip_id": clip.get("id", "unknown"),
-                    "error": f"Missing required fields: {missing_fields}"
-                })
-                continue
-                
-            # Insert clip into parliament_member_clips table
-            try:
-                response = supabase_service.client.table('parliament_member_clips').insert(serializable_clip).execute()
-                
-                if response.data:
-                    saved_clips.append(clip["id"])
-                    logger.info(f"Saved clip {clip['id']} for member {clip['member_name']} to Supabase")
-                else:
-                    failed_clips.append({
-                        "clip_id": clip["id"],
-                        "error": "No data returned from Supabase"
-                    })
-                    logger.warning(f"No data returned when saving clip {clip['id']} to Supabase")
-            except Exception as insert_error:
-                failed_clips.append({
-                    "clip_id": clip["id"],
-                    "error": f"Insert error: {str(insert_error)}"
-                })
-                logger.error(f"Error inserting clip {clip['id']} to Supabase: {str(insert_error)}")
-        except Exception as e:
-            failed_clips.append({
-                "clip_id": clip["id"],
-                "error": str(e)
-            })
-            logger.error(f"Error saving clip {clip['id']} to Supabase: {str(e)}")
-    
-    return {
-        "success": True,
-        "video_id": video_id,
-        "clip_count": len(saved_clips),
-        "saved_clips": saved_clips,
-        "failed_clips": failed_clips
-    }
+
