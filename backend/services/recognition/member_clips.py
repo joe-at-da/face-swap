@@ -562,7 +562,7 @@ def save_member_clips_to_supabase(
             "duration_seconds": duration,
             "transcript": segment["transcript"],
             "full_video_url": full_video_url if full_video_url else "pending_combined_av_upload",
-            "session_title": session_info["title"],
+            "session_title": session_info.get("title", ""),
             "created_at": datetime.now().isoformat(),
             "is_unidentified": segment["recognition_method"] in ["unidentified", "default"]
         }
@@ -583,13 +583,11 @@ def save_member_clips_to_supabase(
                     "video_id": clip.get("video_id"),
                     "member_id": clip.get("member_id"),
                     "member_name": clip.get("member_name"),
-                    "start_time": float(clip.get("start_time", 0)),
-                    "end_time": float(clip.get("end_time", 0)),
-                    "start_timestamp": clip.get("start_timestamp", ""),
-                    "end_timestamp": clip.get("end_timestamp", ""),
+                    "start_timestamp": str(clip.get("start_time", 0)),  # Convert to string for Supabase
+                    "end_timestamp": str(clip.get("end_time", 0)),  # Convert to string for Supabase
                     "duration_seconds": float(clip.get("duration_seconds", 0)),
                     "transcript": (clip.get("transcript", "") or "")[:1000],  # Truncate long transcripts
-                    "full_video_url": clip.get("full_video_url", "").replace("host.docker.internal", "localhost") if clip.get("full_video_url") else "",
+                    "full_video_path": clip.get("full_video_url", "").replace("host.docker.internal", "localhost") if clip.get("full_video_url") else "",
                     "session_title": clip.get("session_title", ""),
                     "created_at": datetime.now().isoformat(),
                     "is_unidentified": bool(clip.get("is_unidentified", False))
