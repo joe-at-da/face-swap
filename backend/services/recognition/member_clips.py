@@ -264,6 +264,46 @@ def save_member_clips_to_supabase(
         if not text:
             return False
         return text[-1] in ['.', '!', '?', ':', '"']
+        
+    # Helper function to assess transcript coherence
+    def assess_transcript_coherence(text):
+        """Assess the semantic coherence of a transcript segment.
+        Returns a value between 0-1 where higher values indicate more coherent, complete thoughts."""
+        if not text:
+            return 0.0
+            
+        text = text.strip()
+        if not text:
+            return 0.0
+            
+        # Basic coherence indicators
+        score = 0.5  # Start with neutral score
+        
+        # Length-based indicators (longer texts tend to be more coherent)
+        words = text.split()
+        if len(words) < 3:
+            score -= 0.2  # Very short segments are less likely to be coherent
+        elif len(words) > 10:
+            score += 0.2  # Longer segments are more likely to be complete thoughts
+            
+        # Sentence completion indicators
+        if is_sentence_complete(text):
+            score += 0.2  # Complete sentences are more coherent
+        else:
+            score -= 0.1  # Incomplete sentences may need merging
+            
+        # Check for sentence starters
+        sentence_starters = ['i', 'we', 'they', 'he', 'she', 'it', 'the', 'a', 'an', 'this', 'that', 'these', 'those']
+        if words and words[0].lower() in sentence_starters:
+            score += 0.1  # Proper sentence starters indicate coherence
+            
+        # Check for conjunctions at the end
+        conjunctions = ['and', 'but', 'or', 'nor', 'for', 'yet', 'so', 'if', 'when', 'because']
+        if words and words[-1].lower() in conjunctions:
+            score -= 0.3  # Ending with conjunction suggests incomplete thought
+            
+        # Normalize score to 0-1 range
+        return max(0.0, min(1.0, score))
     
     # Merge segments by the same speaker if they are close together (less than 60 seconds apart)
     # or if the previous segment's transcript doesn't end with sentence-ending punctuation
@@ -315,6 +355,11 @@ def save_member_clips_to_supabase(
             next_seg = segments[i + 1]
             
             should_merge = False
+            merge_reason = ""
+            
+            # Calculate coherence scores
+            current_coherence = assess_transcript_coherence(current["transcript"])
+            next_coherence = assess_transcript_coherence(next_seg["transcript"])
             
             # Case 1: Same speaker with incomplete sentence
             if (current["speaker_id"] == next_seg["speaker_id"] and 
@@ -323,7 +368,7 @@ def save_member_clips_to_supabase(
                 # Merge with next segment if gap is reasonable (within 2 minutes)
                 if next_seg["start_time"] - current["end_time"] <= EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE:
                     should_merge = True
-                    logger.debug(f"Merging segments due to incomplete sentence: {current['transcript']} + {next_seg['transcript']}")
+                    merge_reason = "incomplete sentence"
             
             # Case 2: Check for sentence continuity between segments
             elif (current["speaker_id"] == next_seg["speaker_id"] and
@@ -334,23 +379,36 @@ def save_member_clips_to_supabase(
                     # If the next segment doesn't start with a capital letter, it's likely a continuation
                     if len(next_seg["transcript"]) > 0 and not next_seg["transcript"].strip()[0].isupper():
                         should_merge = True
-                        logger.debug(f"Merging segments due to sentence continuity: {current['transcript']} + {next_seg['transcript']}")
+                        merge_reason = "sentence continuity"
                     # Check for short segments that might be part of the same thought
                     elif len(current["transcript"].split()) < 5 or len(next_seg["transcript"].split()) < 5:
                         should_merge = True
-                        logger.debug(f"Merging short segments: {current['transcript']} + {next_seg['transcript']}")
+                        merge_reason = "short segment"
                     # Check if the current segment ends with a conjunction or preposition
                     elif any(current["transcript"].strip().lower().endswith(word) for word in ["and", "but", "or", "nor", "for", "yet", "so", "if", "to", "with", "by", "as"]):
                         should_merge = True
-                        logger.debug(f"Merging segments due to ending with conjunction: {current['transcript']} + {next_seg['transcript']}")
+                        merge_reason = "ending with conjunction"
+                    # Use coherence scores to make better merging decisions
+                    elif current_coherence < 0.4 and next_coherence < 0.6:
+                        # Both segments have low-to-medium coherence, likely part of same thought
+                        should_merge = True
+                        merge_reason = "low coherence segments"
             
             # Case 3: Check for very short pauses between segments of the same speaker
             elif (current["speaker_id"] == next_seg["speaker_id"] and
                   next_seg["start_time"] - current["end_time"] <= 2.0):  # 2 second pause threshold
                 should_merge = True
-                logger.debug(f"Merging segments due to short pause: {current['transcript']} + {next_seg['transcript']}")
-            
+                merge_reason = "short pause"
+                
+            # Case 4: Check for semantic continuity using coherence scores
+            elif (current["speaker_id"] == next_seg["speaker_id"] and 
+                  next_seg["start_time"] - current["end_time"] <= 5.0 and  # 5 second threshold for semantic continuity
+                  current_coherence < 0.3):  # Current segment has very low coherence
+                should_merge = True
+                merge_reason = "semantic continuity"
+                
             if should_merge:
+                logger.debug(f"Merging segments due to {merge_reason}: {current['transcript']} + {next_seg['transcript']}")
                 merged = current.copy()
                 merged["end_time"] = next_seg["end_time"]
                 if next_seg["transcript"]:
@@ -380,6 +438,98 @@ def save_member_clips_to_supabase(
 
     # Apply post-processing to further merge segments with incomplete sentences
     merged_segments = post_process_segments(merged_segments)
+    
+    # Split overly long segments at natural pause points
+    def split_long_segments(segments, max_duration=60):
+        """Split segments that are too long at natural pause points or sentence boundaries."""
+        result = []
+        
+        for segment in segments:
+            duration = segment["end_time"] - segment["start_time"]
+            
+            # If segment is not too long, keep it as is
+            if duration <= max_duration:
+                result.append(segment)
+                continue
+                
+            # Try to split at sentence boundaries for long segments
+            transcript = segment["transcript"]
+            if not transcript or len(transcript) < 20:  # Skip if transcript is too short
+                result.append(segment)
+                continue
+                
+            # Look for sentence-ending punctuation to find natural split points
+            sentence_endings = []
+            for i, char in enumerate(transcript):
+                if char in ['.', '!', '?'] and (i+1 >= len(transcript) or transcript[i+1] == ' '):
+                    sentence_endings.append(i)
+            
+            # If no sentence endings found, don't split
+            if not sentence_endings:
+                result.append(segment)
+                continue
+                
+            # Calculate ideal split points based on duration
+            num_splits = int(duration / max_duration) + 1
+            ideal_split_points = []
+            
+            for i in range(1, num_splits):
+                ideal_time = segment["start_time"] + (i * duration / num_splits)
+                ideal_position = int(len(transcript) * (i / num_splits))
+                
+                # Find the closest sentence ending to this ideal position
+                closest_idx = min(range(len(sentence_endings)), 
+                                key=lambda j: abs(sentence_endings[j] - ideal_position)) if sentence_endings else -1
+                
+                if closest_idx >= 0:
+                    ideal_split_points.append(sentence_endings[closest_idx])
+            
+            # Sort split points and remove duplicates
+            ideal_split_points = sorted(set(ideal_split_points))
+            
+            # Create sub-segments
+            if not ideal_split_points:
+                # No good split points found
+                result.append(segment)
+                continue
+                
+            # Create the sub-segments
+            sub_segments = []
+            start_idx = 0
+            start_time = segment["start_time"]
+            
+            for split_idx in ideal_split_points:
+                # Calculate proportional time for this split point
+                split_ratio = (split_idx + 1) / len(transcript)
+                split_time = segment["start_time"] + (duration * split_ratio)
+                
+                # Create sub-segment
+                sub_segment = segment.copy()
+                sub_segment["start_time"] = start_time
+                sub_segment["end_time"] = split_time
+                sub_segment["transcript"] = transcript[start_idx:split_idx+1].strip()
+                sub_segments.append(sub_segment)
+                
+                # Update for next segment
+                start_idx = split_idx + 1
+                start_time = split_time
+            
+            # Add final sub-segment if needed
+            if start_idx < len(transcript):
+                sub_segment = segment.copy()
+                sub_segment["start_time"] = start_time
+                sub_segment["end_time"] = segment["end_time"]
+                sub_segment["transcript"] = transcript[start_idx:].strip()
+                sub_segments.append(sub_segment)
+            
+            # Add all sub-segments to result
+            result.extend(sub_segments)
+            logger.info(f"Split long segment ({duration:.1f}s) into {len(sub_segments)} sub-segments")
+        
+        return result
+    
+    # Split segments that are too long (over 60 seconds)
+    merged_segments = split_long_segments(merged_segments, max_duration=60)
     
     # Create clips for Supabase parliament_member_clips table
     member_clips = []
