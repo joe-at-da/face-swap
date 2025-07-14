@@ -1036,7 +1036,10 @@ class MultimodalRecognitionService:
             # First, ensure member matcher is initialized
             if not self.member_matcher:
                 logger.info("Initializing ParliamentMemberMatcher")
-                self.member_matcher = ParliamentMemberMatcher(db)
+                # Initialize a proper Supabase service to pass to the matcher
+                from backend.services.integration.supabase_client import SupabaseService
+                supabase_service = SupabaseService()
+                self.member_matcher = ParliamentMemberMatcher(supabase_service)
             
             # Ensure member matcher has loaded parliament members
             if not hasattr(self.member_matcher, 'members') or not self.member_matcher.members:

@@ -21,38 +21,45 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
         List of parliament members
     """
     try:
-        # More robust client access handling
-        client = None
+        # Access the client directly from the SupabaseService instance
+        # The SupabaseService class initializes client in __init__
+        if not hasattr(supabase_service, 'client') or supabase_service.client is None:
+            logger.warning("Supabase service has no client attribute or client is None")
+            # Try to reinitialize the client if possible
+            if hasattr(supabase_service, 'get_supabase_client') and callable(supabase_service.get_supabase_client):
+                supabase_service.client = supabase_service.get_supabase_client(use_service_role=True)
+            else:
+                # Import and create a new client as last resort
+                try:
+                    from backend.services.integration.supabase_client import get_supabase_client
+                    supabase_service.client = get_supabase_client(use_service_role=True)
+                except Exception as e:
+                    logger.error(f"Failed to create new Supabase client: {str(e)}")
+                    return None
         
-        # Try different ways to access the client
-        if hasattr(supabase_service, 'client'):
-            client = supabase_service.client
-        elif hasattr(supabase_service, 'supabase') and hasattr(supabase_service.supabase, 'client'):
-            client = supabase_service.supabase.client
-        elif hasattr(supabase_service, 'session') and hasattr(supabase_service.session, 'client'):
-            client = supabase_service.session.client
-        elif hasattr(supabase_service, 'get_client') and callable(supabase_service.get_client):
-            client = supabase_service.get_client()
+        client = supabase_service.client
         
-        # If we still don't have a client, try to access the supabase instance directly
-        if client is None and hasattr(supabase_service, '__call__'):
-            try:
-                client = supabase_service()
-            except:
-                pass
-                
-        if client is None:
-            logger.warning("Supabase service has no accessible client attribute")
-            return None
-        
-        # Fetch parliament members from Supabase
-        response = client.table('parliament_members').select('*').execute()
+        # Fetch parliament members from Supabase with specific columns to ensure proper data format
+        response = client.table('parliament_members').select('id,member_id,name,house,embedding,party').execute()
         members = response.data
         
         if not members:
             logger.warning("No parliament members found in Supabase")
             return None
             
+        # Log sample data structure to help diagnose embedding format issues
+        if members and len(members) > 0:
+            sample_member = members[0]
+            logger.info(f"Sample member structure: {list(sample_member.keys())}")
+            
+            # Check if embedding exists and log its type
+            if 'embedding' in sample_member:
+                embedding_type = type(sample_member['embedding']).__name__
+                embedding_sample = str(sample_member['embedding'])[:100] + '...' if len(str(sample_member['embedding'])) > 100 else str(sample_member['embedding'])
+                logger.info(f"Embedding field type: {embedding_type}, sample: {embedding_sample}")
+            else:
+                logger.warning("No 'embedding' field found in member data")
+        
         logger.info(f"Loaded {len(members)} parliament members from Supabase")
         return members
     except Exception as e:

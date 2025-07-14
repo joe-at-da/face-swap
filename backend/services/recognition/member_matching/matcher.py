@@ -12,12 +12,13 @@ import json
 import time
 import logging
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 
-# Import database functions from the existing module
+# Import database functions and embedding utilities
 from backend.services.recognition.member_matching.database import load_members_from_supabase
+from backend.services.recognition.member_matching.embedding import extract_embedding, normalize_embedding, compute_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -87,18 +88,78 @@ class ParliamentMemberMatcher:
             
             # Extract embeddings from members
             self.member_embeddings = {}
+            valid_embeddings = 0
+            invalid_embeddings = 0
+            
             for member in self.members:
                 member_id = member.get('id')
-                embedding = member.get('embedding')
-                if member_id and embedding:
+                raw_embedding = member.get('embedding')
+                
+                # Skip members without ID or embedding
+                if not member_id or raw_embedding is None:
+                    logger.debug(f"Skipping member {member_id}: missing ID or embedding")
+                    invalid_embeddings += 1
+                    continue
+                
+                try:
+                    # Handle string JSON embeddings
+                    if isinstance(raw_embedding, str):
+                        try:
+                            raw_embedding = json.loads(raw_embedding)
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse JSON embedding for member {member_id}: {str(e)}")
+                            invalid_embeddings += 1
+                            continue
+                    
+                    # Use the extract_embedding utility to handle various formats
+                    try:
+                        embedding_array = extract_embedding(raw_embedding)
+                    except Exception as e:
+                        logger.warning(f"Failed to extract embedding for member {member_id}: {str(e)}")
+                        invalid_embeddings += 1
+                        continue
+                    
+                    # Verify embedding dimensions
+                    if len(embedding_array) != 128:
+                        logger.warning(f"Invalid embedding dimensions for member {member_id}: expected 128, got {len(embedding_array)}")
+                        invalid_embeddings += 1
+                        continue
+                    
+                    # Normalize the embedding
+                    normalized_embedding = normalize_embedding(embedding_array)
+                    
+                    # Check if embedding is all zeros or contains NaN/Inf
+                    if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
+                        logger.warning(f"Invalid embedding values for member {member_id}: contains zeros, NaN, or Inf")
+                        invalid_embeddings += 1
+                        continue
+                    
+                    # Store as a list for JSON serialization
+                    embedding_list = normalized_embedding.tolist()
+                    
+                    # Store the embedding and metadata
                     self.member_embeddings[member_id] = {
-                        'embedding': embedding,
-                        'member_id': member.get('member_id'),
-                        'name': member.get('name', 'Unknown')
+                        'embedding': embedding_list,
+                        'member_id': member.get('member_id', member_id),  # Fallback to id if member_id is missing
+                        'name': member.get('name', 'Unknown'),
+                        'house': member.get('house', 'commons')  # Default to commons if not specified
                     }
+                    valid_embeddings += 1
+                    
+                except Exception as e:
+                    logger.warning(f"Unexpected error processing embedding for member {member_id}: {str(e)}")
+                    import traceback
+                    logger.warning(traceback.format_exc())
+                    invalid_embeddings += 1
+                    continue
             
+            # Log embedding extraction statistics
+            logger.info(f"Extracted {valid_embeddings} valid member embeddings")
+            if invalid_embeddings > 0:
+                logger.warning(f"Found {invalid_embeddings} invalid member embeddings")
+                
             if not self.member_embeddings:
-                logger.warning("Failed to extract member embeddings, using minimal fallback")
+                logger.warning("Failed to extract any valid member embeddings, using minimal fallback")
                 # Create minimal fallback embeddings
                 self.member_embeddings = {
                     "1": {"embedding": [0.0] * 128, "member_id": "1", "name": "Fallback Member 1"},
@@ -151,7 +212,7 @@ class ParliamentMemberMatcher:
             norm = np.linalg.norm(embedding)
             if abs(norm - 1.0) > 1e-5:  # If not already normalized
                 # Normalize the embedding
-                normalized_embedding = embedding / norm
+                normalized_embedding = normalize_embedding(embedding)
                 data["embedding"] = normalized_embedding.tolist()
                 normalized_count += 1
         
@@ -160,17 +221,6 @@ class ParliamentMemberMatcher:
         
         if invalid_embeddings:
             logger.warning(f"Found {len(invalid_embeddings)} invalid member embeddings")
-    
-    def _normalize_embedding(self, embedding: List[float]) -> np.ndarray:
-        """Normalize an embedding to unit length."""
-        embedding_array = np.array(embedding)
-        norm = np.linalg.norm(embedding_array)
-        
-        if norm < 1e-10:
-            logger.warning("Received a zero or near-zero embedding")
-            return np.zeros_like(embedding_array)
-        
-        return embedding_array / norm
     
     def _validate_similarity(self, similarity: float) -> Tuple[bool, float]:
         """
@@ -315,8 +365,8 @@ class ParliamentMemberMatcher:
             Dict[str, Any]: Match result
         """
         try:
-            # Normalize the face embedding
-            normalized_face_embedding = self._normalize_embedding(face_embedding)
+            # Use the utility function to normalize the face embedding
+            normalized_face_embedding = normalize_embedding(np.array(face_embedding))
             
             # Calculate similarity with all member embeddings
             similarities = []
@@ -333,18 +383,22 @@ class ParliamentMemberMatcher:
                         continue
                 
                 # Get member embedding
-                member_embedding = np.array(data["embedding"])
+                member_embedding = data["embedding"]
                 
                 # Skip zero embeddings
-                if np.all(np.abs(member_embedding) < 1e-10):
+                if isinstance(member_embedding, (list, np.ndarray)) and np.all(np.abs(np.array(member_embedding)) < 1e-10):
                     continue
                 
                 # Skip embeddings with different length
-                if len(member_embedding) != len(normalized_face_embedding):
+                if isinstance(member_embedding, (list, np.ndarray)) and len(member_embedding) != len(normalized_face_embedding):
                     continue
                 
-                # Calculate similarity (dot product of normalized vectors)
-                similarity = np.dot(normalized_face_embedding, member_embedding)
+                # Use the utility function to calculate similarity
+                try:
+                    similarity = compute_similarity(normalized_face_embedding, member_embedding)
+                except Exception as e:
+                    logger.warning(f"Error computing similarity for member {member_id}: {str(e)}")
+                    continue
                 
                 # Check for anomalous high similarity scores
                 if similarity > 0.95:
