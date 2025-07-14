@@ -126,12 +126,17 @@ class ParliamentMemberMatcher:
                         mp_encodings_data = json.load(f)
                 
                     # Process the parallel arrays in mp_encodings.json
-                    if all(k in mp_encodings_data for k in ['ids', 'encodings']):
-                        ids = mp_encodings_data.get('ids', [])
-                        encodings = mp_encodings_data.get('encodings', [])
-                        names = mp_encodings_data.get('names', [])
+                if all(k in mp_encodings_data for k in ['ids', 'encodings']):
+                    ids = mp_encodings_data.get('ids', [])
+                    encodings = mp_encodings_data.get('encodings', [])
+                    names = mp_encodings_data.get('names', [])
                     
-                        # Create a mapping from UUID to embedding
+                    # Log the structure of mp_encodings.json
+                    logger.info(f"mp_encodings.json structure: ids={len(ids)}, encodings={len(encodings)}, names={len(names)}")
+                    if len(ids) > 0:
+                        logger.info(f"Sample UUID format in mp_encodings.json: {ids[0]}")
+                    
+                    # Create a mapping from UUID to embedding
                         for i, mp_id in enumerate(ids):
                             if i < len(encodings):
                                 mp_encodings_map[mp_id] = {
@@ -142,14 +147,45 @@ class ParliamentMemberMatcher:
                         logger.info(f"Loaded {len(mp_encodings_map)} embeddings from mp_encodings.json")
                     
                         # Create a mapping from UUID to member ID for all members
-                        # This will help us match UUIDs to member IDs later
-                        for member in self.members:
-                            member_id = member.get('id')
-                            photo_uuid = member.get('photo_uuid')
-                            if member_id and photo_uuid:
-                                uuid_to_member_id[photo_uuid] = member_id
+                    # This will help us match UUIDs to member IDs later
+                    uuid_count = 0
+                    missing_uuid_count = 0
+                    for member in self.members:
+                        member_id = member.get('id')
+                        photo_uuid = member.get('photo_uuid')
+                        
+                        # Log sample member data to help debug
+                        if uuid_count < 3 or missing_uuid_count < 3:
+                            if photo_uuid:
+                                if uuid_count < 3:
+                                    logger.info(f"Member {member_id} has photo_uuid: {photo_uuid}")
+                                    uuid_count += 1
+                            else:
+                                if missing_uuid_count < 3:
+                                    logger.info(f"Member {member_id} is missing photo_uuid")
+                                    # Log all available fields for this member to help debug
+                                    logger.info(f"Available fields for member {member_id}: {list(member.keys())}")
+                                    missing_uuid_count += 1
+                        
+                        if member_id and photo_uuid:
+                            uuid_to_member_id[photo_uuid] = member_id
+                            
+                            # Also store the UUID without dashes for matching
+                            if '-' in photo_uuid:
+                                no_dash_uuid = photo_uuid.replace('-', '')
+                                uuid_to_member_id[no_dash_uuid] = member_id
                     
-                        logger.info(f"Created mapping for {len(uuid_to_member_id)} members with photo UUIDs")
+                    logger.info(f"Created mapping for {len(uuid_to_member_id)} members with photo UUIDs out of {len(self.members)} total members")
+                    
+                    # Check if any UUIDs in mp_encodings.json match the photo_uuids in members
+                    matching_uuids = sum(1 for uuid in ids if uuid in uuid_to_member_id)
+                    logger.info(f"Found {matching_uuids} matching UUIDs between mp_encodings.json and member photo_uuids")
+                    
+                    # If no matches, check if there's a format difference (e.g., with/without dashes)
+                    if matching_uuids == 0 and len(ids) > 0 and len(uuid_to_member_id) > 0:
+                        sample_encoding_uuid = ids[0]
+                        sample_member_uuids = list(uuid_to_member_id.keys())[:3]
+                        logger.info(f"UUID format mismatch? Encoding UUID: {sample_encoding_uuid}, Member UUIDs: {sample_member_uuids}")
                     else:
                         logger.warning("mp_encodings.json does not have expected structure with ids and encodings")
                 else:
@@ -167,38 +203,62 @@ class ParliamentMemberMatcher:
                     invalid_embeddings += 1
                     continue
                 
-                # First try to find a matching photo UUID in the mp_encodings_map
-                # Members in Supabase have photo_uuid field that should match the UUIDs in mp_encodings.json
-                photo_uuid = member.get('photo_uuid')
-                if photo_uuid and photo_uuid in mp_encodings_map:
-                    try:
-                        embedding = mp_encodings_map[photo_uuid]['embedding']
-                        normalized_embedding = self._normalize_embedding(embedding)
-                        
-                        # Check if embedding is valid
-                        if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
-                            logger.warning(f"Invalid mp_encodings embedding for member {member_id} (UUID {photo_uuid}): contains zeros, NaN, or Inf")
-                        else:
-                            # Store as a list for JSON serialization
-                            embedding_list = normalized_embedding.tolist()
-                            
-                            # Store the embedding and metadata
-                            self.member_embeddings[member_id] = {
-                                'embedding': embedding_list,
-                                'member_id': member.get('member_id', member_id),
-                                'name': member.get('name', mp_encodings_map[photo_uuid].get('name', f'Member {member_id}')),
-                                'house': member.get('house', '1'),
-                                'source': 'mp_encodings'
-                            }
-                            valid_embeddings += 1
-                            mp_encodings_loaded += 1
-                            continue  # Skip to next member since we found a valid embedding
-                    except Exception as e:
-                        logger.warning(f"Error processing mp_encodings embedding for member {member_id} (UUID {photo_uuid}): {str(e)}")
+            # First try to find a matching photo UUID in the mp_encodings_map
+            # Members in Supabase have photo_uuid field that should match the UUIDs in mp_encodings.json
+            photo_uuid = member.get('photo_uuid')
             
-                # If we couldn't find by UUID, try to find by member ID in the reverse mapping
+            # Try to match with different UUID formats if direct match fails
+            matching_uuid = None
+            if photo_uuid:
+                if photo_uuid in mp_encodings_map:
+                    matching_uuid = photo_uuid
+                else:
+                    # Try with/without dashes if there might be a format mismatch
+                    if '-' in photo_uuid:
+                        # Try without dashes
+                        no_dash_uuid = photo_uuid.replace('-', '')
+                        if no_dash_uuid in mp_encodings_map:
+                            matching_uuid = no_dash_uuid
+                            logger.info(f"Found UUID match after removing dashes: {photo_uuid} -> {no_dash_uuid}")
+                    else:
+                        # Try to add dashes if it's a standard UUID format
+                        if len(photo_uuid) == 32:
+                            dashed_uuid = f"{photo_uuid[:8]}-{photo_uuid[8:12]}-{photo_uuid[12:16]}-{photo_uuid[16:20]}-{photo_uuid[20:]}"
+                            if dashed_uuid in mp_encodings_map:
+                                matching_uuid = dashed_uuid
+                                logger.info(f"Found UUID match after adding dashes: {photo_uuid} -> {dashed_uuid}")
+            
+            embedding_found = False
+            if matching_uuid:
+                try:
+                    embedding = mp_encodings_map[matching_uuid]['embedding']
+                    normalized_embedding = self._normalize_embedding(embedding)
+                    
+                    # Check if embedding is valid
+                    if np.all(np.abs(normalized_embedding) < 1e-10) or np.isnan(normalized_embedding).any() or np.isinf(normalized_embedding).any():
+                        logger.warning(f"Invalid mp_encodings embedding for member {member_id} (UUID {photo_uuid}): contains zeros, NaN, or Inf")
+                    else:
+                        # Store as a list for JSON serialization
+                        embedding_list = normalized_embedding.tolist()
+                        
+                        # Store the embedding and metadata
+                        self.member_embeddings[member_id] = {
+                            'embedding': embedding_list,
+                            'member_id': member.get('member_id', member_id),
+                            'name': member.get('name', mp_encodings_map[matching_uuid].get('name', f'Member {member_id}')),
+                            'house': member.get('house', '1'),
+                            'source': 'mp_encodings'
+                        }
+                        valid_embeddings += 1
+                        mp_encodings_loaded += 1
+                        embedding_found = True
+                except Exception as e:
+                    logger.warning(f"Error processing mp_encodings embedding for member {member_id} (UUID {photo_uuid}): {str(e)}")
+            
+            # If we already found an embedding, skip the reverse lookup
+            if not embedding_found:
+                # Try to find by member ID in the reverse mapping
                 # Some UUIDs in mp_encodings might be mapped to member IDs in our mapping
-                found = False
                 for uuid, mapped_member_id in uuid_to_member_id.items():
                     if mapped_member_id == member_id and uuid in mp_encodings_map:
                         try:
@@ -216,15 +276,13 @@ class ParliamentMemberMatcher:
                                 }
                                 valid_embeddings += 1
                                 mp_encodings_loaded += 1
-                                found = True
+                                embedding_found = True
                                 break
                         except Exception as e:
                             logger.warning(f"Error processing reverse lookup embedding for member {member_id}: {str(e)}")
                 
-                if found:
-                    continue
-                
-                # If we get here, we couldn't load a valid embedding from any source
+            # If we still couldn't find a valid embedding from any source
+            if not embedding_found:
                 logger.warning(f"No valid embedding found for member {member_id}, using zero vector")
                 
                 # Create a zero embedding as a last resort

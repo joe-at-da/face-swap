@@ -40,15 +40,14 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
         client = supabase_service.client
         
         # Fetch parliament members from Supabase with specific columns to ensure proper data format
-        # Note: Based on error logs, 'name' column doesn't exist in the schema
-        # Try with a more minimal set of columns that should exist
+        # Include photo_uuid which is essential for matching with mp_encodings.json
         try:
-            response = client.table('parliament_members').select('id,member_id,house,embedding').execute()
+            response = client.table('parliament_members').select('id,member_id,house,embedding,photo_uuid,name').execute()
         except Exception as e:
             logger.error(f"Error with initial query: {str(e)}")
-            # Try an even more minimal query as fallback
+            # Try an even more minimal query as fallback, but still include photo_uuid
             try:
-                response = client.table('parliament_members').select('id,member_id').execute()
+                response = client.table('parliament_members').select('id,member_id,photo_uuid').execute()
             except Exception as e2:
                 logger.error(f"Error with fallback query: {str(e2)}")
                 return None
