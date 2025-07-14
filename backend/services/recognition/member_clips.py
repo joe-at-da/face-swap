@@ -307,7 +307,7 @@ def save_member_clips_to_supabase(
         
     # Post-process segments to further avoid splitting sentences
     def post_process_segments(segments):
-        """Post-process segments to avoid splitting sentences."""
+        """Post-process segments to avoid splitting sentences and create more coherent clips."""
         result = []
         i = 0
         while i < len(segments) - 1:
@@ -323,6 +323,7 @@ def save_member_clips_to_supabase(
                 # Merge with next segment if gap is reasonable (within 2 minutes)
                 if next_seg["start_time"] - current["end_time"] <= EXTENDED_GAP_FOR_INCOMPLETE_SENTENCE:
                     should_merge = True
+                    logger.debug(f"Merging segments due to incomplete sentence: {current['transcript']} + {next_seg['transcript']}")
             
             # Case 2: Check for sentence continuity between segments
             elif (current["speaker_id"] == next_seg["speaker_id"] and
@@ -333,13 +334,33 @@ def save_member_clips_to_supabase(
                     # If the next segment doesn't start with a capital letter, it's likely a continuation
                     if len(next_seg["transcript"]) > 0 and not next_seg["transcript"].strip()[0].isupper():
                         should_merge = True
+                        logger.debug(f"Merging segments due to sentence continuity: {current['transcript']} + {next_seg['transcript']}")
+                    # Check for short segments that might be part of the same thought
+                    elif len(current["transcript"].split()) < 5 or len(next_seg["transcript"].split()) < 5:
+                        should_merge = True
+                        logger.debug(f"Merging short segments: {current['transcript']} + {next_seg['transcript']}")
+                    # Check if the current segment ends with a conjunction or preposition
+                    elif any(current["transcript"].strip().lower().endswith(word) for word in ["and", "but", "or", "nor", "for", "yet", "so", "if", "to", "with", "by", "as"]):
+                        should_merge = True
+                        logger.debug(f"Merging segments due to ending with conjunction: {current['transcript']} + {next_seg['transcript']}")
+            
+            # Case 3: Check for very short pauses between segments of the same speaker
+            elif (current["speaker_id"] == next_seg["speaker_id"] and
+                  next_seg["start_time"] - current["end_time"] <= 2.0):  # 2 second pause threshold
+                should_merge = True
+                logger.debug(f"Merging segments due to short pause: {current['transcript']} + {next_seg['transcript']}")
             
             if should_merge:
                 merged = current.copy()
                 merged["end_time"] = next_seg["end_time"]
                 if next_seg["transcript"]:
                     if merged["transcript"]:
-                        merged["transcript"] += " " + next_seg["transcript"]
+                        # Add proper spacing between merged segments
+                        if is_sentence_complete(merged["transcript"]):
+                            merged["transcript"] += " " + next_seg["transcript"]
+                        else:
+                            # If the first segment doesn't end with punctuation, add a space
+                            merged["transcript"] += " " + next_seg["transcript"]
                     else:
                         merged["transcript"] = next_seg["transcript"]
                 merged["confidence"] = max(current["confidence"], next_seg["confidence"])
@@ -388,7 +409,7 @@ def save_member_clips_to_supabase(
             "end_time": segment["end_time"],
             "start_timestamp": start_timestamp,
             "end_timestamp": end_timestamp,
-            "duration": duration,
+            "duration_seconds": duration,
             "transcript": segment["transcript"],
             "full_video_url": full_video_url if full_video_url else "pending_combined_av_upload",
             "session_title": session_info["title"],
@@ -416,7 +437,7 @@ def save_member_clips_to_supabase(
                     "end_time": float(clip.get("end_time", 0)),
                     "start_timestamp": clip.get("start_timestamp", ""),
                     "end_timestamp": clip.get("end_timestamp", ""),
-                    "duration": float(clip.get("duration", 0)),
+                    "duration_seconds": float(clip.get("duration_seconds", 0)),
                     "transcript": (clip.get("transcript", "") or "")[:1000],  # Truncate long transcripts
                     "full_video_url": clip.get("full_video_url", "").replace("host.docker.internal", "localhost") if clip.get("full_video_url") else "",
                     "session_title": clip.get("session_title", ""),
@@ -575,10 +596,9 @@ def enhance_segments_with_diarization(
         
         # Process the diarization results
         diarized_segments = []
-        current_speaker = None
-        current_segment = None
+        speaker_segments = {}
         
-        # Extract speaker segments from diarized results
+        # First pass: Group segments by speaker
         for segment in result.get("segments", []):
             if "speaker" not in segment:
                 continue
@@ -588,36 +608,71 @@ def enhance_segments_with_diarization(
             start_time = segment.get("start", 0)
             end_time = segment.get("end", 0)
             text = segment.get("text", "")
+            confidence = speaker_info.get("confidence", 0.7)
             
-            # If this is a new speaker or first segment
-            if current_speaker != speaker_id or not current_segment:
-                # Save the previous segment if it exists
-                if current_segment:
-                    diarized_segments.append(current_segment)
+            # Initialize speaker dict if not exists
+            if speaker_id not in speaker_segments:
+                speaker_segments[speaker_id] = []
+            
+            # Add this segment to the speaker's list
+            speaker_segments[speaker_id].append({
+                "start_time": start_time,
+                "end_time": end_time,
+                "text": text,
+                "confidence": confidence
+            })
+        
+        logger.info(f"Found {len(speaker_segments)} unique speakers in diarization results")
+        
+        # Second pass: Merge adjacent segments by speaker with small gaps
+        MAX_MERGE_GAP = 2.0  # Maximum gap in seconds to merge segments
+        
+        for speaker_id, segments in speaker_segments.items():
+            # Sort segments by start time
+            segments.sort(key=lambda x: x["start_time"])
+            
+            # Merge adjacent segments with small gaps
+            merged_segments = []
+            current_segment = None
+            
+            for segment in segments:
+                if current_segment is None:
+                    current_segment = segment.copy()
+                    continue
                 
-                # Start a new segment
-                current_speaker = speaker_id
-                current_segment = {
+                # If gap is small enough, merge segments
+                if segment["start_time"] - current_segment["end_time"] <= MAX_MERGE_GAP:
+                    # Extend current segment
+                    current_segment["end_time"] = segment["end_time"]
+                    if segment["text"]:
+                        if current_segment["text"]:
+                            current_segment["text"] += " " + segment["text"]
+                        else:
+                            current_segment["text"] = segment["text"]
+                    # Use max confidence
+                    current_segment["confidence"] = max(current_segment["confidence"], segment["confidence"])
+                else:
+                    # Add current segment and start a new one
+                    merged_segments.append(current_segment)
+                    current_segment = segment.copy()
+            
+            # Add the last segment
+            if current_segment:
+                merged_segments.append(current_segment)
+            
+            # Create final speaker segments
+            for segment in merged_segments:
+                diarized_segments.append({
                     "speaker_id": speaker_id,
                     "speaker_name": speaker_id,  # For now, just use the speaker ID as the name
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "confidence": speaker_info.get("confidence", 0.7),
+                    "start_time": segment["start_time"],
+                    "end_time": segment["end_time"],
+                    "confidence": segment["confidence"],
                     "recognition_method": "diarizer",
-                    "transcript": text
-                }
-            else:
-                # Extend the current segment
-                current_segment["end_time"] = end_time
-                if text:
-                    if current_segment["transcript"]:
-                        current_segment["transcript"] += " " + text
-                    else:
-                        current_segment["transcript"] = text
-        
-        # Add the last segment if it exists
-        if current_segment:
-            diarized_segments.append(current_segment)
+                    "transcript": segment["text"]
+                })
+            
+            logger.info(f"Speaker {speaker_id}: {len(segments)} raw segments merged into {len(merged_segments)} coherent segments")
         
         # Create enhanced recognition results
         enhanced_results = recognition_results.copy()
