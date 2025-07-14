@@ -21,14 +21,28 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
         List of parliament members
     """
     try:
-        # Check if supabase_service has the client attribute directly
+        # More robust client access handling
+        client = None
+        
+        # Try different ways to access the client
         if hasattr(supabase_service, 'client'):
             client = supabase_service.client
-        # Check if it has a session attribute with client
+        elif hasattr(supabase_service, 'supabase') and hasattr(supabase_service.supabase, 'client'):
+            client = supabase_service.supabase.client
         elif hasattr(supabase_service, 'session') and hasattr(supabase_service.session, 'client'):
             client = supabase_service.session.client
-        else:
-            logger.warning("Supabase service has no client attribute")
+        elif hasattr(supabase_service, 'get_client') and callable(supabase_service.get_client):
+            client = supabase_service.get_client()
+        
+        # If we still don't have a client, try to access the supabase instance directly
+        if client is None and hasattr(supabase_service, '__call__'):
+            try:
+                client = supabase_service()
+            except:
+                pass
+                
+        if client is None:
+            logger.warning("Supabase service has no accessible client attribute")
             return None
         
         # Fetch parliament members from Supabase

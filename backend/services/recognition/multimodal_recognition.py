@@ -1041,10 +1041,15 @@ class MultimodalRecognitionService:
             # Ensure member matcher has loaded parliament members
             if not hasattr(self.member_matcher, 'members') or not self.member_matcher.members:
                 logger.info("Loading parliament members in ParliamentMemberMatcher")
-                self.member_matcher.load_parliament_members()
-                logger.info(f"Loaded {len(self.member_matcher.members)} parliament members")
+                success = self.member_matcher.load_parliament_members()
+                if success and self.member_matcher.members:
+                    logger.info(f"Loaded {len(self.member_matcher.members)} parliament members")
+                else:
+                    logger.warning("Failed to load parliament members, using fallback")
             else:
-                logger.info(f"Using {len(self.member_matcher.members)} previously loaded parliament members")
+                # Safely log the number of members
+                member_count = len(self.member_matcher.members) if self.member_matcher.members else 0
+                logger.info(f"Using {member_count} previously loaded parliament members")
             
             # Run facial recognition on the frame
             logger.info(f"Running facial recognition on frame: {frame_path}")
