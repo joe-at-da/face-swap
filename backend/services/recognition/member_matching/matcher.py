@@ -522,3 +522,31 @@ class ParliamentMemberMatcher:
             import traceback
             logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
+    
+    def _get_default_member_for_house(self, house: Optional[str] = None) -> Optional[str]:
+        """
+        Get the default member ID for a specific house to use when no match is found.
+        
+        Args:
+            house: House identifier ('1' for Commons, '2' for Lords)
+            
+        Returns:
+            Optional[str]: Member ID of the default unidentified member for the house, or None if not found
+        """
+        try:
+            # Default member IDs for each house
+            default_members = {
+                "1": "-1",  # Commons unidentified speaker
+                "2": "-2"   # Lords unidentified speaker
+            }
+            
+            # If house is specified, return the default for that house
+            if house and house in default_members:
+                return default_members[house]
+            
+            # Otherwise return the Commons default
+            return default_members.get("1")
+            
+        except Exception as e:
+            logger.error(f"Error getting default member for house {house}: {str(e)}")
+            return None

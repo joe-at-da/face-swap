@@ -500,9 +500,16 @@ def export_recognition_results(
             # Log the clip data for transparency
             logger.info(f"Exporting clip {i} with member_id {member_id} and duration {duration:.2f}s")
             
-            # Insert clip data into Supabase parliament_member_clips table
-            # Use add_to_clip_creation_queue instead of insert_clip as it handles the correct table
-            insert_result = supabase.add_to_clip_creation_queue([clip_data])
+            # Skip sending unidentified speaker clips (member_id = -1) to Supabase
+            # as they would violate foreign key constraints
+            if member_id == -1 or member_id == "-1":
+                logger.warning(f"Skipping export to Supabase for unidentified speaker clip {i} (member_id={member_id}). "
+                              f"Unidentified speakers need to be matched to real MPs before adding to Supabase.")
+                insert_result = {"success": False, "skipped": True, "reason": "unidentified_speaker"}
+            else:
+                # Insert clip data into Supabase parliament_member_clips table
+                # Use add_to_clip_creation_queue instead of insert_clip as it handles the correct table
+                insert_result = supabase.add_to_clip_creation_queue([clip_data])
             
             clips.append({
                 "clip_id": i,
