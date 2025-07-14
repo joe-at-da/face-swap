@@ -554,7 +554,7 @@ def save_member_clips_to_supabase(
             "id": clip_id,
             "video_id": str(video_id),
             "member_id": segment["speaker_id"],
-            "member_name": segment["speaker_name"],
+            # Removed member_name as it's not in the Supabase schema
             "start_time": segment["start_time"],
             "end_time": segment["end_time"],
             "start_timestamp": start_timestamp,
@@ -562,9 +562,9 @@ def save_member_clips_to_supabase(
             "duration_seconds": duration,
             "transcript": segment["transcript"],
             "full_video_url": full_video_url if full_video_url else "pending_combined_av_upload",
-            "session_title": session_info.get("title", ""),
-            "created_at": datetime.now().isoformat(),
-            "is_unidentified": segment["recognition_method"] in ["unidentified", "default"]
+            # Removed session_title as it's not in the Supabase schema
+            "created_at": datetime.now().isoformat()
+            # Removed is_unidentified as it's not in the Supabase schema
         }
         
         member_clips.append(clip_data)
@@ -582,26 +582,26 @@ def save_member_clips_to_supabase(
                     "id": clip.get("id"),
                     "video_id": clip.get("video_id"),
                     "member_id": clip.get("member_id"),
-                    "member_name": clip.get("member_name"),
+                    # Removed member_name as it's not in the Supabase schema
                     "start_timestamp": str(clip.get("start_time", 0)),  # Convert to string for Supabase
                     "end_timestamp": str(clip.get("end_time", 0)),  # Convert to string for Supabase
                     "duration_seconds": float(clip.get("duration_seconds", 0)),
                     "transcript": (clip.get("transcript", "") or "")[:1000],  # Truncate long transcripts
                     "full_video_path": clip.get("full_video_url", "").replace("host.docker.internal", "localhost") if clip.get("full_video_url") else "",
-                    "session_title": clip.get("session_title", ""),
-                    "created_at": datetime.now().isoformat(),
-                    "is_unidentified": bool(clip.get("is_unidentified", False))
+                    # Removed session_title as it's not in the Supabase schema
+                    "created_at": datetime.now().isoformat()
+                    # Removed is_unidentified as it's not in the Supabase schema
                 }
                 
                 # Log the clip data we're about to insert
-                logger.info(f"Inserting clip for {serializable_clip['member_name']} with ID {serializable_clip['id']}")
+                logger.info(f"Inserting clip for member ID {serializable_clip['member_id']} with ID {serializable_clip['id']}")
                 
                 # Insert clip into parliament_member_clips table
                 response = supabase_service.client.table('parliament_member_clips').insert(serializable_clip).execute()
                 
                 if response and hasattr(response, 'data') and response.data:
                     saved_clips.append(clip["id"])
-                    logger.info(f"Saved clip {clip['id']} for member {clip['member_name']} to Supabase")
+                    logger.info(f"Saved clip {clip['id']} for member ID {clip['member_id']} to Supabase")
                 else:
                     failed_clips.append({
                         "clip_id": clip["id"],
