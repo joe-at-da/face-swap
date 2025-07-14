@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to identify the MP in frame from capture 738 at the 50-second mark by comparing face embeddings
+Script to identify the MP in frame from any capture at a specified timestamp by comparing face embeddings
 with parliament member embeddings using the ParliamentMemberMatcher class.
 
 This script incorporates the recent improvements to the embedding matching logic:
@@ -186,14 +186,21 @@ def identify_mp_in_frame(image_path, output_path, confidence_threshold=0.4):
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Identify MP in frame from capture 738")
-    parser.add_argument("--image", default="/tmp/frame_738_50s.jpg", help="Path to the image file")
-    parser.add_argument("--output", default="/tmp/frame_738_50s_identified.jpg", help="Output path for the debug image")
-    parser.add_argument("--capture-id", default="738", help="Capture ID")
-    parser.add_argument("--timestamp", default="50", help="Timestamp in seconds")
+    parser = argparse.ArgumentParser(description="Identify MP in frame from a capture at a specific timestamp")
+    parser.add_argument("--capture-id", required=True, help="Capture ID")
+    parser.add_argument("--timestamp", required=True, help="Timestamp in seconds")
     parser.add_argument("--threshold", type=float, default=0.4, help="Confidence threshold (0.0-1.0)")
+    parser.add_argument("--image", help="Path to the image file (optional, will be generated if not provided)")
+    parser.add_argument("--output", help="Output path for the debug image (optional, will be generated if not provided)")
     
     args = parser.parse_args()
+    
+    # Generate default image and output paths if not provided
+    if not args.image:
+        args.image = f"/tmp/frame_{args.capture_id}_{args.timestamp}s.jpg"
+    
+    if not args.output:
+        args.output = f"/tmp/frame_{args.capture_id}_{args.timestamp}s_identified.jpg"
     
     # Check if the image exists, if not, extract it from the video
     if not os.path.exists(args.image):
