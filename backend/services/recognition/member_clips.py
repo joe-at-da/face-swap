@@ -549,11 +549,21 @@ def save_member_clips_to_supabase(
         start_timestamp = format_timestamp(segment["start_time"])
         end_timestamp = format_timestamp(segment["end_time"])
         
+        # Ensure member_id is an integer (use 0 for unidentified speakers)
+        speaker_id = segment["speaker_id"]
+        if isinstance(speaker_id, str) and speaker_id.startswith("unidentified_"):
+            speaker_id = 0  # Use 0 for unidentified speakers
+        else:
+            try:
+                speaker_id = int(speaker_id)
+            except (ValueError, TypeError):
+                speaker_id = 0  # Default to 0 if conversion fails
+        
         # Create clip metadata - simplified to match the actual Supabase schema
         clip_data = {
             "id": clip_id,
-            "video_id": str(video_id),
-            "member_id": segment["speaker_id"],
+            # Removed video_id as it's not in the Supabase schema
+            "member_id": speaker_id,  # Now guaranteed to be an integer
             # Removed member_name as it's not in the Supabase schema
             "start_time": segment["start_time"],
             "end_time": segment["end_time"],
@@ -578,10 +588,20 @@ def save_member_clips_to_supabase(
             # Ensure clip data is serializable and matches the Supabase schema
             try:
                 # Create a clean serializable version of the clip
+                # Ensure member_id is an integer (use 0 for unidentified speakers)
+                member_id = clip.get("member_id")
+                if isinstance(member_id, str) and member_id.startswith("unidentified_"):
+                    member_id = 0  # Use 0 for unidentified speakers
+                else:
+                    try:
+                        member_id = int(member_id)
+                    except (ValueError, TypeError):
+                        member_id = 0  # Default to 0 if conversion fails
+                
                 serializable_clip = {
                     "id": clip.get("id"),
-                    "video_id": clip.get("video_id"),
-                    "member_id": clip.get("member_id"),
+                    # Removed video_id as it's not in the Supabase schema
+                    "member_id": member_id,  # Now guaranteed to be an integer
                     # Removed member_name as it's not in the Supabase schema
                     "start_timestamp": str(clip.get("start_time", 0)),  # Convert to string for Supabase
                     "end_timestamp": str(clip.get("end_time", 0)),  # Convert to string for Supabase
