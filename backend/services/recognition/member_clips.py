@@ -11,12 +11,150 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from backend.db.models import ParliamentTranscription
 from backend.services.integration.supabase_client import SupabaseService
 from backend.services.utils import make_json_serializable
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_speaker_ids(segments):
+    """
+    Ensure consistent speaker attribution across continuous speech segments.
+    
+    For segments that are close together in time (likely part of the same continuous speech),
+    use the speaker ID with the highest confidence score for all segments in that continuous block.
+    
+    Args:
+        segments: List of speaker segments
+        
+    Returns:
+        Tuple of (normalized_segments, speech_groups) where:
+        - normalized_segments is a list of segments with normalized speaker IDs
+        - speech_groups is a list of dicts with speech group information for database updates
+    """
+    if not segments:
+        return [], []
+        
+    # Sort segments by start time
+    sorted_segments = sorted(segments, key=lambda x: x["start_time"])
+    
+    # Define what constitutes a continuous speech block (max gap in seconds)
+    MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds max gap between segments to be considered continuous
+    
+    # Identify continuous speech blocks
+    speech_blocks = []
+    current_block = [sorted_segments[0]]
+    
+    for i in range(1, len(sorted_segments)):
+        current_segment = sorted_segments[i]
+        previous_segment = sorted_segments[i-1]
+        
+        # If this segment starts soon after the previous one ends, add it to the current block
+        if current_segment["start_time"] - previous_segment["end_time"] <= MAX_CONTINUOUS_SPEECH_GAP:
+            current_block.append(current_segment)
+        else:
+            # This segment is not continuous with the previous one, start a new block
+            speech_blocks.append(current_block)
+            current_block = [current_segment]
+    
+    # Add the last block
+    if current_block:
+        speech_blocks.append(current_block)
+        
+    # For each continuous speech block, find the segment with highest confidence
+    # and use its speaker_id for all segments in the block
+    normalized_segments = []
+    speech_groups = []
+    
+    for block_idx, block in enumerate(speech_blocks):
+        # Generate a unique speech group ID
+        speech_group_id = f"speech_group_{block_idx}_{int(block[0]['start_time'])}"
+        
+        # Find the segment with the highest confidence in this block
+        highest_conf_segment = max(block, key=lambda x: x.get("confidence", 0))
+        highest_conf_speaker_id = highest_conf_segment["speaker_id"]
+        highest_conf = highest_conf_segment.get("confidence", 0)
+        
+        # Log what we're doing
+        if len(block) > 1:
+            logger.info(f"Normalizing speaker IDs for continuous speech block with {len(block)} segments")
+            logger.info(f"Using speaker_id {highest_conf_speaker_id} with confidence {highest_conf}")
+        
+        # Store information about this speech group for database updates
+        segment_ids = []
+        
+        # Apply the highest confidence speaker_id to all segments in this block
+        for segment in block:
+            # Store the original segment ID for database updates
+            if "id" in segment:
+                segment_ids.append(segment["id"])
+                
+            # Update the speaker ID in memory
+            if segment["speaker_id"] != highest_conf_speaker_id:
+                logger.info(f"Changing speaker_id from {segment['speaker_id']} to {highest_conf_speaker_id} based on confidence")
+                segment["speaker_id"] = highest_conf_speaker_id
+                
+            # Add speech_group_id to the segment
+            segment["speech_group_id"] = speech_group_id
+            normalized_segments.append(segment)
+        
+        # Add this speech group to our list for database updates
+        speech_groups.append({
+            "speech_group_id": speech_group_id,
+            "segment_ids": segment_ids,
+            "speaker_id": highest_conf_speaker_id,
+            "confidence": highest_conf,
+            "start_time": block[0]["start_time"],
+            "end_time": block[-1]["end_time"]
+        })
+    
+    return normalized_segments, speech_groups
+
+
+def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_id_mapping):
+    """
+    Update the SQLite database with normalized speaker IDs.
+    
+    Args:
+        db: Database session
+        video_id: ID of the video in the database
+        speech_groups: List of speech groups with segment IDs and normalized speaker IDs
+        member_id_mapping: Dictionary mapping speaker IDs to member IDs
+    """
+    for speech_group in speech_groups:
+        speaker_id = speech_group["speaker_id"]
+        member_id = member_id_mapping.get(speaker_id)
+        
+        if not speech_group["segment_ids"]:
+            logger.warning(f"No segment IDs found for speech group {speech_group['speech_group_id']}")
+            continue
+            
+        if member_id:
+            # Update speaker ID and speech group ID in the database
+            placeholders = ",".join(["?" for _ in speech_group["segment_ids"]])
+            query = text(f"UPDATE speaker_segments SET member_id = :member_id, speech_group_id = :speech_group_id WHERE id IN ({placeholders}) AND video_id = :video_id")
+            
+            params = {
+                "member_id": member_id,
+                "speech_group_id": speech_group["speech_group_id"],
+                "video_id": video_id
+            }
+            
+            # Add segment IDs as positional parameters
+            for i, segment_id in enumerate(speech_group["segment_ids"]):
+                params[f"id_{i}"] = segment_id
+                
+            db.execute(query, params)
+            logger.info(f"Updated {len(speech_group['segment_ids'])} segments with member_id {member_id} and speech_group_id {speech_group['speech_group_id']}")
+        else:
+            logger.warning(f"No member ID mapping found for speaker ID {speaker_id}")
+    
+    # Commit the changes
+    db.commit()
+
 
 def save_member_clips_to_supabase(
     db: Session,
@@ -396,9 +534,18 @@ def save_member_clips_to_supabase(
     if current_segment is not None:
         merged_segments.append(current_segment)
     
+    # Normalize speaker IDs across continuous speech segments based on confidence scores
+    # This ensures consistent speaker attribution across segments that are likely part of the same speech
+    merged_segments, speech_groups = normalize_speaker_ids(merged_segments)
+    logger.info(f"Applied speaker ID normalization based on confidence scores")
+    
     # Get member ID mapping from database
     member_id_mapping = get_member_id_mapping(db, speaker_ids)
     logger.info(f"Retrieved member ID mapping for {len(member_id_mapping)} speakers")
+    
+    # Update the SQLite database with normalized speaker IDs
+    update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_id_mapping)
+    logger.info(f"Updated SQLite database with normalized speaker IDs for {len(speech_groups)} speech groups")
         
     # Post-process segments to further avoid splitting sentences
     def post_process_segments(segments):
