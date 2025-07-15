@@ -89,8 +89,19 @@ def normalize_speaker_ids(segments):
         # Apply the highest confidence speaker_id to all segments in this block
         for segment in block:
             # Store the original segment ID for database updates
+            # Check for different possible ID fields based on the database schema
+            segment_id = None
             if "id" in segment:
-                segment_ids.append(segment["id"])
+                segment_id = segment["id"]
+                logger.info(f"Found segment ID: {segment_id} from 'id' field")
+            elif "start_timestamp" in segment and "end_timestamp" in segment:
+                # Create a composite ID based on timestamps if no explicit ID exists
+                # This is for matching with the database records shown in the screenshot
+                segment_id = int(float(segment["start_timestamp"]) * 100)  # Convert to integer for database matching
+                logger.info(f"Created segment ID: {segment_id} from timestamps")
+            
+            if segment_id is not None:
+                segment_ids.append(segment_id)
                 
             # Update the speaker ID in memory
             if segment["speaker_id"] != highest_conf_speaker_id:
@@ -147,23 +158,29 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                 continue
                 
             # Use raw SQL for bulk update of all segments in this speech group
+            # Based on the screenshot, we need to match the integer IDs in the database
+            # Format the segment IDs appropriately for the SQL query
+            logger.info(f"Segment IDs for update: {segment_ids}")
+            
+            # Format IDs without quotes for integer IDs
+            segment_ids_str = ", ".join([str(id) for id in segment_ids])
+            
             # Prepare the SQL update statement based on the actual database schema
-            # We're working with the parliament_clips table which now has a speech_group_id column
-            segment_ids_str = ", ".join([f"'{id}'" for id in segment_ids])
             update_sql = text("""
                 UPDATE parliament_clips 
                 SET 
-                    member_id = :member_id,
                     speech_group_id = :speech_group_id
                 WHERE 
                     id IN ({segment_ids})
             """.format(segment_ids=segment_ids_str))
             
+            logger.info(f"SQL update statement: {update_sql}")
+            logger.info(f"Using speech_group_id: {speech_group_id}")
+            
             # Execute the update with the correct parameters
             result = db.execute(
                 update_sql,
                 {
-                    "member_id": member_id,
                     "speech_group_id": speech_group_id
                 }
             )
