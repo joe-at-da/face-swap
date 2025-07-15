@@ -123,37 +123,68 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
         video_id: ID of the video in the database
         speech_groups: List of speech groups with segment IDs and normalized speaker IDs
         member_id_mapping: Dictionary mapping speaker IDs to member IDs
-    """
-    for speech_group in speech_groups:
-        speaker_id = speech_group["speaker_id"]
-        member_id = member_id_mapping.get(speaker_id)
         
-        if not speech_group["segment_ids"]:
-            logger.warning(f"No segment IDs found for speech group {speech_group['speech_group_id']}")
-            continue
-            
-        if member_id:
-            # Update speaker ID and speech group ID in the database
-            placeholders = ",".join(["?" for _ in speech_group["segment_ids"]])
-            query = text(f"UPDATE speaker_segments SET member_id = :member_id, speech_group_id = :speech_group_id WHERE id IN ({placeholders}) AND video_id = :video_id")
-            
-            params = {
-                "member_id": member_id,
-                "speech_group_id": speech_group["speech_group_id"],
-                "video_id": video_id
-            }
-            
-            # Add segment IDs as positional parameters
-            for i, segment_id in enumerate(speech_group["segment_ids"]):
-                params[f"id_{i}"] = segment_id
-                
-            db.execute(query, params)
-            logger.info(f"Updated {len(speech_group['segment_ids'])} segments with member_id {member_id} and speech_group_id {speech_group['speech_group_id']}")
-        else:
-            logger.warning(f"No member ID mapping found for speaker ID {speaker_id}")
+    Returns:
+        Number of segments updated in the database
+    """
+    if not speech_groups:
+        logger.info("No speech groups to update in database")
+        return 0
+        
+    logger.info(f"Updating SQLite database with {len(speech_groups)} normalized speech groups")
     
-    # Commit the changes
-    db.commit()
+    total_updated = 0
+    
+    try:
+        for speech_group in speech_groups:
+            speaker_id = speech_group["speaker_id"]
+            member_id = member_id_mapping.get(speaker_id)
+            speech_group_id = speech_group["speech_group_id"]
+            segment_ids = speech_group["segment_ids"]
+            
+            if not segment_ids:
+                logger.warning(f"No segment IDs found for speech group {speech_group_id}")
+                continue
+                
+            # Use raw SQL for bulk update of all segments in this speech group
+            # Prepare the SQL update statement based on the actual database schema
+            # We're working with the parliament_clips table which now has a speech_group_id column
+            segment_ids_str = ", ".join([f"'{id}'" for id in segment_ids])
+            update_sql = text("""
+                UPDATE parliament_clips 
+                SET 
+                    member_id = :member_id,
+                    speech_group_id = :speech_group_id
+                WHERE 
+                    id IN ({segment_ids})
+            """.format(segment_ids=segment_ids_str))
+            
+            # Execute the update with the correct parameters
+            result = db.execute(
+                update_sql,
+                {
+                    "member_id": member_id,
+                    "speech_group_id": speech_group_id
+                }
+            )
+            
+            # Get number of rows affected
+            updated_count = result.rowcount
+            total_updated += updated_count
+            
+            logger.info(f"Updated {updated_count} segments in speech group {speech_group_id} with member_id {member_id}")
+        
+        # Commit the transaction
+        db.commit()
+        logger.info(f"Successfully updated {total_updated} segments with normalized speaker IDs")
+        
+    except Exception as e:
+        # Rollback in case of error
+        db.rollback()
+        logger.error(f"Error updating database with normalized speaker IDs: {str(e)}")
+        raise
+    
+    return total_updated
 
 
 def save_member_clips_to_supabase(
@@ -439,6 +470,27 @@ def save_member_clips_to_supabase(
             "recognition_method": "default",
             "transcript": "No transcript available"
         })
+    
+    # Apply speaker normalization to ensure consistent speaker attribution across continuous speech segments
+    logger.info(f"Applying speaker normalization to {len(speaker_segments)} segments")
+    try:
+        # Get member ID mapping for all speaker IDs
+        member_id_mapping = get_member_id_mapping(db, speaker_ids)
+        
+        # Normalize speaker IDs across continuous speech segments
+        normalized_segments, speech_groups = normalize_speaker_ids(speaker_segments)
+        
+        # Update the database with normalized speaker IDs
+        if speech_groups:
+            updated_count = update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_id_mapping)
+            logger.info(f"Updated {updated_count} segments in database with normalized speaker IDs")
+        
+        # Replace the original segments with normalized ones
+        speaker_segments = normalized_segments
+    except Exception as e:
+        logger.error(f"Error during speaker normalization: {str(e)}")
+        # Continue with original segments if normalization fails
+        logger.warning("Continuing with original speaker segments due to normalization error")
     
     # Sort segments by start time
     speaker_segments.sort(key=lambda x: x["start_time"])
