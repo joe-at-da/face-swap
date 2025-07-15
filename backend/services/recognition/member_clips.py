@@ -529,6 +529,10 @@ def save_member_clips_to_supabase(
         return result
     
     # Split segments that are too long (over 60 seconds)
+    # Store the original segments before splitting for potential recombination later
+    original_merged_segments = merged_segments.copy()
+    
+    # Split segments for local processing and detailed analysis
     merged_segments = split_long_segments(merged_segments, max_duration=60)
     
     # Create clips for Supabase parliament_member_clips table
@@ -583,11 +587,81 @@ def save_member_clips_to_supabase(
         
         member_clips.append(clip_data)
     
-    # Save clips to Supabase parliament_member_clips table
+    # Define a function to recombine segments from the same speaker for export
+    def recombine_segments_for_export(clips):
+        """Recombine split segments from the same speaker into continuous speech segments for export."""
+        # Group clips by member_id
+        clips_by_member = {}
+        for clip in clips:
+            member_id = clip.get("member_id")
+            # Skip unidentified speakers or invalid member_ids
+            if isinstance(member_id, str) and member_id.startswith("unidentified_"):
+                continue
+            try:
+                member_id = int(member_id)
+                if member_id <= 0:
+                    continue
+            except (ValueError, TypeError):
+                continue
+                
+            if member_id not in clips_by_member:
+                clips_by_member[member_id] = []
+            clips_by_member[member_id].append(clip)
+        
+        # Sort clips for each member by start_time
+        for member_id, member_clips in clips_by_member.items():
+            member_clips.sort(key=lambda x: x.get("start_time", 0))
+        
+        # Recombine adjacent clips from the same speaker
+        recombined_clips = []
+        for member_id, sorted_clips in clips_by_member.items():
+            current_combined = None
+            
+            for clip in sorted_clips:
+                if current_combined is None:
+                    current_combined = clip.copy()
+                    continue
+                
+                # If this clip starts right after the previous one ends (or with small gap)
+                if abs(clip.get("start_time", 0) - current_combined.get("end_time", 0)) <= 1.0:  # 1 second tolerance
+                    # Extend the current combined clip
+                    current_combined["end_time"] = clip.get("end_time", 0)
+                    current_combined["end_timestamp"] = clip.get("end_timestamp", "")
+                    current_combined["duration_seconds"] = current_combined.get("end_time", 0) - current_combined.get("start_time", 0)
+                    
+                    # Combine transcripts
+                    if clip.get("transcript"):
+                        if current_combined.get("transcript"):
+                            current_combined["transcript"] += " " + clip.get("transcript")
+                        else:
+                            current_combined["transcript"] = clip.get("transcript")
+                else:
+                    # This clip is not adjacent, add the current combined and start a new one
+                    recombined_clips.append(current_combined)
+                    current_combined = clip.copy()
+            
+            # Add the last combined clip
+            if current_combined:
+                recombined_clips.append(current_combined)
+        
+        # Add back any clips that weren't recombined (like unidentified speakers)
+        for clip in clips:
+            member_id = clip.get("member_id")
+            if (isinstance(member_id, str) and member_id.startswith("unidentified_")) or \
+               (not isinstance(member_id, int) or member_id <= 0):
+                recombined_clips.append(clip)
+        
+        return recombined_clips
+    
+    # Recombine segments for Supabase export
+    recombined_clips = recombine_segments_for_export(member_clips)
+    logger.info(f"Recombined {len(member_clips)} segments into {len(recombined_clips)} continuous speech segments for export")
+    
+    # Save recombined clips to Supabase parliament_member_clips table
     saved_clips = []
     failed_clips = []
     
-    for clip in member_clips:
+    for clip in recombined_clips:
         try:
             # Ensure clip data is serializable and matches the Supabase schema
             try:
