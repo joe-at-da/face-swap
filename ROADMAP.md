@@ -131,6 +131,8 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Transcription service integration
    - Storage management system with accurate real-time metrics
    - Multi-layered fallback mechanisms for storage breakdown calculations
+   - Speaker attribution consistency across continuous speech segments
+   - Speech group tracking for improved speaker identification
 
 5. Social Media Integration
    - Twitter, Facebook, and Instagram platforms

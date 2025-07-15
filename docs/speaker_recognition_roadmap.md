@@ -30,6 +30,13 @@
    - ✅ End-to-end test script for validating the full pipeline
    - ✅ Comprehensive MP photo management documentation
 
+2. **Speaker Attribution Consistency**
+   - ✅ Implemented speaker normalization across continuous speech segments
+   - ✅ Added speech group tracking for related segments
+   - ✅ Enhanced confidence-based speaker selection for continuous speech
+   - ✅ Database integration for persistent speech group IDs
+   - ✅ Improved reliability of speaker identification in exported data
+
 ### In Progress
 
 1. **Multimodal Recognition Enhancements**
