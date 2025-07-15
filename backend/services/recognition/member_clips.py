@@ -710,27 +710,6 @@ def save_member_clips_to_supabase(
             "transcript": "No transcript available"
         })
     
-    # Apply speaker normalization to ensure consistent speaker attribution across continuous speech segments
-    logger.info(f"Applying speaker normalization to {len(speaker_segments)} segments")
-    try:
-        # Get member ID mapping for all speaker IDs
-        member_id_mapping = get_member_id_mapping(db, speaker_ids)
-        
-        # Normalize speaker IDs across continuous speech segments
-        normalized_segments, speech_groups = normalize_speaker_ids(speaker_segments)
-        
-        # Update the database with normalized speaker IDs
-        if speech_groups:
-            updated_count = update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_id_mapping)
-            logger.info(f"Updated {updated_count} segments in database with normalized speaker IDs")
-        
-        # Replace the original segments with normalized ones
-        speaker_segments = normalized_segments
-    except Exception as e:
-        logger.error(f"Error during speaker normalization: {str(e)}")
-        # Continue with original segments if normalization fails
-        logger.warning("Continuing with original speaker segments due to normalization error")
-    
     # Sort segments by start time
     speaker_segments.sort(key=lambda x: x["start_time"])
     
@@ -835,8 +814,19 @@ def save_member_clips_to_supabase(
     logger.info(f"Retrieved member ID mapping for {len(member_id_mapping)} speakers")
     
     # Update the SQLite database with normalized speaker IDs
-    update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_id_mapping)
-    logger.info(f"Updated SQLite database with normalized speaker IDs for {len(speech_groups)} speech groups")
+    try:
+        update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_id_mapping)
+        logger.info(f"Updated SQLite database with normalized speaker IDs for {len(speech_groups)} speech groups")
+    except Exception as e:
+        logger.error(f"Error updating database with normalized speaker IDs: {str(e)}")
+        # Explicitly rollback the transaction to prevent cascading failures in PostgreSQL
+        try:
+            db.rollback()
+            logger.info("Successfully rolled back transaction after normalization error")
+        except Exception as rollback_error:
+            logger.error(f"Error during transaction rollback: {str(rollback_error)}")
+        # Continue with original segments if normalization fails
+        logger.warning("Continuing with original speaker segments due to normalization error")
         
     # Post-process segments to further avoid splitting sentences
     def post_process_segments(segments):
