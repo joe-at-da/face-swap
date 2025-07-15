@@ -1013,13 +1013,17 @@ class SupabaseIntegration:
                         first_clip = clips_data[0]
                         missing_in_first = []
                         for req_field in required_fields:
+                            # Initialize mapped variable for each required field
+                            mapped = False
                             if req_field not in first_clip:
                                 # Check if it could be mapped from another field
-                                mapped = False
                                 for orig_field, target_field in field_mapping.items():
                                     if target_field == req_field and orig_field in first_clip:
                                         mapped = True
                                         break
+                            else:
+                                # If the field exists directly, consider it mapped
+                                mapped = True
                             if not mapped:
                                 missing_in_first.append(req_field)
                         

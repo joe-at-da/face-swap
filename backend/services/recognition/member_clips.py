@@ -549,15 +549,19 @@ def save_member_clips_to_supabase(
         start_timestamp = format_timestamp(segment["start_time"])
         end_timestamp = format_timestamp(segment["end_time"])
         
-        # Ensure member_id is an integer (use 0 for unidentified speakers)
+        # Get speaker_id - we'll validate it later when inserting to Supabase
         speaker_id = segment["speaker_id"]
+        # We'll keep the original speaker_id here and validate/filter when inserting to Supabase
+        # This allows us to still create the clip data for local processing
         if isinstance(speaker_id, str) and speaker_id.startswith("unidentified_"):
-            speaker_id = 0  # Use 0 for unidentified speakers
+            # Keep as is for now, we'll handle this during insertion
+            pass
         else:
             try:
                 speaker_id = int(speaker_id)
             except (ValueError, TypeError):
-                speaker_id = 0  # Default to 0 if conversion fails
+                # Keep as is for now, we'll handle this during insertion
+                pass
         
         # Create clip metadata - simplified to match the actual Supabase schema
         clip_data = {
@@ -588,20 +592,30 @@ def save_member_clips_to_supabase(
             # Ensure clip data is serializable and matches the Supabase schema
             try:
                 # Create a clean serializable version of the clip
-                # Ensure member_id is an integer (use 0 for unidentified speakers)
+                # Ensure member_id is an integer and skip unidentified speakers
                 member_id = clip.get("member_id")
                 if isinstance(member_id, str) and member_id.startswith("unidentified_"):
-                    member_id = 0  # Use 0 for unidentified speakers
+                    # Skip unidentified speakers instead of using member_id = 0
+                    logger.warning(f"Skipping unidentified speaker clip {clip.get('id')} - cannot be inserted due to foreign key constraints")
+                    failed_clips.append({"clip_id": clip.get("id"), "warn": "Skipped unidentified speaker"})
+                    continue
                 else:
                     try:
                         member_id = int(member_id)
+                        # Skip if member_id is 0 or negative
+                        if member_id <= 0:
+                            logger.warning(f"Skipping clip {clip.get('id')} with invalid member_id {member_id} - must be positive integer")
+                            failed_clips.append({"clip_id": clip.get("id"), "error": f"Invalid member_id: {member_id}"})
+                            continue
                     except (ValueError, TypeError):
-                        member_id = 0  # Default to 0 if conversion fails
+                        logger.warning(f"Skipping clip {clip.get('id')} with non-integer member_id {member_id}")
+                        failed_clips.append({"clip_id": clip.get("id"), "error": f"Non-integer member_id: {member_id}"})
+                        continue
                 
                 serializable_clip = {
                     "id": clip.get("id"),
                     # Removed video_id as it's not in the Supabase schema
-                    "member_id": member_id,  # Now guaranteed to be an integer
+                    "member_id": member_id,  # Now guaranteed to be a positive integer
                     # Removed member_name as it's not in the Supabase schema
                     "start_timestamp": str(clip.get("start_time", 0)),  # Convert to string for Supabase
                     "end_timestamp": str(clip.get("end_time", 0)),  # Convert to string for Supabase
