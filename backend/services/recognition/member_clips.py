@@ -159,7 +159,7 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
         is_sqlite = hasattr(db.connection(), 'connection') and isinstance(db.connection().connection, sqlite3.Connection)
         logger.info(f"Inferred SQLite connection: {is_sqlite}")
     
-    # First, verify that the speech_group_id column exists in the parliament_clips table for SQLite
+    # For SQLite, verify that the speech_group_id column exists
     if is_sqlite:
         try:
             # Check if speech_group_id column exists using SQLite syntax
@@ -176,10 +176,26 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                 logger.info("Successfully added speech_group_id column")
         except Exception as e:
             logger.error(f"Error checking/adding speech_group_id column in SQLite: {str(e)}")
+            db.rollback()
             # Continue anyway, as the column might exist but we just failed to check
     else:
-        # For PostgreSQL, use information_schema to check for column existence
+        # For PostgreSQL, first check if the table exists
         try:
+            check_table_sql = text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'parliament_clips'
+                );
+            """)
+            result = db.execute(check_table_sql)
+            table_exists = result.scalar()
+            
+            if not table_exists:
+                logger.warning("Table 'parliament_clips' does not exist in PostgreSQL database")
+                # Don't try to alter a non-existent table
+                return 0
+                
+            # If table exists, check if column exists
             check_column_sql = text("""
                 SELECT column_name 
                 FROM information_schema.columns 
@@ -197,9 +213,14 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                 logger.info("Successfully added speech_group_id column")
         except Exception as e:
             logger.error(f"Error checking/adding speech_group_id column in PostgreSQL: {str(e)}")
-            # Continue anyway, as the column might exist but we just failed to check
+            db.rollback()
+            # Return early since we can't proceed without the proper table structure
+            return 0
     
     total_updated = 0
+    
+    # Initialize a transaction status flag to track if we need to rollback
+    transaction_error = False
     
     try:
         # First, query the database to get the actual IDs of clips for this video
@@ -241,6 +262,7 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                         db_clips[(start_time, end_time)] = db_id
                 except Exception as e2:
                     logger.error(f"Error with fallback SQLite query: {str(e2)}")
+                    # No need to rollback for SQLite as it auto-commits
         else:
             # PostgreSQL version using JSONB extraction
             try:
@@ -259,7 +281,14 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                     db_clips[(start_time, end_time)] = db_id
             except Exception as e:
                 logger.error(f"Error with PostgreSQL JSONB query: {str(e)}")
-                # Try a simpler approach
+                # Check if this is a transaction abort error
+                if "InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e):
+                    transaction_error = True
+                    logger.error("Transaction is aborted, will rollback at the end of function")
+                    # No point trying more queries in an aborted transaction
+                    return 0
+                
+                # Try a simpler approach if not a transaction error
                 try:
                     # Try a LIKE query as a fallback
                     video_clips_sql = text("""
@@ -276,6 +305,12 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                         db_clips[(start_time, end_time)] = db_id
                 except Exception as e2:
                     logger.error(f"Error with fallback PostgreSQL query: {str(e2)}")
+                    # Check if this is a transaction abort error
+                    if "InFailedSqlTransaction" in str(e2) or "current transaction is aborted" in str(e2):
+                        transaction_error = True
+                        logger.error("Transaction is aborted, will rollback at the end of function")
+                        # No point trying more queries in an aborted transaction
+                        return 0
                     
                     # Last resort: try to get all clips and filter in Python
                     try:
@@ -300,7 +335,12 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                                 logger.error(f"Error processing row in last resort query: {str(e3)}")
                     except Exception as e3:
                         logger.error(f"Error with last resort query: {str(e3)}")
-                        # We've tried everything, just continue with empty db_clips
+                        # Check if this is a transaction abort error
+                        if "InFailedSqlTransaction" in str(e3) or "current transaction is aborted" in str(e3):
+                            transaction_error = True
+                            logger.error("Transaction is aborted, will rollback at the end of function")
+                            # No point trying more queries in an aborted transaction
+                            return 0
         
         logger.info(f"Found {len(db_clips)} clips in database for video {video_id}")
         
@@ -365,12 +405,34 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                     logger.info(f"Committed update for speech group {speech_group_id}")
             except Exception as e:
                 logger.error(f"Error updating speech group {speech_group_id}: {str(e)}")
+                # Check if this is a transaction abort error
+                if "InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e):
+                    transaction_error = True
+                    logger.error("Transaction is aborted, will exit function early")
+                    # No point continuing with other speech groups
+                    break
+                    
                 if not is_sqlite:  # PostgreSQL needs explicit rollback
-                    db.rollback()
-                    logger.info(f"Rolled back failed update for speech group {speech_group_id}")
+                    try:
+                        db.rollback()
+                        logger.info(f"Rolled back failed update for speech group {speech_group_id}")
+                    except Exception as rollback_error:
+                        logger.error(f"Error during rollback: {str(rollback_error)}")
+                        transaction_error = True
+                        break
                 # Continue with the next speech group
             
             logger.info(f"Updated {updated_count} segments in speech group {speech_group_id} with member_id {member_id}")
+        
+        # Check if we had a transaction error
+        if transaction_error:
+            if not is_sqlite:  # PostgreSQL needs explicit rollback
+                try:
+                    db.rollback()
+                    logger.info("Rolled back all updates due to transaction error")
+                except Exception as rollback_error:
+                    logger.error(f"Final rollback error: {str(rollback_error)}")
+            return 0  # Return 0 updates since we're rolling back
         
         # Final commit for SQLite (PostgreSQL commits after each update)
         if is_sqlite:
@@ -399,10 +461,11 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                     video_non_null_count = result.scalar()
                     logger.info(f"Segments with non-null speech_group_id for video {video_id}: {video_non_null_count}")
                 except Exception as e:
-                    logger.error(f"Error verifying SQLite updates for video: {str(e)}")
+                    logger.error(f"Error verifying SQLite updates for video {video_id}: {str(e)}")
             else:
                 # PostgreSQL version
                 try:
+                    # Only attempt verification if we haven't had transaction errors
                     video_verify_sql = text("""
                         SELECT COUNT(*) FROM parliament_clips 
                         WHERE speech_group_id IS NOT NULL AND 
@@ -412,16 +475,32 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                     video_non_null_count = result.scalar()
                     logger.info(f"Segments with non-null speech_group_id for video {video_id}: {video_non_null_count}")
                 except Exception as e:
-                    logger.error(f"Error verifying PostgreSQL updates for video: {str(e)}")
+                    logger.error(f"Error verifying PostgreSQL updates for video {video_id}: {str(e)}")
+                    # If this is a transaction error, make sure we rollback
+                    if "InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e):
+                        try:
+                            db.rollback()
+                            logger.info("Rolled back transaction after verification error")
+                        except Exception as rollback_error:
+                            logger.error(f"Error during verification rollback: {str(rollback_error)}")
         except Exception as e:
             logger.error(f"Error verifying updates: {str(e)}")
-            # Continue anyway, this is just for logging
-        
+            # If this is a transaction error, make sure we rollback
+            if not is_sqlite and ("InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e)):
+                try:
+                    db.rollback()
+                    logger.info("Rolled back transaction after verification error")
+                except Exception as rollback_error:
+                    logger.error(f"Error during verification rollback: {str(rollback_error)}")
+    
     except Exception as e:
-        # Rollback in case of error
-        db.rollback()
-        logger.error(f"Error updating database with normalized speaker IDs: {str(e)}")
-        raise
+        logger.error(f"Error updating database with normalized speakers: {str(e)}")
+        if not is_sqlite:  # PostgreSQL needs explicit rollback
+            try:
+                db.rollback()
+                logger.info("Rolled back all updates due to error")
+            except Exception as rollback_error:
+                logger.error(f"Error during final rollback: {str(rollback_error)}")
     
     return total_updated
 

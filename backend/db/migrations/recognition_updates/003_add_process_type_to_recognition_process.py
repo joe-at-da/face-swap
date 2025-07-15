@@ -4,8 +4,13 @@ Migration to add process_type column to RecognitionProcess model.
 """
 
 import logging
+import os
+import sys
 from sqlalchemy import Column, String, text
 from sqlalchemy.sql import func
+
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../')))
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -13,7 +18,11 @@ logger = logging.getLogger(__name__)
 
 def run_migration():
     """Add process_type column to recognition_processes table."""
-    from backend.db.session import engine
+    from backend.core.config import settings
+    from sqlalchemy import create_engine
+    
+    # Create engine from settings
+    engine = create_engine(settings.DATABASE_URL)
     
     logger.info("Adding process_type column to recognition_processes table")
     
