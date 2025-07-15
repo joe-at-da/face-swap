@@ -94,11 +94,12 @@ def normalize_speaker_ids(segments):
             if "id" in segment:
                 segment_id = segment["id"]
                 logger.info(f"Found segment ID: {segment_id} from 'id' field")
-            elif "start_timestamp" in segment and "end_timestamp" in segment:
-                # Create a composite ID based on timestamps if no explicit ID exists
-                # This is for matching with the database records shown in the screenshot
-                segment_id = int(float(segment["start_timestamp"]) * 100)  # Convert to integer for database matching
-                logger.info(f"Created segment ID: {segment_id} from timestamps")
+            elif "segment_id" in segment:
+                segment_id = segment["segment_id"]
+                logger.info(f"Found segment ID: {segment_id} from 'segment_id' field")
+            elif "db_id" in segment:
+                segment_id = segment["db_id"]
+                logger.info(f"Found segment ID: {segment_id} from 'db_id' field")
             
             if segment_id is not None:
                 segment_ids.append(segment_id)
@@ -144,56 +145,277 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
         
     logger.info(f"Updating SQLite database with {len(speech_groups)} normalized speech groups")
     
+    # Determine if we're using SQLite or PostgreSQL
+    is_sqlite = False
+    try:
+        # Try to get the dialect name
+        dialect = db.bind.dialect.name
+        logger.info(f"Database dialect: {dialect}")
+        is_sqlite = dialect == 'sqlite'
+    except Exception as e:
+        logger.warning(f"Could not determine database dialect: {str(e)}")
+        # Try to infer from the connection object
+        import sqlite3
+        is_sqlite = hasattr(db.connection(), 'connection') and isinstance(db.connection().connection, sqlite3.Connection)
+        logger.info(f"Inferred SQLite connection: {is_sqlite}")
+    
+    # First, verify that the speech_group_id column exists in the parliament_clips table for SQLite
+    if is_sqlite:
+        try:
+            # Check if speech_group_id column exists using SQLite syntax
+            check_column_sql = text("PRAGMA table_info(parliament_clips)")
+            result = db.execute(check_column_sql)
+            columns = [row[1] for row in result]
+            
+            if 'speech_group_id' not in columns:
+                # Add the speech_group_id column if it doesn't exist
+                logger.info("Adding speech_group_id column to parliament_clips table")
+                alter_table_sql = text("ALTER TABLE parliament_clips ADD COLUMN speech_group_id TEXT")
+                db.execute(alter_table_sql)
+                db.commit()
+                logger.info("Successfully added speech_group_id column")
+        except Exception as e:
+            logger.error(f"Error checking/adding speech_group_id column in SQLite: {str(e)}")
+            # Continue anyway, as the column might exist but we just failed to check
+    else:
+        # For PostgreSQL, use information_schema to check for column existence
+        try:
+            check_column_sql = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'parliament_clips' AND column_name = 'speech_group_id'
+            """)
+            result = db.execute(check_column_sql)
+            column_exists = result.fetchone() is not None
+            
+            if not column_exists:
+                # Add the speech_group_id column if it doesn't exist
+                logger.info("Adding speech_group_id column to parliament_clips table")
+                alter_table_sql = text("ALTER TABLE parliament_clips ADD COLUMN speech_group_id TEXT")
+                db.execute(alter_table_sql)
+                db.commit()
+                logger.info("Successfully added speech_group_id column")
+        except Exception as e:
+            logger.error(f"Error checking/adding speech_group_id column in PostgreSQL: {str(e)}")
+            # Continue anyway, as the column might exist but we just failed to check
+    
     total_updated = 0
     
     try:
+        # First, query the database to get the actual IDs of clips for this video
+        # This ensures we're using the correct database IDs for the update
+        db_clips = {}
+        
+        if is_sqlite:
+            # SQLite version using json_extract
+            video_clips_sql = text("""
+                SELECT id, start_timestamp, end_timestamp 
+                FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = :video_id
+            """)
+            
+            try:
+                result = db.execute(video_clips_sql, {"video_id": video_id})
+                for row in result:
+                    db_id = row[0]  # Database ID
+                    start_time = float(row[1]) if row[1] else 0
+                    end_time = float(row[2]) if row[2] else 0
+                    # Create a key based on timestamps that we can match with our segments
+                    db_clips[(start_time, end_time)] = db_id
+            except Exception as e:
+                logger.error(f"Error querying SQLite database: {str(e)}")
+                # Try an alternative approach without json_extract
+                try:
+                    # Try a LIKE query as a fallback
+                    video_clips_sql = text("""
+                        SELECT id, start_timestamp, end_timestamp 
+                        FROM parliament_clips 
+                        WHERE metadata LIKE :pattern
+                    """)
+                    
+                    result = db.execute(video_clips_sql, {"pattern": f"%\"video_id\":{video_id}%"})
+                    for row in result:
+                        db_id = row[0]  # Database ID
+                        start_time = float(row[1]) if row[1] else 0
+                        end_time = float(row[2]) if row[2] else 0
+                        db_clips[(start_time, end_time)] = db_id
+                except Exception as e2:
+                    logger.error(f"Error with fallback SQLite query: {str(e2)}")
+        else:
+            # PostgreSQL version using JSONB extraction
+            try:
+                # First try with PostgreSQL JSONB syntax
+                video_clips_sql = text("""
+                    SELECT id, start_timestamp, end_timestamp 
+                    FROM parliament_clips 
+                    WHERE metadata::jsonb ->> 'video_id' = :video_id
+                """)
+                
+                result = db.execute(video_clips_sql, {"video_id": str(video_id)})
+                for row in result:
+                    db_id = row[0]  # Database ID
+                    start_time = float(row[1]) if row[1] else 0
+                    end_time = float(row[2]) if row[2] else 0
+                    db_clips[(start_time, end_time)] = db_id
+            except Exception as e:
+                logger.error(f"Error with PostgreSQL JSONB query: {str(e)}")
+                # Try a simpler approach
+                try:
+                    # Try a LIKE query as a fallback
+                    video_clips_sql = text("""
+                        SELECT id, start_timestamp, end_timestamp 
+                        FROM parliament_clips 
+                        WHERE metadata LIKE :pattern
+                    """)
+                    
+                    result = db.execute(video_clips_sql, {"pattern": f"%\"video_id\":{video_id}%"})
+                    for row in result:
+                        db_id = row[0]  # Database ID
+                        start_time = float(row[1]) if row[1] else 0
+                        end_time = float(row[2]) if row[2] else 0
+                        db_clips[(start_time, end_time)] = db_id
+                except Exception as e2:
+                    logger.error(f"Error with fallback PostgreSQL query: {str(e2)}")
+                    
+                    # Last resort: try to get all clips and filter in Python
+                    try:
+                        video_clips_sql = text("""
+                            SELECT id, start_timestamp, end_timestamp, metadata 
+                            FROM parliament_clips
+                        """)
+                        
+                        result = db.execute(video_clips_sql)
+                        import json
+                        for row in result:
+                            try:
+                                db_id = row[0]  # Database ID
+                                start_time = float(row[1]) if row[1] else 0
+                                end_time = float(row[2]) if row[2] else 0
+                                metadata = json.loads(row[3]) if row[3] else {}
+                                
+                                # Check if this clip belongs to our video
+                                if metadata.get('video_id') == video_id or metadata.get('video_id') == str(video_id):
+                                    db_clips[(start_time, end_time)] = db_id
+                            except Exception as e3:
+                                logger.error(f"Error processing row in last resort query: {str(e3)}")
+                    except Exception as e3:
+                        logger.error(f"Error with last resort query: {str(e3)}")
+                        # We've tried everything, just continue with empty db_clips
+        
+        logger.info(f"Found {len(db_clips)} clips in database for video {video_id}")
+        
         for speech_group in speech_groups:
             speaker_id = speech_group["speaker_id"]
             member_id = member_id_mapping.get(speaker_id)
             speech_group_id = speech_group["speech_group_id"]
             segment_ids = speech_group["segment_ids"]
+            start_time = speech_group["start_time"]
+            end_time = speech_group["end_time"]
+            
+            # If we don't have segment IDs from the database, try to match by timestamps
+            if not segment_ids:
+                logger.warning(f"No segment IDs found for speech group {speech_group_id}, trying to match by timestamps")
+                
+                # Find all clips in this time range
+                matching_db_ids = []
+                for (clip_start, clip_end), db_id in db_clips.items():
+                    # Check if this clip overlaps with our speech group
+                    if (clip_start <= end_time and clip_end >= start_time):
+                        matching_db_ids.append(db_id)
+                
+                if matching_db_ids:
+                    segment_ids = matching_db_ids
+                    logger.info(f"Found {len(matching_db_ids)} matching clips by timestamp for speech group {speech_group_id}")
             
             if not segment_ids:
-                logger.warning(f"No segment IDs found for speech group {speech_group_id}")
+                logger.warning(f"Still no segment IDs found for speech group {speech_group_id}")
                 continue
                 
-            # Use raw SQL for bulk update of all segments in this speech group
-            # Based on the screenshot, we need to match the integer IDs in the database
-            # Format the segment IDs appropriately for the SQL query
-            logger.info(f"Segment IDs for update: {segment_ids}")
-            
             # Format IDs without quotes for integer IDs
             segment_ids_str = ", ".join([str(id) for id in segment_ids])
             
-            # Prepare the SQL update statement based on the actual database schema
-            update_sql = text("""
-                UPDATE parliament_clips 
-                SET 
-                    speech_group_id = :speech_group_id
-                WHERE 
-                    id IN ({segment_ids})
-            """.format(segment_ids=segment_ids_str))
-            
-            logger.info(f"SQL update statement: {update_sql}")
-            logger.info(f"Using speech_group_id: {speech_group_id}")
-            
-            # Execute the update with the correct parameters
-            result = db.execute(
-                update_sql,
-                {
-                    "speech_group_id": speech_group_id
-                }
-            )
-            
-            # Get number of rows affected
-            updated_count = result.rowcount
-            total_updated += updated_count
+            try:
+                # Prepare the SQL update statement based on the actual database schema
+                update_sql = text("""
+                    UPDATE parliament_clips 
+                    SET 
+                        speech_group_id = :speech_group_id
+                    WHERE 
+                        id IN ({segment_ids})
+                """.format(segment_ids=segment_ids_str))
+                
+                logger.info(f"SQL update statement: {update_sql}")
+                logger.info(f"Using speech_group_id: {speech_group_id}")
+                
+                # Execute the update with the correct parameters
+                result = db.execute(
+                    update_sql,
+                    {
+                        "speech_group_id": speech_group_id
+                    }
+                )
+                
+                # Get number of rows affected
+                updated_count = result.rowcount
+                total_updated += updated_count
+                
+                # Commit after each update to avoid long transactions
+                if not is_sqlite:  # PostgreSQL benefits from more frequent commits
+                    db.commit()
+                    logger.info(f"Committed update for speech group {speech_group_id}")
+            except Exception as e:
+                logger.error(f"Error updating speech group {speech_group_id}: {str(e)}")
+                if not is_sqlite:  # PostgreSQL needs explicit rollback
+                    db.rollback()
+                    logger.info(f"Rolled back failed update for speech group {speech_group_id}")
+                # Continue with the next speech group
             
             logger.info(f"Updated {updated_count} segments in speech group {speech_group_id} with member_id {member_id}")
         
-        # Commit the transaction
-        db.commit()
+        # Final commit for SQLite (PostgreSQL commits after each update)
+        if is_sqlite:
+            db.commit()
+            logger.info(f"Committed all updates for SQLite database")
+        
         logger.info(f"Successfully updated {total_updated} segments with normalized speaker IDs")
+        
+        # Verify the updates were applied
+        try:
+            verify_sql = text("SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id IS NOT NULL")
+            result = db.execute(verify_sql)
+            non_null_count = result.scalar()
+            logger.info(f"Total segments with non-null speech_group_id after update: {non_null_count}")
+            
+            # Also verify for this specific video
+            if is_sqlite:
+                # SQLite version
+                try:
+                    video_verify_sql = text("""
+                        SELECT COUNT(*) FROM parliament_clips 
+                        WHERE speech_group_id IS NOT NULL AND 
+                              json_extract(metadata, '$.video_id') = :video_id
+                    """)
+                    result = db.execute(video_verify_sql, {"video_id": video_id})
+                    video_non_null_count = result.scalar()
+                    logger.info(f"Segments with non-null speech_group_id for video {video_id}: {video_non_null_count}")
+                except Exception as e:
+                    logger.error(f"Error verifying SQLite updates for video: {str(e)}")
+            else:
+                # PostgreSQL version
+                try:
+                    video_verify_sql = text("""
+                        SELECT COUNT(*) FROM parliament_clips 
+                        WHERE speech_group_id IS NOT NULL AND 
+                              metadata::jsonb ->> 'video_id' = :video_id
+                    """)
+                    result = db.execute(video_verify_sql, {"video_id": str(video_id)})
+                    video_non_null_count = result.scalar()
+                    logger.info(f"Segments with non-null speech_group_id for video {video_id}: {video_non_null_count}")
+                except Exception as e:
+                    logger.error(f"Error verifying PostgreSQL updates for video: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error verifying updates: {str(e)}")
+            # Continue anyway, this is just for logging
         
     except Exception as e:
         # Rollback in case of error
