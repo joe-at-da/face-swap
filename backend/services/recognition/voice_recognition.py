@@ -6,6 +6,7 @@ integrating with the existing scripts for speaker identification based on voice.
 """
 
 import os
+import sys
 import json
 import logging
 import subprocess
@@ -94,6 +95,17 @@ class VoiceRecognitionService:
                     "message": "Audio file has invalid duration. Please check the audio extraction process.",
                     "transcript": "Invalid audio file cannot be transcribed."
                 }
+                
+            # Check if this is a long audio file (over the threshold)
+            # For long files, use the chunked transcription approach to avoid memory issues
+            # Get threshold from environment variable or use default (30 minutes)
+            long_audio_threshold = int(os.environ.get('LONG_AUDIO_THRESHOLD_SECONDS', 1800))  # Default: 30 minutes
+            logger.info(f"Long audio threshold set to {long_audio_threshold} seconds")
+            
+            if duration > long_audio_threshold:
+                logger.info(f"Long audio file detected ({duration} seconds). Using chunked transcription approach.")
+                return self._transcribe_long_audio(audio_path, output_file, duration)
+                
         except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
             error_msg = f"Failed to validate audio file: {str(e)}"
             logger.error(error_msg)
@@ -105,6 +117,74 @@ class VoiceRecognitionService:
                 "transcript": "Invalid audio file cannot be transcribed."
             }
         
+        # For regular-length audio files, use the standard approach
+        return self._transcribe_standard_audio(audio_path, output_file)
+    
+    def _transcribe_long_audio(self, audio_path: str, output_file: Optional[str] = None, duration: float = 0) -> Dict:
+        """
+        Transcribe a long audio file using the chunked transcription approach.
+        
+        Args:
+            audio_path: Path to the audio file
+            output_file: Optional path to save the output transcript
+            duration: Duration of the audio file in seconds
+            
+        Returns:
+            Dict with transcription results
+        """
+        logger.info(f"Using chunked transcription for long audio file: {audio_path} ({duration} seconds)")
+        
+        # Import the chunked transcriber here to avoid circular imports
+        sys.path.append(str(Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))))  # Add project root
+        from scripts.chunked_transcription import ChunkedTranscriber
+        
+        try:
+            # Initialize the chunked transcriber with appropriate settings
+            # Use a smaller model size for better memory efficiency
+            # Get chunk size from environment variable or use default (10 minutes)
+            chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', 600))  # Default: 10 minutes
+            logger.info(f"Using audio chunk size of {chunk_size} seconds")
+            
+            # Check if we should include chunk markers in the transcript
+            include_markers = os.environ.get('INCLUDE_CHUNK_MARKERS', '').lower() in ('true', '1', 'yes')
+            logger.info(f"Including chunk markers in transcript: {include_markers}")
+            
+            transcriber = ChunkedTranscriber(model_size="tiny", chunk_size=chunk_size)
+            
+            # Transcribe the audio file
+            result = transcriber.transcribe(audio_path, output_file, include_markers=include_markers)
+            
+            # Log the result
+            if result["success"]:
+                logger.info(f"Chunked transcription completed successfully")
+                if "chunks" in result:
+                    logger.info(f"Processed {len(result['chunks'])} chunks")
+            else:
+                logger.error(f"Chunked transcription failed: {result.get('error', 'Unknown error')}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in chunked transcription: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error in chunked transcription: {str(e)}",
+                "output_file": None,
+                "message": "Transcription failed due to an error in the chunked transcription process.",
+                "transcript": "[Transcription failed due to an unexpected error]"
+            }
+    
+    def _transcribe_standard_audio(self, audio_path: str, output_file: Optional[str] = None) -> Dict:
+        """
+        Transcribe a standard-length audio file using the direct approach.
+        
+        Args:
+            audio_path: Path to the audio file
+            output_file: Optional path to save the output transcript
+            
+        Returns:
+            Dict with transcription results
+        """
         # Prepare the command
         script_path = self.scripts_dir / "parliament_transcription.py"
         
@@ -153,13 +233,13 @@ class VoiceRecognitionService:
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
-                logger.error("Transcription process timed out after 10 minutes")
+                logger.error("Transcription process timed out after 20 minutes")
                 return {
                     "success": False,
-                    "error": "Transcription process timed out after 10 minutes",
+                    "error": "Transcription process timed out after 20 minutes",
                     "output_file": None,
                     "message": "Transcription failed due to timeout. The audio file may be too large or complex.",
-                    "transcript": "[Transcription failed: Process timed out after 10 minutes]"
+                    "transcript": "[Transcription failed: Process timed out after 20 minutes]"
                 }
             
             # Check if the process was successful
