@@ -91,8 +91,55 @@ def save_member_clips_to_supabase(
         except Exception as e:
             logger.error(f"Error loading transcription file: {str(e)}")
     
+    # Create a mapping of speaker IDs to proper member IDs from the database
+    def get_member_id_mapping(db, speaker_ids):
+        """Query the database to get the correct integer member_ids for speaker IDs.
+        
+        Args:
+            db: Database session
+            speaker_ids: List of speaker IDs from recognition results
+            
+        Returns:
+            Dictionary mapping speaker IDs to integer member_ids
+        """
+        # Initialize the mapping
+        member_id_mapping = {}
+        
+        # Skip if no speaker IDs
+        if not speaker_ids:
+            return member_id_mapping
+            
+        try:
+            # Query the parliament_members table to get the correct member_ids
+            # This assumes there's a table that maps between recognition system IDs and database member IDs
+            from sqlalchemy import text
+            
+            # Convert list to tuple for SQL IN clause
+            speaker_ids_tuple = tuple(speaker_ids) if len(speaker_ids) > 1 else f"('{speaker_ids[0]}')" 
+            
+            # Query to get member_id mapping
+            query = text(f"""SELECT id, member_id FROM parliament_members 
+                          WHERE id IN {speaker_ids_tuple}
+                       """)
+                       
+            result = db.execute(query).fetchall()
+            
+            # Create the mapping
+            for row in result:
+                recognition_id = row[0]  # UUID from recognition system
+                db_member_id = row[1]    # Integer member_id from database
+                member_id_mapping[recognition_id] = db_member_id
+                
+            logger.info(f"Found {len(member_id_mapping)} member ID mappings in database")
+            
+        except Exception as e:
+            logger.error(f"Error querying member ID mapping: {str(e)}")
+            
+        return member_id_mapping
+    
     # Extract speaker segments from recognition results
     speaker_segments = []
+    speaker_ids = []  # Collect all speaker IDs for mapping
     
     # Process identified speakers from facial recognition
     if "identified_speakers" in recognition_results:
@@ -102,6 +149,10 @@ def save_member_clips_to_supabase(
             
             if not speaker_id or not speaker_name:
                 continue
+                
+            # Collect speaker ID for mapping
+            if speaker_id not in speaker_ids:
+                speaker_ids.append(speaker_id)
                 
             for segment in speaker.get("segments", []):
                 speaker_segments.append({
@@ -344,6 +395,10 @@ def save_member_clips_to_supabase(
     # Add the last segment if there is one
     if current_segment is not None:
         merged_segments.append(current_segment)
+    
+    # Get member ID mapping from database
+    member_id_mapping = get_member_id_mapping(db, speaker_ids)
+    logger.info(f"Retrieved member ID mapping for {len(member_id_mapping)} speakers")
         
     # Post-process segments to further avoid splitting sentences
     def post_process_segments(segments):
@@ -535,6 +590,12 @@ def save_member_clips_to_supabase(
     # Split segments for local processing and detailed analysis
     merged_segments = split_long_segments(merged_segments, max_duration=60)
     
+    # Log the member ID mapping for debugging
+    if member_id_mapping:
+        logger.info(f"Using member ID mapping: {member_id_mapping}")
+    else:
+        logger.warning("No member ID mapping found. Using original speaker IDs.")
+    
     # Create clips for Supabase parliament_member_clips table
     member_clips = []
     for segment in merged_segments:
@@ -553,19 +614,30 @@ def save_member_clips_to_supabase(
         start_timestamp = format_timestamp(segment["start_time"])
         end_timestamp = format_timestamp(segment["end_time"])
         
-        # Get speaker_id - we'll validate it later when inserting to Supabase
-        speaker_id = segment["speaker_id"]
-        # We'll keep the original speaker_id here and validate/filter when inserting to Supabase
-        # This allows us to still create the clip data for local processing
-        if isinstance(speaker_id, str) and speaker_id.startswith("unidentified_"):
-            # Keep as is for now, we'll handle this during insertion
-            pass
+        # Get speaker_id and map to proper member_id if available
+        original_speaker_id = segment["speaker_id"]
+        
+        # Check if we have a mapping for this speaker ID
+        if original_speaker_id in member_id_mapping:
+            # Use the mapped integer member_id from the database
+            speaker_id = member_id_mapping[original_speaker_id]
+            logger.debug(f"Mapped speaker ID {original_speaker_id} to member_id {speaker_id}")
         else:
-            try:
-                speaker_id = int(speaker_id)
-            except (ValueError, TypeError):
+            # No mapping found, use the original speaker_id
+            speaker_id = original_speaker_id
+            
+            # Handle unidentified speakers
+            if isinstance(speaker_id, str) and speaker_id.startswith("unidentified_"):
                 # Keep as is for now, we'll handle this during insertion
-                pass
+                logger.debug(f"Unidentified speaker: {speaker_id}")
+            else:
+                # Try to convert to integer if possible
+                try:
+                    speaker_id = int(speaker_id)
+                except (ValueError, TypeError):
+                    logger.debug(f"Could not convert speaker_id to integer: {speaker_id}")
+                    # Keep as is for now, we'll handle this during insertion
+                    pass
         
         # Create clip metadata - simplified to match the actual Supabase schema
         clip_data = {
@@ -668,6 +740,14 @@ def save_member_clips_to_supabase(
                 # Create a clean serializable version of the clip
                 # Ensure member_id is an integer and skip unidentified speakers
                 member_id = clip.get("member_id")
+                
+                # Check if this is an original speaker ID that needs mapping
+                if member_id in member_id_mapping:
+                    # Use the mapped integer member_id from the database
+                    member_id = member_id_mapping[member_id]
+                    logger.info(f"Using mapped member_id {member_id} for clip {clip.get('id')}")
+                
+                # Handle unidentified speakers
                 if isinstance(member_id, str) and member_id.startswith("unidentified_"):
                     # Skip unidentified speakers instead of using member_id = 0
                     logger.warning(f"Skipping unidentified speaker clip {clip.get('id')} - cannot be inserted due to foreign key constraints")
