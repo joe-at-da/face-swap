@@ -631,6 +631,137 @@ class ParliamentClipsIntegrationService:
             logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
     
+    def _get_sqlite_db_path(self):
+        """
+        Get the path to the SQLite database file.
+        
+        Returns:
+            str: Path to the SQLite database file
+        """
+        import os
+        
+        # Check if we're running in Docker or locally
+        if os.path.exists("/app/backend/parliament_clips.db"):
+            return "/app/backend/parliament_clips.db"
+        else:
+            # Assume we're running locally
+            return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "parliament_clips.db")
+    
+    def _normalize_speech_group_member_ids_in_sqlite(self, video_id=None):
+        """
+        Normalize member IDs within speech groups in the SQLite database.
+        For each speech group, find the clip with the highest confidence and use its member_id
+        for all clips in that speech group.
+        
+        Args:
+            video_id: Optional ID of the video to update. If None, update all videos.
+            
+        Returns:
+            Dict with normalization results
+        """
+        logger.info(f"Normalizing member IDs within speech groups for video ID {video_id}")
+        results = {
+            "groups_updated": 0,
+            "clips_updated": 0,
+            "errors": []
+        }
+        
+        # Initialize conn to None so it's defined for the finally block
+        conn = None
+        
+        try:
+            # Connect to the SQLite database
+            db_path = self._get_sqlite_db_path()
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Get all speech groups for the specified video
+            if video_id:
+                cursor.execute(
+                    "SELECT DISTINCT speech_group_id FROM parliament_clips WHERE video_id = ? AND speech_group_id IS NOT NULL",
+                    (str(video_id),)
+                )
+            else:
+                cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
+            speech_groups = [row[0] for row in cursor.fetchall()]
+            
+            logger.info(f"Found {len(speech_groups)} speech groups to normalize")
+            
+            for speech_group_id in speech_groups:
+                try:
+                    # Find the clip with the highest confidence in this speech group
+                    cursor.execute(
+                        "SELECT id, member_id, confidence_score FROM parliament_clips "
+                        "WHERE speech_group_id = ? ORDER BY confidence_score DESC LIMIT 1",
+                        (speech_group_id,)
+                    )
+                    best_clip = cursor.fetchone()
+                    
+                    if not best_clip:
+                        logger.warning(f"No clips found for speech group {speech_group_id}")
+                        continue
+                    
+                    best_clip_id, best_member_id, best_confidence = best_clip
+                    
+                    # Check if all clips in this group already have the same member_id
+                    cursor.execute(
+                        "SELECT COUNT(DISTINCT member_id) FROM parliament_clips WHERE speech_group_id = ?",
+                        (speech_group_id,)
+                    )
+                    distinct_member_count = cursor.fetchone()[0]
+                    
+                    if distinct_member_count <= 1:
+                        logger.debug(f"Speech group {speech_group_id} already has consistent member IDs")
+                        continue
+                    
+                    # Update all clips in this speech group to use the best member_id
+                    cursor.execute(
+                        "UPDATE parliament_clips SET member_id = ? "
+                        "WHERE speech_group_id = ? AND member_id != ?",
+                        (best_member_id, speech_group_id, best_member_id)
+                    )
+                    
+                    updated_clips = cursor.rowcount
+                    if updated_clips > 0:
+                        logger.info(f"Updated {updated_clips} clips in speech group {speech_group_id} to use member_id {best_member_id}")
+                        results["groups_updated"] += 1
+                        results["clips_updated"] += updated_clips
+                except Exception as e:
+                    error_msg = f"Error normalizing speech group {speech_group_id}: {str(e)}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+            
+            # Commit the changes
+            conn.commit()
+            
+            # Set overall success status
+            results["success"] = len(results["errors"]) == 0
+            
+            if results["success"]:
+                if results["groups_updated"] > 0:
+                    logger.info(f"✅ Successfully normalized {results['groups_updated']} speech groups with {results['clips_updated']} clips updated")
+                else:
+                    logger.info("✅ All speech groups already had consistent member IDs")
+            else:
+                logger.warning(f"⚠️ Normalization completed with {len(results['errors'])} errors")
+                
+        except Exception as e:
+            error_msg = f"Error normalizing speech group member IDs: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            logger.error(traceback.format_exc())
+            results["errors"].append(error_msg)
+            results["success"] = False
+        finally:
+            # Close the database connection
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+                    
+        return results
+    
     def _clear_all_local_clips(self) -> Dict[str, Any]:
         """
         Clear all clips from the local SQLite database without affecting Supabase data.
@@ -1088,6 +1219,9 @@ class ParliamentClipsIntegrationService:
         Returns:
             Dict with export status and results
         """
+        # First, normalize member IDs within speech groups to ensure consistent speaker attribution
+        self._normalize_speech_group_member_ids_in_sqlite(video_id)
+        
         # Initialize cache for temporary Speaker objects
         temp_members_cache = {}
         logger.info(f"===== EXPORTING CLIPS TO SUPABASE =====")
