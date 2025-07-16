@@ -693,6 +693,21 @@ class ParliamentClipsIntegrationService:
                 
                 speech_groups = [row[0] for row in cursor.fetchall()]
                 
+                # If no results, try with the video ID as a number without leading zeros
+                if not speech_groups:
+                    try:
+                        # Convert to int to remove leading zeros, then back to string
+                        numeric_video_id = str(int(video_id))
+                        cursor.execute(
+                            "SELECT DISTINCT speech_group_id FROM parliament_clips "
+                            "WHERE speech_group_id LIKE ? AND speech_group_id IS NOT NULL",
+                            (f"speech_group_{numeric_video_id}_%",)
+                        )
+                        speech_groups = [row[0] for row in cursor.fetchall()]
+                    except ValueError:
+                        # Not a numeric ID, continue with other methods
+                        pass
+                
                 if not speech_groups:
                     # If we can't find by direct pattern matching, try metadata
                     cursor.execute(
@@ -727,30 +742,38 @@ class ParliamentClipsIntegrationService:
             
             for speech_group_id in speech_groups:
                 try:
+                    # Get all clips in this speech group
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id = ?",
+                        (speech_group_id,)
+                    )
+                    clip_count = cursor.fetchone()[0]
+                    
+                    if clip_count == 0:
+                        logger.warning(f"No clips found for speech group {speech_group_id}")
+                        continue
+                        
                     # Find the clip with the highest confidence in this speech group
                     cursor.execute(
                         "SELECT id, member_id, confidence_score FROM parliament_clips "
-                        "WHERE speech_group_id = ? ORDER BY confidence_score DESC LIMIT 1",
+                        "WHERE speech_group_id = ? AND member_id IS NOT NULL AND member_id != '' "
+                        "ORDER BY confidence_score DESC LIMIT 1",
                         (speech_group_id,)
                     )
                     best_clip = cursor.fetchone()
                     
                     if not best_clip:
-                        logger.warning(f"No clips found for speech group {speech_group_id}")
+                        logger.warning(f"No clips with valid member_id found for speech group {speech_group_id}")
                         continue
                     
                     best_clip_id, best_member_id, best_confidence = best_clip
                     
                     # Check if all clips in this group already have the same member_id
                     cursor.execute(
-                        "SELECT COUNT(DISTINCT member_id) FROM parliament_clips WHERE speech_group_id = ?",
+                        "SELECT COUNT(DISTINCT member_id) FROM parliament_clips WHERE speech_group_id = ? AND member_id IS NOT NULL AND member_id != ''",
                         (speech_group_id,)
                     )
                     distinct_member_count = cursor.fetchone()[0]
-                    
-                    if distinct_member_count <= 1:
-                        logger.debug(f"Speech group {speech_group_id} already has consistent member IDs")
-                        continue
                     
                     # Get all clips in this speech group for detailed logging
                     if logger.level <= logging.DEBUG:
@@ -766,10 +789,14 @@ class ParliamentClipsIntegrationService:
                             logger.debug(f"  Clip {clip_id} ({start_time}-{end_time}): Member ID {member_id}, Confidence {confidence}")
                         logger.debug(f"  Selected best clip {best_clip_id} with member_id {best_member_id} (confidence: {best_confidence})")
                     
+                    if distinct_member_count <= 1 and clip_count == 1:
+                        logger.debug(f"Speech group {speech_group_id} already has consistent member IDs or only contains one clip")
+                        continue
+                    
                     # Update all clips in this speech group to use the best member_id
                     cursor.execute(
                         "UPDATE parliament_clips SET member_id = ? "
-                        "WHERE speech_group_id = ? AND member_id != ?",
+                        "WHERE speech_group_id = ? AND (member_id != ? OR member_id IS NULL OR member_id = '')",
                         (best_member_id, speech_group_id, best_member_id)
                     )
                     
