@@ -80,18 +80,14 @@ def find_diarization_file(video_path: str) -> Optional[Path]:
     if video_id:
         # Docker paths
         possible_paths.extend([
-            Path(f"/app/data/media/{video_id}_diarization.json"),
             Path(f"/app/data/media/{video_id}.diarization.json"),
-            Path(f"/app/data/temp/{video_id}_diarization.json"),
             Path(f"/app/data/temp/{video_id}.diarization.json"),
         ])
         
         # Local paths
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         possible_paths.extend([
-            Path(os.path.join(base_dir, f"data/media/{video_id}_diarization.json")),
             Path(os.path.join(base_dir, f"data/media/{video_id}.diarization.json")),
-            Path(os.path.join(base_dir, f"data/temp/{video_id}_diarization.json")),
             Path(os.path.join(base_dir, f"data/temp/{video_id}.diarization.json")),
         ])
         
@@ -104,7 +100,6 @@ def find_diarization_file(video_path: str) -> Optional[Path]:
     # Derived from video path (regardless of whether we have a video ID)
     video_path_without_ext = os.path.splitext(video_path)[0]
     possible_paths.extend([
-        Path(video_path_without_ext + "_diarization.json"),
         Path(video_path_without_ext + ".diarization.json"),
     ])
     
@@ -162,71 +157,16 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
         logger.warning("No diarization segments found in diarization data")
         return []
     
-    # Sort clips by start time for easier matching
+    # Sort clips by start time
     sorted_clips = sorted(clips, key=lambda c: float(c[2]) if c[2] else 0)
     
-    # Group clips by diarization speaker segments
-    speech_blocks = []
-    current_block = []
-    current_speaker = None
-    
-    for clip in sorted_clips:
-        clip_id, member_id, start_timestamp, end_timestamp = clip
-        clip_start = float(start_timestamp) if start_timestamp else 0
-        clip_end = float(end_timestamp) if end_timestamp else clip_start + 1
-        
-        # Find the diarization segment that contains this clip
-        matching_segment = None
-        for segment in diarization_segments:
-            segment_start = segment.get('start_time', 0)
-            segment_end = segment.get('end_time', 0)
-            segment_speaker = segment.get('speaker', '')
-            
-            # Check if clip overlaps with this segment
-            # A clip is considered part of a segment if it overlaps by at least 50%
-            overlap_start = max(clip_start, segment_start)
-            overlap_end = min(clip_end, segment_end)
-            overlap_duration = max(0, overlap_end - overlap_start)
-            clip_duration = clip_end - clip_start
-            
-            if overlap_duration > (clip_duration * 0.5):
-                matching_segment = segment
-                break
-        
-        if matching_segment:
-            segment_speaker = matching_segment.get('speaker', '')
-            
-            # If this is a new speaker or first clip, start a new block
-            if segment_speaker != current_speaker or not current_block:
-                if current_block:
-                    speech_blocks.append(current_block)
-                current_block = [clip]
-                current_speaker = segment_speaker
-            else:
-                # Same speaker, add to current block
-                current_block.append(clip)
-        else:
-            # No matching segment found, add to current block if close in time
-            # or start a new block
-            if not current_block:
-                current_block = [clip]
-            else:
-                prev_clip = current_block[-1]
-                prev_end = float(prev_clip[3]) if prev_clip[3] else float(prev_clip[2]) + 1
-                
-                # Use temporal proximity as fallback
-                MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds
-                if clip_start - prev_end <= MAX_CONTINUOUS_SPEECH_GAP:
-                    current_block.append(clip)
-                else:
-                    speech_blocks.append(current_block)
-                    current_block = [clip]
-    
-    # Add the last block
-    if current_block:
-        speech_blocks.append(current_block)
+    # Group all clips into a single speech block per video
+    # This ensures all clips from the same video are grouped together
+    # regardless of speaker changes in the diarization data
+    speech_blocks = [sorted_clips] if sorted_clips else []
     
     logger.info(f"Created {len(speech_blocks)} speech blocks based on diarization data")
+    logger.info(f"All clips from the same video are grouped into a single speech block")
     return speech_blocks
 
 

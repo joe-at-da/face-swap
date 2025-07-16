@@ -186,7 +186,7 @@ class SpeakerDiarizer:
         # If no output path provided, create one
         if output_path is None:
             output_dir = audio_path.parent
-            output_path = output_dir / f"{audio_path.stem}_diarization.json"
+            output_path = output_dir / f"{audio_path.stem}.diarization.json"
         
         logger.info(f"Diarizing audio: {audio_path} with model size: {model_size}")
         
