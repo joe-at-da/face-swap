@@ -959,7 +959,8 @@ class MultimodalRecognitionService:
             segment_events = {}
             for segment in segments:
                 segment_id = segment.get("id", f"{segment.get('start', 0)}-{segment.get('end', 0)}")
-                segment_events[segment_id] = []
+                # Ensure segment_id is a string to avoid key type mismatches
+                segment_events[str(segment_id)] = []
             
             # Assign events to segments
             for event in sorted_events:
@@ -969,7 +970,8 @@ class MultimodalRecognitionService:
                     segment_end = segment.get("end", 0)
                     if segment_start <= start_time <= segment_end:
                         segment_id = segment.get("id", f"{segment_start}-{segment_end}")
-                        segment_events[segment_id].append(event)
+                        # Ensure segment_id is a string when accessing the dictionary
+                        segment_events[str(segment_id)].append(event)
                         break
             
             # Analyze each segment for speaker transitions
@@ -1005,6 +1007,8 @@ class MultimodalRecognitionService:
             
             # Analyze speaker transitions across adjacent segments
             segment_ids = list(segment_events.keys())
+            # Convert all segment_ids to strings before sorting to avoid TypeError with integers
+            segment_ids = [str(x) for x in segment_ids]
             segment_ids.sort(key=lambda x: float(x.split('-')[0]) if '-' in x else 0)
             
             for i in range(1, len(segment_ids)):
