@@ -60,33 +60,62 @@ def find_diarization_file(video_path: str) -> Optional[Path]:
     """
     # Extract video ID from path if possible
     try:
-        video_id = os.path.basename(video_path).split('_')[0]
-    except (ValueError, IndexError):
-        return None
+        # Handle different filename patterns
+        video_basename = os.path.basename(video_path)
+        # Try to extract video ID from various filename patterns
+        if '_' in video_basename:
+            video_id = video_basename.split('_')[0]
+        else:
+            video_id = os.path.splitext(video_basename)[0]
+        
+        logger.info(f"Extracted video ID: {video_id} from path: {video_path}")
+    except (ValueError, IndexError) as e:
+        logger.warning(f"Could not extract video ID from path: {video_path}, error: {e}")
+        video_id = None
     
     # Common locations for diarization files
-    possible_paths = [
-        # Direct match with video ID
-        Path(f"/app/data/media/{video_id}_diarization.json"),
-        Path(f"/app/data/temp/{video_id}_diarization.json"),
-        Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), f"data/media/{video_id}_diarization.json")),
-        Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), f"data/temp/{video_id}_diarization.json")),
+    possible_paths = []
+    
+    # If we have a video ID, check ID-based paths
+    if video_id:
+        # Docker paths
+        possible_paths.extend([
+            Path(f"/app/data/media/{video_id}_diarization.json"),
+            Path(f"/app/data/media/{video_id}.diarization.json"),
+            Path(f"/app/data/temp/{video_id}_diarization.json"),
+            Path(f"/app/data/temp/{video_id}.diarization.json"),
+        ])
         
-        # Derived from video path
-        Path(os.path.splitext(video_path)[0] + "_diarization.json"),
-        Path(os.path.splitext(video_path)[0] + ".diarization.json"),
+        # Local paths
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        possible_paths.extend([
+            Path(os.path.join(base_dir, f"data/media/{video_id}_diarization.json")),
+            Path(os.path.join(base_dir, f"data/media/{video_id}.diarization.json")),
+            Path(os.path.join(base_dir, f"data/temp/{video_id}_diarization.json")),
+            Path(os.path.join(base_dir, f"data/temp/{video_id}.diarization.json")),
+        ])
         
         # Audio-derived paths
-        Path(f"/app/data/temp/audio_extracts/{video_id}.audio_diarization.json"),
-        Path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), f"data/temp/audio_extracts/{video_id}.audio_diarization.json"))
-    ]
+        possible_paths.extend([
+            Path(f"/app/data/temp/audio_extracts/{video_id}.audio_diarization.json"),
+            Path(os.path.join(base_dir, f"data/temp/audio_extracts/{video_id}.audio_diarization.json"))
+        ])
     
+    # Derived from video path (regardless of whether we have a video ID)
+    video_path_without_ext = os.path.splitext(video_path)[0]
+    possible_paths.extend([
+        Path(video_path_without_ext + "_diarization.json"),
+        Path(video_path_without_ext + ".diarization.json"),
+    ])
+    
+    # Check if any of the possible paths exist
     for path in possible_paths:
         if path.exists():
             logger.info(f"Found diarization file: {path}")
             return path
     
     logger.info(f"No diarization file found for video {video_path}")
+    logger.debug(f"Checked paths: {possible_paths}")
     return None
 
 
