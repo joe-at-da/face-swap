@@ -661,6 +661,7 @@ class ParliamentClipsIntegrationService:
         """
         logger.info(f"Normalizing member IDs within speech groups for video ID {video_id}")
         results = {
+            "success": False,
             "groups_updated": 0,
             "clips_updated": 0,
             "errors": []
@@ -677,35 +678,45 @@ class ParliamentClipsIntegrationService:
             
             # Get all speech groups for the specified video
             if video_id:
-                # Find the video path for this video_id
-                video_path = None
-                # First check if we have any clips with this video_id in the metadata
+                # Find speech groups for this video_id using pattern matching
+                # speech_group_id format is speech_group_{video_id}_{block_idx}_{timestamp}
                 cursor.execute(
-                    "SELECT metadata FROM parliament_clips WHERE metadata LIKE ? LIMIT 1",
-                    (f"%{video_id}%",)
+                    "SELECT DISTINCT speech_group_id FROM parliament_clips "
+                    "WHERE speech_group_id LIKE ? AND speech_group_id IS NOT NULL",
+                    (f"speech_group_{video_id}_%",)
                 )
-                result = cursor.fetchone()
-                if result:
-                    try:
-                        import json
-                        metadata = json.loads(result[0])
-                        if metadata.get('video_id') == str(video_id):
-                            # Get all clips with this video_id in metadata
-                            cursor.execute(
-                                "SELECT DISTINCT speech_group_id FROM parliament_clips "
-                                "WHERE metadata LIKE ? AND speech_group_id IS NOT NULL",
-                                (f"%{video_id}%",)
-                            )
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Could not parse metadata for video {video_id}")
-                        cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
-                else:
-                    # If we can't find by metadata, just get all speech groups
-                    logger.warning(f"Could not find clips for video {video_id}, normalizing all speech groups")
-                    cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
+                
+                speech_groups = [row[0] for row in cursor.fetchall()]
+                
+                if not speech_groups:
+                    # If we can't find by direct pattern matching, try metadata
+                    cursor.execute(
+                        "SELECT metadata FROM parliament_clips WHERE metadata LIKE ? LIMIT 1",
+                        (f"%{video_id}%",)
+                    )
+                    result = cursor.fetchone()
+                    if result:
+                        try:
+                            import json
+                            metadata = json.loads(result[0])
+                            if metadata.get('video_id') == str(video_id):
+                                # Get all clips with this video_id in metadata
+                                cursor.execute(
+                                    "SELECT DISTINCT speech_group_id FROM parliament_clips "
+                                    "WHERE metadata LIKE ? AND speech_group_id IS NOT NULL",
+                                    (f"%{video_id}%",)
+                                )
+                                speech_groups = [row[0] for row in cursor.fetchall()]
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Could not parse metadata for video {video_id}")
+                            speech_groups = []
+                    
+                    if not speech_groups:
+                        logger.warning(f"Could not find speech groups for video {video_id}")
             else:
+                # Get all speech groups if no video_id specified
                 cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
-            speech_groups = [row[0] for row in cursor.fetchall()]
+                speech_groups = [row[0] for row in cursor.fetchall()]
             
             logger.info(f"Found {len(speech_groups)} speech groups to normalize")
             
