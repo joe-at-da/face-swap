@@ -140,7 +140,7 @@ def load_diarization_data(diarization_file: Path) -> Optional[Dict]:
         return None
 
 
-def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: Dict) -> List[List[Tuple]]:
+def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: Dict) -> Tuple[List[List[Tuple]], Dict]:
     """
     Create speech blocks based on diarization data.
     
@@ -149,7 +149,9 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
         diarization_data: Dict with diarization data
         
     Returns:
-        List of speech blocks, where each block is a list of clips
+        Tuple containing:
+            - List of speech blocks, where each block is a list of clips
+            - Dictionary mapping clip IDs to speaker labels
     """
     # Extract diarization segments
     diarization_segments = diarization_data.get('segments', [])
@@ -157,17 +159,100 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
         logger.warning("No diarization segments found in diarization data")
         return []
     
-    # Sort clips by start time
+    # Sort clips by start time for easier matching
     sorted_clips = sorted(clips, key=lambda c: float(c[2]) if c[2] else 0)
     
-    # Group all clips into a single speech block per video
-    # This ensures all clips from the same video are grouped together
-    # regardless of speaker changes in the diarization data
-    speech_blocks = [sorted_clips] if sorted_clips else []
+    # First, assign each clip to a speaker based on diarization data
+    clip_speaker_map = {}
+    for clip in sorted_clips:
+        clip_id, member_id, start_timestamp, end_timestamp = clip
+        clip_start = float(start_timestamp) if start_timestamp else 0
+        clip_end = float(end_timestamp) if end_timestamp else clip_start + 1
+        clip_duration = clip_end - clip_start
+        
+        # Find the diarization segment that contains this clip
+        matching_segment = None
+        for segment in diarization_segments:
+            segment_start = segment.get('start_time', 0)
+            segment_end = segment.get('end_time', 0)
+            
+            # Check if clip overlaps with this segment
+            # A clip is considered part of a segment if it overlaps by at least 50%
+            overlap_start = max(clip_start, segment_start)
+            overlap_end = min(clip_end, segment_end)
+            overlap_duration = max(0, overlap_end - overlap_start)
+            
+            if overlap_duration > (clip_duration * 0.5):
+                matching_segment = segment
+                break
+        
+        if matching_segment:
+            segment_speaker = matching_segment.get('speaker', '')
+            clip_speaker_map[clip_id] = segment_speaker
+            logger.debug(f"Clip {clip_id} ({clip_start}-{clip_end}) assigned to {segment_speaker}")
+        else:
+            # No matching segment found, assign to None
+            clip_speaker_map[clip_id] = None
+            logger.debug(f"Clip {clip_id} ({clip_start}-{clip_end}) could not be assigned to any speaker")
     
-    logger.info(f"Created {len(speech_blocks)} speech blocks based on diarization data")
-    logger.info(f"All clips from the same video are grouped into a single speech block")
-    return speech_blocks
+    # Group clips by speaker
+    speaker_clips = {}
+    for clip in sorted_clips:
+        clip_id = clip[0]
+        speaker = clip_speaker_map.get(clip_id)
+        if speaker not in speaker_clips:
+            speaker_clips[speaker] = []
+        speaker_clips[speaker].append(clip)
+    
+    # Create speech blocks from speaker groups
+    speech_blocks = []
+    for speaker, speaker_group in speaker_clips.items():
+        if speaker is None:
+            # For clips without a speaker, use temporal proximity
+            temp_blocks = []
+            current_block = []
+            for clip in sorted(speaker_group, key=lambda c: float(c[2]) if c[2] else 0):
+                if not current_block:
+                    current_block = [clip]
+                else:
+                    prev_clip = current_block[-1]
+                    prev_end = float(prev_clip[3]) if prev_clip[3] else float(prev_clip[2]) + 1
+                    clip_start = float(clip[2]) if clip[2] else 0
+                    
+                    # Use temporal proximity
+                    MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds
+                    if clip_start - prev_end <= MAX_CONTINUOUS_SPEECH_GAP:
+                        current_block.append(clip)
+                    else:
+                        temp_blocks.append(current_block)
+                        current_block = [clip]
+            
+            if current_block:
+                temp_blocks.append(current_block)
+            
+            speech_blocks.extend(temp_blocks)
+        else:
+            # For clips with a speaker, keep them in one group
+            if speaker_group:
+                speech_blocks.append(speaker_group)
+    
+    # Sort speech blocks by the start time of their first clip
+    speech_blocks.sort(key=lambda block: float(block[0][2]) if block[0][2] else 0)
+    
+    num_speakers = len(set(segment.get('speaker', '') for segment in diarization_segments))
+    logger.info(f"Diarization data contains {num_speakers} distinct speakers")
+    logger.info(f"Created {len(speech_blocks)} speech blocks based on speaker changes in diarization data")
+    
+    # Debug info
+    for i, block in enumerate(speech_blocks):
+        first_clip = block[0]
+        last_clip = block[-1]
+        first_start = float(first_clip[2]) if first_clip[2] else 0
+        last_end = float(last_clip[3]) if last_clip[3] else 0
+        speaker = clip_speaker_map.get(first_clip[0])
+        logger.debug(f"Speech block {i}: {len(block)} clips, {first_start}-{last_end}, speaker: {speaker}")
+    
+    return speech_blocks, clip_speaker_map
 
 
 def create_speech_blocks_by_proximity(clips: List[Tuple]) -> List[List[Tuple]]:
@@ -282,9 +367,22 @@ def update_speech_groups(video_id=None):
                 diarization_data = load_diarization_data(diarization_file)
                 if diarization_data:
                     # Create speech blocks based on diarization data
-                    speech_blocks = create_speech_blocks_from_diarization(clips, diarization_data)
+                    speech_blocks, clip_speaker_map = create_speech_blocks_from_diarization(clips, diarization_data)
                     diarization_used += 1
                     logger.info(f"Using diarization data to create speech groups for {video_path}")
+                    
+                    # Debug: Print clip to speaker assignments if debug mode is enabled
+                    if hasattr(args, 'debug') and args.debug:
+                        logger.debug(f"Clip to speaker assignments for {video_path}:")
+                        for clip_id, speaker in clip_speaker_map.items():
+                            cursor.execute("SELECT start_timestamp, end_timestamp FROM parliament_clips WHERE id = ?", (clip_id,))
+                            clip_info = cursor.fetchone()
+                            if clip_info:
+                                start_time, end_time = clip_info
+                                logger.debug(f"  Clip {clip_id} ({start_time}-{end_time}): Speaker {speaker}")
+                            else:
+                                logger.debug(f"  Clip {clip_id}: Speaker {speaker}")
+                    
             
             # If no diarization data or blocks couldn't be created, fall back to temporal proximity
             if not speech_blocks:
@@ -358,8 +456,14 @@ def main():
     parser = argparse.ArgumentParser(description='Update speech group IDs in parliament_clips database')
     parser.add_argument('--video-id', type=str, help='Optional video ID to update')
     parser.add_argument('--force', action='store_true', help='Force update of speech groups even if already assigned')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
+    global args
     args = parser.parse_args()
+    
+    # Set up debug logging if requested
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
     
     # If force flag is provided, clear existing speech group IDs for the specified video
     if args.force and args.video_id:

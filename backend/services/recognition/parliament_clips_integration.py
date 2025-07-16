@@ -651,10 +651,12 @@ class ParliamentClipsIntegrationService:
         """
         Normalize member IDs within speech groups in the SQLite database.
         
-        Speech groups are now created based solely on temporal proximity (not member_id).
+        Speech groups are created based on speaker diarization data when available,
+        or temporal proximity as a fallback.
+        
         For each speech group, this function finds the clip with the highest confidence
         and uses its member_id for all clips in that speech group, ensuring consistent
-        speaker attribution within continuous speech segments.
+        speaker attribution within speech segments from the same speaker.
         
         Args:
             video_id: Optional ID of the video to update. If None, update all videos.
@@ -749,6 +751,20 @@ class ParliamentClipsIntegrationService:
                     if distinct_member_count <= 1:
                         logger.debug(f"Speech group {speech_group_id} already has consistent member IDs")
                         continue
+                    
+                    # Get all clips in this speech group for detailed logging
+                    if logger.level <= logging.DEBUG:
+                        cursor.execute(
+                            "SELECT id, member_id, confidence_score, start_timestamp, end_timestamp FROM parliament_clips "
+                            "WHERE speech_group_id = ? ORDER BY CAST(start_timestamp AS REAL)",
+                            (speech_group_id,)
+                        )
+                        clips_in_group = cursor.fetchall()
+                        logger.debug(f"Speech group {speech_group_id} contains {len(clips_in_group)} clips:")
+                        for clip in clips_in_group:
+                            clip_id, member_id, confidence, start_time, end_time = clip
+                            logger.debug(f"  Clip {clip_id} ({start_time}-{end_time}): Member ID {member_id}, Confidence {confidence}")
+                        logger.debug(f"  Selected best clip {best_clip_id} with member_id {best_member_id} (confidence: {best_confidence})")
                     
                     # Update all clips in this speech group to use the best member_id
                     cursor.execute(
