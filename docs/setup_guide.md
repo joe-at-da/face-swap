@@ -11,6 +11,24 @@
 
 ### 1. Database Setup
 
+**IMPORTANT: Choose ONE of the following options (A or B), not both:**
+
+#### Option A: Using Docker PostgreSQL (Recommended)
+
+If you're using Docker with the provided docker-compose.dev.yml file, PostgreSQL will be set up automatically in a container. No local PostgreSQL installation is needed.
+
+```bash
+# Start Docker containers including PostgreSQL
+docker-compose -f docker-compose.dev.yml up -d
+
+# Verify PostgreSQL container is running
+docker-compose -f docker-compose.dev.yml ps
+```
+
+#### Option B: Using Local PostgreSQL
+
+Only use this option if you're NOT using Docker.
+
 ```bash
 # Install PostgreSQL 14 (macOS)
 brew install postgresql@14
@@ -25,6 +43,8 @@ brew services start postgresql@14
 # Create database
 /opt/homebrew/opt/postgresql@14/bin/createdb parliament_clips
 ```
+
+**NOTE: Running both Docker PostgreSQL and local PostgreSQL simultaneously will cause port conflicts on 5432.**
 
 ### 2. Python Environment Setup
 
@@ -80,12 +100,17 @@ For more detailed database management options, see the [Database Management Guid
 
 You can connect to the database using SQL IDEs like TablePlus, DBeaver, or pgAdmin:
 
-**Connection Details:**
+**Connection Details for Docker PostgreSQL:**
 - Host: localhost
 - Port: 5432
-- Database: parliament_db
+- Database: parliament_clips
 - Username: postgres
 - Password: postgres
+
+**IMPORTANT: Before connecting with TablePlus or other SQL IDEs:**
+1. Ensure you don't have local PostgreSQL running on the same port (5432)
+2. Check for conflicts with `ps aux | grep postgres`
+3. If you see local PostgreSQL instances running, stop them with `brew services stop postgresql@14`
 
 See the [Database Management Guide](database_management.md) for detailed instructions on setting up TablePlus and other SQL IDEs.
 
@@ -263,9 +288,11 @@ After completing the setup:
 ### Common Issues
 
 1. PostgreSQL Connection Issues
-   - Ensure PostgreSQL service is running
+   - Ensure PostgreSQL service is running (either Docker or local, not both)
    - Verify database credentials in `.env`
    - Check if postgres user exists
+   - Run `ps aux | grep postgres` to check for multiple conflicting PostgreSQL instances
+   - If using Docker, ensure containers are running with `docker-compose -f docker-compose.dev.yml ps`
 
 2. Migration Issues
    - Make sure database exists
