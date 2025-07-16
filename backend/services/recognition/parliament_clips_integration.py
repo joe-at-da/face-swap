@@ -650,8 +650,11 @@ class ParliamentClipsIntegrationService:
     def _normalize_speech_group_member_ids_in_sqlite(self, video_id=None):
         """
         Normalize member IDs within speech groups in the SQLite database.
-        For each speech group, find the clip with the highest confidence and use its member_id
-        for all clips in that speech group.
+        
+        Speech groups are now created based solely on temporal proximity (not member_id).
+        For each speech group, this function finds the clip with the highest confidence
+        and uses its member_id for all clips in that speech group, ensuring consistent
+        speaker attribution within continuous speech segments.
         
         Args:
             video_id: Optional ID of the video to update. If None, update all videos.

@@ -99,10 +99,9 @@ def update_speech_groups(video_id=None):
             clips = cursor.fetchall()
             logger.info(f"Found {len(clips)} clips for video path {video_path}")
             
-            # Group clips by member_id and time proximity
+            # Group clips by temporal proximity only (not by member_id)
             MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds max gap between segments
             
-            current_member_id = None
             current_block = []
             speech_blocks = []
             
@@ -116,22 +115,16 @@ def update_speech_groups(video_id=None):
                     logger.warning(f"Invalid timestamp format for clip {clip_id}: {start_time_str}-{end_time_str}")
                     continue
                 
-                if current_member_id is None:
+                if not current_block:
                     # First clip
-                    current_member_id = member_id
-                    current_block = [clip]
-                elif member_id != current_member_id:
-                    # New speaker, start a new block
-                    speech_blocks.append(current_block)
-                    current_member_id = member_id
                     current_block = [clip]
                 else:
-                    # Same speaker, check time proximity
+                    # Check time proximity only
                     prev_clip = current_block[-1]
                     prev_end_time = float(prev_clip[3]) if prev_clip[3] else float(prev_clip[2]) + 1
                     
                     if start_time - prev_end_time <= MAX_CONTINUOUS_SPEECH_GAP:
-                        # Continuous speech
+                        # Continuous speech (regardless of member_id)
                         current_block.append(clip)
                     else:
                         # Gap too large, start a new block
@@ -144,7 +137,7 @@ def update_speech_groups(video_id=None):
             
             logger.info(f"Grouped {len(clips)} clips into {len(speech_blocks)} speech blocks")
             
-            # Update speech_group_id for each block
+            # Update speech_group_id for each temporal speech block (based only on time proximity)
             block_updates = 0
             for block_idx, block in enumerate(speech_blocks):
                 # Generate a unique speech group ID
