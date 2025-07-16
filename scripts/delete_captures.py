@@ -3,13 +3,15 @@
 Delete all capture sessions and associated data from the database.
 
 This script provides a clean slate by removing all capture-related data,
-including associated files and database records.
+including associated files and database records, while preserving important
+speaker data such as photos and face embeddings.
 """
 
 import os
 import sys
 import shutil
 import logging
+import fnmatch
 from pathlib import Path
 
 # Add the parent directory to the path so we can import from backend
@@ -38,8 +40,8 @@ def check_table_exists(db, table_name):
         return False
 
 def clean_database():
-    """Clean all capture-related data from the database."""
-    logger.info("Starting database cleanup for all capture-related data")
+    """Clean capture-related data from the database while preserving speaker data."""
+    logger.info("Starting database cleanup for capture-related data")
     
     # Get a database session
     db = next(get_db())
@@ -52,13 +54,29 @@ def clean_database():
             "parliament_transcriptions",
             "speaker_identifications",
             "transcription_segments",
-            "transcription_speakers"
+            "transcription_speakers",
+            "parliament_member_clips",  # Added as requested
+            "parliament_videos",       # Added as requested
+            "recognition_events",      # Added as requested
+            "recognition_processes"    # Added as requested
+        ]
+        
+        # Tables to preserve (don't clean these)
+        tables_to_preserve = [
+            "speakers",             # Contains speaker information
+            "speaker_appearances",   # Contains speaker appearance data
+            "speaker_embeddings"    # May contain face encodings
         ]
         
         # First, check which tables actually exist
         existing_tables = []
         for table in tables_to_clean:
             if check_table_exists(db, table):
+                # Skip tables that should be preserved
+                if table in tables_to_preserve:
+                    logger.info(f"Table {table} exists but will be preserved, skipping")
+                    continue
+                    
                 existing_tables.append(table)
                 logger.info(f"Table {table} exists and will be cleaned")
             else:
@@ -172,7 +190,7 @@ def clean_database():
         logger.info("Closed database session")
 
 def clean_files():
-    """Clean all capture-related files from the filesystem."""
+    """Clean capture-related files from the filesystem while preserving important data."""
     logger.info("Starting cleanup of capture-related files")
     
     # Paths to clean
@@ -182,22 +200,84 @@ def clean_files():
         "/app/data/temp/audio_extracts"
     ]
     
+    # Directories to preserve (do not delete these or their contents)
+    preserve_dirs = [
+        "/app/data/mp_photos",  # Speaker/MP photos directory
+        "/app/data/embeddings",  # Face embeddings if stored separately
+        "/app/data/media/speaker_photos"  # Alternative location for speaker photos
+    ]
+    
+    # File patterns to preserve (glob patterns)
+    preserve_patterns = [
+        "*speaker*",
+        "*mp_photo*",
+        "*face*encoding*",
+        "*embedding*"
+    ]
+    
     for path in paths_to_clean:
         try:
             if os.path.exists(path):
-                # Remove all files in the directory but keep the directory itself
+                logger.info(f"Cleaning directory: {path}")
+                # Remove files in the directory but keep the directory itself
                 for item in os.listdir(path):
                     item_path = os.path.join(path, item)
+                    
+                    # Skip if this is a directory we want to preserve
+                    if any(os.path.samefile(item_path, preserve_dir) if os.path.exists(preserve_dir) else item_path == preserve_dir 
+                           for preserve_dir in preserve_dirs if os.path.exists(preserve_dir)):
+                        logger.info(f"Preserving directory: {item_path}")
+                        continue
+                    
+                    # Skip if this matches a pattern we want to preserve
+                    should_preserve = False
+                    for pattern in preserve_patterns:
+                        if fnmatch.fnmatch(os.path.basename(item_path).lower(), pattern.lower()):
+                            logger.info(f"Preserving file/dir matching pattern '{pattern}': {item_path}")
+                            should_preserve = True
+                            break
+                    
+                    if should_preserve:
+                        continue
+                    
                     try:
                         if os.path.isfile(item_path):
                             os.unlink(item_path)
                             logger.info(f"Removed file: {item_path}")
                         elif os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
-                            logger.info(f"Removed directory: {item_path}")
+                            # For directories, recursively check if they contain anything to preserve
+                            contains_preserved = False
+                            for root, dirs, files in os.walk(item_path):
+                                # Check if any directory should be preserved
+                                for d in dirs:
+                                    d_path = os.path.join(root, d)
+                                    if any(os.path.samefile(d_path, preserve_dir) if os.path.exists(preserve_dir) else d_path == preserve_dir 
+                                           for preserve_dir in preserve_dirs if os.path.exists(preserve_dir)):
+                                        contains_preserved = True
+                                        break
+                                
+                                # Check if any file matches preserve patterns
+                                if not contains_preserved:
+                                    for f in files:
+                                        for pattern in preserve_patterns:
+                                            if fnmatch.fnmatch(f.lower(), pattern.lower()):
+                                                contains_preserved = True
+                                                break
+                                        if contains_preserved:
+                                            break
+                                
+                                if contains_preserved:
+                                    break
+                            
+                            if contains_preserved:
+                                logger.info(f"Skipping directory with preserved content: {item_path}")
+                            else:
+                                shutil.rmtree(item_path)
+                                logger.info(f"Removed directory: {item_path}")
                     except Exception as e:
-                        logger.error(f"Error removing {item_path}: {str(e)}")
-                logger.info(f"Cleaned directory: {path}")
+                        logger.error(f"Error processing {item_path}: {str(e)}")
+                
+                logger.info(f"Finished cleaning directory: {path}")
             else:
                 # Create the directory if it doesn't exist
                 os.makedirs(path, exist_ok=True)
@@ -206,8 +286,8 @@ def clean_files():
             logger.error(f"Error cleaning path {path}: {str(e)}")
 
 def clean_all():
-    """Clean all capture-related data from the database and filesystem."""
-    logger.info("Starting complete cleanup of all capture-related data")
+    """Clean capture-related data from the database and filesystem while preserving speaker data."""
+    logger.info("Starting cleanup of capture-related data (preserving speaker data)")
     
     # Clean the database
     clean_database()
@@ -215,7 +295,20 @@ def clean_all():
     # Clean the filesystem
     clean_files()
     
-    logger.info("Completed cleanup of all capture-related data")
+    logger.info("Completed cleanup of capture-related data while preserving speaker data")
+    logger.info("Speaker photos in /app/data/mp_photos and face embeddings have been preserved")
 
 if __name__ == "__main__":
-    clean_all()
+    print("\nThis script will delete all capture-related data while preserving speaker photos and embeddings.")
+    print("It will NOT delete:")
+    print("  - Speaker data in the 'speakers' table")
+    print("  - MP photos in /app/data/mp_photos")
+    print("  - Face encodings and embeddings")
+    print("\nAre you sure you want to continue? (y/n): ", end="")
+    response = input().strip().lower()
+    
+    if response == 'y':
+        clean_all()
+    else:
+        print("Operation cancelled.")
+        sys.exit(0)
