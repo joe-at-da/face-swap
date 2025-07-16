@@ -10,7 +10,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 - 🎭 Facial recognition-powered Parliament TV capture
 - ✂️ Easy clip editing and branding
 - 🎯 Face recognition and tagging
-- 🔊 Automated transcription and subtitling
+- 🔊 Automated transcription and subtitling with chunked processing for long recordings
 - 🚀 Multi-platform social media sharing
 - 🤖 AI-driven content analysis
 - 🔐 Role-based access control (ADMIN, MP, STAFF)
@@ -21,7 +21,7 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 
 - **Backend**: FastAPI, PostgreSQL, Redis, Celery
 - **Video Processing**: OpenCV, FFmpeg, MoviePy
-- **AI/ML**: TensorFlow, PyTorch, Whisper
+- **AI/ML**: TensorFlow, PyTorch, Whisper (with chunked processing for long recordings)
 - **Frontend**: Next.js, TypeScript, Tailwind CSS
 - **Authentication**: JWT, bcrypt
 - **Testing**: pytest, TestClient
@@ -75,6 +75,8 @@ A powerful application for UK Members of Parliament to capture, edit, and share 
 - [Database Management](docs/database_management.md) - Database setup, rebuild, and SQL IDE connections
 - [Authentication](docs/authentication.md) - Auth system and user roles
 - [Video Capture](docs/video_capture.md) - Video capture functionality and configuration
+- [Transcription](docs/transcription.md) - Transcription functionality and configuration
+- [Chunked Transcription](docs/chunked_transcription.md) - Long audio transcription processing
 - [API Guide](docs/api_guide.md) - Complete API documentation including endpoints and authentication
 - [Technical Roadmap](ROADMAP.md) - Project roadmap and phases
 - [Deployment Guide](docs/deployment.md) - Production deployment

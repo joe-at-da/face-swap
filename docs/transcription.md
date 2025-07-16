@@ -14,6 +14,8 @@ The Parliament Video Clip Manager includes a powerful automatic transcription fe
 - **Status Tracking**: Monitor transcription progress with real-time status updates
 - **Content Viewing**: View transcription content directly in the browser
 - **Download Options**: Download transcription files for offline use
+- **Chunked Processing**: Support for long recordings (4+ hours) through automatic audio chunking
+- **Timestamp Preservation**: Maintain accurate timestamps across audio chunks
 
 ## User Interface
 
@@ -54,6 +56,18 @@ To view existing transcriptions:
 - **API Endpoints**: Located in `/backend/api/v1/endpoints/transcription.py`
 - **Database Model**: Defined in `/backend/db/models/transcription.py`
 - **Processing Service**: Implemented in `/backend/services/transcription.py`
+- **Chunked Processing**: Implemented in `/backend/services/transcription_chunking.py`
+
+### Chunked Transcription
+
+For long recordings (4+ hours), the system automatically uses chunked transcription processing:
+
+1. Audio is split into manageable chunks (default: 10 minutes per chunk)
+2. Each chunk is processed independently using Whisper
+3. Results are combined with proper timestamp adjustments
+4. The combined result is formatted as a JSON object compatible with Whisper output
+
+For detailed information about chunked transcription, see [Chunked Transcription](chunked_transcription.md).
 
 ### Frontend Components
 
@@ -129,6 +143,11 @@ Planned enhancements for the transcription feature include:
 3. **Additional Output Formats**: Support for more output formats (PDF, HTML, etc.)
 4. **Enhanced Language Support**: Add support for more languages
 5. **Real-time Transcription**: Implement streaming transcription for live feeds
+6. **Improved Chunk Boundary Detection**: Use silence detection to create more natural chunk boundaries
+7. **Enhanced Error Recovery**: Automatically retry failed chunks
+8. **Progress Tracking**: Provide real-time progress updates for each chunk
+9. **Adaptive Chunk Sizing**: Dynamically adjust chunk size based on audio content
+10. **Format Validation**: Add automatic validation of transcription format before multimodal processing
 
 ## API Reference
 

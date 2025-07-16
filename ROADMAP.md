@@ -51,6 +51,7 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - ✅ Video capture and storage
 - ✅ Basic clip editing
 - ✅ Transcription integration with Whisper
+- ✅ Chunked transcription for long recordings
 - ✅ Storage management system
 - ✅ Face recognition setup
 
@@ -93,11 +94,22 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Performance optimization
 
 ### Phase 6: Optimization & Scale 📈
-- Resource usage optimization
+- ✅ Resource usage optimization for long transcriptions
+- ✅ Chunked transcription format standardization
+- ✅ Multimodal recognition integration with chunked transcription
 - Video compression improvements
 - Cache configuration
 - Performance monitoring
 - Scale based on metrics
+
+### Phase 7: Advanced Transcription & Recognition 🔊
+- Improved chunk boundary detection using silence detection
+- Enhanced error recovery for failed transcription chunks
+- Real-time progress tracking for chunked transcription
+- Adaptive chunk sizing based on audio content
+- Automatic format validation for transcription data
+- Enhanced speaker diarization integration
+- Improved face-to-voice correlation
 
 ## Current Progress (as of May 25, 2025)
 
