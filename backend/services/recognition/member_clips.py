@@ -179,42 +179,12 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
             db.rollback()
             # Continue anyway, as the column might exist but we just failed to check
     else:
-        # For PostgreSQL, first check if the table exists
-        try:
-            check_table_sql = text("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'parliament_clips'
-                );
-            """)
-            result = db.execute(check_table_sql)
-            table_exists = result.scalar()
-            
-            if not table_exists:
-                logger.warning("Table 'parliament_clips' does not exist in PostgreSQL database")
-                # Don't try to alter a non-existent table
-                return 0
-                
-            # If table exists, check if column exists
-            check_column_sql = text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'parliament_clips' AND column_name = 'speech_group_id'
-            """)
-            result = db.execute(check_column_sql)
-            column_exists = result.fetchone() is not None
-            
-            if not column_exists:
-                # Add the speech_group_id column if it doesn't exist
-                logger.info("Adding speech_group_id column to parliament_clips table")
-                alter_table_sql = text("ALTER TABLE parliament_clips ADD COLUMN speech_group_id TEXT")
-                db.execute(alter_table_sql)
-                db.commit()
-                logger.info("Successfully added speech_group_id column")
-        except Exception as e:
-            logger.error(f"Error checking/adding speech_group_id column in PostgreSQL: {str(e)}")
-            db.rollback()
-            # Return early since we can't proceed without the proper table structure
+        # For PostgreSQL, we don't need to check or modify the parliament_clips table
+        # since it's only used in SQLite. This avoids errors when the table doesn't exist.
+        logger.info("Skipping PostgreSQL parliament_clips table check - table is only used in SQLite")
+        # If we're using PostgreSQL, we're likely not working with parliament clips
+        # so we can return early
+        if not speech_groups:
             return 0
     
     total_updated = 0
@@ -264,83 +234,9 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                     logger.error(f"Error with fallback SQLite query: {str(e2)}")
                     # No need to rollback for SQLite as it auto-commits
         else:
-            # PostgreSQL version using JSONB extraction
-            try:
-                # First try with PostgreSQL JSONB syntax
-                video_clips_sql = text("""
-                    SELECT id, start_timestamp, end_timestamp 
-                    FROM parliament_clips 
-                    WHERE metadata::jsonb ->> 'video_id' = :video_id
-                """)
-                
-                result = db.execute(video_clips_sql, {"video_id": str(video_id)})
-                for row in result:
-                    db_id = row[0]  # Database ID
-                    start_time = float(row[1]) if row[1] else 0
-                    end_time = float(row[2]) if row[2] else 0
-                    db_clips[(start_time, end_time)] = db_id
-            except Exception as e:
-                logger.error(f"Error with PostgreSQL JSONB query: {str(e)}")
-                # Check if this is a transaction abort error
-                if "InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e):
-                    transaction_error = True
-                    logger.error("Transaction is aborted, will rollback at the end of function")
-                    # No point trying more queries in an aborted transaction
-                    return 0
-                
-                # Try a simpler approach if not a transaction error
-                try:
-                    # Try a LIKE query as a fallback
-                    video_clips_sql = text("""
-                        SELECT id, start_timestamp, end_timestamp 
-                        FROM parliament_clips 
-                        WHERE metadata LIKE :pattern
-                    """)
-                    
-                    result = db.execute(video_clips_sql, {"pattern": f"%\"video_id\":{video_id}%"})
-                    for row in result:
-                        db_id = row[0]  # Database ID
-                        start_time = float(row[1]) if row[1] else 0
-                        end_time = float(row[2]) if row[2] else 0
-                        db_clips[(start_time, end_time)] = db_id
-                except Exception as e2:
-                    logger.error(f"Error with fallback PostgreSQL query: {str(e2)}")
-                    # Check if this is a transaction abort error
-                    if "InFailedSqlTransaction" in str(e2) or "current transaction is aborted" in str(e2):
-                        transaction_error = True
-                        logger.error("Transaction is aborted, will rollback at the end of function")
-                        # No point trying more queries in an aborted transaction
-                        return 0
-                    
-                    # Last resort: try to get all clips and filter in Python
-                    try:
-                        video_clips_sql = text("""
-                            SELECT id, start_timestamp, end_timestamp, metadata 
-                            FROM parliament_clips
-                        """)
-                        
-                        result = db.execute(video_clips_sql)
-                        import json
-                        for row in result:
-                            try:
-                                db_id = row[0]  # Database ID
-                                start_time = float(row[1]) if row[1] else 0
-                                end_time = float(row[2]) if row[2] else 0
-                                metadata = json.loads(row[3]) if row[3] else {}
-                                
-                                # Check if this clip belongs to our video
-                                if metadata.get('video_id') == video_id or metadata.get('video_id') == str(video_id):
-                                    db_clips[(start_time, end_time)] = db_id
-                            except Exception as e3:
-                                logger.error(f"Error processing row in last resort query: {str(e3)}")
-                    except Exception as e3:
-                        logger.error(f"Error with last resort query: {str(e3)}")
-                        # Check if this is a transaction abort error
-                        if "InFailedSqlTransaction" in str(e3) or "current transaction is aborted" in str(e3):
-                            transaction_error = True
-                            logger.error("Transaction is aborted, will rollback at the end of function")
-                            # No point trying more queries in an aborted transaction
-                            return 0
+            logger.info("Skipping PostgreSQL parliament_clips queries - table only exists in SQLite")
+            # Return early since we can't proceed with PostgreSQL for parliament clips
+            return 0
         
         logger.info(f"Found {len(db_clips)} clips in database for video {video_id}")
         
@@ -441,57 +337,43 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
         
         logger.info(f"Successfully updated {total_updated} segments with normalized speaker IDs")
         
-        # Verify the updates were applied
-        try:
-            verify_sql = text("SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id IS NOT NULL")
-            result = db.execute(verify_sql)
-            non_null_count = result.scalar()
-            logger.info(f"Total segments with non-null speech_group_id after update: {non_null_count}")
-            
-            # Also verify for this specific video
-            if is_sqlite:
-                # SQLite version
+        # Verify updates
+        if is_sqlite:
+            try:
+                # Check how many clips have speech_group_id set
+                verify_sql = text("SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id IS NOT NULL")
+                result = db.execute(verify_sql)
+                with_speech_group = result.scalar() or 0
+                
+                # Check total clips
+                total_sql = text("""
+                            SELECT COUNT(*) FROM parliament_clips 
+                            WHERE json_extract(metadata, '$.video_id') = :video_id
+                        """)
+                
                 try:
-                    video_verify_sql = text("""
-                        SELECT COUNT(*) FROM parliament_clips 
-                        WHERE speech_group_id IS NOT NULL AND 
-                              json_extract(metadata, '$.video_id') = :video_id
-                    """)
-                    result = db.execute(video_verify_sql, {"video_id": video_id})
-                    video_non_null_count = result.scalar()
-                    logger.info(f"Segments with non-null speech_group_id for video {video_id}: {video_non_null_count}")
+                    result = db.execute(total_sql, {"video_id": video_id})
+                    total_clips = result.scalar() or 0
                 except Exception as e:
-                    logger.error(f"Error verifying SQLite updates for video {video_id}: {str(e)}")
-            else:
-                # PostgreSQL version
-                try:
-                    # Only attempt verification if we haven't had transaction errors
-                    video_verify_sql = text("""
-                        SELECT COUNT(*) FROM parliament_clips 
-                        WHERE speech_group_id IS NOT NULL AND 
-                              metadata::jsonb ->> 'video_id' = :video_id
-                    """)
-                    result = db.execute(video_verify_sql, {"video_id": str(video_id)})
-                    video_non_null_count = result.scalar()
-                    logger.info(f"Segments with non-null speech_group_id for video {video_id}: {video_non_null_count}")
-                except Exception as e:
-                    logger.error(f"Error verifying PostgreSQL updates for video {video_id}: {str(e)}")
-                    # If this is a transaction error, make sure we rollback
-                    if "InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e):
-                        try:
-                            db.rollback()
-                            logger.info("Rolled back transaction after verification error")
-                        except Exception as rollback_error:
-                            logger.error(f"Error during verification rollback: {str(rollback_error)}")
-        except Exception as e:
-            logger.error(f"Error verifying updates: {str(e)}")
-            # If this is a transaction error, make sure we rollback
-            if not is_sqlite and ("InFailedSqlTransaction" in str(e) or "current transaction is aborted" in str(e)):
-                try:
-                    db.rollback()
-                    logger.info("Rolled back transaction after verification error")
-                except Exception as rollback_error:
-                    logger.error(f"Error during verification rollback: {str(rollback_error)}")
+                    # Try a fallback query
+                    total_sql = text("""
+                            SELECT COUNT(*) FROM parliament_clips 
+                            WHERE metadata LIKE :pattern
+                        """)
+                    result = db.execute(total_sql, {"pattern": f"%\"video_id\":{video_id}%"})
+                    total_clips = result.scalar() or 0
+                    
+                logger.info(f"Verification: {with_speech_group}/{total_clips} clips have speech_group_id set")
+                
+                # Calculate percentage
+                if total_clips > 0:
+                    percentage = (with_speech_group / total_clips) * 100
+                    logger.info(f"Speech group coverage: {percentage:.1f}%")
+            except Exception as e:
+                logger.error(f"Error verifying updates: {str(e)}")
+        else:
+            # Skip verification for PostgreSQL since parliament_clips table doesn't exist there
+            logger.info("Skipping verification for PostgreSQL - parliament_clips table only exists in SQLite")
     
     except Exception as e:
         logger.error(f"Error updating database with normalized speakers: {str(e)}")

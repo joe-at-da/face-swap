@@ -88,6 +88,7 @@ class ParliamentClipsIntegrationService:
                     end_timestamp TEXT,
                     confidence_score REAL,
                     duration_seconds REAL,
+                    speech_group_id TEXT,
                     session_date TEXT,
                     created_at TEXT,
                     updated_at TEXT,
@@ -95,18 +96,28 @@ class ParliamentClipsIntegrationService:
                 )
             """)
             
+            # Check if the table already exists but doesn't have the speech_group_id column
+            cursor.execute("PRAGMA table_info(parliament_clips)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'speech_group_id' not in columns:
+                # Add the speech_group_id column if it doesn't exist
+                logger.info("Adding speech_group_id column to existing parliament_clips table")
+                cursor.execute("ALTER TABLE parliament_clips ADD COLUMN speech_group_id TEXT")
+                logger.info("Successfully added speech_group_id column")
+            
             conn.commit()
-            logger.info("Successfully created parliament_clips table")
+            logger.info("Successfully created/updated parliament_clips table")
         except Exception as e:
-            logger.error(f"Error creating parliament_clips table: {str(e)}")
+            logger.error(f"Error creating/updating parliament_clips table: {str(e)}")
         finally:
             if conn:
                 conn.close()
     
     def save_recognition_events_to_parliament_clips(self, 
-                                                   video_id: int, 
-                                                   recognition_events: List[Dict[str, Any]],
-                                                   video_path: str) -> Dict[str, Any]:
+                                               video_id: int, 
+                                               recognition_events: List[Dict[str, Any]],
+                                               video_path: str) -> Dict[str, Any]:
         """
         Save recognition events to the local SQLite parliament_clips database.
         
@@ -174,66 +185,103 @@ class ParliamentClipsIntegrationService:
             sample_event = speaker_events[0]
             logger.info(f"Sample speaker event: {json.dumps(sample_event, indent=2)}")
         
+        # Group events by speaker and time proximity to create speech groups
+        # Sort events by start time
+        sorted_events = sorted(speaker_events, key=lambda x: x.get("start_time", 0))
+        
+        # Define what constitutes a continuous speech block (max gap in seconds)
+        MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds max gap between segments to be considered continuous
+        
+        # Identify continuous speech blocks
+        speech_blocks = []
+        if sorted_events:
+            current_block = [sorted_events[0]]
+            
+            for i in range(1, len(sorted_events)):
+                current_event = sorted_events[i]
+                previous_event = sorted_events[i-1]
+                
+                # If this event starts soon after the previous one ends and has the same member_id, add it to the current block
+                if (current_event.get("start_time", 0) - previous_event.get("end_time", 0) <= MAX_CONTINUOUS_SPEECH_GAP and 
+                    current_event.get("member_id") == previous_event.get("member_id")):
+                    current_block.append(current_event)
+                else:
+                    # This event is not continuous with the previous one, start a new block
+                    speech_blocks.append(current_block)
+                    current_block = [current_event]
+            
+            # Add the last block
+            if current_block:
+                speech_blocks.append(current_block)
+        
+        logger.info(f"Grouped {len(sorted_events)} events into {len(speech_blocks)} speech blocks")
+        
+        # Assign speech group IDs to each block
         member_id_counts = {}
-        for event in speaker_events:
-            # Extract data from the event
-            start_time = event.get("start_time", 0)
-            end_time = event.get("end_time", 0)
-            text = event.get("text", "")
-            member_id = event.get("member_id", "")
-            confidence = event.get("confidence", 0.0)
+        for block_idx, block in enumerate(speech_blocks):
+            # Generate a unique speech group ID
+            speech_group_id = f"speech_group_{video_id}_{block_idx}_{int(block[0].get('start_time', 0))}"
             
-            # Ensure member_id is stored as an integer as per the SQLite schema
-            if member_id:
-                try:
-                    # Convert to integer if it's not already
-                    if not isinstance(member_id, int):
-                        member_id = int(member_id)
-                except (ValueError, TypeError):
-                    logger.error(f"Invalid member_id format: {member_id} - must be convertible to integer")
-                    errors.append(f"Event at {start_time}-{end_time} has invalid member_id format")
+            for event in block:
+                # Extract data from the event
+                start_time = event.get("start_time", 0)
+                end_time = event.get("end_time", 0)
+                text = event.get("text", "")
+                member_id = event.get("member_id", "")
+                confidence = event.get("confidence", 0.0)
+                
+                # Ensure member_id is stored as an integer as per the SQLite schema
+                if member_id:
+                    try:
+                        # Convert to integer if it's not already
+                        if not isinstance(member_id, int):
+                            member_id = int(member_id)
+                    except (ValueError, TypeError):
+                        logger.error(f"Invalid member_id format: {member_id} - must be convertible to integer")
+                        errors.append(f"Event at {start_time}-{end_time} has invalid member_id format")
+                        continue
+                
+                # Count member IDs for debugging
+                member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
+                
+                # Skip events without a member_id
+                if not member_id:
+                    logger.warning(f"Skipping event without member_id at {start_time}-{end_time}")
+                    logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
+                    errors.append(f"Event at {start_time}-{end_time} has no member_id")
                     continue
-            
-            # Count member IDs for debugging
-            member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
-            
-            # Skip events without a member_id
-            if not member_id:
-                logger.warning(f"Skipping event without member_id at {start_time}-{end_time}")
-                logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
-                errors.append(f"Event at {start_time}-{end_time} has no member_id")
-                continue
+                    
+                logger.info(f"Processing event for member_id: {member_id} at {start_time}-{end_time}")
                 
-            logger.info(f"Processing event for member_id: {member_id} at {start_time}-{end_time}")
-            
-            # Calculate duration in seconds
-            duration_seconds = end_time - start_time
-            
-            # Verify video_path exists
-            if not os.path.exists(video_path):
-                logger.error(f"❌ Video path does not exist: {video_path}")
-                errors.append(f"Video path does not exist: {video_path}")
-                continue
+                # Calculate duration in seconds
+                duration_seconds = end_time - start_time
                 
-            # Create clip data for parliament_clips table
-            clip_data = {
-                'member_id': member_id,
-                'transcript': text,
-                'full_video_path': video_path,
-                'start_timestamp': str(start_time),
-                'end_timestamp': str(end_time),
-                'confidence_score': confidence,
-                'duration_seconds': duration_seconds,
-                'session_date': datetime.now().strftime("%Y-%m-%d"),
-                'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'metadata': json.dumps({
-                    'video_id': video_id,
-                    'face_image_url': event.get("face_image_url", ""),
-                    'matched_by': event.get("matched_by", "unknown"),
-                    'recognition_method': event.get("recognition_method", "multimodal")
-                })
-            }
+                # Verify video_path exists
+                if not os.path.exists(video_path):
+                    logger.error(f"❌ Video path does not exist: {video_path}")
+                    errors.append(f"Video path does not exist: {video_path}")
+                    continue
+                    
+                # Create clip data for parliament_clips table
+                clip_data = {
+                    'member_id': member_id,
+                    'transcript': text,
+                    'full_video_path': video_path,
+                    'start_timestamp': str(start_time),
+                    'end_timestamp': str(end_time),
+                    'confidence_score': confidence,
+                    'duration_seconds': duration_seconds,
+                    'speech_group_id': speech_group_id,
+                    'session_date': datetime.now().strftime("%Y-%m-%d"),
+                    'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'metadata': json.dumps({
+                        'video_id': video_id,
+                        'face_image_url': event.get("face_image_url", ""),
+                        'matched_by': event.get("matched_by", "unknown"),
+                        'recognition_method': event.get("recognition_method", "multimodal")
+                    })
+                }
             
             logger.info(f"Prepared data for clip: member_id={member_id}, duration={duration_seconds:.2f}s")
             

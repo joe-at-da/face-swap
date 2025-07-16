@@ -409,10 +409,18 @@ class MultimodalRecognitionService:
                                     else:
                                         text = text_part.strip()
                                     
+                                    # Create segment with all required Whisper fields
                                     segment = {
+                                        "id": len(segments),
+                                        "seek": start_time,
                                         "start": start_time,
                                         "end": end_time,
                                         "text": text,
+                                        "tokens": [],
+                                        "temperature": 0.0,
+                                        "avg_logprob": -0.5,
+                                        "compression_ratio": 1.0,
+                                        "no_speech_prob": 0.1,
                                         "speaker": speaker
                                     }
                                     segments.append(segment)
