@@ -420,8 +420,23 @@ class MultimodalRecognitionService:
                             except Exception as e:
                                 logger.warning(f"Error parsing line '{line}': {str(e)}")
                     
+                    
                     # Create a transcription object with segments
                     transcription = {"segments": segments}
+                    
+                    # Handle chunked transcription format
+                    if not segments and isinstance(video.transcription_results, str):
+                        # Try to parse as a JSON string that might contain segments
+                        try:
+                            json_data = json.loads(video.transcription_results)
+                            if isinstance(json_data, dict) and "segments" in json_data:
+                                segments = json_data["segments"]
+                                if segments:
+                                    logger.info(f"Successfully parsed chunked transcription with {len(segments)} segments")
+                                    transcription = json_data
+                        except json.JSONDecodeError:
+                            logger.warning("Failed to parse transcription as JSON")
+                            pass
                     
                 elif video.transcription_results.startswith('{') and video.transcription_results.endswith('}'):
                     # Try to parse as JSON
