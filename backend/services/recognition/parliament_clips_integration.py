@@ -677,10 +677,32 @@ class ParliamentClipsIntegrationService:
             
             # Get all speech groups for the specified video
             if video_id:
+                # Find the video path for this video_id
+                video_path = None
+                # First check if we have any clips with this video_id in the metadata
                 cursor.execute(
-                    "SELECT DISTINCT speech_group_id FROM parliament_clips WHERE video_id = ? AND speech_group_id IS NOT NULL",
-                    (str(video_id),)
+                    "SELECT metadata FROM parliament_clips WHERE metadata LIKE ? LIMIT 1",
+                    (f"%{video_id}%",)
                 )
+                result = cursor.fetchone()
+                if result:
+                    try:
+                        import json
+                        metadata = json.loads(result[0])
+                        if metadata.get('video_id') == str(video_id):
+                            # Get all clips with this video_id in metadata
+                            cursor.execute(
+                                "SELECT DISTINCT speech_group_id FROM parliament_clips "
+                                "WHERE metadata LIKE ? AND speech_group_id IS NOT NULL",
+                                (f"%{video_id}%",)
+                            )
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Could not parse metadata for video {video_id}")
+                        cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
+                else:
+                    # If we can't find by metadata, just get all speech groups
+                    logger.warning(f"Could not find clips for video {video_id}, normalizing all speech groups")
+                    cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
             else:
                 cursor.execute("SELECT DISTINCT speech_group_id FROM parliament_clips WHERE speech_group_id IS NOT NULL")
             speech_groups = [row[0] for row in cursor.fetchall()]
