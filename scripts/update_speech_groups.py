@@ -233,8 +233,10 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
             speech_blocks.extend(temp_blocks)
         else:
             # For clips with a speaker, keep them in one group
-            if speaker_group:
-                speech_blocks.append(speaker_group)
+            # Sort clips within the speaker group by timestamp
+            sorted_speaker_group = sorted(speaker_group, key=lambda c: float(c[2]) if c[2] else 0)
+            if sorted_speaker_group:
+                speech_blocks.append(sorted_speaker_group)
     
     # Sort speech blocks by the start time of their first clip
     speech_blocks.sort(key=lambda block: float(block[0][2]) if block[0][2] else 0)
@@ -242,6 +244,10 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
     num_speakers = len(set(segment.get('speaker', '') for segment in diarization_segments))
     logger.info(f"Diarization data contains {num_speakers} distinct speakers")
     logger.info(f"Created {len(speech_blocks)} speech blocks based on speaker changes in diarization data")
+    
+    # Ensure we're not creating too many blocks
+    if len(speech_blocks) > num_speakers and num_speakers > 0:
+        logger.warning(f"Created more speech blocks ({len(speech_blocks)}) than speakers ({num_speakers}). This may indicate a problem with grouping.")
     
     # Debug info
     for i, block in enumerate(speech_blocks):
@@ -344,9 +350,18 @@ def update_speech_groups(video_id=None):
         for (video_path,) in video_paths:
             # Extract video ID from path if possible
             try:
-                path_video_id = int(os.path.basename(video_path).split('_')[0])
+                # Try to extract numeric video ID from the path
+                filename = os.path.basename(video_path)
+                # First try with underscore pattern (e.g., 803_video.mp4)
+                if '_' in filename:
+                    path_video_id = int(filename.split('_')[0])
+                # Then try with just the filename (e.g., 803.mp4)
+                else:
+                    path_video_id = int(filename.split('.')[0])
+                logger.info(f"Extracted video ID: {path_video_id} from path: {video_path}")
             except (ValueError, IndexError):
                 path_video_id = hash(video_path) % 10000  # Use a hash if we can't extract an ID
+                logger.warning(f"Could not extract video ID from path: {video_path}, using hash: {path_video_id}")
             
             # Get all clips for this video, ordered by start_timestamp
             cursor.execute("""
@@ -371,6 +386,11 @@ def update_speech_groups(video_id=None):
                     diarization_used += 1
                     logger.info(f"Using diarization data to create speech groups for {video_path}")
                     
+                    # Validate that we have the expected number of speech blocks
+                    num_speakers = len(set(segment.get('speaker', '') for segment in diarization_data.get('segments', [])))
+                    if num_speakers > 0 and len(speech_blocks) != num_speakers:
+                        logger.warning(f"Expected {num_speakers} speech blocks (one per speaker), but created {len(speech_blocks)}. This may indicate a problem with grouping.")
+                    
                     # Debug: Print clip to speaker assignments if debug mode is enabled
                     if hasattr(args, 'debug') and args.debug:
                         logger.debug(f"Clip to speaker assignments for {video_path}:")
@@ -390,6 +410,13 @@ def update_speech_groups(video_id=None):
                 speech_blocks = create_speech_blocks_by_proximity(clips)
             
             logger.info(f"Grouped {len(clips)} clips into {len(speech_blocks)} speech blocks")
+            
+            # Verify that each speech block has at least one clip
+            empty_blocks = [i for i, block in enumerate(speech_blocks) if not block]
+            if empty_blocks:
+                logger.warning(f"Found {len(empty_blocks)} empty speech blocks: {empty_blocks}")
+                # Remove empty blocks
+                speech_blocks = [block for block in speech_blocks if block]
             
             # Update speech_group_id for each speech block
             block_updates = 0
