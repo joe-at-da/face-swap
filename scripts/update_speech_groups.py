@@ -14,6 +14,7 @@ import sys
 import json
 import sqlite3
 import logging
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -387,7 +388,7 @@ def update_speech_groups(video_id=None, debug=False):
                         logger.warning(f"Expected {num_speakers} speech blocks (one per speaker), but created {len(speech_blocks)}. This may indicate a problem with grouping.")
                     
                     # Debug: Print clip to speaker assignments if debug mode is enabled
-                    if hasattr(args, 'debug') and args.debug:
+                    if debug:
                         logger.debug(f"Clip to speaker assignments for {video_path}:")
                         for clip_id, speaker in clip_speaker_map.items():
                             cursor.execute("SELECT start_timestamp, end_timestamp FROM parliament_clips WHERE id = ?", (clip_id,))
@@ -461,7 +462,6 @@ def update_speech_groups(video_id=None, debug=False):
         
     except Exception as e:
         logger.error(f"Error updating speech groups: {str(e)}")
-        import traceback
         logger.error(traceback.format_exc())
         return {
             "success": False,

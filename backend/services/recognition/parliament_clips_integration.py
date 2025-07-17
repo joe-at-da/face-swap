@@ -6,12 +6,13 @@ ensuring that recognized clips are properly saved for local development and test
 It also integrates with Supabase to ensure clips are available in the production environment.
 """
 
-import json
 import os
 import sys
+import json
 import sqlite3
 import logging
-import time
+import subprocess
+import traceback
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
@@ -288,7 +289,6 @@ class ParliamentClipsIntegrationService:
                 
             except Exception as e:
                 logger.error(f"❌ Error saving clip to parliament_clips database: {str(e)}")
-                import traceback
                 logger.error(traceback.format_exc())
                 errors.append(f"Error saving clip: {str(e)}")
                 if conn:
@@ -407,7 +407,6 @@ class ParliamentClipsIntegrationService:
                 self._export_clips_to_supabase(video_id, recognition_events, video_path)
             except Exception as e:
                 logger.error(f"Error exporting clips to Supabase: {str(e)}")
-                import traceback
                 logger.error(traceback.format_exc())
                 result["supabase_export_error"] = str(e)
         else:
