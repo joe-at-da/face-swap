@@ -185,110 +185,79 @@ class ParliamentClipsIntegrationService:
             sample_event = speaker_events[0]
             logger.info(f"Sample speaker event: {json.dumps(sample_event, indent=2)}")
         
-        # Group events by speaker and time proximity to create speech groups
-        # Sort events by start time
+        # We'll temporarily assign a placeholder speech group ID to each clip
+        # Later, we'll run the update_speech_groups.py script to properly group by diarization data
+        speech_group_id = f"temp_speech_group_{video_id}"
+        
+        # Sort events by start time for consistent processing
         sorted_events = sorted(speaker_events, key=lambda x: x.get("start_time", 0))
         
-        # Define what constitutes a continuous speech block (max gap in seconds)
-        MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds max gap between segments to be considered continuous
+        logger.info(f"Will save {len(sorted_events)} events with temporary speech group IDs")
+        logger.info(f"Speech groups will be updated using diarization data after saving clips")
         
-        # Identify continuous speech blocks
-        speech_blocks = []
-        if sorted_events:
-            current_block = [sorted_events[0]]
+        for event in sorted_events:
+            # Extract data from the event
+            start_time = event.get("start_time", 0)
+            end_time = event.get("end_time", 0)
+            text = event.get("text", "")
+            member_id = event.get("member_id", "")
+            confidence = event.get("confidence", 0.0)
             
-            for i in range(1, len(sorted_events)):
-                current_event = sorted_events[i]
-                previous_event = sorted_events[i-1]
-                
-                # If this event starts soon after the previous one ends and has the same member_id, add it to the current block
-                if (current_event.get("start_time", 0) - previous_event.get("end_time", 0) <= MAX_CONTINUOUS_SPEECH_GAP and 
-                    current_event.get("member_id") == previous_event.get("member_id")):
-                    current_block.append(current_event)
-                else:
-                    # This event is not continuous with the previous one, start a new block
-                    speech_blocks.append(current_block)
-                    current_block = [current_event]
-            
-            # Add the last block
-            if current_block:
-                speech_blocks.append(current_block)
-        
-        logger.info(f"Grouped {len(sorted_events)} events into {len(speech_blocks)} speech blocks")
-        
-        # Assign speech group IDs to each block
-        member_id_counts = {}
-        for block_idx, block in enumerate(speech_blocks):
-            # Generate a unique speech group ID
-            speech_group_id = f"speech_group_{video_id}_{block_idx}_{int(block[0].get('start_time', 0))}"
-            
-            for event in block:
-                # Extract data from the event
-                start_time = event.get("start_time", 0)
-                end_time = event.get("end_time", 0)
-                text = event.get("text", "")
-                member_id = event.get("member_id", "")
-                confidence = event.get("confidence", 0.0)
-                
-                # Ensure member_id is stored as an integer as per the SQLite schema
-                if member_id:
-                    try:
-                        # Convert to integer if it's not already
-                        if not isinstance(member_id, int):
-                            member_id = int(member_id)
-                    except (ValueError, TypeError):
-                        logger.error(f"Invalid member_id format: {member_id} - must be convertible to integer")
-                        errors.append(f"Event at {start_time}-{end_time} has invalid member_id format")
-                        continue
-                
-                # Count member IDs for debugging
-                member_id_counts[member_id] = member_id_counts.get(member_id, 0) + 1
-                
-                # Skip events without a member_id
-                if not member_id:
-                    logger.warning(f"Skipping event without member_id at {start_time}-{end_time}")
-                    logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
-                    errors.append(f"Event at {start_time}-{end_time} has no member_id")
+            # Ensure member_id is stored as an integer as per the SQLite schema
+            if member_id:
+                try:
+                    # Convert to integer if it's not already
+                    if not isinstance(member_id, int):
+                        member_id = int(member_id)
+                except (ValueError, TypeError):
+                    logger.error(f"Invalid member_id format: {member_id} - must be convertible to integer")
+                    errors.append(f"Event at {start_time}-{end_time} has invalid member_id format")
                     continue
-                    
-                logger.info(f"Processing event for member_id: {member_id} at {start_time}-{end_time}")
-                
-                # Calculate duration in seconds
-                duration_seconds = end_time - start_time
-                
-                # Verify video_path exists
-                if not os.path.exists(video_path):
-                    logger.error(f"❌ Video path does not exist: {video_path}")
-                    errors.append(f"Video path does not exist: {video_path}")
-                    continue
-                    
-                # Create clip data for parliament_clips table
-                clip_data = {
-                    'member_id': member_id,
-                    'transcript': text,
-                    'full_video_path': video_path,
-                    'start_timestamp': str(start_time),
-                    'end_timestamp': str(end_time),
-                    'confidence_score': confidence,
-                    'duration_seconds': duration_seconds,
-                    'speech_group_id': speech_group_id,
-                    'session_date': datetime.now().strftime("%Y-%m-%d"),
-                    'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'metadata': json.dumps({
-                        'video_id': video_id,
-                        'face_image_url': event.get("face_image_url", ""),
-                        'matched_by': event.get("matched_by", "unknown"),
-                        'recognition_method': event.get("recognition_method", "multimodal")
-                    })
-                }
             
-            logger.info(f"Prepared data for clip: member_id={member_id}, duration={duration_seconds:.2f}s")
+            # Skip events without a member_id
+            if not member_id:
+                logger.warning(f"Skipping event without member_id at {start_time}-{end_time}")
+                logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
+                errors.append(f"Event at {start_time}-{end_time} has no member_id")
+                continue
+            
+            logger.info(f"Processing event for member_id: {member_id} at {start_time}-{end_time}")
+            
+            # Calculate duration in seconds
+            duration = end_time - start_time
+            
+            # Verify video_path exists
+            if not os.path.exists(video_path):
+                logger.error(f"❌ Video path does not exist: {video_path}")
+                errors.append(f"Video path does not exist: {video_path}")
+                continue
+            
+            # Create clip data for parliament_clips table
+            clip_data = {
+                'member_id': member_id,
+                'transcript': text,
+                'full_video_path': video_path,
+                'start_timestamp': str(start_time),
+                'end_timestamp': str(end_time),
+                'confidence_score': confidence,
+                'duration_seconds': duration,
+                'speech_group_id': speech_group_id,
+                'session_date': datetime.now().strftime("%Y-%m-%d"),
+                'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'metadata': json.dumps({
+                    'video_id': video_id,
+                    'face_image_url': event.get("face_image_url", ""),
+                    'matched_by': event.get("matched_by", "unknown"),
+                    'recognition_method': event.get("recognition_method", "multimodal")
+                })
+            }
+            
+            logger.info(f"Prepared data for clip: member_id={member_id}, duration={duration:.2f}s")
             
             # Insert into database
             conn = None
             try:
-                # Check if clip already exists
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
                 
@@ -348,6 +317,78 @@ class ParliamentClipsIntegrationService:
             conn.close()
         except Exception as e:
             logger.error(f"Error checking database after saving: {str(e)}")
+        
+        # Now run the update_speech_groups.py script to properly group clips by speaker using diarization data
+        logger.info(f"Running update_speech_groups.py to properly group clips by speaker using diarization data")
+        try:
+            # Try multiple possible paths for the script
+            possible_paths = [
+                "/app/scripts/update_speech_groups.py",  # Docker container path
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts/update_speech_groups.py"),  # Local dev path
+                "./scripts/update_speech_groups.py"  # Relative path
+            ]
+            
+            script_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    script_path = path
+                    logger.info(f"Found update_speech_groups.py at {script_path}")
+                    break
+            
+            if not script_path:
+                # List all files in the scripts directory to debug
+                scripts_dir = "/app/scripts"
+                if os.path.exists(scripts_dir):
+                    logger.info(f"Contents of {scripts_dir}: {os.listdir(scripts_dir)}")
+                else:
+                    logger.warning(f"Scripts directory {scripts_dir} does not exist")
+                    
+                scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts")
+                if os.path.exists(scripts_dir):
+                    logger.info(f"Contents of {scripts_dir}: {os.listdir(scripts_dir)}")
+                
+                raise FileNotFoundError(f"Could not find update_speech_groups.py in any of the expected locations: {possible_paths}")
+            
+            # Run the script directly using python
+            import subprocess
+            cmd = [sys.executable, script_path, "--video-id", str(video_id), "--debug"]
+            logger.info(f"Running command: {' '.join(cmd)}")
+            
+            # Set environment variables for the subprocess
+            env = os.environ.copy()
+            env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            
+            # Run with full output capture
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            
+            logger.info(f"Command exit code: {result.returncode}")
+            logger.info(f"Command stdout: {result.stdout[:1000]}" + ("..." if len(result.stdout) > 1000 else ""))
+            logger.info(f"Command stderr: {result.stderr[:1000]}" + ("..." if len(result.stderr) > 1000 else ""))
+            
+            if result.returncode == 0:
+                logger.info(f"Successfully updated speech groups using diarization data")
+                
+                # Verify the speech groups were updated by checking the database
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(DISTINCT speech_group_id) FROM parliament_clips WHERE full_video_path LIKE ?",(f"%{video_id}.mp4%",))
+                group_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM parliament_clips WHERE full_video_path LIKE ?",(f"%{video_id}.mp4%",))
+                clip_count = cursor.fetchone()[0]
+                conn.close()
+                
+                logger.info(f"After update: {clip_count} clips in {group_count} speech groups for video {video_id}")
+                
+                if group_count == 1 and clip_count > 1:
+                    logger.warning(f"⚠️ All clips still in one speech group after update. Diarization grouping may have failed.")
+            else:
+                logger.warning(f"Failed to update speech groups: {result.stderr}")
+                errors.append(f"Failed to update speech groups: {result.stderr}")
+        except Exception as e:
+            error_msg = f"Error running update_speech_groups: {str(e)}"
+            logger.error(error_msg)
+            logger.exception(e)
+            errors.append(error_msg)
         
         # Return results
         success = clips_saved > 0

@@ -18,39 +18,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
-# Add the parent directory to sys.path to allow importing from backend
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Set up logging
 logger = logging.getLogger(__name__)
 
-def get_db_path():
-    """Get the path to the parliament_clips.db file."""
-    # Define paths for data storage
-    docker_db_path = "/app/backend/parliament_clips.db"  # Path in Docker container
-    local_db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                "backend/parliament_clips.db")  # Local path
-    
-    # Use the path that exists
-    if os.path.exists(docker_db_path):
-        db_path = docker_db_path
-        logger.info(f"Using Docker database path: {db_path}")
-    elif os.path.exists(local_db_path):
-        db_path = local_db_path
-        logger.info(f"Using local database path: {db_path}")
-    else:
-        logger.error("Parliament clips database doesn't exist.")
-        raise FileNotFoundError("Parliament clips database not found")
-    
-    return db_path
-
-def find_diarization_file(video_path: str) -> Optional[Path]:
-    """
-    Find the diarization JSON file for a given video path.
+def find_diarization_file(video_path: Path) -> Optional[Path]:
+    """Find the diarization JSON file for a given video path.
     
     Args:
         video_path: Path to the video file
@@ -308,20 +280,43 @@ def create_speech_blocks_by_proximity(clips: List[Tuple]) -> List[List[Tuple]]:
     return speech_blocks
 
 
-def update_speech_groups(video_id=None):
+def update_speech_groups(video_id=None, debug=False):
     """
     Update speech group IDs for clips in the parliament_clips table.
     
     Args:
         video_id: Optional ID of the video to update. If None, update all videos.
+        debug: Whether to enable debug logging
     
     Returns:
         Dict with results of the operation
     """
-    db_path = get_db_path()
-    conn = None
+    # Set up logging
+    log_level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.info(f"Updating speech groups for video_id={video_id}, debug={debug}")
     
+    # Connect to the database
+    conn = None
     try:
+        # Try multiple possible paths for the database
+        possible_db_paths = [
+            "/app/backend/parliament_clips.db",  # Docker container path
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "backend/parliament_clips.db"),  # Local dev path
+            "./backend/parliament_clips.db"  # Relative path
+        ]
+        
+        db_path = None
+        for path in possible_db_paths:
+            if os.path.exists(path):
+                db_path = path
+                logger.info(f"Found database at {db_path}")
+                break
+                
+        if not db_path:
+            logger.error(f"Database not found in any of the expected locations: {possible_db_paths}")
+            return {"success": False, "error": f"Database not found in any of the expected locations: {possible_db_paths}"}
+            
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -485,16 +480,27 @@ def main():
     parser.add_argument('--force', action='store_true', help='Force update of speech groups even if already assigned')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
-    global args
     args = parser.parse_args()
-    
-    # Set up debug logging if requested
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
     
     # If force flag is provided, clear existing speech group IDs for the specified video
     if args.force and args.video_id:
-        db_path = get_db_path()
+        # Try multiple possible paths for the database
+        possible_db_paths = [
+            "/app/backend/parliament_clips.db",  # Docker container path
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "backend/parliament_clips.db"),  # Local dev path
+            "./backend/parliament_clips.db"  # Relative path
+        ]
+        
+        db_path = None
+        for path in possible_db_paths:
+            if os.path.exists(path):
+                db_path = path
+                break
+                
+        if not db_path:
+            logger.error(f"Database not found in any of the expected locations")
+            return
+            
         try:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
@@ -511,7 +517,7 @@ def main():
         except Exception as e:
             logger.error(f"Error clearing speech group IDs: {e}")
     
-    result = update_speech_groups(args.video_id)
+    result = update_speech_groups(args.video_id, args.debug)
     
     if result["success"]:
         logger.info(f"Successfully updated {result['total_updated']} clips in {result['videos_processed']} videos")
