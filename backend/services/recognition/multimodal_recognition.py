@@ -504,10 +504,58 @@ class MultimodalRecognitionService:
             video.transcription_results = json.dumps(transcription)
             db.commit()
             
-            # If there are no segments, return an error
+            # If there are no segments, try to create them from diarization data
             if not segments:
-                logger.error("No segments found in transcription")
-                return {"success": False, "error": "No segments found in transcription"}
+                logger.warning("No segments found in transcription, attempting to use diarization data")
+                
+                # Look for diarization data
+                diarization_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
+                if os.path.exists(diarization_path):
+                    try:
+                        with open(diarization_path, 'r') as f:
+                            diarization_data = json.load(f)
+                            
+                        # Log diarization data stats
+                        diarization_segments = diarization_data.get("segments", [])
+                        diarization_speakers = diarization_data.get("speakers", {})
+                        logger.info(f"Loaded diarization data: {len(diarization_segments)} segments, {len(diarization_speakers)} speakers")
+                        
+                        # Create segments from diarization data
+                        segments = []
+                        for i, seg in enumerate(diarization_segments):
+                            start_time = seg.get("start_time", 0)
+                            end_time = seg.get("end_time", 0)
+                            speaker = seg.get("speaker", "Unknown")
+                            
+                            # Create a segment with required fields
+                            segment = {
+                                "id": i,
+                                "seek": start_time,
+                                "start": start_time,
+                                "end": end_time,
+                                "text": f"Speech segment {i+1}",  # Placeholder text
+                                "tokens": [],
+                                "temperature": 0.0,
+                                "avg_logprob": -0.5,
+                                "compression_ratio": 1.0,
+                                "no_speech_prob": 0.1,
+                                "speaker": speaker
+                            }
+                            segments.append(segment)
+                        
+                        # Update transcription with segments
+                        if segments:
+                            transcription["segments"] = segments
+                            logger.info(f"Created {len(segments)} segments from diarization data")
+                        else:
+                            logger.error("Failed to create segments from diarization data")
+                            return {"success": False, "error": "No segments found in transcription and failed to create from diarization"}
+                    except Exception as e:
+                        logger.error(f"Error creating segments from diarization data: {str(e)}")
+                        return {"success": False, "error": f"No segments found in transcription and error creating from diarization: {str(e)}"}
+                else:
+                    logger.error(f"No segments found in transcription and no diarization data at {diarization_path}")
+                    return {"success": False, "error": "No segments found in transcription and no diarization data available"}
             
             # Create output directory for frames
             output_dir = os.path.join(self.output_dir, f"video_{video_id}")

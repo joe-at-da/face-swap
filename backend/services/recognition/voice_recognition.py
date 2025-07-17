@@ -470,18 +470,16 @@ class VoiceRecognitionService:
             logger.error(f"Error in speaker identification: {str(e)}")
             return {
                 "success": False,
-                "error": str(e),
-                "output_file": None,
-                "results_file": None
+                "error": str(e)
             }
     
-    def combine_transcription_with_speakers(self, transcription_path: str, speaker_results_path: str, output_file: Optional[str] = None) -> Dict:
+    def combine_transcription_with_speakers(self, transcription_path: Optional[str], speaker_results_path: str, output_file: Optional[str] = None) -> Dict:
         """
-        Combine transcription with speaker identification results.
+        Combine transcription data with speaker identification results.
         
         Args:
-            transcription_path: Path to the transcription file
-            speaker_results_path: Path to the speaker identification results file
+            transcription_path: Path to the transcription file (can be None)
+            speaker_results_path: Path to the speaker identification results
             output_file: Optional path to save the combined output
             
         Returns:
@@ -489,34 +487,41 @@ class VoiceRecognitionService:
         """
         logger.info(f"Combining transcription with speaker identification: {transcription_path} + {speaker_results_path}")
         
-        # Load the transcription
-        try:
-            with open(transcription_path, 'r') as f:
-                try:
-                    # First try to load as JSON
-                    transcription = json.load(f)
-                except json.JSONDecodeError:
-                    # If that fails, try to handle as text format
-                    f.seek(0)  # Reset file pointer to beginning
-                    text_content = f.read()
-                    
-                    # Create a simple JSON structure from the text
-                    transcription = {
-                        "text": text_content,
-                        "segments": [{
-                            "start": 0,
-                            "end": 0,  # We don't have timing info in plain text
-                            "text": text_content
-                        }]
-                    }
-                    logger.info("Loaded transcription as plain text format")
-        except Exception as e:
-            logger.error(f"Error loading transcription: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Error loading transcription: {str(e)}"
-            }
+        # Initialize transcription with empty structure
+        transcription = {
+            "text": "",
+            "segments": []
+        }
         
+        # Load the transcription if path is provided
+        if transcription_path:
+            try:
+                with open(transcription_path, 'r') as f:
+                    try:
+                        # First try to load as JSON
+                        transcription = json.load(f)
+                    except json.JSONDecodeError:
+                        # If that fails, try to handle as text format
+                        f.seek(0)  # Reset file pointer to beginning
+                        text_content = f.read()
+                        
+                        # Create a simple JSON structure from the text
+                        transcription = {
+                            "text": text_content,
+                            "segments": [{
+                                "start": 0,
+                                "end": 0,  # We don't have timing info in plain text
+                                "text": text_content
+                            }]
+                        }
+                        logger.info("Loaded transcription as plain text format")
+            except Exception as e:
+                logger.error(f"Error loading transcription: {str(e)}")
+                # Continue with empty transcription instead of failing
+                logger.warning("Continuing with empty transcription structure")
+        else:
+            logger.warning("No transcription path provided, using empty transcription structure")
+            
         # Load the speaker identification results if provided
         speaker_results = {"segments": []}
         if speaker_results_path:
