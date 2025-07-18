@@ -31,50 +31,106 @@ def find_diarization_file(video_path: Path) -> Optional[Path]:
     Returns:
         Path to the diarization file if found, None otherwise
     """
-    # Extract video ID from path if possible
-    try:
-        # Handle different filename patterns
-        video_basename = os.path.basename(video_path)
-        # Try to extract video ID from various filename patterns
-        if '_' in video_basename:
-            video_id = video_basename.split('_')[0]
-        else:
-            video_id = os.path.splitext(video_basename)[0]
-        
-        logger.info(f"Extracted video ID: {video_id} from path: {video_path}")
-    except (ValueError, IndexError) as e:
-        logger.warning(f"Could not extract video ID from path: {video_path}, error: {e}")
-        video_id = None
+    # Convert to string for easier handling
+    video_path_str = str(video_path)
+    
+    # Extract video ID from path using multiple methods
+    video_ids = []
+    
+    # Method 1: Extract from basename with underscore pattern (e.g., 803_video.mp4 -> 803)
+    video_basename = os.path.basename(video_path_str)
+    if '_' in video_basename:
+        video_ids.append(video_basename.split('_')[0])
+    
+    # Method 2: Extract from basename without extension (e.g., 803.mp4 -> 803)
+    video_ids.append(os.path.splitext(video_basename)[0])
+    
+    # Method 3: Try to find any numeric sequence in the filename
+    import re
+    numeric_matches = re.findall(r'\d+', video_basename)
+    video_ids.extend(numeric_matches)
+    
+    # Method 4: Extract from the full path
+    path_parts = video_path_str.split(os.path.sep)
+    for part in path_parts:
+        if part.isdigit():
+            video_ids.append(part)
+    
+    # Remove duplicates and empty strings
+    video_ids = list(set([vid for vid in video_ids if vid]))
+    
+    logger.info(f"Extracted possible video IDs: {video_ids} from path: {video_path}")
+    
+    # Base directory for local paths
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # Common locations for diarization files
     possible_paths = []
     
-    # If we have a video ID, check ID-based paths
-    if video_id:
+    # Path patterns based on video path
+    video_path_without_ext = os.path.splitext(video_path_str)[0]
+    possible_paths.extend([
+        Path(video_path_without_ext + ".diarization.json"),
+        Path(video_path_without_ext + "_diarization.json"),
+        Path(video_path_without_ext + "_speakers.json"),
+        Path(os.path.join(os.path.dirname(video_path_without_ext), "diarization_" + os.path.basename(video_path_without_ext) + ".json")),
+    ])
+    
+    # Common directory patterns
+    search_dirs = [
+        "/app/data/temp/audio_extracts",
+        "/app/data/temp",
+        "/app/data/media",
+        os.path.join(base_dir, "data/temp/audio_extracts"),
+        os.path.join(base_dir, "data/temp"),
+        os.path.join(base_dir, "data/media"),
+        # Add more common directories
+        "/app/backend/data/temp",
+        os.path.join(base_dir, "backend/data/temp"),
+        os.path.join(os.path.dirname(video_path_str), "diarization"),
+        os.path.dirname(video_path_str),  # Check in the same directory as the video
+    ]
+    
+    # For each video ID, generate possible file paths
+    for video_id in video_ids:
         # Docker paths
         possible_paths.extend([
             Path(f"/app/data/media/{video_id}.diarization.json"),
             Path(f"/app/data/temp/{video_id}.diarization.json"),
+            Path(f"/app/data/temp/audio_extracts/{video_id}.diarization.json"),
+            Path(f"/app/data/temp/audio_extracts/diarization_{video_id}.json"),
+            Path(f"/app/data/temp/audio_extracts/{video_id}_diarization.json"),
+            Path(f"/app/data/temp/audio_extracts/{video_id}_speakers.json"),
+            Path(f"/app/data/temp/{video_id}_speakers.json"),
+            Path(f"/app/data/temp/audio_extracts/{video_id}.audio_diarization.json"),
         ])
         
         # Local paths
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         possible_paths.extend([
             Path(os.path.join(base_dir, f"data/media/{video_id}.diarization.json")),
             Path(os.path.join(base_dir, f"data/temp/{video_id}.diarization.json")),
+            Path(os.path.join(base_dir, f"data/temp/audio_extracts/{video_id}.diarization.json")),
+            Path(os.path.join(base_dir, f"data/temp/audio_extracts/diarization_{video_id}.json")),
+            Path(os.path.join(base_dir, f"data/temp/audio_extracts/{video_id}_diarization.json")),
+            Path(os.path.join(base_dir, f"data/temp/audio_extracts/{video_id}_speakers.json")),
+            Path(os.path.join(base_dir, f"data/temp/{video_id}_speakers.json")),
+            Path(os.path.join(base_dir, f"data/temp/audio_extracts/{video_id}.audio_diarization.json")),
         ])
         
-        # Audio-derived paths
-        possible_paths.extend([
-            Path(f"/app/data/temp/audio_extracts/{video_id}.audio_diarization.json"),
-            Path(os.path.join(base_dir, f"data/temp/audio_extracts/{video_id}.audio_diarization.json"))
-        ])
-    
-    # Derived from video path (regardless of whether we have a video ID)
-    video_path_without_ext = os.path.splitext(video_path)[0]
-    possible_paths.extend([
-        Path(video_path_without_ext + ".diarization.json"),
-    ])
+        # Try with numeric video ID variations (in case it's stored with leading zeros)
+        try:
+            numeric_id = int(video_id)
+            # Try with different zero-padding
+            for padding in [0, 2, 3, 4]:
+                padded_id = f"{numeric_id:0{padding}d}" if padding > 0 else str(numeric_id)
+                possible_paths.extend([
+                    Path(f"/app/data/temp/audio_extracts/{padded_id}.diarization.json"),
+                    Path(f"/app/data/temp/audio_extracts/diarization_{padded_id}.json"),
+                    Path(os.path.join(base_dir, f"data/temp/audio_extracts/{padded_id}.diarization.json")),
+                    Path(os.path.join(base_dir, f"data/temp/audio_extracts/diarization_{padded_id}.json")),
+                ])
+        except ValueError:
+            pass  # Not a numeric ID, skip these paths
     
     # Check if any of the possible paths exist
     for path in possible_paths:
@@ -82,8 +138,42 @@ def find_diarization_file(video_path: Path) -> Optional[Path]:
             logger.info(f"Found diarization file: {path}")
             return path
     
-    logger.info(f"No diarization file found for video {video_path}")
-    logger.debug(f"Checked paths: {possible_paths}")
+    # If no file found, search in common directories for any file containing any of the video_ids
+    for search_dir in search_dirs:
+        if os.path.exists(search_dir):
+            logger.info(f"Searching for diarization files in {search_dir}")
+            try:
+                for file in os.listdir(search_dir):
+                    if file.endswith(".json") and ("diarization" in file.lower() or "speaker" in file.lower()):
+                        # Check if any of our video IDs are in the filename
+                        for video_id in video_ids:
+                            if video_id in file:
+                                path = Path(os.path.join(search_dir, file))
+                                logger.info(f"Found potential diarization file: {path}")
+                                return path
+            except (PermissionError, FileNotFoundError) as e:
+                logger.warning(f"Error accessing directory {search_dir}: {e}")
+    
+    # Last resort: search for any JSON file with "diarization" or "speaker" in the name
+    # in the same directory as the video
+    video_dir = os.path.dirname(video_path_str)
+    if os.path.exists(video_dir):
+        try:
+            json_files = [f for f in os.listdir(video_dir) if f.endswith(".json") and 
+                         ("diarization" in f.lower() or "speaker" in f.lower())]
+            
+            if json_files:
+                # Sort by modification time (newest first)
+                json_files.sort(key=lambda x: os.path.getmtime(os.path.join(video_dir, x)), reverse=True)
+                newest_file = json_files[0]
+                path = Path(os.path.join(video_dir, newest_file))
+                logger.info(f"Found newest diarization file in video directory: {path}")
+                return path
+        except (PermissionError, FileNotFoundError) as e:
+            logger.warning(f"Error accessing video directory {video_dir}: {e}")
+    
+    logger.warning(f"No diarization file found for video {video_path}")
+    logger.debug(f"Checked paths: {possible_paths[:10]}... and {len(possible_paths)-10} more")
     return None
 
 
@@ -103,13 +193,89 @@ def load_diarization_data(diarization_file: Path) -> Optional[Dict]:
         
         # Validate that this is a diarization file
         if 'segments' in data and isinstance(data['segments'], list):
-            logger.info(f"Successfully loaded diarization data with {len(data['segments'])} segments")
-            return data
+            segments = data['segments']
+            logger.info(f"Successfully loaded diarization data with {len(segments)} segments")
+            
+            # Check if segments have the expected structure
+            if segments:
+                # Count segments with speaker information
+                speakers_count = sum(1 for seg in segments if 'speaker' in seg)
+                if speakers_count == 0:
+                    logger.warning(f"No speaker information found in any of the {len(segments)} segments")
+                    
+                    # Try to find speaker information in alternative fields
+                    alternative_fields = ['speaker_id', 'speakerId', 'speaker_label', 'label']
+                    for field in alternative_fields:
+                        if any(field in seg for seg in segments):
+                            logger.info(f"Found alternative speaker field: '{field}', converting to 'speaker'")
+                            # Convert to standard format
+                            for seg in segments:
+                                if field in seg:
+                                    seg['speaker'] = seg[field]
+                            break
+                
+                # Check for required timing information
+                timing_fields = [('start_time', 'end_time'), ('start', 'end')]
+                has_timing = False
+                
+                for start_field, end_field in timing_fields:
+                    if all(start_field in seg and end_field in seg for seg in segments[:5]):
+                        has_timing = True
+                        # If using alternative field names, standardize them
+                        if start_field != 'start_time' or end_field != 'end_time':
+                            logger.info(f"Converting timing fields from {start_field}/{end_field} to start_time/end_time")
+                            for seg in segments:
+                                if start_field in seg:
+                                    seg['start_time'] = seg[start_field]
+                                if end_field in seg:
+                                    seg['end_time'] = seg[end_field]
+                        break
+                
+                if not has_timing:
+                    logger.warning("Segments missing required timing information")
+                    return None
+                
+                # Log summary of speakers found
+                speakers = set(seg.get('speaker', '') for seg in segments if 'speaker' in seg)
+                logger.info(f"Found {len(speakers)} unique speakers in diarization data: {speakers}")
+                
+                return data
+            else:
+                logger.warning("Diarization file contains empty segments list")
+                return None
+        elif 'diarization' in data and isinstance(data['diarization'], dict) and 'segments' in data['diarization']:
+            # Handle nested structure
+            logger.info("Found nested diarization data structure, extracting segments")
+            nested_data = {'segments': data['diarization']['segments']}
+            return load_diarization_data(nested_data)  # Recursively process the extracted data
         else:
+            # Try to find any array that might contain speaker segments
+            for key, value in data.items():
+                if isinstance(value, list) and len(value) > 0:
+                    # Check if items look like speaker segments
+                    if all(isinstance(item, dict) for item in value[:5]):
+                        sample_items = value[:5]
+                        # Check if they have timing and speaker info
+                        has_timing = any(('start_time' in item or 'start' in item) and 
+                                        ('end_time' in item or 'end' in item) for item in sample_items)
+                        has_speaker = any('speaker' in item or 'speaker_id' in item or 'label' in item 
+                                        for item in sample_items)
+                        
+                        if has_timing and has_speaker:
+                            logger.info(f"Found potential segments under key '{key}', attempting to use")
+                            # Create a standardized structure
+                            standardized_data = {'segments': value}
+                            return load_diarization_data(standardized_data)  # Recursively process
+            
             logger.warning(f"File {diarization_file} does not appear to be a valid diarization file")
+            logger.debug(f"File content keys: {list(data.keys())}")
             return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in diarization file {diarization_file}: {e}")
+        return None
     except Exception as e:
         logger.error(f"Error loading diarization file {diarization_file}: {e}")
+        logger.exception(e)
         return None
 
 
@@ -130,13 +296,23 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
     diarization_segments = diarization_data.get('segments', [])
     if not diarization_segments:
         logger.warning("No diarization segments found in diarization data")
-        return []
+        # Return empty lists in the expected tuple format
+        return [], {}
+    
+    # Log diarization data summary
+    num_segments = len(diarization_segments)
+    speakers = set(segment.get('speaker', '') for segment in diarization_segments)
+    num_speakers = len(speakers)
+    logger.info(f"Diarization data contains {num_segments} segments from {num_speakers} distinct speakers")
+    logger.debug(f"Speaker IDs: {speakers}")
     
     # Sort clips by start time for easier matching
     sorted_clips = sorted(clips, key=lambda c: float(c[2]) if c[2] else 0)
     
     # First, assign each clip to a speaker based on diarization data
     clip_speaker_map = {}
+    unassigned_clips = []
+    
     for clip in sorted_clips:
         clip_id, member_id, start_timestamp, end_timestamp = clip
         clip_start = float(start_timestamp) if start_timestamp else 0
@@ -145,28 +321,42 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
         
         # Find the diarization segment that contains this clip
         matching_segment = None
+        best_overlap = 0
+        
         for segment in diarization_segments:
             segment_start = segment.get('start_time', 0)
             segment_end = segment.get('end_time', 0)
             
             # Check if clip overlaps with this segment
-            # A clip is considered part of a segment if it overlaps by at least 50%
             overlap_start = max(clip_start, segment_start)
             overlap_end = min(clip_end, segment_end)
             overlap_duration = max(0, overlap_end - overlap_start)
+            overlap_percentage = overlap_duration / clip_duration if clip_duration > 0 else 0
             
-            if overlap_duration > (clip_duration * 0.5):
+            # Keep track of the segment with the best overlap
+            if overlap_percentage > best_overlap:
+                best_overlap = overlap_percentage
                 matching_segment = segment
-                break
         
-        if matching_segment:
+        # A clip is considered part of a segment if it overlaps by at least 30%
+        # (reduced from 50% to catch more clips)
+        if matching_segment and best_overlap >= 0.3:
             segment_speaker = matching_segment.get('speaker', '')
             clip_speaker_map[clip_id] = segment_speaker
-            logger.debug(f"Clip {clip_id} ({clip_start}-{clip_end}) assigned to {segment_speaker}")
+            logger.debug(f"Clip {clip_id} ({clip_start:.2f}-{clip_end:.2f}) assigned to speaker {segment_speaker} with {best_overlap:.1%} overlap")
         else:
-            # No matching segment found, assign to None
+            # No matching segment found with sufficient overlap
             clip_speaker_map[clip_id] = None
-            logger.debug(f"Clip {clip_id} ({clip_start}-{clip_end}) could not be assigned to any speaker")
+            unassigned_clips.append(clip)
+            logger.debug(f"Clip {clip_id} ({clip_start:.2f}-{clip_end:.2f}) could not be assigned to any speaker (best overlap: {best_overlap:.1%})")
+    
+    # Log assignment statistics
+    assigned_count = len(clip_speaker_map) - len(unassigned_clips)
+    total_count = len(sorted_clips)
+    logger.info(f"Assigned {assigned_count}/{total_count} clips to speakers ({assigned_count/total_count:.1%})")
+    
+    if unassigned_clips:
+        logger.warning(f"Could not assign {len(unassigned_clips)} clips to any speaker")
     
     # Group clips by speaker
     speaker_clips = {}
@@ -179,57 +369,63 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
     
     # Create speech blocks from speaker groups
     speech_blocks = []
+    
+    # Process clips with identified speakers first
     for speaker, speaker_group in speaker_clips.items():
-        if speaker is None:
-            # For clips without a speaker, use temporal proximity
-            temp_blocks = []
-            current_block = []
-            for clip in sorted(speaker_group, key=lambda c: float(c[2]) if c[2] else 0):
-                if not current_block:
-                    current_block = [clip]
-                else:
-                    prev_clip = current_block[-1]
-                    prev_end = float(prev_clip[3]) if prev_clip[3] else float(prev_clip[2]) + 1
-                    clip_start = float(clip[2]) if clip[2] else 0
-                    
-                    # Use temporal proximity
-                    MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds
-                    if clip_start - prev_end <= MAX_CONTINUOUS_SPEECH_GAP:
-                        current_block.append(clip)
-                    else:
-                        temp_blocks.append(current_block)
-                        current_block = [clip]
-            
-            if current_block:
-                temp_blocks.append(current_block)
-            
-            speech_blocks.extend(temp_blocks)
-        else:
+        if speaker is not None and speaker != '':
             # For clips with a speaker, keep them in one group
             # Sort clips within the speaker group by timestamp
             sorted_speaker_group = sorted(speaker_group, key=lambda c: float(c[2]) if c[2] else 0)
             if sorted_speaker_group:
                 speech_blocks.append(sorted_speaker_group)
     
+    # Then process unassigned clips using temporal proximity
+    if None in speaker_clips:
+        unassigned_group = speaker_clips[None]
+        temp_blocks = []
+        current_block = []
+        
+        for clip in sorted(unassigned_group, key=lambda c: float(c[2]) if c[2] else 0):
+            if not current_block:
+                current_block = [clip]
+            else:
+                prev_clip = current_block[-1]
+                prev_end = float(prev_clip[3]) if prev_clip[3] else float(prev_clip[2]) + 1
+                clip_start = float(clip[2]) if clip[2] else 0
+                
+                # Use temporal proximity
+                MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds
+                if clip_start - prev_end <= MAX_CONTINUOUS_SPEECH_GAP:
+                    current_block.append(clip)
+                else:
+                    temp_blocks.append(current_block)
+                    current_block = [clip]
+        
+        if current_block:
+            temp_blocks.append(current_block)
+        
+        speech_blocks.extend(temp_blocks)
+    
     # Sort speech blocks by the start time of their first clip
     speech_blocks.sort(key=lambda block: float(block[0][2]) if block[0][2] else 0)
     
-    num_speakers = len(set(segment.get('speaker', '') for segment in diarization_segments))
-    logger.info(f"Diarization data contains {num_speakers} distinct speakers")
     logger.info(f"Created {len(speech_blocks)} speech blocks based on speaker changes in diarization data")
     
     # Ensure we're not creating too many blocks
-    if len(speech_blocks) > num_speakers and num_speakers > 0:
-        logger.warning(f"Created more speech blocks ({len(speech_blocks)}) than speakers ({num_speakers}). This may indicate a problem with grouping.")
+    if len(speech_blocks) > num_speakers * 2 and num_speakers > 0:
+        logger.warning(f"Created many more speech blocks ({len(speech_blocks)}) than speakers ({num_speakers}). This may indicate a problem with grouping.")
     
     # Debug info
-    for i, block in enumerate(speech_blocks):
+    for i, block in enumerate(speech_blocks[:5]):  # Log only first 5 blocks to avoid excessive logging
         first_clip = block[0]
         last_clip = block[-1]
         first_start = float(first_clip[2]) if first_clip[2] else 0
         last_end = float(last_clip[3]) if last_clip[3] else 0
         speaker = clip_speaker_map.get(first_clip[0])
-        logger.debug(f"Speech block {i}: {len(block)} clips, {first_start}-{last_end}, speaker: {speaker}")
+        logger.info(f"Speech block {i}: {len(block)} clips, {first_start:.2f}-{last_end:.2f}, speaker: {speaker}")
+    
+    if len(speech_blocks) > 5:
+        logger.info(f"... and {len(speech_blocks) - 5} more speech blocks")
     
     return speech_blocks, clip_speaker_map
 
@@ -281,13 +477,14 @@ def create_speech_blocks_by_proximity(clips: List[Tuple]) -> List[List[Tuple]]:
     return speech_blocks
 
 
-def update_speech_groups(video_id=None, debug=False):
+def update_speech_groups(video_id=None, debug=False, force=False):
     """
     Update speech group IDs for clips in the parliament_clips table.
     
     Args:
         video_id: Optional ID of the video to update. If None, update all videos.
         debug: Whether to enable debug logging
+        force: Whether to force update speech groups even if already assigned
     
     Returns:
         Dict with results of the operation
@@ -295,7 +492,7 @@ def update_speech_groups(video_id=None, debug=False):
     # Set up logging
     log_level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger.info(f"Updating speech groups for video_id={video_id}, debug={debug}")
+    logger.info(f"Updating speech groups for video_id={video_id}, debug={debug}, force={force}")
     
     # Connect to the database
     conn = None
@@ -329,6 +526,17 @@ def update_speech_groups(video_id=None, debug=False):
             logger.info("Adding speech_group_id column to parliament_clips table")
             cursor.execute("ALTER TABLE parliament_clips ADD COLUMN speech_group_id TEXT")
             conn.commit()
+        
+        # If force flag is provided, clear existing speech group IDs for the specified video
+        if force and video_id:
+            # Clear speech group IDs for the specified video
+            cursor.execute(
+                "UPDATE parliament_clips SET speech_group_id = NULL WHERE full_video_path LIKE ?",
+                (f"%{video_id}%",)
+            )
+            conn.commit()
+            affected_rows = cursor.rowcount
+            logger.info(f"Cleared speech group IDs for {affected_rows} clips with video ID {video_id}")
         
         # Get all videos that need updating
         if video_id:
@@ -482,54 +690,110 @@ def main():
     
     args = parser.parse_args()
     
-    # If force flag is provided, clear existing speech group IDs for the specified video
-    if args.force and args.video_id:
-        # Try multiple possible paths for the database
-        possible_db_paths = [
-            "/app/backend/parliament_clips.db",  # Docker container path
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "backend/parliament_clips.db"),  # Local dev path
-            "./backend/parliament_clips.db"  # Relative path
-        ]
-        
-        db_path = None
-        for path in possible_db_paths:
-            if os.path.exists(path):
-                db_path = path
-                break
-                
-        if not db_path:
-            logger.error(f"Database not found in any of the expected locations")
-            return
+    # Set up logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Find the database path
+    possible_db_paths = [
+        "/app/backend/parliament_clips.db",  # Docker container path
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "backend/parliament_clips.db"),  # Local dev path
+        "./backend/parliament_clips.db"  # Relative path
+    ]
+    
+    db_path = None
+    for path in possible_db_paths:
+        if os.path.exists(path):
+            db_path = path
+            logger.info(f"Found database at {db_path}")
+            break
             
-        try:
+    if not db_path:
+        logger.error(f"Database not found in any of the expected locations: {possible_db_paths}")
+        return
+    
+    # Connect to the database
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Check current state of speech group IDs before any changes
+        if args.video_id:
+            cursor.execute(
+                "SELECT COUNT(*) FROM parliament_clips WHERE full_video_path LIKE ?", 
+                (f"%{args.video_id}%",)
+            )
+            total_clips = cursor.fetchone()[0]
+            
+            cursor.execute(
+                "SELECT DISTINCT speech_group_id FROM parliament_clips WHERE full_video_path LIKE ?", 
+                (f"%{args.video_id}%",)
+            )
+            current_groups = [row[0] for row in cursor.fetchall()]
+            
+            logger.info(f"Before update: Found {total_clips} clips with video ID {args.video_id}")
+            logger.info(f"Current speech group IDs: {current_groups}")
+            
+            # Check if all clips have the same temporary speech group ID
+            if len(current_groups) == 1 and current_groups[0] and current_groups[0].startswith("temp_speech_group_"):
+                logger.warning(f"All clips have the same temporary speech group ID: {current_groups[0]}")
+        
+        # The force flag handling is now moved to the update_speech_groups function
+        
+        # Close the connection before calling update_speech_groups
+        conn.close()
+        
+        # Run the update process
+        logger.info(f"Starting speech group update for video_id={args.video_id}, debug={args.debug}, force={args.force}")
+        result = update_speech_groups(args.video_id, args.debug, args.force)
+        
+        if result["success"]:
+            logger.info(f"Successfully updated {result['total_updated']} clips in {result['videos_processed']} videos")
+            logger.info(f"Used diarization data for {result['diarization_used']} videos")
+            
+            # Reconnect to verify the results
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
-            # Clear speech group IDs for the specified video
-            cursor.execute(
-                "UPDATE parliament_clips SET speech_group_id = NULL WHERE full_video_path LIKE ?",
-                (f"%{args.video_id}%",)
-            )
-            conn.commit()
-            affected_rows = cursor.rowcount
-            logger.info(f"Cleared speech group IDs for {affected_rows} clips with video ID {args.video_id}")
+            if args.video_id:
+                # Check the updated speech group IDs
+                cursor.execute(
+                    "SELECT DISTINCT speech_group_id FROM parliament_clips WHERE full_video_path LIKE ?", 
+                    (f"%{args.video_id}%",)
+                )
+                updated_groups = [row[0] for row in cursor.fetchall()]
+                
+                # Count clips per speech group
+                cursor.execute(
+                    "SELECT speech_group_id, COUNT(*) FROM parliament_clips WHERE full_video_path LIKE ? GROUP BY speech_group_id", 
+                    (f"%{args.video_id}%",)
+                )
+                group_counts = cursor.fetchall()
+                
+                logger.info(f"After update: Speech group IDs: {updated_groups}")
+                logger.info(f"Clips per speech group:")
+                for group_id, count in group_counts:
+                    logger.info(f"  {group_id}: {count} clips")
+                
+                # Check if we still have temporary speech group IDs
+                temp_groups = [g for g in updated_groups if g and g.startswith("temp_speech_group_")]
+                if temp_groups:
+                    logger.warning(f"Still have {len(temp_groups)} temporary speech group IDs after update: {temp_groups}")
+                    logger.warning("This may indicate that diarization data was not found or could not be used")
+            
             conn.close()
-        except Exception as e:
-            logger.error(f"Error clearing speech group IDs: {e}")
-    
-    result = update_speech_groups(args.video_id, args.debug)
-    
-    if result["success"]:
-        logger.info(f"Successfully updated {result['total_updated']} clips in {result['videos_processed']} videos")
-        logger.info(f"Used diarization data for {result['diarization_used']} videos")
-        
-        if result['total_clips'] > 0:
-            coverage_percentage = (result['clips_with_speech_group'] / result['total_clips']) * 100
-            logger.info(f"Speech group coverage: {result['clips_with_speech_group']}/{result['total_clips']} clips ({coverage_percentage:.1f}%)")
+            
+            if result['total_clips'] > 0:
+                coverage_percentage = (result['clips_with_speech_group'] / result['total_clips']) * 100
+                logger.info(f"Speech group coverage: {result['clips_with_speech_group']}/{result['total_clips']} clips ({coverage_percentage:.1f}%)")
+            else:
+                logger.info("No clips found in the database")
         else:
-            logger.info("No clips found in the database")
-    else:
-        logger.error(f"Failed to update speech groups: {result['error']}")
+            logger.error(f"Failed to update speech groups: {result['error']}")
+    
+    except Exception as e:
+        logger.error(f"Error in main function: {str(e)}")
+        logger.exception(e)
 
 if __name__ == "__main__":
     main()

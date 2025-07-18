@@ -183,9 +183,15 @@ class MultimodalRecognitionService:
                 
                 # Combine transcription with speaker identification
                 if speaker_result.get("success", True):
+                    # Get the correct paths for transcription and speaker results
+                    transcription_path = transcription_result.get("output_file", "")
+                    speaker_results_path = speaker_result.get("results_file", "")
+                    
+                    logger.info(f"Combining transcription ({transcription_path}) with speaker results ({speaker_results_path})")
+                    
                     combined_result = voice_service.combine_transcription_with_speakers(
-                        transcription_result.get("output_file", ""),
-                        speaker_result.get("output_file", "")
+                        transcription_path,
+                        speaker_results_path
                     )
                     if combined_result.get("success", False):
                         video.transcription_results = json.dumps(combined_result.get("combined_results", {}))

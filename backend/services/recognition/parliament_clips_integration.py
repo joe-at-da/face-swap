@@ -349,9 +349,9 @@ class ParliamentClipsIntegrationService:
                 
                 raise FileNotFoundError(f"Could not find update_speech_groups.py in any of the expected locations: {possible_paths}")
             
-            # Run the script directly using python
+            # Run the script directly using python with the force flag to ensure it updates even if speech groups exist
             import subprocess
-            cmd = [sys.executable, script_path, "--video-id", str(video_id), "--debug"]
+            cmd = [sys.executable, script_path, "--video-id", str(video_id), "--force", "--debug"]
             logger.info(f"Running command: {' '.join(cmd)}")
             
             # Set environment variables for the subprocess
@@ -371,16 +371,54 @@ class ParliamentClipsIntegrationService:
                 # Verify the speech groups were updated by checking the database
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(DISTINCT speech_group_id) FROM parliament_clips WHERE full_video_path LIKE ?",(f"%{video_id}.mp4%",))
+                
+                # Use more flexible queries to find clips for this video
+                # First try with video_id in the path
+                cursor.execute(
+                    "SELECT COUNT(DISTINCT speech_group_id) FROM parliament_clips WHERE full_video_path LIKE ?", 
+                    (f"%{video_id}%",)
+                )
                 group_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM parliament_clips WHERE full_video_path LIKE ?",(f"%{video_id}.mp4%",))
+                
+                cursor.execute(
+                    "SELECT COUNT(*) FROM parliament_clips WHERE full_video_path LIKE ?", 
+                    (f"%{video_id}%",)
+                )
                 clip_count = cursor.fetchone()[0]
+                
+                # If no clips found, try checking metadata JSON for video_id
+                if clip_count == 0:
+                    cursor.execute(
+                        "SELECT COUNT(DISTINCT speech_group_id) FROM parliament_clips WHERE metadata LIKE ?", 
+                        (f"%{video_id}%",)
+                    )
+                    group_count = cursor.fetchone()[0]
+                    
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM parliament_clips WHERE metadata LIKE ?", 
+                        (f"%{video_id}%",)
+                    )
+                    clip_count = cursor.fetchone()[0]
+                
+                # Check for temporary speech group IDs
+                temp_speech_group = f"temp_speech_group_{video_id}"
+                cursor.execute(
+                    "SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id = ? AND full_video_path LIKE ?", 
+                    (temp_speech_group, f"%{video_id}%")
+                )
+                temp_group_count = cursor.fetchone()[0]
+                
                 conn.close()
                 
                 logger.info(f"After update: {clip_count} clips in {group_count} speech groups for video {video_id}")
                 
+                if temp_group_count > 0:
+                    logger.warning(f"⚠️ {temp_group_count} clips still have temporary speech group ID '{temp_speech_group}'")
+                    logger.warning("This may indicate that diarization data was not found or could not be used")
+                    
                 if group_count == 1 and clip_count > 1:
                     logger.warning(f"⚠️ All clips still in one speech group after update. Diarization grouping may have failed.")
+                    logger.warning("Check if diarization data exists and is correctly formatted")
             else:
                 logger.warning(f"Failed to update speech groups: {result.stderr}")
                 errors.append(f"Failed to update speech groups: {result.stderr}")
