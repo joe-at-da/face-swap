@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """
-Test script for uploading a video to Supabase storage.
-This script verifies that the fixed Supabase upload implementation is working correctly.
+Test script for uploading a combined AV video to Supabase storage.
+This script verifies that the fixed Supabase upload implementation is working correctly with
+combined AV files, which are the primary use case for the application.
 
 This version uses the new SupabaseUploader class which fixes issues with base_url and headers.
 """
@@ -25,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 def test_supabase_upload(video_path: str = None, method: str = 'auto', bucket: str = 'videos', chunk_size: int = 5 * 1024 * 1024):
     """
-    Test uploading a video to Supabase storage using the fixed SupabaseUploader class.
+    Test uploading a combined AV video to Supabase storage using the fixed SupabaseUploader class.
     
     Args:
-        video_path: Path to the video file to upload. If None, uses a test video.
+        video_path: Path to the combined AV file to upload. If None, uses the latest combined AV file.
         method: Upload method to use ('direct', 'chunked', or 'auto').
         bucket: Supabase storage bucket to upload to.
         chunk_size: Size of chunks for chunked upload in bytes (default: 5MB).
@@ -39,9 +40,9 @@ def test_supabase_upload(video_path: str = None, method: str = 'auto', bucket: s
         logger.info("Initializing SupabaseUploader with service role key")
         uploader = SupabaseUploader()
         
-        # Use a test video if no path is provided
+        # Use the latest combined AV file if no path is provided
         if not video_path:
-            # Look for a video file in the media directory
+            # Look for combined AV files in the media directory
             media_dir = Path("/app/data/media")
             if not media_dir.exists():
                 logger.warning(f"Media directory {media_dir} does not exist, using a local path")
@@ -50,14 +51,14 @@ def test_supabase_upload(video_path: str = None, method: str = 'auto', bucket: s
                     logger.error(f"Media directory {media_dir} does not exist")
                     return False
             
-            # Find the first MP4 file in the media directory
-            video_files = list(media_dir.glob("*.mp4"))
-            if not video_files:
-                logger.error(f"No MP4 files found in {media_dir}")
+            # Find the latest combined AV file in the media directory
+            combined_av_files = sorted(list(media_dir.glob("combined_av_*.mp4")), key=lambda x: x.stat().st_mtime, reverse=True)
+            if not combined_av_files:
+                logger.error(f"No combined AV files found in {media_dir}")
                 return False
             
-            video_path = str(video_files[0])
-            logger.info(f"Using video file: {video_path}")
+            video_path = str(combined_av_files[0])
+            logger.info(f"Using latest combined AV file: {video_path}")
         
         # Check if the file exists
         if not os.path.exists(video_path):
@@ -98,14 +99,29 @@ def test_supabase_upload(video_path: str = None, method: str = 'auto', bucket: s
 
 if __name__ == "__main__":
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Test Supabase video upload with fixed implementation')
-    parser.add_argument('--file', '-f', dest='video_path', help='Path to video file to upload')
+    parser = argparse.ArgumentParser(
+        description='Test Supabase upload with fixed implementation for combined AV files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+        Examples:
+          # Upload the latest combined AV file using automatic method selection
+          python backend/scripts/test_supabase_upload.py
+          
+          # Upload a specific combined AV file using direct upload
+          python backend/scripts/test_supabase_upload.py -f data/media/combined_av_818_20250720_180733.mp4 -m direct
+          
+          # Upload to a different bucket with custom chunk size
+          python backend/scripts/test_supabase_upload.py -b full_videos -c 10485760
+        '''
+    )
+    parser.add_argument('--file', '-f', dest='video_path', 
+                      help='Path to combined AV file to upload (defaults to latest combined_av_*.mp4)')
     parser.add_argument('--method', '-m', dest='method', choices=['auto', 'direct', 'chunked'], default='auto',
-                        help='Upload method to use (auto, direct, or chunked)')
+                      help='Upload method to use: auto (based on file size), direct (extended timeout), or chunked')
     parser.add_argument('--bucket', '-b', dest='bucket', default='videos',
-                        help='Supabase storage bucket to upload to')
+                      help='Supabase storage bucket to upload to (default: videos)')
     parser.add_argument('--chunk-size', '-c', dest='chunk_size', type=int, default=5 * 1024 * 1024,
-                        help='Size of chunks for chunked upload in bytes (default: 5MB)')
+                      help='Size of chunks for chunked upload in bytes (default: 5MB)')
     
     args = parser.parse_args()
     
