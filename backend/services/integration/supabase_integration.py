@@ -442,8 +442,8 @@ class SupabaseIntegration:
                         combined_url = new_path
                     
                     # Force re-initialize the Supabase client with service role
-                    self.supabase = SupabaseService(use_service_role=True)
-                    logger.info("Re-initialized Supabase client with service role")
+                    self.supabase = SupabaseUploader(use_service_role=True)
+                    logger.info("Re-initialized Supabase client with service role (using SupabaseUploader)")
                     
                     # Upload the combined file directly to the full_videos bucket
                     # Use the original filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
