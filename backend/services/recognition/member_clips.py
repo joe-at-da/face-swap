@@ -7,7 +7,7 @@ import os
 import json
 import uuid
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from backend.db.models import ParliamentTranscription
 from backend.services.integration.supabase_client import SupabaseService
+from backend.services.integration.supabase_upload import SupabaseUploader
 from backend.services.utils import make_json_serializable
 
 logger = logging.getLogger(__name__)
@@ -393,7 +394,7 @@ def save_member_clips_to_supabase(
     full_video_url: str,
     recognition_results: Dict[str, Any],
     video_metadata: Dict[str, Any],
-    supabase_service: SupabaseService,
+    supabase_service: Union[SupabaseService, SupabaseUploader],
     video_path: Optional[str] = None,
     audio_path: Optional[str] = None,
     use_diarization: bool = False
@@ -414,7 +415,7 @@ def save_member_clips_to_supabase(
         full_video_url: URL to the full video in Supabase storage
         recognition_results: Recognition results from facial and voice recognition
         video_metadata: Metadata about the video
-        supabase_service: Initialized Supabase service with appropriate permissions
+        supabase_service: Initialized Supabase service (either SupabaseService or SupabaseUploader) with appropriate permissions
         video_path: Optional path to the video file for diarization
         audio_path: Optional path to the audio file for diarization
         use_diarization: Whether to use speaker diarization to enhance speaker segments

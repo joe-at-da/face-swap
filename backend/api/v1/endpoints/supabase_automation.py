@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 from backend.core.config import settings
 from backend.api.deps import get_db, get_api_key
 from backend.services.integration.supabase_integration import SupabaseIntegration
-from backend.services.integration.supabase_client import SupabaseService
+from backend.services.integration.supabase_upload import SupabaseUploader
+from backend.services.integration.supabase_client import SupabaseService  # Keep for backward compatibility
 from backend.services.parliament_tv import ParliamentTVCapture
 from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
 from sqlalchemy import desc
@@ -441,7 +442,8 @@ async def process_parliament_tv_to_supabase(
                     
                     # Initialize SupabaseService for saving member clips
                     logger.info(f"Initializing SupabaseService with service role for saving member clips for session {capture_id}")
-                    supabase_service = SupabaseService(use_service_role=True)
+                    # Use the improved SupabaseUploader with extended timeout (1 hour) for large video uploads
+                    supabase_service = SupabaseUploader(use_service_role=True, timeout=3600)
                     
                     # First run the synchronization script to ensure member IDs are properly synchronized
                     logger.info(f"Running member ID synchronization script before saving clips for session {capture_id}")

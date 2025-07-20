@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class SupabaseUploader:
     """Service for uploading videos to Supabase Storage."""
     
-    def __init__(self, use_service_role: bool = True):
+    def __init__(self, use_service_role: bool = True, timeout: int = 600):
         """
         Initialize the Supabase uploader.
         
@@ -29,6 +29,7 @@ class SupabaseUploader:
             use_service_role: If True, use the service role key instead of the anon key
                              Service role has admin privileges and should be used for
                              server-side operations only.
+            timeout: Timeout in seconds for direct uploads (default: 600 seconds = 10 minutes)
         """
         # Store the URL and API key directly for direct API access
         self.supabase_url = settings.SUPABASE_URL
@@ -44,6 +45,8 @@ class SupabaseUploader:
         self.client = create_client(self.supabase_url, self.api_key)
         self.full_videos_bucket = "full_videos"
         self.clips_bucket = "clips"
+        self.timeout = timeout
+        logger.info(f"Initialized SupabaseUploader with timeout: {self.timeout} seconds")
         
     def upload_full_video(self, file_path: str, destination_path: str = None, chunk_size: int = 5 * 1024 * 1024, bucket: str = "videos", max_retries: int = 3) -> Dict[str, Any]:
         """Upload a full video file to Supabase storage.
@@ -266,7 +269,8 @@ class SupabaseUploader:
         retry_count = 0
         success = False
         error = None
-        timeout = 600  # 10 minutes timeout
+        # Use the instance timeout parameter set during initialization
+        timeout = self.timeout
         
         while retry_count < max_retries and not success:
             try:

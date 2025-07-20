@@ -21,7 +21,7 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from backend.core.config import settings
-from backend.services.integration.supabase_client import SupabaseService
+from backend.services.integration.supabase_upload import SupabaseUploader
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -73,11 +73,11 @@ def upload_video_to_supabase(file_path: str, destination_path: Optional[str] = N
     try:
         logger.info(f"Uploading video {file_path} to Supabase")
         
-        # Initialize Supabase service with service role key
-        supabase = SupabaseService(use_service_role=True)
+        # Initialize Supabase uploader with service role key and extended timeout (1 hour)
+        supabase = SupabaseUploader(use_service_role=True, timeout=3600)
         
-        # Upload the video
-        result = supabase.upload_full_video(file_path, destination_path)
+        # Upload the video to the full_videos bucket
+        result = supabase.upload_full_video(file_path=file_path, destination_path=destination_path, bucket="full_videos")
         
         if result["success"]:
             logger.info(f"Video uploaded successfully to {result['path']}")

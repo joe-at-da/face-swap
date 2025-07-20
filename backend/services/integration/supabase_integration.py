@@ -19,7 +19,7 @@ from datetime import datetime as datetime_module
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.services.integration.supabase_client import SupabaseService
+from backend.services.integration.supabase_upload import SupabaseUploader
 from backend.services.integration.supabase_export import (
     format_video_for_supabase,
     format_clips_for_supabase
@@ -39,10 +39,11 @@ class SupabaseIntegration:
         """
         Initialize Supabase integration.
         """
-        self.supabase = SupabaseService(use_service_role=True)
+        # Use SupabaseUploader with extended timeout (1 hour) for large uploads
+        self.supabase = SupabaseUploader(use_service_role=True, timeout=3600)
         # Only using full_videos_bucket for combined AV files
         self.full_videos_bucket = settings.SUPABASE_FULL_VIDEOS_BUCKET or "full_videos"
-        logger.info(f"Initialized SupabaseIntegration with full_videos_bucket: {self.full_videos_bucket}")
+        logger.info(f"Initialized SupabaseIntegration with full_videos_bucket: {self.full_videos_bucket} and extended timeout of 3600 seconds")
     
     def upload_media_to_supabase(
         self, 
@@ -70,8 +71,13 @@ class SupabaseIntegration:
         if 'combined_av_' in filename and os.path.exists(video_path):
             logger.info(f"Found combined AV file: {video_path}")
             try:
-                # Upload the combined AV file to the full_videos bucket
-                upload_result = self.supabase.upload_full_video(file_path=video_path)
+                # Upload the combined AV file to the full_videos bucket with explicit bucket parameter
+                upload_result = self.supabase.upload_full_video(
+                    file_path=video_path,
+                    bucket=self.full_videos_bucket,
+                    # Set extremely high chunking threshold to effectively disable chunking
+                    # unless explicitly needed (50GB default in SupabaseUploader)
+                )
                 if upload_result.get("success"):
                     logger.info(f"Successfully uploaded combined AV file to Supabase: {upload_result.get('public_url')}")
                     return {"combined_av_url": upload_result.get("public_url")}
@@ -452,11 +458,12 @@ class SupabaseIntegration:
                     
                     logger.info(f"Using chunk size: {chunk_size / (1024 * 1024):.2f}MB for file of size: {file_size / (1024 * 1024):.2f}MB")
                     
-                    # Call upload_full_video with chunk size and retry parameters
+                    # Call upload_full_video with chunk size, retry parameters, and explicit bucket
                     upload_result = self.supabase.upload_full_video(
                         file_path=combined_url,
                         chunk_size=chunk_size,
-                        max_retries=3
+                        max_retries=3,
+                        bucket="full_videos"
                     )
                     logger.info(f"Upload result: {upload_result}")
                     
@@ -590,8 +597,11 @@ class SupabaseIntegration:
                 
                 if combined_av_path and os.path.exists(combined_av_path) and os.path.getsize(combined_av_path) > 0:
                     logger.info(f"Found valid alternative combined AV file at: {combined_av_path}")
-                    # Upload the alternative file
-                    upload_result = self.supabase.upload_full_video(file_path=combined_av_path)
+                    # Upload the alternative file to the full_videos bucket
+                    upload_result = self.supabase.upload_full_video(
+                        file_path=combined_av_path,
+                        bucket=self.full_videos_bucket
+                    )
                     logger.info(f"Alternative upload result: {upload_result}")
                     
                     if upload_result.get("success"):

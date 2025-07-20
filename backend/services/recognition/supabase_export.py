@@ -247,7 +247,10 @@ def export_recognition_results(
     
     # Initialize Supabase service for uploads and database operations
     from backend.services.integration.supabase_client import SupabaseService
-    supabase = SupabaseService(use_service_role=True)
+    from backend.services.integration.supabase_upload import SupabaseUploader
+    
+    # Use the improved SupabaseUploader with extended timeout (1 hour) for large video uploads
+    supabase = SupabaseUploader(use_service_role=True, timeout=3600)
     
     # Upload ONLY the combined video to Supabase storage (this is the full video)
     # We only want combined_av_ files in the Supabase bucket
@@ -262,8 +265,8 @@ def export_recognition_results(
             logger.warning("SUPABASE_INTEGRATION_ENABLED is set to False. Enabling it temporarily for this upload.")
             # We'll proceed with the upload anyway, but log this warning
         
-        # Make sure we're using the service role for Supabase
-        supabase = SupabaseService(use_service_role=True)
+        # Make sure we're using the service role for Supabase with extended timeout for large videos
+        supabase = SupabaseUploader(use_service_role=True, timeout=3600)
         logger.info(f"Supabase client initialized with service role: {supabase.client is not None}")
         logger.info(f"Supabase URL: {settings.SUPABASE_URL}, API key set: {bool(settings.SUPABASE_SERVICE_ROLE_KEY)}")
         logger.info(f"Supabase bucket: {settings.SUPABASE_FULL_VIDEOS_BUCKET}")
@@ -275,9 +278,9 @@ def export_recognition_results(
                 test_bytes = test_file.read(1024)  # Read first 1KB to test access
                 logger.info(f"File is readable, first few bytes: {test_bytes[:20]}")
             
-            # Now attempt the actual upload
-            logger.info("Starting upload to Supabase...")
-            upload_result = supabase.upload_full_video(file_path=combined_av_path)
+            # Now attempt the actual upload to the full_videos bucket
+            logger.info("Starting upload to Supabase full_videos bucket...")
+            upload_result = supabase.upload_full_video(file_path=combined_av_path, bucket="full_videos")
             logger.info(f"Upload result: {upload_result}")
             
             if not upload_result.get("success", False):
