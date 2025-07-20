@@ -2,6 +2,51 @@
 
 ## Common Issues and Solutions
 
+### Speech Group ID Assignment Issues
+
+**Issue**: Incorrect or missing speech group IDs in parliament clips, causing fragmented speech segments or incorrect speaker attribution.
+
+**Symptoms**:
+- Multiple speech group IDs for the same continuous speech
+- Temporary speech group IDs (format: `temp_XXX`) remaining in the database
+- Inconsistent speaker attribution across speech segments
+- Missing diarization files
+
+**Solution**:
+1. Verify diarization files are being found correctly:
+   ```bash
+   # Check for diarization files in common locations
+   find /app/data/temp -name "*.diarization.json" -o -name "*_speakers.json"
+   ```
+
+2. Force update speech group IDs for a specific video:
+   ```bash
+   # Run the update_speech_groups.py script with --force flag
+   python scripts/update_speech_groups.py --video_path /app/data/media/VIDEO_ID.mp4 --force
+   ```
+
+3. Check for temporary speech group IDs in the database:
+   ```sql
+   -- In SQLite
+   SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id LIKE 'temp_%';
+   ```
+
+4. Verify speech group assignments in the database:
+   ```sql
+   -- In SQLite
+   SELECT speech_group_id, COUNT(*) as clip_count 
+   FROM parliament_clips 
+   GROUP BY speech_group_id 
+   ORDER BY clip_count DESC;
+   ```
+
+5. For performance optimization, consider batch processing speech group updates:
+   ```python
+   # Example batch update code
+   with db.transaction():
+       db.executemany("UPDATE parliament_clips SET speech_group_id = ? WHERE id = ?", updates)
+   ```
+
 ### Missing Tables
 
 **Issue**: 401 Unauthorized errors or 500 Internal Server errors due to missing database tables.
