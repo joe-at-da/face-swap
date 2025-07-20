@@ -36,7 +36,14 @@ def get_supabase_client(use_service_role: bool = False) -> Client:
 
 
 class SupabaseService:
-    """Service for interacting with Supabase."""
+    """Service for interacting with Supabase.
+    
+    This class provides methods for interacting with Supabase, including
+    uploading files, inserting data, and retrieving data.
+    
+    DEPRECATED: This class is deprecated and will be removed in a future release.
+    Please use SupabaseUploader from backend.services.integration.supabase_upload instead.
+    """
     
     def __init__(self, use_service_role: bool = True):
         """
@@ -47,6 +54,9 @@ class SupabaseService:
                              This is required for storage operations and should be
                              used for server-side operations only.
         """
+        import warnings
+        warnings.warn("SupabaseService is deprecated. Please use SupabaseUploader from backend.services.integration.supabase_upload instead.", DeprecationWarning)
+        
         self.client = get_supabase_client(use_service_role=use_service_role)
         # Only using full_videos_bucket for all uploads
         self.full_videos_bucket = settings.SUPABASE_FULL_VIDEOS_BUCKET
@@ -58,17 +68,26 @@ class SupabaseService:
         """
         Insert video data into Supabase 'videos' table.
         
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader instead.
+        
         Args:
             video_data: Dictionary containing video metadata
             
         Returns:
             Response from Supabase
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.insert_video is deprecated. Please use SupabaseUploader instead.",
+            DeprecationWarning, stacklevel=2
+        )
         return self.client.table('videos').insert(video_data).execute()
     
     def insert_clip(self, clip_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Insert clip data into Supabase 'clips' table.
+        
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader instead.
         
         Args:
             clip_data: Dictionary containing clip metadata
@@ -76,11 +95,18 @@ class SupabaseService:
         Returns:
             Response from Supabase
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.insert_clip is deprecated. Please use SupabaseUploader instead.",
+            DeprecationWarning, stacklevel=2
+        )
         return self.client.table('clips').insert(clip_data).execute()
     
     def get_video_status(self, video_id: str) -> Optional[Dict[str, Any]]:
         """
         Get video status from Supabase.
+        
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader instead.
         
         Args:
             video_id: ID of the video to check
@@ -88,6 +114,11 @@ class SupabaseService:
         Returns:
             Video data if found, None otherwise
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.get_video_status is deprecated. Please use SupabaseUploader instead.",
+            DeprecationWarning, stacklevel=2
+        )
         response = self.client.table('videos').select('*').eq('video_id', video_id).execute()
         data = response.data
         
@@ -101,6 +132,9 @@ class SupabaseService:
         """
         Upload a file to Supabase Storage.
         
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader.upload_full_video instead,
+        which provides better support for large file uploads with extended timeouts.
+        
         Args:
             bucket: Storage bucket name (ignored, always using full_videos_bucket)
             path: Destination path in the bucket
@@ -109,6 +143,12 @@ class SupabaseService:
         Returns:
             Response from Supabase Storage
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.upload_file is deprecated. Please use SupabaseUploader.upload_full_video instead, "
+            "which provides better support for large file uploads with extended timeouts.",
+            DeprecationWarning, stacklevel=2
+        )
         # Always use full_videos_bucket regardless of what bucket was passed
         logger.warning(f"Ignoring specified bucket '{bucket}' and using full_videos_bucket '{self.full_videos_bucket}' instead")
         
@@ -138,6 +178,8 @@ class SupabaseService:
         """
         Get public URL for a file in Supabase Storage.
         
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader.get_public_url instead.
+        
         Args:
             bucket: Storage bucket name (ignored, always using full_videos_bucket)
             path: Path to the file in the bucket
@@ -145,6 +187,11 @@ class SupabaseService:
         Returns:
             Public URL for the file
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.get_public_url is deprecated. Please use SupabaseUploader.get_public_url instead.",
+            DeprecationWarning, stacklevel=2
+        )
         # Always use full_videos_bucket regardless of what bucket was passed
         logger.warning(f"Ignoring specified bucket '{bucket}' and using full_videos_bucket '{self.full_videos_bucket}' instead")
         
@@ -155,8 +202,11 @@ class SupabaseService:
         return self.client.storage.from_(self.full_videos_bucket).get_public_url(destination_path)
         
     def upload_full_video(self, file_path: str, destination_path: str = None, chunk_size: int = 5 * 1024 * 1024, max_retries: int = 3) -> Dict[str, Any]:
-        logger.warning(f"🔄 DEBUG: upload_full_video called for file_path={file_path} - SUPABASE STORAGE UPLOAD ENTRY POINT")
-        """Upload a full video file to Supabase storage.
+        """
+        Upload a full video file to Supabase Storage.
+        
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader.upload_full_video instead,
+        which provides better support for large file uploads with extended timeouts and explicit bucket parameter.
         
         For large files (>100MB), this method will automatically use chunked uploads.
         
@@ -169,6 +219,13 @@ class SupabaseService:
         Returns:
             Dict with upload status and information
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.upload_full_video is deprecated. Please use SupabaseUploader.upload_full_video instead, "
+            "which provides better support for large file uploads with extended timeouts and explicit bucket parameter.",
+            DeprecationWarning, stacklevel=2
+        )
+        logger.warning(f"🔄 DEBUG: upload_full_video called for file_path={file_path} - SUPABASE STORAGE UPLOAD ENTRY POINT")
         if not file_path:
             logger.warning("Video file path is None")
             return {"success": False, "error": "File path is None"}
@@ -405,6 +462,9 @@ class SupabaseService:
         """
         Upload a large file to Supabase Storage in chunks.
         
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader.upload_large_video instead,
+        which provides better support for large file uploads with extended timeouts and explicit bucket parameter.
+        
         This method breaks a large file into smaller chunks and uploads them sequentially,
         maintaining a single file in Supabase storage. This approach prevents timeouts
         and memory issues when uploading large files.
@@ -418,6 +478,12 @@ class SupabaseService:
         Returns:
             Dict with upload status and information
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.upload_large_video is deprecated. Please use SupabaseUploader.upload_large_video instead, "
+            "which provides better support for large file uploads with extended timeouts and explicit bucket parameter.",
+            DeprecationWarning, stacklevel=2
+        )
         import time
         import io
         
@@ -722,6 +788,8 @@ class SupabaseService:
         """
         Previously added a job to the video_processing queue.
         Now just returns success without doing anything since the queue is not needed.
+        
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader instead.
 
         Args:
             video_data: Video data that would have been processed
@@ -729,6 +797,11 @@ class SupabaseService:
         Returns:
             Success response
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.add_to_video_processing_queue is deprecated. Please use SupabaseUploader instead.",
+            DeprecationWarning, stacklevel=2
+        )
         # Just log and return success without attempting to use Supabase
         video_id = video_data.get('video_id', 'unknown')
         logger.info(f"Skipping video processing queue for video ID: {video_id}")
@@ -745,12 +818,21 @@ class SupabaseService:
         """
         Add clips to the parliament_member_clips table.
         
+        DEPRECATED: This method is deprecated. Please use SupabaseUploader.add_to_clip_creation_queue instead,
+        which provides the same functionality with better error handling and validation.
+        
         Args:
             clip_data: List of clip data to process
             
         Returns:
             Response from Supabase
         """
+        import warnings
+        warnings.warn(
+            "SupabaseService.add_to_clip_creation_queue is deprecated. Please use SupabaseUploader.add_to_clip_creation_queue instead, "
+            "which provides the same functionality with better error handling and validation.",
+            DeprecationWarning, stacklevel=2
+        )
         import uuid
         from datetime import datetime
         
