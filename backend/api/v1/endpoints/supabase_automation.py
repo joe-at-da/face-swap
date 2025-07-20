@@ -107,6 +107,8 @@ async def process_parliament_tv_to_supabase(
     
     # Create a background task for the rest of the process
     def process_parliament_tv_task():
+        import json  # Import json module to fix UnboundLocalError
+        import traceback  # Import traceback module for error logging
         try:
             # Step 2: Create capture session
             capture_metadata = {
@@ -315,7 +317,7 @@ async def process_parliament_tv_to_supabase(
                     logger.info(f"Successfully serialized recognition data for session {capture_id}")
                 except Exception as e:
                     logger.error(f"Error serializing recognition data: {str(e)}")
-                    import traceback
+                    # traceback already imported at function start
                     logger.error(f"Traceback: {traceback.format_exc()}")
                     # Create a minimal serializable version
                     serializable_recognition_data = {"error": "Serialization failed", "original_keys": list(recognition_data.keys()) if isinstance(recognition_data, dict) else "Not a dict"}
@@ -325,7 +327,7 @@ async def process_parliament_tv_to_supabase(
                     logger.info(f"Successfully serialized video metadata for session {capture_id}")
                 except Exception as e:
                     logger.error(f"Error serializing video metadata: {str(e)}")
-                    import traceback
+                    # traceback already imported at function start
                     logger.error(f"Traceback: {traceback.format_exc()}")
                     # Create a minimal serializable version
                     serializable_video_metadata = {"video_id": capture_id, "error": "Serialization failed"}
@@ -351,7 +353,7 @@ async def process_parliament_tv_to_supabase(
                             logger.info(f"Using combined AV path from metadata: {video_file_path}")
                     except Exception as e:
                         logger.error(f"Error processing metadata for combined AV path: {str(e)}")
-                        import traceback
+                        # traceback already imported at function start
                         logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 logger.info(f"Exporting recognition results to Supabase for session {capture_id} with video path: {video_file_path}")
@@ -384,7 +386,7 @@ async def process_parliament_tv_to_supabase(
                         logger.info(f"Export result for session {capture_id}: {export_result}")
                     except Exception as e:
                         logger.error(f"Error in export_and_upload_recognition: {str(e)}")
-                        import traceback
+                        # traceback already imported at function start
                         logger.error(f"Traceback: {traceback.format_exc()}")
                         export_result = {"error": str(e), "success": False}
                     
@@ -435,7 +437,7 @@ async def process_parliament_tv_to_supabase(
                                     logger.warning(f"🔍 Successfully uploaded combined AV file to Supabase: {full_video_url}")
                             except Exception as e:
                                 logger.error(f"Error uploading combined AV file to Supabase: {str(e)}")
-                                import traceback
+                                # traceback already imported at function start
                                 logger.error(f"Upload traceback: {traceback.format_exc()}")
                     
                     logger.info(f"Full video URL from export: {full_video_url}")
@@ -452,7 +454,7 @@ async def process_parliament_tv_to_supabase(
                         logger.info("Using inline member ID conversion in supabase_client.py")
                     except Exception as sync_error:
                         logger.error(f"Error synchronizing member IDs: {str(sync_error)}")
-                        import traceback
+                        # traceback already imported at function start
                         logger.error(f"Synchronization traceback: {traceback.format_exc()}")
                         # Continue with the export, but log the error
                     
@@ -512,7 +514,7 @@ async def process_parliament_tv_to_supabase(
                         logger.warning(f"Failed clips: {save_result.get('failed_clips', [])}")
                 except Exception as e:
                     logger.error(f"Error saving member clips to Supabase: {str(e)}")
-                    import traceback
+                    # traceback already imported at function start
                     logger.error(f"Traceback: {traceback.format_exc()})")
                 
                 
@@ -598,7 +600,7 @@ async def process_parliament_tv_to_supabase(
                         logger.warning("No valid clips export path found after all attempts. Creating empty export files.")
 
                         # Create empty export files to ensure the pipeline can continue
-                        import json
+                        # json already imported at function start
                         from datetime import datetime
                         
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -644,7 +646,7 @@ async def process_parliament_tv_to_supabase(
                                         capture.capture_metadata = {}
                                     elif isinstance(capture.capture_metadata, str):
                                         try:
-                                            import json
+                                            # json already imported at function start
                                             capture.capture_metadata = json.loads(capture.capture_metadata)
                                         except json.JSONDecodeError:
                                             capture.capture_metadata = {}
@@ -672,7 +674,7 @@ async def process_parliament_tv_to_supabase(
                             logger.warning(f"Verification details: {verification_result}")
                 except Exception as e:
                     logger.error(f"Error verifying MP clips: {str(e)}")
-                    import traceback
+                    # traceback already imported at function start
                     logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 # Update capture status with external ID
