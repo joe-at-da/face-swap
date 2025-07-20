@@ -442,8 +442,24 @@ class SupabaseIntegration:
                     # Upload the combined file directly to the full_videos bucket
                     # Use the original filename as the destination path to preserve the combined_av_XXX_TIMESTAMP.mp4 format
                     logger.info(f"Starting upload of combined AV file to Supabase: {combined_url}")
-                    upload_result = self.supabase.upload_full_video(file_path=combined_url)
+                    
+                    # Configure chunk size based on file size for optimal performance
+                    file_size = os.path.getsize(combined_url)
+                    # Default chunk size is 5MB, but use larger chunks for very large files
+                    chunk_size = 5 * 1024 * 1024  # 5MB default
+                    if file_size > 1 * 1024 * 1024 * 1024:  # If file is larger than 1GB
+                        chunk_size = 10 * 1024 * 1024  # Use 10MB chunks
+                    
+                    logger.info(f"Using chunk size: {chunk_size / (1024 * 1024):.2f}MB for file of size: {file_size / (1024 * 1024):.2f}MB")
+                    
+                    # Call upload_full_video with chunk size and retry parameters
+                    upload_result = self.supabase.upload_full_video(
+                        file_path=combined_url,
+                        chunk_size=chunk_size,
+                        max_retries=3
+                    )
                     logger.info(f"Upload result: {upload_result}")
+                    
                     
                     if upload_result.get("success"):
                         supabase_url = upload_result.get("public_url")

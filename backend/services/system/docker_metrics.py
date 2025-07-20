@@ -31,7 +31,7 @@ class DockerMetrics:
         try:
             # Check if we're running inside a container by looking for container environment
             if os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv'):
-                logger.info("Running inside a container, using process stats instead of Docker stats")
+                # logger.info("Running inside a container, using process stats instead of Docker stats")
                 return DockerMetrics._get_process_stats()
                 
             # Try to run docker stats command to get container metrics
