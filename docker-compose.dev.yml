@@ -8,6 +8,10 @@ services:
     volumes:
       - .:/app
       - ./data/media:/app/media
+    deploy:
+      resources:
+        limits:
+          memory: 6G  # Increased memory allocation for large uploads
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/parliament_clips
       - TEST_DATABASE_URL=postgresql://postgres:postgres@db:5432/test_parliament_clips

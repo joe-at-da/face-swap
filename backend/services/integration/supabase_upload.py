@@ -53,14 +53,14 @@ class SupabaseUploader:
     def upload_full_video(self, file_path: str, destination_path: str = None, chunk_size: int = 5 * 1024 * 1024, bucket: str = "videos", max_retries: int = 3) -> Dict[str, Any]:
         """Upload a full video file to Supabase storage.
         
-        For large files (>100MB), this method will automatically use direct upload with extended timeout.
-        For extremely large files (>50GB), it will use chunked upload as a fallback.
+        For large files (>100MB), this method will automatically use memory-efficient streaming upload with extended timeout.
         
         Args:
             file_path: Path to the file to upload
             destination_path: Path within the bucket to upload to (defaults to filename)
-            chunk_size: Size of each chunk in bytes (default: 5MB)
-            max_retries: Maximum number of retries for each chunk
+            chunk_size: Size of each chunk in bytes (default: 5MB, used only for progress reporting)
+            bucket: Target storage bucket
+            max_retries: Maximum number of retries for upload
             
         Returns:
             Dict with upload status and information
@@ -88,31 +88,22 @@ class SupabaseUploader:
                 logger.warning(f"Video file not found: {file_path}")
                 return {"success": False, "error": f"File not found: {file_path}"}
         
-        # Check file size to ensure it's not empty
+        # Get file size
         file_size = os.path.getsize(file_path)
-        if file_size == 0:
-            logger.error(f"File exists but is empty (0 bytes): {file_path}")
-            return {"success": False, "error": f"File is empty: {file_path}"}
         logger.info(f"File size: {file_size} bytes ({file_size / (1024 * 1024):.2f} MB)")
-        
-        # Tiered approach based on file size
-        large_file_threshold = 100 * 1024 * 1024  # 100MB
-        extremely_large_threshold = 50 * 1024 * 1024 * 1024  # 50GB
-        
-        if file_size > extremely_large_threshold:
-            logger.info(f"Extremely large file detected ({file_size / (1024 * 1024 * 1024):.2f} GB > 50 GB). Using chunked upload.")
-            return self.upload_chunked_video(file_path=file_path, destination_path=destination_path, chunk_size=chunk_size, bucket=bucket, max_retries=max_retries)
-        elif file_size > large_file_threshold:
-            logger.info(f"Large file detected ({file_size / (1024 * 1024):.2f} MB > {large_file_threshold / (1024 * 1024)} MB). Using direct upload with extended timeout.")
-            return self.upload_large_video(file_path=file_path, destination_path=destination_path, bucket=bucket, max_retries=max_retries)
-            
-        # For smaller files, use standard upload
-        logger.info(f"Standard file size detected ({file_size / (1024 * 1024):.2f} MB). Using standard upload.")
         
         # Use the file's basename if no destination path is provided
         if destination_path is None:
             destination_path = os.path.basename(file_path)
-            
+        
+        # For large files (>100MB), use memory-efficient streaming upload with extended timeout
+        if file_size > 100 * 1024 * 1024:
+            logger.info(f"Large file detected ({file_size / (1024 * 1024):.2f} MB). Using memory-efficient streaming upload.")
+            return self.upload_large_video(file_path, destination_path, bucket, max_retries)
+        
+        # For normal files, use standard upload
+        logger.info(f"Standard file size ({file_size / (1024 * 1024):.2f} MB). Using standard upload.")
+        
         # Use the provided bucket parameter
         target_bucket = bucket
         logger.info(f"Using bucket '{target_bucket}' for upload: {destination_path}")
@@ -130,84 +121,63 @@ class SupabaseUploader:
         
         # Start upload
         start_time = time.time()
-        response = None
         
         # Set proper content type for MP4 files
         content_type = "video/mp4" if file_path.lower().endswith(".mp4") else None
         
-        # For MP4 files, we need to ensure proper MIME type and permissions
-        file_options = {
-            "cache-control": "max-age=3600",
-            "upsert": "true"
-        }
-        
-        if content_type:
-            file_options["content-type"] = content_type
-            logger.info(f"Using content-type: {content_type}")
-        
-        # Try upload with retries
-        retry_count = 0
-        success = False
-        error = None
-        
-        while retry_count < max_retries and not success:
-            try:
-                logger.info(f"Upload attempt {retry_count + 1}/{max_retries}")
+        try:
+            # Upload the file
+            with open(file_path, 'rb') as upload_file:
+                # For MP4 files, we need to ensure proper MIME type and permissions
+                file_options = {
+                    "cache-control": "max-age=3600",
+                    "upsert": "true"
+                }
                 
-                # Open the file and upload it
-                with open(file_path, 'rb') as upload_file:
-                    response = self.client.storage.from_(target_bucket).upload(
-                        path=destination_path,
-                        file=upload_file,
-                        file_options=file_options
-                    )
-                    success = True
-                    logger.info(f"Upload successful: {response}")
+                if content_type:
+                    file_options["content-type"] = content_type
                 
-            except Exception as upload_error:
-                retry_count += 1
-                error = str(upload_error)
-                logger.warning(f"Upload attempt {retry_count} failed: {error}")
-                
-                if retry_count < max_retries:
-                    wait_time = 2 ** retry_count  # Exponential backoff
-                    logger.info(f"Retrying upload in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"All {max_retries} upload attempts failed")
-        
-        if not success:
+                # Upload the file
+                response = self.client.storage.from_(target_bucket).upload(
+                    destination_path,
+                    upload_file,
+                    file_options=file_options
+                )
+            
+            # Get the public URL
+            public_url = self.client.storage.from_(target_bucket).get_public_url(destination_path)
+            
+            # Fix the URL if needed (replace host.docker.internal with localhost)
+            if "host.docker.internal" in public_url:
+                public_url = public_url.replace("host.docker.internal", "localhost")
+            
+            # Calculate upload statistics
+            end_time = time.time()
+            upload_duration = end_time - start_time
+            avg_speed = file_size / upload_duration / (1024 * 1024) if upload_duration > 0 else 0
+            
+            logger.info(f"Upload completed in {upload_duration:.2f} seconds")
+            logger.info(f"Average upload speed: {avg_speed:.2f} MB/s")
+            logger.info(f"Public URL: {public_url}")
+            
+            return {
+                "success": True,
+                "file_path": file_path,
+                "url": public_url,
+                "bucket": target_bucket,
+                "path": destination_path,
+                "size": file_size,
+                "upload_time": upload_duration,
+                "average_speed": avg_speed
+            }
+            
+        except Exception as e:
+            logger.error(f"Error uploading file: {str(e)}")
             return {
                 "success": False,
-                "error": error or "Unknown error during upload",
+                "error": str(e),
                 "file_path": file_path
             }
-        
-        # Get the public URL for the uploaded file
-        public_url = self.client.storage.from_(target_bucket).get_public_url(destination_path)
-        
-        # Replace host.docker.internal with localhost for external access
-        if public_url and 'host.docker.internal' in public_url:
-            original_url = public_url
-            public_url = public_url.replace('host.docker.internal', 'localhost')
-            logger.info(f"Converted Docker internal URL '{original_url}' to external URL: '{public_url}'")
-        
-        # Calculate upload statistics
-        total_time = time.time() - start_time
-        avg_speed = file_size / total_time / (1024 * 1024) if total_time > 0 else 0
-        
-        logger.info(f"Upload completed in {total_time:.2f} seconds")
-        logger.info(f"Average upload speed: {avg_speed:.2f} MB/s")
-        
-        return {
-            "success": True,
-            "path": destination_path,
-            "public_url": public_url,
-            "file_size": file_size,
-            "upload_time": total_time,
-            "average_speed": avg_speed,
-            "response": response
-        }
         
     def upload_large_video(self, file_path: str, destination_path: str = None, bucket: str = "videos", max_retries: int = 5) -> Dict[str, Any]:
         """Upload a large video file to Supabase storage using a memory-efficient streaming approach.
