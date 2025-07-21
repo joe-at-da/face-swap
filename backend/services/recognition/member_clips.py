@@ -156,6 +156,10 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
     """
     Update the SQLite database with normalized speaker IDs.
     
+    This function only updates clips that don't already have a valid member_id,
+    preserving member IDs from facial recognition while ensuring consistent speaker attribution
+    for clips without a valid member_id.
+    
     Args:
         db: Database session
         video_id: ID of the video in the database
@@ -303,26 +307,28 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
             # Log the update operation with detailed information
             if member_id is not None:
                 logger.info(f"Updating segments {segment_ids_str} with member_id {member_id} (from speaker_id {speaker_id})")
-            else:
-                logger.warning(f"No member_id available for segments {segment_ids_str} with speaker_id {speaker_id}")
             
             try:
-                # Update the speech group ID for all segments in this group
-                update_sql = text("""UPDATE parliament_clips SET speech_group_id = :speech_group_id WHERE id IN ({segment_ids})""".format(segment_ids=segment_ids_str))
-                result = db.execute(update_sql, {"speech_group_id": speech_group_id})
-                updated_count = result.rowcount
-                
-                # If we have a member_id, update that as well
-                if member_id is not None:
-                    update_member_sql = text("""UPDATE parliament_clips SET member_id = :member_id WHERE id IN ({segment_ids})""".format(segment_ids=segment_ids_str))
-                    member_result = db.execute(update_member_sql, {"member_id": member_id})
-                    member_updated_count = member_result.rowcount
-                    logger.info(f"Updated {member_updated_count} segments with member_id {member_id}")
-                
-                total_updated += updated_count
-                
-                if not is_sqlite:
-                    db.commit()
+                # Update SQL statements to set speech_group_id and member_id for segments
+                if segment_ids:
+                    segment_ids_str = ", ".join([f"'{id}'" for id in segment_ids if id])
+                    
+                    # Update speech_group_id for all segments in this group
+                    update_group_sql = text(f"""UPDATE parliament_clips SET speech_group_id = :speech_group_id WHERE id IN ({segment_ids_str})""")
+                    db.execute(update_group_sql, {"speech_group_id": speech_group_id})
+                    
+                    # Only update member_id for segments that don't already have a valid member_id
+                    # This preserves member IDs from facial recognition
+                    if member_id is not None:
+                        update_member_sql = text(f"""UPDATE parliament_clips SET member_id = :member_id 
+                                              WHERE id IN ({segment_ids_str}) 
+                                              AND (member_id IS NULL OR member_id = '')""")
+                        result = db.execute(update_member_sql, {"member_id": member_id})
+                        updated_count = result.rowcount
+                        logger.info(f"Updated {updated_count} clips without valid member_ids in speech group {speech_group_id} with member_id {member_id}")
+                    
+                    if not is_sqlite:
+                        db.commit()
                     
                 logger.info(f"Updated {updated_count} segments in speech group {speech_group_id} with member_id {member_id}")
                 

@@ -733,8 +733,9 @@ class ParliamentClipsIntegrationService:
         or temporal proximity as a fallback.
         
         For each speech group, this function finds the clip with the highest confidence
-        and uses its member_id for all clips in that speech group, ensuring consistent
-        speaker attribution within speech segments from the same speaker.
+        and uses its member_id ONLY for clips in that speech group that don't already have a valid member_id.
+        This preserves member IDs from facial recognition while ensuring consistent speaker attribution
+        for clips without a valid member_id.
         
         Args:
             video_id: Optional ID of the video to update. If None, update all videos.
@@ -871,12 +872,15 @@ class ParliamentClipsIntegrationService:
                         logger.debug(f"Speech group {speech_group_id} already has consistent member IDs or only contains one clip")
                         continue
                     
-                    # Update all clips in this speech group to use the best member_id
+                    # Only update clips that don't have a valid member_id
+                    # This preserves member IDs from facial recognition
                     cursor.execute(
                         "UPDATE parliament_clips SET member_id = ? "
-                        "WHERE speech_group_id = ? AND (member_id != ? OR member_id IS NULL OR member_id = '')",
-                        (best_member_id, speech_group_id, best_member_id)
+                        "WHERE speech_group_id = ? AND (member_id IS NULL OR member_id = '')",
+                        (best_member_id, speech_group_id)
                     )
+                    
+                    logger.info(f"Preserving existing member IDs in speech group {speech_group_id} - only updating clips without a valid member_id")
                     
                     updated_clips = cursor.rowcount
                     if updated_clips > 0:
