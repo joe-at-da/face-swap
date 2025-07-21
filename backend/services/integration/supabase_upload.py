@@ -8,8 +8,10 @@ import sys
 import time
 import logging
 import requests
+import io
 from typing import Dict, Any, List, Optional
 from supabase import create_client, Client
+from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 
 # Add the project root to the path so we can import from backend
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -208,10 +210,10 @@ class SupabaseUploader:
         }
         
     def upload_large_video(self, file_path: str, destination_path: str = None, bucket: str = "videos", max_retries: int = 5) -> Dict[str, Any]:
-        """Upload a large video file to Supabase storage using a direct upload with extended timeout.
+        """Upload a large video file to Supabase storage using a memory-efficient streaming approach.
     
-        This method uses a direct upload approach with extended timeout and robust error handling:
-        1. Uploads the entire file in a single request with a long timeout (1 hour)
+        This method uses a streaming upload approach with extended timeout and robust error handling:
+        1. Streams the file in memory-efficient chunks with a long timeout (1 hour)
         2. Provides detailed logging and error reporting
         3. Implements retry logic with exponential backoff
     
@@ -278,38 +280,77 @@ class SupabaseUploader:
             try:
                 logger.info(f"Upload attempt {retry_count + 1}/{max_retries} with {extended_timeout}s timeout")
                 
-                # Upload the file directly
-                with open(file_path, 'rb') as upload_file:
-                    # Get the underlying URL for direct upload
-                    url = f"{self.supabase_url}/storage/v1/object/{target_bucket}/{destination_path}"
+                # Get the underlying URL for direct upload
+                url = f"{self.supabase_url}/storage/v1/object/{target_bucket}/{destination_path}"
+                
+                # Create headers with the auth token
+                headers = {
+                    'Authorization': f'Bearer {self.api_key}',
+                    'apiKey': self.api_key
+                }
+                
+                if content_type:
+                    headers['Content-Type'] = content_type
+                
+                # Create a custom session with increased timeout
+                session = requests.Session()
+                session.headers.update(headers)
+                
+                # Create a callback function for monitoring upload progress
+                
+                # Create a callback function to monitor upload progress
+                def create_callback(encoder):
+                    last_report_time = time.time()
+                    last_report_percent = 0
                     
-                    # Create headers with the auth token
-                    headers = {
-                        'Authorization': f'Bearer {self.api_key}',
-                        'apiKey': self.api_key
-                    }
+                    def callback(monitor):
+                        nonlocal last_report_time, last_report_percent
+                        current_time = time.time()
+                        current_percent = int((monitor.bytes_read / monitor.len) * 100)
+                        
+                        # Report progress every 5% or 30 seconds
+                        if (current_percent >= last_report_percent + 5) or \
+                           (current_time - last_report_time >= 30):
+                            logger.info(f"Upload progress: {current_percent}% ({monitor.bytes_read / (1024*1024):.2f} MB of {monitor.len / (1024*1024):.2f} MB)")
+                            last_report_time = current_time
+                            last_report_percent = current_percent
                     
-                    # Create a custom session with increased timeout
-                    session = requests.Session()
-                    session.headers.update(headers)
-                    
-                    # Upload the file with the extended timeout
-                    logger.info(f"Starting direct upload of {file_size / (1024 * 1024):.2f} MB with {extended_timeout}s timeout")
-                    
-                    # Use the session to upload the file with increased timeout
-                    response = session.post(
-                        url,
-                        files={"file": upload_file},
-                        data=file_options,
-                        timeout=extended_timeout
+                    return callback
+                
+                # Open the file directly for the encoder
+                with open(file_path, 'rb') as file_data:
+                    # Create the multipart encoder with the file
+                    encoder = MultipartEncoder(
+                        fields={
+                            **file_options,
+                            'file': (os.path.basename(file_path), file_data, content_type or 'application/octet-stream')
+                        }
                     )
                     
-                    # Check if the upload was successful
-                    if response.status_code == 200:
-                        success = True
-                        logger.info(f"Upload successful with status code {response.status_code}")
-                    else:
-                        raise Exception(f"Upload failed with status code {response.status_code}: {response.text}")
+                    # Create a monitor for the encoder with progress callback
+                    monitor = MultipartEncoderMonitor(encoder, create_callback(encoder))
+                    
+                    # Update headers with the content type from the encoder
+                    headers['Content-Type'] = monitor.content_type
+                    
+                    logger.info(f"Starting streaming upload of {file_size / (1024 * 1024):.2f} MB with {extended_timeout}s timeout")
+                    
+                    # Use the session to upload the file with increased timeout and streaming
+                    response = session.post(
+                        url,
+                        data=monitor,
+                        headers=headers,
+                        timeout=extended_timeout
+                    )
+                
+                # The encoder, monitor, and request are now handled in the with block above
+                
+                # Check if the upload was successful
+                if response.status_code == 200:
+                    success = True
+                    logger.info(f"Upload successful with status code {response.status_code}")
+                else:
+                    raise Exception(f"Upload failed with status code {response.status_code}: {response.text}")
             
             except Exception as upload_error:
                 retry_count += 1
