@@ -538,16 +538,54 @@ def save_member_clips_to_supabase(
     # Process diarized speaker segments if available
     if "diarized_speaker_segments" in recognition_results and recognition_results["diarized_speaker_segments"]:
         logger.info("Processing diarized speaker segments")
-        for segment in recognition_results["diarized_speaker_segments"]:
-            speaker_segments.append({
-                "speaker_id": segment["speaker_id"],
-                "speaker_name": segment["speaker_name"],
-                "start_time": segment["start_time"],
-                "end_time": segment["end_time"],
-                "confidence": segment.get("confidence", 0.7),
-                "recognition_method": "diarizer",
-                "transcript": segment.get("transcript", "")
-            })
+        
+        # First check if we have speech groups available
+        if "speech_groups" in recognition_results and recognition_results["speech_groups"]:
+            logger.info(f"Using {len(recognition_results['speech_groups'])} speech groups for clip generation")
+            
+            # Process each speech group as a single segment
+            for group_id, group_data in recognition_results["speech_groups"].items():
+                # Skip groups with no segments
+                if not group_data or "segments" not in group_data or not group_data["segments"]:
+                    continue
+                    
+                # Get speaker info from the first segment
+                first_segment = group_data["segments"][0]
+                speaker_id = first_segment.get("speaker_id", "")
+                speaker_name = first_segment.get("speaker_name", "Unknown Speaker")
+                
+                # Combine all transcripts in the group
+                combined_transcript = " ".join([s.get("transcript", "") for s in group_data["segments"] if s.get("transcript")])
+                
+                # Calculate average confidence
+                confidences = [s.get("confidence", 0.7) for s in group_data["segments"] if s.get("confidence") is not None]
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0.7
+                
+                # Add the speech group as a single segment
+                speaker_segments.append({
+                    "speaker_id": speaker_id,
+                    "speaker_name": speaker_name,
+                    "start_time": group_data.get("start_time", 0),
+                    "end_time": group_data.get("end_time", 0),
+                    "confidence": avg_confidence,
+                    "recognition_method": "diarizer",
+                    "transcript": combined_transcript,
+                    "speech_group_id": group_id
+                })
+        else:
+            # Fall back to individual segments if no speech groups
+            logger.info("No speech groups found, processing individual diarized segments")
+            for segment in recognition_results["diarized_speaker_segments"]:
+                speaker_segments.append({
+                    "speaker_id": segment["speaker_id"],
+                    "speaker_name": segment["speaker_name"],
+                    "start_time": segment["start_time"],
+                    "end_time": segment["end_time"],
+                    "confidence": segment.get("confidence", 0.7),
+                    "recognition_method": "diarizer",
+                    "transcript": segment.get("transcript", ""),
+                    "speech_group_id": segment.get("speech_group_id")
+                })
     
     # Process speaker segments from voice recognition if available
     elif transcript_data and "speakers" in transcript_data:
@@ -1323,8 +1361,9 @@ def enhance_segments_with_diarization(
         # Process the diarization results
         diarized_segments = []
         speaker_segments = {}
+        speech_groups = {}
         
-        # First pass: Group segments by speaker
+        # First pass: Group segments by speaker and speech group
         for segment in result.get("segments", []):
             if "speaker" not in segment:
                 continue
@@ -1336,67 +1375,127 @@ def enhance_segments_with_diarization(
             text = segment.get("text", "")
             confidence = speaker_info.get("confidence", 0.7)
             
+            # Get speech group ID if available, otherwise use a default
+            speech_group_id = segment.get("speech_group_id", None)
+            
             # Initialize speaker dict if not exists
             if speaker_id not in speaker_segments:
                 speaker_segments[speaker_id] = []
             
             # Add this segment to the speaker's list
-            speaker_segments[speaker_id].append({
+            segment_data = {
                 "start_time": start_time,
                 "end_time": end_time,
                 "text": text,
-                "confidence": confidence
-            })
+                "confidence": confidence,
+                "speech_group_id": speech_group_id
+            }
+            speaker_segments[speaker_id].append(segment_data)
+            
+            # Group by speech_group_id if available
+            if speech_group_id is not None:
+                if speech_group_id not in speech_groups:
+                    speech_groups[speech_group_id] = []
+                speech_groups[speech_group_id].append(segment_data)
         
         logger.info(f"Found {len(speaker_segments)} unique speakers in diarization results")
         
-        # Second pass: Merge adjacent segments by speaker with small gaps
+        # Second pass: Use speech groups if available, otherwise merge adjacent segments by speaker
         MAX_MERGE_GAP = 2.0  # Maximum gap in seconds to merge segments
         
-        for speaker_id, segments in speaker_segments.items():
-            # Sort segments by start time
-            segments.sort(key=lambda x: x["start_time"])
+        # If we have speech groups from the diarizer, use those directly
+        if speech_groups:
+            logger.info(f"Using {len(speech_groups)} speech groups from diarization results")
             
-            # Merge adjacent segments with small gaps
-            merged_segments = []
-            current_segment = None
-            
-            for segment in segments:
-                if current_segment is None:
-                    current_segment = segment.copy()
-                    continue
+            # Process each speech group
+            for group_id, group_segments in speech_groups.items():
+                # Sort segments by start time
+                group_segments.sort(key=lambda x: x["start_time"])
                 
-                # If gap is small enough, merge segments
-                if segment["start_time"] - current_segment["end_time"] <= MAX_MERGE_GAP:
-                    # Extend current segment
-                    current_segment["end_time"] = segment["end_time"]
-                    if segment["text"]:
-                        if current_segment["text"]:
-                            current_segment["text"] += " " + segment["text"]
-                        else:
-                            current_segment["text"] = segment["text"]
-                    # Use max confidence
-                    current_segment["confidence"] = max(current_segment["confidence"], segment["confidence"])
-                else:
-                    # Add current segment and start a new one
-                    merged_segments.append(current_segment)
-                    current_segment = segment.copy()
-            
-            # Add the last segment
-            if current_segment:
-                merged_segments.append(current_segment)
-            
-            # Create final speaker segments
-            for segment in merged_segments:
+                # Get the first segment's speaker as the group speaker
+                speaker_id = group_segments[0]["speaker_id"] if "speaker_id" in group_segments[0] else ""
+                
+                # Combine all text in the group
+                combined_text = " ".join([s["text"] for s in group_segments if s["text"]])
+                
+                # Get start and end times from the group
+                start_time = min([s["start_time"] for s in group_segments])
+                end_time = max([s["end_time"] for s in group_segments])
+                
+                # Average confidence across segments
+                avg_confidence = sum([s["confidence"] for s in group_segments]) / len(group_segments) if group_segments else 0.7
+                
+                # Create a segment for this speech group
                 diarized_segments.append({
                     "speaker_id": speaker_id,
                     "speaker_name": speaker_id,  # For now, just use the speaker ID as the name
-                    "start_time": segment["start_time"],
-                    "end_time": segment["end_time"],
-                    "confidence": segment["confidence"],
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "confidence": avg_confidence,
                     "recognition_method": "diarizer",
-                    "transcript": segment["text"]
+                    "transcript": combined_text,
+                    "speech_group_id": group_id
                 })
+        else:
+            # Fall back to the original merging logic if no speech groups are available
+            logger.info("No speech groups found, falling back to segment merging logic")
+            
+            for speaker_id, segments in speaker_segments.items():
+                # Sort segments by start time
+                segments.sort(key=lambda x: x["start_time"])
+                
+                # Merge adjacent segments with small gaps
+                merged_segments = []
+                current_segment = None
+                current_group_id = None
+                
+                for segment in segments:
+                    if current_segment is None:
+                        current_segment = segment.copy()
+                        current_group_id = segment.get("speech_group_id")
+                        continue
+                    
+                    # If this segment has a different speech group ID, don't merge
+                    segment_group_id = segment.get("speech_group_id")
+                    if current_group_id is not None and segment_group_id is not None and current_group_id != segment_group_id:
+                        merged_segments.append(current_segment)
+                        current_segment = segment.copy()
+                        current_group_id = segment_group_id
+                        continue
+                    
+                    # If gap is small enough, merge segments
+                    if segment["start_time"] - current_segment["end_time"] <= MAX_MERGE_GAP:
+                        # Extend current segment
+                        current_segment["end_time"] = segment["end_time"]
+                        if segment["text"]:
+                            if current_segment["text"]:
+                                current_segment["text"] += " " + segment["text"]
+                            else:
+                                current_segment["text"] = segment["text"]
+                        # Use max confidence
+                        current_segment["confidence"] = max(current_segment["confidence"], segment["confidence"])
+                    else:
+                        # Add current segment and start a new one
+                        merged_segments.append(current_segment)
+                        current_segment = segment.copy()
+                        current_group_id = segment_group_id
+                
+                # Add the last segment
+                if current_segment:
+                    merged_segments.append(current_segment)
+                
+                # Create final speaker segments
+                for segment in merged_segments:
+                    diarized_segments.append({
+                        "speaker_id": speaker_id,
+                        "speaker_name": speaker_id,  # For now, just use the speaker ID as the name
+                        "start_time": segment["start_time"],
+                        "end_time": segment["end_time"],
+                        "confidence": segment["confidence"],
+                        "recognition_method": "diarizer",
+                        "transcript": segment["text"],
+                        "speech_group_id": segment.get("speech_group_id")
+                    })
             
             logger.info(f"Speaker {speaker_id}: {len(segments)} raw segments merged into {len(merged_segments)} coherent segments")
         
@@ -1406,6 +1505,20 @@ def enhance_segments_with_diarization(
         # Replace or merge speaker segments
         if diarized_segments:
             logger.info(f"Found {len(diarized_segments)} diarized speaker segments")
+            
+            # Group segments by speech_group_id for easier access
+            grouped_segments = {}
+            for segment in diarized_segments:
+                group_id = segment.get("speech_group_id")
+                if group_id:
+                    if group_id not in grouped_segments:
+                        grouped_segments[group_id] = []
+                    grouped_segments[group_id].append(segment)
+            
+            # Add speech groups information if available
+            if grouped_segments:
+                logger.info(f"Organized segments into {len(grouped_segments)} speech groups")
+                enhanced_results["speech_groups"] = grouped_segments
             
             # For now, we'll completely replace the speaker segments with diarized ones
             # Later, we could implement a more sophisticated merging strategy

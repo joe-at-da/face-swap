@@ -420,6 +420,7 @@ async def process_parliament_tv_to_supabase(
                     # If still None, check if there's a combined AV file in the media directory
                     if not full_video_url:
                         from backend.core.config import settings
+                        import glob  # Local import to ensure it's available in this scope
                         media_dir = settings.MEDIA_STORAGE_PATH
                         combined_files = glob.glob(os.path.join(media_dir, f"combined_av_{capture_id}_*.mp4"))
                         if combined_files:

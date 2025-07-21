@@ -261,6 +261,10 @@ class SpeakerDiarizer:
             speakers = {}
             segments = []
             total_duration = 0
+            current_speech_group = 0
+            last_speaker = None
+            max_gap_threshold = 1.0  # Maximum gap in seconds to consider segments part of the same speech
+            last_end_time = 0
             
             # Extract segments from diarization output
             for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -269,12 +273,20 @@ class SpeakerDiarizer:
                 duration = end_time - start_time
                 total_duration = max(total_duration, end_time)
                 
-                # Add segment
+                # Determine if we need a new speech group
+                # Create a new speech group if:
+                # 1. Speaker changes, or
+                # 2. Gap between segments is too large (even for the same speaker)
+                if speaker != last_speaker or (start_time - last_end_time) > max_gap_threshold:
+                    current_speech_group += 1
+                
+                # Add segment with speech group ID
                 segment = {
                     "speaker": speaker,
                     "start_time": start_time,
                     "end_time": end_time,
-                    "duration": duration
+                    "duration": duration,
+                    "speech_group_id": current_speech_group
                 }
                 segments.append(segment)
                 
@@ -283,11 +295,42 @@ class SpeakerDiarizer:
                     speakers[speaker] = {
                         "segments": 0,
                         "total_duration": 0,
+                        "speech_groups": set(),
                         "metadata": {}
                     }
                 
                 speakers[speaker]["segments"] += 1
                 speakers[speaker]["total_duration"] += duration
+                speakers[speaker]["speech_groups"].add(current_speech_group)
+                
+                # Update tracking variables
+                last_speaker = speaker
+                last_end_time = end_time
+            
+            # Convert speech_groups from set to list for JSON serialization
+            for speaker_id, speaker_data in speakers.items():
+                if "speech_groups" in speaker_data:
+                    speaker_data["speech_groups"] = list(speaker_data["speech_groups"])
+            
+            # Group segments by speech_group_id
+            speech_groups = {}
+            for segment in segments:
+                group_id = segment["speech_group_id"]
+                if group_id not in speech_groups:
+                    speech_groups[group_id] = {
+                        "speaker": segment["speaker"],
+                        "segments": [],
+                        "start_time": segment["start_time"],
+                        "end_time": segment["end_time"],
+                        "duration": segment["duration"]
+                    }
+                else:
+                    # Update group information
+                    speech_groups[group_id]["end_time"] = segment["end_time"]
+                    speech_groups[group_id]["duration"] += segment["duration"]
+                
+                # Add segment to its group
+                speech_groups[group_id]["segments"].append(segment)
             
             # Create the results dictionary
             diarization_results = {
@@ -295,11 +338,13 @@ class SpeakerDiarizer:
                 "output_file": str(output_path),
                 "speakers": speakers,
                 "segments": segments,
+                "speech_groups": speech_groups,
                 "processing_info": {
                     "processed_at": datetime.now().isoformat(),
                     "total_duration": total_duration,
                     "model": f"pyannote-audio-{model_size}",
-                    "num_speakers": len(speakers)
+                    "num_speakers": len(speakers),
+                    "num_speech_groups": len(speech_groups)
                 }
             }
             
@@ -366,14 +411,24 @@ class SpeakerDiarizer:
         # Create segments
         segments = []
         current_time = 0
+        last_speaker = None
+        current_speech_group = 0
         
         # Minimum segment duration (3-8 seconds)
         min_segment = 3
         max_segment = 8
         
+        # Initialize speech_groups field in speaker data
+        for speaker_id in speakers:
+            speakers[speaker_id]["speech_groups"] = set()
+        
         while current_time < total_duration:
             # Select a speaker
             speaker_id = f"SPEAKER_{random.randint(1, num_speakers)}"
+            
+            # Determine if we need a new speech group
+            if speaker_id != last_speaker:
+                current_speech_group += 1
             
             # Determine segment duration (between min_segment and max_segment seconds)
             segment_duration = random.uniform(min_segment, max_segment)
@@ -382,21 +437,51 @@ class SpeakerDiarizer:
             if current_time + segment_duration > total_duration:
                 segment_duration = total_duration - current_time
             
-            # Create segment
+            # Create segment with speech group ID
             segment = {
                 "speaker": speaker_id,
                 "start_time": current_time,
                 "end_time": current_time + segment_duration,
-                "duration": segment_duration
+                "duration": segment_duration,
+                "speech_group_id": current_speech_group
             }
             segments.append(segment)
             
             # Update speaker statistics
             speakers[speaker_id]["segments"] += 1
             speakers[speaker_id]["total_duration"] += segment_duration
+            speakers[speaker_id]["speech_groups"].add(current_speech_group)
+            
+            # Update tracking variables
+            last_speaker = speaker_id
             
             # Move to next segment
             current_time += segment_duration
+        
+        # Convert speech_groups from set to list for JSON serialization
+        for speaker_id, speaker_data in speakers.items():
+            if "speech_groups" in speaker_data:
+                speaker_data["speech_groups"] = list(speaker_data["speech_groups"])
+        
+        # Group segments by speech_group_id
+        speech_groups = {}
+        for segment in segments:
+            group_id = segment["speech_group_id"]
+            if group_id not in speech_groups:
+                speech_groups[group_id] = {
+                    "speaker": segment["speaker"],
+                    "segments": [],
+                    "start_time": segment["start_time"],
+                    "end_time": segment["end_time"],
+                    "duration": segment["duration"]
+                }
+            else:
+                # Update group information
+                speech_groups[group_id]["end_time"] = segment["end_time"]
+                speech_groups[group_id]["duration"] += segment["duration"]
+            
+            # Add segment to its group
+            speech_groups[group_id]["segments"].append(segment)
         
         # Create the results dictionary
         diarization_results = {
@@ -404,11 +489,13 @@ class SpeakerDiarizer:
             "output_file": str(output_path),
             "speakers": speakers,
             "segments": segments,
+            "speech_groups": speech_groups,
             "processing_info": {
                 "processed_at": datetime.now().isoformat(),
                 "total_duration": total_duration,
                 "model": "fallback",
-                "num_speakers": num_speakers
+                "num_speakers": num_speakers,
+                "num_speech_groups": len(speech_groups)
             }
         }
         
