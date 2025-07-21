@@ -128,10 +128,10 @@ def normalize_speaker_ids(segments):
                 logger.info(f"Changing speaker_id from {segment['speaker_id']} to {highest_conf_speaker_id} based on confidence")
                 segment["speaker_id"] = highest_conf_speaker_id
                 
-            # Make sure member_id is also set to match the speaker_id for consistency
-            # This ensures that when the database is updated, it uses the correct member ID
-            if "member_id" in segment and str(segment["member_id"]) != highest_conf_speaker_id:
-                logger.info(f"Updating member_id from {segment['member_id']} to {highest_conf_speaker_id} for consistency")
+            # Set all member_ids in this speech group to the highest confidence member_id
+            # This ensures consistent speaker attribution across the speech group
+            if "member_id" not in segment or segment.get("member_id") != highest_conf_speaker_id:
+                logger.info(f"Setting member_id from {segment.get('member_id')} to {highest_conf_speaker_id} (highest confidence in speech group)")
                 segment["member_id"] = highest_conf_speaker_id
                 
             # Add speech_group_id to the segment
@@ -143,11 +143,15 @@ def normalize_speaker_ids(segments):
             "speech_group_id": speech_group_id,
             "segment_ids": segment_ids,
             "speaker_id": highest_conf_speaker_id,
-            "member_id": highest_conf_speaker_id,  # Ensure member_id is also set correctly
+            "member_id": highest_conf_speaker_id,  # Use the highest confidence member ID for the entire speech group
             "confidence": highest_conf,
             "start_time": block[0]["start_time"],
             "end_time": block[-1]["end_time"]
         })
+        
+        logger.info(f"Created speech group {speech_group_id} with member_id {highest_conf_speaker_id} (confidence: {highest_conf})")
+        logger.info(f"Speech group contains {len(segment_ids)} segments from {block[0]['start_time']} to {block[-1]['end_time']}")
+        
     
     return normalized_segments, speech_groups
 
@@ -834,50 +838,22 @@ def save_member_clips_to_supabase(
     if current_segment is not None:
         merged_segments.append(current_segment)
     
-    # TEMPORARILY COMMENTED OUT: Normalize speaker IDs across continuous speech segments based on confidence scores
+    # Normalize speaker IDs across continuous speech segments based on confidence scores
     # This ensures consistent speaker attribution across segments that are likely part of the same speech
-    # merged_segments, speech_groups = normalize_speaker_ids(merged_segments)
-    # logger.info(f"Applied speaker ID normalization based on confidence scores")
+    merged_segments, speech_groups = normalize_speaker_ids(merged_segments)
+    logger.info(f"Applied speaker ID normalization based on confidence scores")
     
-    # Instead, create speech_groups directly from the unnormalized segments
-    # This will preserve the original speaker IDs and member IDs from facial recognition
-    speech_groups = []
-    for idx, segment in enumerate(merged_segments):
-        speech_group_id = f"speech_group_unnormalized_{idx}_{int(segment['start_time'])}"
-        segment["speech_group_id"] = speech_group_id
-        
-        # Create a speech group for each segment
-        segment_id = None
-        if "id" in segment:
-            segment_id = segment["id"]
-        elif "segment_id" in segment:
-            segment_id = segment["segment_id"]
-        elif "db_id" in segment:
-            segment_id = segment["db_id"]
-            
-        segment_ids = [segment_id] if segment_id is not None else []
-        
-        # Check if we have a member_id from facial recognition
-        # If the speaker_id is numeric, it's likely from facial recognition
-        member_id = None
-        if "member_id" in segment and segment["member_id"] is not None:
-            member_id = segment["member_id"]
-            logger.info(f"Using existing member_id {member_id} from segment")
-        elif isinstance(segment["speaker_id"], str) and segment["speaker_id"].isdigit():
-            member_id = int(segment["speaker_id"])
-            logger.info(f"Using numeric speaker_id {segment['speaker_id']} as member_id {member_id}")
-        
-        speech_groups.append({
-            "speech_group_id": speech_group_id,
-            "segment_ids": segment_ids,
-            "speaker_id": segment["speaker_id"],
-            "member_id": member_id,  # Include member_id in the speech group
-            "confidence": segment.get("confidence", 0),
-            "start_time": segment["start_time"],
-            "end_time": segment["end_time"]
-        })
-        
-    logger.info(f"Created {len(speech_groups)} unnormalized speech groups (normalization disabled)")
+    # The normalize_speaker_ids function already returns speech groups with normalized speaker IDs
+    # We don't need to create them manually
+    logger.info(f"Created {len(speech_groups)} normalized speech groups")
+    
+    # Log the speech groups for debugging
+    for sg in speech_groups:
+        logger.info(f"Speech group {sg['speech_group_id']}: speaker_id={sg['speaker_id']}, member_id={sg.get('member_id')}, confidence={sg.get('confidence', 0)}")
+        if 'segment_ids' in sg:
+            logger.info(f"  Segment IDs: {sg['segment_ids']}")
+        else:
+            logger.info(f"  No segment IDs in speech group")
 
     
     # Get member ID mapping from database
