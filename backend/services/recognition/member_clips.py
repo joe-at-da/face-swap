@@ -269,72 +269,63 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
         for speech_group in speech_groups:
             speaker_id = speech_group["speaker_id"]
             
-            # Check if the speaker_id is already a numeric member ID (from facial recognition)
+            # Check if this speech group has a member_id already (from facial recognition)
+            # This ensures we preserve the original member_id if it exists
+            if "member_id" in speech_group and speech_group["member_id"] is not None:
+                member_id = speech_group["member_id"]
+                logger.info(f"Using existing member_id {member_id} from speech group")
+            # Check if the speaker_id is a numeric member ID (from facial recognition)
             # If it is, use it directly instead of looking it up in the mapping
-            if speaker_id.isdigit():
+            elif isinstance(speaker_id, str) and speaker_id.isdigit():
                 member_id = int(speaker_id)
                 logger.info(f"Using numeric speaker_id {speaker_id} directly as member_id {member_id}")
             else:
-                # Try to map the speaker_id to a member_id using the mapping
                 member_id = member_id_mapping.get(speaker_id)
-                logger.info(f"Mapped speaker_id {speaker_id} to member_id {member_id}")
+                if member_id is not None:
+                    logger.info(f"Mapped speaker_id {speaker_id} to member_id {member_id} using mapping")
+                else:
+                    logger.warning(f"No mapping found for speaker_id {speaker_id}, member_id will be NULL")
             
             speech_group_id = speech_group["speech_group_id"]
-            segment_ids = speech_group["segment_ids"]
-            start_time = speech_group["start_time"]
-            end_time = speech_group["end_time"]
+            segment_ids = speech_group.get("segment_ids", [])
             
-            # If we don't have segment IDs from the database, try to match by timestamps
+            # Skip if no segment IDs
             if not segment_ids:
-                logger.warning(f"No segment IDs found for speech group {speech_group_id}, trying to match by timestamps")
-                
-                # Find all clips in this time range
-                matching_db_ids = []
-                for (clip_start, clip_end), db_id in db_clips.items():
-                    # Check if this clip overlaps with our speech group
-                    if (clip_start <= end_time and clip_end >= start_time):
-                        matching_db_ids.append(db_id)
-                
-                if matching_db_ids:
-                    segment_ids = matching_db_ids
-                    logger.info(f"Found {len(matching_db_ids)} matching clips by timestamp for speech group {speech_group_id}")
-            
-            if not segment_ids:
-                logger.warning(f"Still no segment IDs found for speech group {speech_group_id}")
+                logger.warning(f"No segment IDs for speech group {speech_group_id}, skipping")
                 continue
-                
-            # Format IDs without quotes for integer IDs
-            segment_ids_str = ", ".join([str(id) for id in segment_ids])
+            
+            # Format the segment IDs for the SQL query
+            segment_ids_str = ", ".join([f"'{id}'" if isinstance(id, str) else str(id) for id in segment_ids if id is not None])
+            if not segment_ids_str:
+                logger.warning(f"No valid segment IDs for speech group {speech_group_id}, skipping")
+                continue
+            
+            # Log the update operation with detailed information
+            if member_id is not None:
+                logger.info(f"Updating segments {segment_ids_str} with member_id {member_id} (from speaker_id {speaker_id})")
+            else:
+                logger.warning(f"No member_id available for segments {segment_ids_str} with speaker_id {speaker_id}")
             
             try:
-                # Prepare the SQL update statement based on the actual database schema
-                update_sql = text("""
-                    UPDATE parliament_clips 
-                    SET 
-                        speech_group_id = :speech_group_id
-                    WHERE 
-                        id IN ({segment_ids})
-                """.format(segment_ids=segment_ids_str))
-                
-                logger.info(f"SQL update statement: {update_sql}")
-                logger.info(f"Using speech_group_id: {speech_group_id}")
-                
-                # Execute the update with the correct parameters
-                result = db.execute(
-                    update_sql,
-                    {
-                        "speech_group_id": speech_group_id
-                    }
-                )
-                
-                # Get number of rows affected
+                # Update the speech group ID for all segments in this group
+                update_sql = text("""UPDATE parliament_clips SET speech_group_id = :speech_group_id WHERE id IN ({segment_ids})""".format(segment_ids=segment_ids_str))
+                result = db.execute(update_sql, {"speech_group_id": speech_group_id})
                 updated_count = result.rowcount
+                
+                # If we have a member_id, update that as well
+                if member_id is not None:
+                    update_member_sql = text("""UPDATE parliament_clips SET member_id = :member_id WHERE id IN ({segment_ids})""".format(segment_ids=segment_ids_str))
+                    member_result = db.execute(update_member_sql, {"member_id": member_id})
+                    member_updated_count = member_result.rowcount
+                    logger.info(f"Updated {member_updated_count} segments with member_id {member_id}")
+                
                 total_updated += updated_count
                 
-                # Commit after each update to avoid long transactions
-                if not is_sqlite:  # PostgreSQL benefits from more frequent commits
+                if not is_sqlite:
                     db.commit()
-                    logger.info(f"Committed update for speech group {speech_group_id}")
+                    
+                logger.info(f"Updated {updated_count} segments in speech group {speech_group_id} with member_id {member_id}")
+                
             except Exception as e:
                 logger.error(f"Error updating speech group {speech_group_id}: {str(e)}")
                 # Check if this is a transaction abort error
@@ -353,8 +344,6 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                         transaction_error = True
                         break
                 # Continue with the next speech group
-            
-            logger.info(f"Updated {updated_count} segments in speech group {speech_group_id} with member_id {member_id}")
         
         # Check if we had a transaction error
         if transaction_error:
@@ -839,10 +828,51 @@ def save_member_clips_to_supabase(
     if current_segment is not None:
         merged_segments.append(current_segment)
     
-    # Normalize speaker IDs across continuous speech segments based on confidence scores
+    # TEMPORARILY COMMENTED OUT: Normalize speaker IDs across continuous speech segments based on confidence scores
     # This ensures consistent speaker attribution across segments that are likely part of the same speech
-    merged_segments, speech_groups = normalize_speaker_ids(merged_segments)
-    logger.info(f"Applied speaker ID normalization based on confidence scores")
+    # merged_segments, speech_groups = normalize_speaker_ids(merged_segments)
+    # logger.info(f"Applied speaker ID normalization based on confidence scores")
+    
+    # Instead, create speech_groups directly from the unnormalized segments
+    # This will preserve the original speaker IDs and member IDs from facial recognition
+    speech_groups = []
+    for idx, segment in enumerate(merged_segments):
+        speech_group_id = f"speech_group_unnormalized_{idx}_{int(segment['start_time'])}"
+        segment["speech_group_id"] = speech_group_id
+        
+        # Create a speech group for each segment
+        segment_id = None
+        if "id" in segment:
+            segment_id = segment["id"]
+        elif "segment_id" in segment:
+            segment_id = segment["segment_id"]
+        elif "db_id" in segment:
+            segment_id = segment["db_id"]
+            
+        segment_ids = [segment_id] if segment_id is not None else []
+        
+        # Check if we have a member_id from facial recognition
+        # If the speaker_id is numeric, it's likely from facial recognition
+        member_id = None
+        if "member_id" in segment and segment["member_id"] is not None:
+            member_id = segment["member_id"]
+            logger.info(f"Using existing member_id {member_id} from segment")
+        elif isinstance(segment["speaker_id"], str) and segment["speaker_id"].isdigit():
+            member_id = int(segment["speaker_id"])
+            logger.info(f"Using numeric speaker_id {segment['speaker_id']} as member_id {member_id}")
+        
+        speech_groups.append({
+            "speech_group_id": speech_group_id,
+            "segment_ids": segment_ids,
+            "speaker_id": segment["speaker_id"],
+            "member_id": member_id,  # Include member_id in the speech group
+            "confidence": segment.get("confidence", 0),
+            "start_time": segment["start_time"],
+            "end_time": segment["end_time"]
+        })
+        
+    logger.info(f"Created {len(speech_groups)} unnormalized speech groups (normalization disabled)")
+
     
     # Get member ID mapping from database
     member_id_mapping = get_member_id_mapping(db, speaker_ids)
@@ -1405,6 +1435,7 @@ def enhance_segments_with_diarization(
                 
             speaker_info = segment["speaker"]
             speaker_id = speaker_info.get("name", "")  # Use name as ID for anonymous speakers
+            member_id = speaker_info.get("id")  # Get member_id if available from facial recognition
             start_time = segment.get("start", 0)
             end_time = segment.get("end", 0)
             text = segment.get("text", "")
@@ -1423,8 +1454,14 @@ def enhance_segments_with_diarization(
                 "end_time": end_time,
                 "text": text,
                 "confidence": confidence,
-                "speech_group_id": speech_group_id
+                "speech_group_id": speech_group_id,
+                "speaker_id": speaker_id
             }
+            
+            # Preserve member_id from facial recognition if available
+            if member_id is not None:
+                segment_data["member_id"] = member_id
+                logger.info(f"Preserving member_id {member_id} from facial recognition in segment {start_time}-{end_time}")
             speaker_segments[speaker_id].append(segment_data)
             
             # Group by speech_group_id if available
@@ -1450,6 +1487,14 @@ def enhance_segments_with_diarization(
                 # Get the first segment's speaker as the group speaker
                 speaker_id = group_segments[0]["speaker_id"] if "speaker_id" in group_segments[0] else ""
                 
+                # Find the highest confidence segment with a member_id from facial recognition
+                segments_with_member_id = [seg for seg in group_segments if "member_id" in seg]
+                member_id = None
+                if segments_with_member_id:
+                    highest_conf_segment = max(segments_with_member_id, key=lambda x: x.get("confidence", 0))
+                    member_id = highest_conf_segment["member_id"]
+                    logger.info(f"Using member_id {member_id} from highest confidence segment in speech group {group_id}")
+                
                 # Combine all text in the group
                 combined_text = " ".join([s["text"] for s in group_segments if s["text"]])
                 
@@ -1461,7 +1506,7 @@ def enhance_segments_with_diarization(
                 avg_confidence = sum([s["confidence"] for s in group_segments]) / len(group_segments) if group_segments else 0.7
                 
                 # Create a segment for this speech group
-                diarized_segments.append({
+                segment_data = {
                     "speaker_id": speaker_id,
                     "speaker_name": speaker_id,  # For now, just use the speaker ID as the name
                     "start_time": start_time,
@@ -1470,7 +1515,14 @@ def enhance_segments_with_diarization(
                     "recognition_method": "diarizer",
                     "transcript": combined_text,
                     "speech_group_id": group_id
-                })
+                }
+                
+                # Preserve member_id from facial recognition if available
+                if member_id is not None:
+                    segment_data["member_id"] = member_id
+                    logger.info(f"Preserving member_id {member_id} in speech group {group_id}")
+                    
+                diarized_segments.append(segment_data)
         else:
             # Fall back to the original merging logic if no speech groups are available
             logger.info("No speech groups found, falling back to segment merging logic")
@@ -1521,7 +1573,7 @@ def enhance_segments_with_diarization(
                 
                 # Create final speaker segments
                 for segment in merged_segments:
-                    diarized_segments.append({
+                    segment_data = {
                         "speaker_id": speaker_id,
                         "speaker_name": speaker_id,  # For now, just use the speaker ID as the name
                         "start_time": segment["start_time"],
@@ -1530,7 +1582,14 @@ def enhance_segments_with_diarization(
                         "recognition_method": "diarizer",
                         "transcript": segment["text"],
                         "speech_group_id": segment.get("speech_group_id")
-                    })
+                    }
+                    
+                    # Preserve member_id from facial recognition if available in the original segment
+                    if "member_id" in segment:
+                        segment_data["member_id"] = segment["member_id"]
+                        logger.info(f"Preserving member_id {segment['member_id']} in merged segment {segment['start_time']}-{segment['end_time']}")
+                        
+                    diarized_segments.append(segment_data)
             
             logger.info(f"Speaker {speaker_id}: {len(segments)} raw segments merged into {len(merged_segments)} coherent segments")
         
