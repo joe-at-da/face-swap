@@ -75,14 +75,32 @@ def normalize_speaker_ids(segments):
         speech_group_id = f"speech_group_{block_idx}_{int(block[0]['start_time'])}"
         
         # Find the segment with the highest confidence in this block
-        highest_conf_segment = max(block, key=lambda x: x.get("confidence", 0))
-        highest_conf_speaker_id = highest_conf_segment["speaker_id"]
-        highest_conf = highest_conf_segment.get("confidence", 0)
+        # IMPORTANT: Prioritize numeric member IDs (like 4621) over UUIDs or generic speaker IDs
+        # This ensures we use the real member IDs from facial recognition when available
+        
+        # First, check if any segment has a numeric member_id (from facial recognition)
+        numeric_id_segments = [seg for seg in block if "member_id" in seg and isinstance(seg.get("member_id"), (int, float, str)) 
+                              and str(seg.get("member_id")).isdigit()]
+        
+        if numeric_id_segments:
+            # If we have segments with numeric member IDs, find the one with highest confidence
+            highest_conf_segment = max(numeric_id_segments, key=lambda x: x.get("confidence", 0))
+            highest_conf = highest_conf_segment.get("confidence", 0)
+            
+            # Use the member_id as the speaker_id for normalization
+            highest_conf_speaker_id = str(highest_conf_segment["member_id"])
+            logger.info(f"Using numeric member_id {highest_conf_speaker_id} with confidence {highest_conf} for speech group")
+        else:
+            # Fall back to using the highest confidence segment's speaker_id
+            highest_conf_segment = max(block, key=lambda x: x.get("confidence", 0))
+            highest_conf_speaker_id = highest_conf_segment["speaker_id"]
+            highest_conf = highest_conf_segment.get("confidence", 0)
+            logger.info(f"No numeric member_id found, using speaker_id {highest_conf_speaker_id} with confidence {highest_conf}")
         
         # Log what we're doing
         if len(block) > 1:
             logger.info(f"Normalizing speaker IDs for continuous speech block with {len(block)} segments")
-            logger.info(f"Using speaker_id {highest_conf_speaker_id} with confidence {highest_conf}")
+            logger.info(f"Using ID {highest_conf_speaker_id} with confidence {highest_conf}")
         
         # Store information about this speech group for database updates
         segment_ids = []
@@ -110,6 +128,12 @@ def normalize_speaker_ids(segments):
                 logger.info(f"Changing speaker_id from {segment['speaker_id']} to {highest_conf_speaker_id} based on confidence")
                 segment["speaker_id"] = highest_conf_speaker_id
                 
+            # Make sure member_id is also set to match the speaker_id for consistency
+            # This ensures that when the database is updated, it uses the correct member ID
+            if "member_id" in segment and str(segment["member_id"]) != highest_conf_speaker_id:
+                logger.info(f"Updating member_id from {segment['member_id']} to {highest_conf_speaker_id} for consistency")
+                segment["member_id"] = highest_conf_speaker_id
+                
             # Add speech_group_id to the segment
             segment["speech_group_id"] = speech_group_id
             normalized_segments.append(segment)
@@ -119,6 +143,7 @@ def normalize_speaker_ids(segments):
             "speech_group_id": speech_group_id,
             "segment_ids": segment_ids,
             "speaker_id": highest_conf_speaker_id,
+            "member_id": highest_conf_speaker_id,  # Ensure member_id is also set correctly
             "confidence": highest_conf,
             "start_time": block[0]["start_time"],
             "end_time": block[-1]["end_time"]
@@ -243,7 +268,17 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
         
         for speech_group in speech_groups:
             speaker_id = speech_group["speaker_id"]
-            member_id = member_id_mapping.get(speaker_id)
+            
+            # Check if the speaker_id is already a numeric member ID (from facial recognition)
+            # If it is, use it directly instead of looking it up in the mapping
+            if speaker_id.isdigit():
+                member_id = int(speaker_id)
+                logger.info(f"Using numeric speaker_id {speaker_id} directly as member_id {member_id}")
+            else:
+                # Try to map the speaker_id to a member_id using the mapping
+                member_id = member_id_mapping.get(speaker_id)
+                logger.info(f"Mapped speaker_id {speaker_id} to member_id {member_id}")
+            
             speech_group_id = speech_group["speech_group_id"]
             segment_ids = speech_group["segment_ids"]
             start_time = speech_group["start_time"]

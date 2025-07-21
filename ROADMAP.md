@@ -108,8 +108,8 @@ An application for UK Members of Parliament to capture, edit, and share video cl
 - Real-time progress tracking for chunked transcription
 - Adaptive chunk sizing based on audio content
 - Automatic format validation for transcription data
-- Enhanced speaker diarization integration
-- Improved face-to-voice correlation
+- ✅ Enhanced speaker diarization integration with member ID preservation
+- ✅ Improved face-to-voice correlation with confidence-based normalization
 
 ## Current Progress (as of May 25, 2025)
 
@@ -145,6 +145,9 @@ An application for UK Members of Parliament to capture, edit, and share video cl
    - Multi-layered fallback mechanisms for storage breakdown calculations
    - Speaker attribution consistency across continuous speech segments
    - Speech group tracking for improved speaker identification
+   - Enhanced speaker diarization with member ID preservation and normalization
+   - Prioritization of high-confidence member IDs from facial recognition
+   - Transparent data handling without synthetic fallbacks
 
 5. Social Media Integration
    - Twitter, Facebook, and Instagram platforms
@@ -320,6 +323,8 @@ Speaker diarization is the process of partitioning an audio stream into segments
 - [x] **Multi-modal Recognition**
   - Integrate with facial recognition for improved accuracy when video is available
   - Combine voice and face recognition results for higher confidence
+  - Preserve highest confidence member IDs from facial recognition within speech groups
+  - Normalize speaker IDs across continuous speech segments for consistent attribution
 
 ### Technical Implementation
 
@@ -337,7 +342,9 @@ The diarization process uses multiple techniques:
 1. **BIC Segmentation**: Detects speaker changes by comparing adjacent audio windows using Bayesian Information Criterion
 2. **Voice Embedding Matching**: Compares voice characteristics with known profiles
 3. **Speaker Continuity Logic**: Ensures segments with similar voice characteristics are assigned to the same speaker
-4. **Facial Recognition**: When video is available, uses face detection to confirm or improve voice matching
+4. **Facial Recognition Integration**: When video is available, uses face detection to confirm or improve voice matching
+5. **Member ID Normalization**: Preserves numeric member IDs from facial recognition and applies the highest confidence ID to all segments in a speech group
+6. **Transparent Data Handling**: Shows real data or clear error messages instead of fallbacks to maintain data integrity
 
 #### Configuration Parameters
 - `min_segment_duration`: Minimum duration between speaker changes (default: 1.0 seconds)
