@@ -79,60 +79,48 @@ def normalize_speaker_ids(segments):
         # This ensures we use the real member IDs from facial recognition when available
         
         # First, check if any segment has a numeric member_id (from facial recognition)
-        numeric_id_segments = [seg for seg in block if "member_id" in seg and isinstance(seg.get("member_id"), (int, float, str)) 
-                              and str(seg.get("member_id")).isdigit()]
-        
-        if numeric_id_segments:
-            # If we have segments with numeric member IDs, find the one with highest confidence
-            highest_conf_segment = max(numeric_id_segments, key=lambda x: x.get("confidence", 0))
-            highest_conf = highest_conf_segment.get("confidence", 0)
-            
-            # Use the member_id as the speaker_id for normalization
-            highest_conf_speaker_id = str(highest_conf_segment["member_id"])
-            logger.info(f"Using numeric member_id {highest_conf_speaker_id} with confidence {highest_conf} for speech group")
-        else:
-            # Fall back to using the highest confidence segment's speaker_id
-            highest_conf_segment = max(block, key=lambda x: x.get("confidence", 0))
-            highest_conf_speaker_id = highest_conf_segment["speaker_id"]
-            highest_conf = highest_conf_segment.get("confidence", 0)
-            logger.info(f"No numeric member_id found, using speaker_id {highest_conf_speaker_id} with confidence {highest_conf}")
-        
-        # Log what we're doing
-        if len(block) > 1:
-            logger.info(f"Normalizing speaker IDs for continuous speech block with {len(block)} segments")
-            logger.info(f"Using ID {highest_conf_speaker_id} with confidence {highest_conf}")
-        
-        # Store information about this speech group for database updates
+        highest_conf = -1
+        highest_conf_speaker_id = None
+        highest_conf_member_id = None
         segment_ids = []
         
-        # Apply the highest confidence speaker_id to all segments in this block
+        # Collect segment IDs for this speech group
         for segment in block:
-            # Store the original segment ID for database updates
-            # Check for different possible ID fields based on the database schema
-            segment_id = None
-            if "id" in segment:
-                segment_id = segment["id"]
-                logger.info(f"Found segment ID: {segment_id} from 'id' field")
-            elif "segment_id" in segment:
-                segment_id = segment["segment_id"]
-                logger.info(f"Found segment ID: {segment_id} from 'segment_id' field")
-            elif "db_id" in segment:
-                segment_id = segment["db_id"]
-                logger.info(f"Found segment ID: {segment_id} from 'db_id' field")
-            
+            segment_id = segment.get("id")
             if segment_id is not None:
                 segment_ids.append(segment_id)
-                
-            # Update the speaker ID in memory
+        
+        # First pass: Find the segment with highest confidence that has a numeric member_id
+        for segment in block:
+            if "member_id" in segment and segment["member_id"] is not None and str(segment["member_id"]).isdigit():
+                conf = segment.get("confidence", 0)
+                if conf > highest_conf:
+                    highest_conf = conf
+                    highest_conf_speaker_id = segment["speaker_id"]
+                    highest_conf_member_id = str(segment["member_id"])
+                    logger.info(f"Found high confidence member_id {highest_conf_member_id} with confidence {conf}")
+        
+        # If no segment with numeric member_id was found, fall back to speaker_id
+        if highest_conf_member_id is None:
+            for segment in block:
+                conf = segment.get("confidence", 0)
+                if conf > highest_conf:
+                    highest_conf = conf
+                    highest_conf_speaker_id = segment["speaker_id"]
+                    highest_conf_member_id = highest_conf_speaker_id  # Use speaker_id as member_id
+                    logger.info(f"No member_id found, using speaker_id {highest_conf_speaker_id} with confidence {conf}")
+        
+        # Now update all segments in this block with the highest confidence speaker ID and member ID
+        for segment in block:
+            # Always update speaker_id for consistency
             if segment["speaker_id"] != highest_conf_speaker_id:
                 logger.info(f"Changing speaker_id from {segment['speaker_id']} to {highest_conf_speaker_id} based on confidence")
                 segment["speaker_id"] = highest_conf_speaker_id
                 
-            # Set all member_ids in this speech group to the highest confidence member_id
-            # This ensures consistent speaker attribution across the speech group
-            if "member_id" not in segment or segment.get("member_id") != highest_conf_speaker_id:
-                logger.info(f"Setting member_id from {segment.get('member_id')} to {highest_conf_speaker_id} (highest confidence in speech group)")
-                segment["member_id"] = highest_conf_speaker_id
+            # Always update member_id to the highest confidence member_id in this speech group
+            if segment.get("member_id") != highest_conf_member_id:
+                logger.info(f"Setting member_id from {segment.get('member_id')} to {highest_conf_member_id} (highest confidence in speech group)")
+                segment["member_id"] = highest_conf_member_id
                 
             # Add speech_group_id to the segment
             segment["speech_group_id"] = speech_group_id
@@ -143,13 +131,13 @@ def normalize_speaker_ids(segments):
             "speech_group_id": speech_group_id,
             "segment_ids": segment_ids,
             "speaker_id": highest_conf_speaker_id,
-            "member_id": highest_conf_speaker_id,  # Use the highest confidence member ID for the entire speech group
+            "member_id": highest_conf_member_id,  # Use the highest confidence member ID for the entire speech group
             "confidence": highest_conf,
             "start_time": block[0]["start_time"],
             "end_time": block[-1]["end_time"]
         })
         
-        logger.info(f"Created speech group {speech_group_id} with member_id {highest_conf_speaker_id} (confidence: {highest_conf})")
+        logger.info(f"Created speech group {speech_group_id} with speaker_id={highest_conf_speaker_id}, member_id={highest_conf_member_id} (confidence: {highest_conf})")
         logger.info(f"Speech group contains {len(segment_ids)} segments from {block[0]['start_time']} to {block[-1]['end_time']}")
         
     
