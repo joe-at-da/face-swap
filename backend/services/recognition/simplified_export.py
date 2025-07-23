@@ -112,12 +112,13 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
                 
                 logger.info(f"Found {clip_count} total clips in SQLite")
                 
-                # Query all clips
-                logger.info("Using exact schema for parliament_clips table")
+                # Query all clips that haven't been exported yet
+                logger.info("Using exact schema for parliament_clips table, filtering out already exported clips")
                 query_sql = text("""
                     SELECT id, member_id, transcript, full_video_path, start_timestamp, end_timestamp, 
                            confidence_score, duration_seconds, metadata, speech_group_id
                     FROM parliament_clips 
+                    WHERE json_extract(metadata, '$.exported') IS NULL OR json_extract(metadata, '$.exported') != 'true'
                     ORDER BY start_timestamp
                 """)
                 
@@ -378,10 +379,12 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
                     # Continue with next batch
             
             # Clean up SQLite database after successful export
-            if total_inserted > 0 and exported_clip_ids:
+            # Mark clips as exported even if they were skipped (already in Supabase)
+            clips_to_mark = exported_clip_ids if exported_clip_ids else [clip['id'] for clip in supabase_clips]
+            if clips_to_mark:
                 try:
                     # Mark clips as exported in SQLite to avoid re-exporting
-                    logger.info(f"Marking {len(exported_clip_ids)} clips as exported in SQLite")
+                    logger.info(f"Marking {len(clips_to_mark)} clips as exported in SQLite")
                     
                     # Option 1: Delete the exported clips from SQLite
                     # This is commented out as it might be too destructive
@@ -392,7 +395,7 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
                     
                     # Option 2: Mark clips as exported by adding an 'exported' flag to metadata
                     # This preserves the data but prevents re-export
-                    for clip_id in exported_clip_ids:
+                    for clip_id in clips_to_mark:
                         db.execute(
                             text("""
                                 UPDATE parliament_clips 
@@ -403,7 +406,7 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
                         )
                     
                     db.commit()
-                    logger.info(f"Successfully marked {len(exported_clip_ids)} clips as exported in SQLite")
+                    logger.info(f"Successfully marked {len(clips_to_mark)} clips as exported in SQLite")
                 except Exception as cleanup_error:
                     logger.error(f"Error cleaning up SQLite after export: {str(cleanup_error)}")
                     # Don't fail the overall process if cleanup fails
@@ -415,7 +418,7 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
                 "inserted": total_inserted,
                 "skipped": skipped_clips,
                 "total": clip_count,
-                "cleaned_up": len(exported_clip_ids) if exported_clip_ids else 0
+                "cleaned_up": len(clips_to_mark)
             }
             
         except Exception as e:
