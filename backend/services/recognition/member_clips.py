@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 def normalize_speaker_ids(segments):
     """
-    Normalize speaker IDs across continuous speech segments.
+    Normalize speaker IDs across speech segments by speaker identity only.
     
     This function:
-    1. Groups continuous speech segments by speaker
-    2. Assigns a unique speech group ID to each group
+    1. Groups speech segments purely by speaker identity (ignoring time gaps)
+    2. Assigns a unique speech group ID to each speaker group
     3. Selects the member ID with the highest confidence score in each group
     4. Updates all segments in the group with this member ID
     
@@ -39,8 +39,7 @@ def normalize_speaker_ids(segments):
     current_block = []
     current_speaker = None
     
-    # Parameters for grouping
-    max_gap = 60  # Maximum gap in seconds between segments to consider them part of the same speech
+    # Group segments purely by speaker identity, ignoring time gaps
     
     for segment in sorted_segments:
         # Extract speaker_id from metadata if it exists there
@@ -69,19 +68,10 @@ def normalize_speaker_ids(segments):
             current_block = [segment]
             current_speaker = speaker_id
         else:
-            # Check if this segment is within the time gap of the last segment
+            # Add this segment to the current block regardless of time gaps
+            # since it's from the same speaker
             if current_block:
-                last_segment = current_block[-1]
-                last_end_time = last_segment.get('end_time', 0)
-                current_start_time = segment.get('start_time', 0)
-                
-                if current_start_time - last_end_time <= max_gap:
-                    # This segment is part of the current block
-                    current_block.append(segment)
-                else:
-                    # This segment is too far from the last one, start a new block
-                    process_speech_block(current_block, speech_groups)
-                    current_block = [segment]
+                current_block.append(segment)
             else:
                 # Should not happen, but just in case
                 current_block.append(segment)
@@ -135,8 +125,33 @@ def process_speech_block(block, speech_groups):
     
     speaker_id = metadata.get('speaker_id') or first_segment.get('speaker_id')
     
-    # Generate a unique ID for this speech group
-    speech_group_id = f"speech_group_{len(speech_groups)}_{uuid.uuid4().hex[:8]}"
+    # Generate a simple sequential ID for this speech group
+    speech_group_id = f"speech_group_{speaker_id}_{len(speech_groups)}"
+    
+    # Debug information about the speech group
+    print(f"Creating speech group: {speech_group_id} for speaker {speaker_id}")
+    print(f"  Segments: {len(block)} from {block[0].get('start_time', 0)} to {block[-1].get('end_time', 0)}")
+    print(f"  First segment text: {block[0].get('text', '[No text]')[:50]}...")
+    print(f"  Last segment text: {block[-1].get('text', '[No text]')[:50]}...")
+    
+    # Log confidence scores for debugging
+    confidences = []
+    for segment in block:
+        seg_metadata = segment.get('metadata', {})
+        if isinstance(seg_metadata, str):
+            try:
+                seg_metadata = json.loads(seg_metadata)
+            except:
+                seg_metadata = {}
+        
+        conf = seg_metadata.get("confidence_score", 
+               seg_metadata.get("confidence", 
+               segment.get("confidence_score", 
+               segment.get("confidence", 0))))
+        confidences.append(conf)
+    
+    print(f"  Confidence scores: min={min(confidences) if confidences else 'N/A'}, max={max(confidences) if confidences else 'N/A'}, avg={sum(confidences)/len(confidences) if confidences else 'N/A'}")
+    print("  " + "-"*50)
     
     # Find the member ID with the highest confidence score in this block
     highest_conf = -1
