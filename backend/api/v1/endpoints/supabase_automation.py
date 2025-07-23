@@ -459,60 +459,42 @@ async def process_parliament_tv_to_supabase(
                         logger.error(f"Synchronization traceback: {traceback.format_exc()}")
                         # Continue with the export, but log the error
                     
-                    # Process and save member clips
-                    logger.warning(f"🚀 CALLING save_member_clips_to_supabase for video_id={capture_id}")
+                    # Process and save member clips using the simplified export process
+                    logger.warning(f"🚀 CALLING normalize_and_export_clips for video_id={capture_id}")
                     
-                    # Ensure recognition_data is properly deserialized
-                    if isinstance(recognition_data, str):
-                        try:
-                            recognition_data = json.loads(recognition_data)
-                            logger.info("Successfully deserialized recognition_data from string to dict")
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to deserialize recognition_data: {str(e)}")
+                    # Import the simplified export function
+                    from backend.services.recognition.simplified_export import normalize_and_export_clips
                     
-                    # Check if we need to extract recognition_results from the database
-                    if not recognition_data or not isinstance(recognition_data, dict) or not recognition_data.keys():
-                        logger.warning("Recognition data is empty or invalid, attempting to load from database")
-                        try:
-                            # Get the CaptureSession record
-                            capture_record = db.query(CaptureSession).filter(CaptureSession.id == capture_id).first()
-                            if capture_record and capture_record.recognition_results:
-                                # Parse recognition_results from the database
-                                if isinstance(capture_record.recognition_results, str):
-                                    recognition_data = json.loads(capture_record.recognition_results)
-                                    logger.info(f"Loaded recognition_results from database. Keys: {list(recognition_data.keys())}")
-                                else:
-                                    recognition_data = capture_record.recognition_results
-                                    logger.info(f"Loaded recognition_results from database (already dict). Keys: {list(recognition_data.keys())}")
-                        except Exception as e:
-                            logger.error(f"Error loading recognition_results from database: {str(e)}")
+                    # Connect to SQLite database
+                    from sqlalchemy import create_engine
+                    from sqlalchemy.orm import sessionmaker
                     
-                    # Add support for speaker diarization
-                    audio_path = video_metadata.get('audio_path')
-                    video_path = video_metadata.get('file_path')
-                    use_diarization = True  # Enable diarization by default
+                    # SQLite database path in Docker container
+                    sqlite_path = "/app/backend/parliament_clips.db"
+                    sqlite_engine = create_engine(f"sqlite:///{sqlite_path}")
+                    SQLiteSession = sessionmaker(bind=sqlite_engine)
+                    sqlite_session = SQLiteSession()
                     
-                    # Check if audio file exists
-                    if audio_path and not os.path.exists(audio_path):
-                        logger.warning(f"Audio file not found at {audio_path}, diarization will be skipped")
-                        use_diarization = False
+                    try:
+                        # Call the simplified export function
+                        save_result = normalize_and_export_clips(
+                            db=sqlite_session,
+                            video_id=str(capture_id),
+                            supabase_service=supabase_service
+                        )
+                        
+                        # Close SQLite session
+                        sqlite_session.close()
+                    except Exception as e:
+                        logger.error(f"Error in normalize_and_export_clips: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        sqlite_session.close()
+                        save_result = {"error": str(e), "success": False}
                     
-                    save_result = save_member_clips_to_supabase(
-                        db=db,
-                        video_id=capture_id,
-                        full_video_url=full_video_url,
-                        recognition_results=recognition_data,
-                        video_metadata=video_metadata,
-                        supabase_service=supabase_service,
-                        video_path=video_path,
-                        audio_path=audio_path,
-                        use_diarization=use_diarization
-                    )
-                    
-                    logger.info(f"Saved {save_result.get('clip_count', 0)} member clips to Supabase for session {capture_id}")
-                    logger.info(f"Saved clips: {save_result.get('saved_clips', [])}")
-                    if save_result.get('failed_clips', []):
-                        logger.warning(f"Failed clips: {save_result.get('failed_clips', [])}")
+                    logger.info(f"Normalized {save_result.get('normalized', 0)} clips and exported {save_result.get('inserted', 0)} clips to Supabase for session {capture_id}")
+                    if save_result.get('skipped', 0) > 0:
+                        logger.warning(f"Skipped {save_result.get('skipped', 0)} clips during export")
                 except Exception as e:
                     logger.error(f"Error saving member clips to Supabase: {str(e)}")
                     # traceback already imported at function start
@@ -727,62 +709,4 @@ async def process_parliament_tv_to_supabase(
         "duration": duration
     }
 
-
-def save_member_clips_to_supabase(
-    db: Session,
-    video_id: int,
-    full_video_url: Optional[str],
-    recognition_results: Dict[str, Any],
-    video_metadata: Dict[str, Any],
-    supabase_service: SupabaseService,
-    video_path: Optional[str] = None,
-    audio_path: Optional[str] = None,
-    use_diarization: bool = False
-) -> Dict[str, Any]:
-    """
-    Process recognition results and save individual member clips to the Supabase parliament_member_clips table.
-    
-    This function:
-    1. Processes recognition results to identify speaker segments
-    2. Merges segments by the same speaker if they are close together (less than 60 seconds apart)
-    3. Creates detailed clip metadata including timestamps, transcript segments, and confidence scores
-    4. Saves clips to the Supabase parliament_member_clips table
-    
-    Args:
-        db: Database session
-        video_id: ID of the video in the database
-        full_video_url: URL to the full video in Supabase storage
-        recognition_results: Recognition results from facial and voice recognition
-        video_metadata: Metadata about the video
-        supabase_service: Initialized Supabase service with appropriate permissions
-        
-    Returns:
-        Dictionary with results of the clip saving process
-    """
-    # This is a deprecated wrapper that imports and calls the main implementation from member_clips.py
-    logger.warning("Using deprecated save_member_clips_to_supabase from supabase_automation.py. Please use the version from member_clips.py directly.")
-    
-    try:
-        # Import the main implementation from member_clips.py
-        from backend.services.recognition.member_clips import save_member_clips_to_supabase as save_member_clips_impl
-        
-        # Call the main implementation with all parameters
-        return save_member_clips_impl(
-            db=db,
-            video_id=video_id,
-            full_video_url=full_video_url,
-            recognition_results=recognition_results,
-            video_metadata=video_metadata,
-            supabase_service=supabase_service,
-            video_path=video_path,
-            audio_path=audio_path,
-            use_diarization=use_diarization
-        )
-    except ImportError as e:
-        logger.error(f"Failed to import save_member_clips_to_supabase from member_clips.py: {str(e)}")
-        raise
-    except Exception as e:
-        logger.error(f"Error in save_member_clips_to_supabase wrapper: {str(e)}")
-        raise
-    
 

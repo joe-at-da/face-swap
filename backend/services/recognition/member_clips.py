@@ -432,8 +432,8 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
 
 
 def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition_results=None, 
-                              video_metadata=None, supabase_service=None, video_path=None, 
-                              audio_path=None, use_diarization=False):
+                               video_metadata=None, supabase_service=None, video_path=None, 
+                               audio_path=None, use_diarization=False):
     """
     Save normalized member clips to Supabase (PostgreSQL).
     
@@ -477,19 +477,19 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
         # First, get valid member IDs from PostgreSQL to ensure we only export valid IDs
         valid_member_ids = []
         try:
-            # Get valid member IDs from the parliament_members table in PostgreSQL
-            member_response = uploader.client.table('parliament_members').select('member_id').execute()
+            # Get valid member IDs from the speakers table in PostgreSQL using parliament_id field
+            member_response = uploader.client.table('speakers').select('parliament_id').execute()
             if hasattr(member_response, 'data') and member_response.data:
-                valid_member_ids = [member['member_id'] for member in member_response.data if 'member_id' in member]
-                logger.info(f"Found {len(valid_member_ids)} valid member IDs in PostgreSQL")
+                valid_member_ids = [speaker['parliament_id'] for speaker in member_response.data if 'parliament_id' in speaker]
+                logger.info(f"Found {len(valid_member_ids)} valid parliament_ids in PostgreSQL speakers table")
                 if valid_member_ids:
                     sample_ids = valid_member_ids[:10] if len(valid_member_ids) > 10 else valid_member_ids
-                    logger.info(f"Sample valid member IDs: {sample_ids}")
+                    logger.info(f"Sample valid parliament_ids: {sample_ids}")
             
             if not valid_member_ids:
-                logger.warning("No valid member IDs found in PostgreSQL. Clips may be rejected during export.")
+                logger.warning("No valid parliament_ids found in PostgreSQL speakers table. Clips may be rejected during export.")
         except Exception as e:
-            logger.warning(f"Could not fetch valid member IDs from PostgreSQL: {str(e)}")
+            logger.warning(f"Could not fetch valid parliament_ids from PostgreSQL: {str(e)}")
             logger.warning("Proceeding with export, but clips may be rejected if member IDs don't exist in PostgreSQL.")
         
         # Query the SQLite database for clips with the given video_id
@@ -555,7 +555,7 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
                 
                 # Check if member_id is valid in PostgreSQL (if we have valid IDs)
                 if valid_member_ids and member_id not in valid_member_ids:
-                    logger.warning(f"Member ID {member_id} not found in PostgreSQL parliament_members table")
+                    logger.warning(f"Member ID {member_id} not found in PostgreSQL speakers table as parliament_id")
                     skipped_clips += 1
                     invalid_member_ids.add(member_id)
                     continue
@@ -595,6 +595,7 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
                 logger.info(f"Processing batch {i//batch_size + 1}/{(len(supabase_clips) + batch_size - 1)//batch_size} with {len(batch)} clips")
                 
                 try:
+                    # Use the modified uploader that validates against speakers.parliament_id
                     result = uploader.add_to_clip_creation_queue(batch)
                     
                     if "error" in result:

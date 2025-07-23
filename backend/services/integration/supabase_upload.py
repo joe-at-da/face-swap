@@ -779,23 +779,23 @@ class SupabaseUploader:
                         # If we haven't fetched valid member IDs yet, do it now
                         if valid_member_ids is None:
                             try:
-                                # Get a list of valid member_ids (integer) from the parliament_members table
-                                member_response = self.client.table('parliament_members').select('member_id').execute()
-                                valid_member_ids = [member['member_id'] for member in member_response.data if 'member_id' in member] if member_response.data else []
-                                logger.info(f"Fetched {len(valid_member_ids)} valid member_ids from parliament_members table")
+                                # Get a list of valid parliament_ids (integer) from the speakers table
+                                member_response = self.client.table('speakers').select('parliament_id').execute()
+                                valid_member_ids = [speaker['parliament_id'] for speaker in member_response.data if 'parliament_id' in speaker] if member_response.data else []
+                                logger.info(f"Fetched {len(valid_member_ids)} valid parliament_ids from speakers table")
                                 
                                 # Log the first few valid member IDs for diagnostic purposes
                                 if valid_member_ids:
                                     sample_ids = valid_member_ids[:10] if len(valid_member_ids) > 10 else valid_member_ids
                                     logger.info(f"Sample valid member_ids: {sample_ids} (types: {[type(mid).__name__ for mid in sample_ids]})")
                                 
-                                # If we couldn't find any valid member IDs, log an error
+                                # If we couldn't find any valid parliament IDs, log an error
                                 if not valid_member_ids:
-                                    logger.error("No valid member IDs found in parliament_members table")
+                                    logger.error("No valid parliament_ids found in speakers table")
                                     # Return clear error instead of creating test data
                                     return {
                                         "success": False, 
-                                        "error": "No valid member IDs found in parliament_members table. Please ensure parliament_members table is populated."
+                                        "error": "No valid parliament_ids found in speakers table. Please ensure speakers table is populated."
                                     }
                             except Exception as fetch_error:
                                 logger.error(f"Error fetching valid member IDs: {str(fetch_error)}")
@@ -844,8 +844,8 @@ class SupabaseUploader:
                             # Check if the member_id is in valid_member_ids
                             if member_id not in int_valid_member_ids:
                                 # For non-special IDs that aren't valid, log a clear warning
-                                logger.warning(f"Member ID {member_id} not found in parliament_members table")
-                                logger.warning(f"Valid member IDs: {int_valid_member_ids[:10]}... (showing first 10)")
+                                logger.warning(f"Member ID {member_id} not found in speakers table as parliament_id")
+                                logger.warning(f"Valid parliament_ids: {int_valid_member_ids[:10]}... (showing first 10)")
                                 logger.warning(f"Skipping clip with invalid member ID {member_id}")
                                 continue
                         else:
@@ -936,10 +936,10 @@ class SupabaseUploader:
                                         logger.error(f"Cannot convert member_id {member_id} to integer")
                                         continue  # Skip this clip
                                 
-                                # Verify this member_id exists in parliament_members table
-                                member_check = self.client.table('parliament_members').select('member_id').eq('member_id', clip['member_id']).execute()
+                                # Verify this member_id exists in speakers table as parliament_id
+                                member_check = self.client.table('speakers').select('parliament_id').eq('parliament_id', clip['member_id']).execute()
                                 if not member_check.data or len(member_check.data) == 0:
-                                    logger.warning(f"Member ID {clip['member_id']} not found in parliament_members table")
+                                    logger.warning(f"Member ID {clip['member_id']} not found in speakers table as parliament_id")
                                     logger.warning(f"Skipping clip with invalid member ID {clip['member_id']}")
                                     continue  # Skip this clip instead of using a fallback ID
                             except Exception as e:
