@@ -78,7 +78,7 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             # Use the exact schema provided
             logger.info("Using exact schema for parliament_clips table")
             query_sql = text("""
-                SELECT id, member_id, transcript, start_timestamp, end_timestamp, 
+                SELECT id, member_id, transcript, full_video_path, start_timestamp, end_timestamp, 
                        confidence_score, duration_seconds, metadata, speech_group_id
                 FROM parliament_clips 
                 WHERE json_extract(metadata, '$.video_id') = :video_id
@@ -100,7 +100,7 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             clip_dicts = []
             for clip in clips:
                 # Parse metadata JSON
-                metadata = clip[7]  # metadata is the 8th column
+                metadata = clip[8]  # metadata is now the 9th column (index 8)
                 if isinstance(metadata, str):
                     try:
                         metadata = json.loads(metadata)
@@ -108,18 +108,19 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                         metadata = {}
                 
                 # Use speech_group_id from the schema
-                speech_group_id = clip[8] if len(clip) > 8 else None
+                speech_group_id = clip[9] if len(clip) > 9 else None
                 
                 clip_dict = {
                     "id": clip[0],
                     "member_id": clip[1],
                     "transcript": clip[2],
-                    "start_time": clip[3],  # Using start_timestamp as start_time
-                    "end_time": clip[4],    # Using end_timestamp as end_time
-                    "confidence_score": clip[5],
-                    "duration_seconds": clip[6],
-                    "metadata": metadata,
-                    "speech_group_id": speech_group_id
+                    "full_video_path": clip[3],  # Added full_video_path
+                    "start_time": clip[4],  # Using start_timestamp as start_time (index adjusted)
+                    "end_time": clip[5],    # Using end_timestamp as end_time (index adjusted)
+                    "confidence_score": clip[6],  # index adjusted
+                    "duration_seconds": clip[7],  # index adjusted
+                    "metadata": metadata,  # metadata is now at index 8
+                    "speech_group_id": speech_group_id  # speech_group_id is now at index 9
                 }
                 clip_dicts.append(clip_dict)
             
@@ -172,7 +173,7 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                 if current_block:
                     speech_blocks.append(current_block)
             
-            logger.info(f"Identified {len(speech_blocks)} speech blocks across {len(speaker_groups)} speakers")
+            logger.info(f"Identified {len(speech_blocks)} speech blocks across {len(speech_groups)} speakers")
             
             # Process each speech block to find the highest confidence member_id
             speech_groups = []
@@ -281,7 +282,7 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                     "id": str(uuid.uuid4()),  # Generate a new UUID for Supabase
                     "member_id": member_id,
                     "transcript": clip["transcript"],
-                    "full_video_path": metadata.get("full_video_path", ""),
+                    "full_video_path": clip.get("full_video_path", ""),  # Get directly from clip, not metadata
                     "start_timestamp": clip["start_time"],
                     "end_timestamp": clip["end_time"],
                     "confidence_score": clip["confidence_score"],
