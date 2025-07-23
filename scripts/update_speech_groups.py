@@ -282,6 +282,7 @@ def load_diarization_data(diarization_file: Path) -> Optional[Dict]:
 def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: Dict) -> Tuple[List[List[Tuple]], Dict]:
     """
     Create speech blocks based on diarization data.
+    A speech block is created whenever the speaker changes.
     
     Args:
         clips: List of clips (id, member_id, start_timestamp, end_timestamp)
@@ -358,53 +359,45 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
     if unassigned_clips:
         logger.warning(f"Could not assign {len(unassigned_clips)} clips to any speaker")
     
-    # Group clips by speaker
-    speaker_clips = {}
-    for clip in sorted_clips:
+    # Sort all clips by timestamp
+    sorted_all_clips = sorted(clips, key=lambda c: float(c[2]) if c[2] else 0)
+    
+    # Create speech blocks based on speaker changes
+    speech_blocks = []
+    current_block = []
+    current_speaker = None
+    
+    # Process clips sequentially
+    for clip in sorted_all_clips:
         clip_id = clip[0]
         speaker = clip_speaker_map.get(clip_id)
-        if speaker not in speaker_clips:
-            speaker_clips[speaker] = []
-        speaker_clips[speaker].append(clip)
-    
-    # Create speech blocks from speaker groups
-    speech_blocks = []
-    
-    # Process clips with identified speakers first
-    for speaker, speaker_group in speaker_clips.items():
-        if speaker is not None and speaker != '':
-            # For clips with a speaker, keep them in one group
-            # Sort clips within the speaker group by timestamp
-            sorted_speaker_group = sorted(speaker_group, key=lambda c: float(c[2]) if c[2] else 0)
-            if sorted_speaker_group:
-                speech_blocks.append(sorted_speaker_group)
-    
-    # Then process unassigned clips using temporal proximity
-    if None in speaker_clips:
-        unassigned_group = speaker_clips[None]
-        temp_blocks = []
-        current_block = []
         
-        for clip in sorted(unassigned_group, key=lambda c: float(c[2]) if c[2] else 0):
-            if not current_block:
-                current_block = [clip]
-            else:
-                prev_clip = current_block[-1]
-                prev_end = float(prev_clip[3]) if prev_clip[3] else float(prev_clip[2]) + 1
-                clip_start = float(clip[2]) if clip[2] else 0
-                
-                # Use temporal proximity
-                MAX_CONTINUOUS_SPEECH_GAP = 1.5  # 1.5 seconds
-                if clip_start - prev_end <= MAX_CONTINUOUS_SPEECH_GAP:
-                    current_block.append(clip)
-                else:
-                    temp_blocks.append(current_block)
-                    current_block = [clip]
-        
-        if current_block:
-            temp_blocks.append(current_block)
-        
-        speech_blocks.extend(temp_blocks)
+        # Start a new block if this is the first clip or if the speaker changes
+        if not current_block:
+            current_block = [clip]
+            current_speaker = speaker
+        elif speaker != current_speaker:
+            # Speaker changed, start a new block
+            speech_blocks.append(current_block)
+            current_block = [clip]
+            current_speaker = speaker
+        else:
+            # Same speaker, add to current block
+            current_block.append(clip)
+    
+    # Add the last block
+    if current_block:
+        speech_blocks.append(current_block)
+    
+    # Process any unassigned clips (those with speaker=None) that might have been missed
+    unassigned_clips = [clip for clip in sorted_clips if clip_speaker_map.get(clip[0]) is None]
+    
+    if unassigned_clips:
+        logger.info(f"Processing {len(unassigned_clips)} unassigned clips using temporal proximity")
+        # Create a separate speech block for each unassigned clip
+        # This ensures they don't get grouped with assigned clips
+        for clip in sorted(unassigned_clips, key=lambda c: float(c[2]) if c[2] else 0):
+            speech_blocks.append([clip])
     
     # Sort speech blocks by the start time of their first clip
     speech_blocks.sort(key=lambda block: float(block[0][2]) if block[0][2] else 0)
@@ -413,7 +406,7 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
     
     # Ensure we're not creating too many blocks
     if len(speech_blocks) > num_speakers * 2 and num_speakers > 0:
-        logger.warning(f"Created many more speech blocks ({len(speech_blocks)}) than speakers ({num_speakers}). This may indicate a problem with grouping.")
+        logger.warning(f"Expected {num_speakers} speech blocks (one per speaker), but created {len(speech_blocks)}. This may indicate a problem with grouping.")
     
     # Debug info
     for i, block in enumerate(speech_blocks[:5]):  # Log only first 5 blocks to avoid excessive logging
