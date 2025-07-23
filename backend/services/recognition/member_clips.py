@@ -7,8 +7,8 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.services.integration.supabase_service import SupabaseService
-from backend.services.integration.supabase_uploader import SupabaseUploader
+from backend.services.integration.supabase_client import SupabaseService
+from backend.services.integration.supabase_upload import SupabaseUploader
 
 logger = logging.getLogger(__name__)
 
@@ -425,3 +425,137 @@ def update_sqlite_with_normalized_speakers(db, video_id, speech_groups, member_i
                 logger.error(f"Error during final rollback: {str(rollback_error)}")
     
     return total_updated
+
+
+def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition_results=None, 
+                              video_metadata=None, supabase_service=None, video_path=None, 
+                              audio_path=None, use_diarization=False):
+    """
+    Save normalized member clips to Supabase (PostgreSQL).
+    
+    This function exports clips from the SQLite database to the PostgreSQL database via Supabase,
+    ensuring that member IDs are properly normalized and consistent within speech groups.
+    
+    Args:
+        db: Database session
+        video_id: ID of the video
+        full_video_url: URL of the full video in Supabase storage
+        recognition_results: Recognition results from the recognition process
+        video_metadata: Metadata for the video
+        supabase_service: Supabase service instance (if None, a new one will be created)
+        video_path: Path to the video file
+        audio_path: Path to the audio file
+        use_diarization: Whether to use diarization results
+        
+    Returns:
+        Dictionary with results of the clip saving process
+    """
+    logger.info(f"Exporting normalized member clips to Supabase for video ID {video_id}")
+    
+    try:
+        # Check if we're using SQLite or PostgreSQL
+        is_sqlite = hasattr(db.connection().connection, 'execute')
+        
+        if not is_sqlite:
+            logger.warning("This function is designed to export from SQLite to PostgreSQL. "
+                          "The current database connection appears to be PostgreSQL already.")
+        
+        # Create a Supabase uploader if one wasn't provided
+        uploader = supabase_service
+        if not uploader:
+            try:
+                uploader = SupabaseUploader(use_service_role=True)
+                logger.info("Created new SupabaseUploader instance")
+            except Exception as e:
+                logger.error(f"Failed to create SupabaseUploader: {str(e)}")
+                return {"error": f"Failed to create SupabaseUploader: {str(e)}"}
+        
+        # Query the SQLite database for clips with the given video_id
+        try:
+            # First, check if we have any clips for this video
+            count_sql = text("""
+                SELECT COUNT(*) FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = :video_id
+            """)
+            
+            result = db.execute(count_sql, {"video_id": video_id})
+            clip_count = result.scalar() or 0
+            
+            if clip_count == 0:
+                logger.warning(f"No clips found in SQLite for video ID {video_id}")
+                return {"warning": f"No clips found for video ID {video_id}", "inserted": 0}
+            
+            logger.info(f"Found {clip_count} clips in SQLite for video ID {video_id}")
+            
+            # Query for all clips with this video_id
+            query_sql = text("""
+                SELECT id, member_id, transcript, start_timestamp, end_timestamp, 
+                       confidence_score, duration_seconds, metadata, speech_group_id
+                FROM parliament_clips 
+                WHERE json_extract(metadata, '$.video_id') = :video_id
+            """)
+            
+            result = db.execute(query_sql, {"video_id": video_id})
+            clips = result.fetchall()
+            
+            # Prepare clips for Supabase export
+            supabase_clips = []
+            for clip in clips:
+                # Parse metadata JSON
+                metadata = clip[7]  # metadata is the 8th column
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except:
+                        metadata = {}
+                
+                # Skip clips without member_id or with member_id = 0 (unknown)
+                member_id = clip[1]  # member_id is the 2nd column
+                if not member_id or member_id == 0:
+                    logger.warning(f"Skipping clip with missing or unknown member_id: {clip[0]}")
+                    continue
+                
+                # Create a clip record for Supabase
+                supabase_clip = {
+                    "id": str(uuid.uuid4()),  # Generate a new UUID for Supabase
+                    "member_id": member_id,
+                    "transcript": clip[2],  # transcript
+                    "full_video_path": full_video_url or metadata.get("full_video_path", ""),
+                    "start_timestamp": clip[3],  # start_timestamp
+                    "end_timestamp": clip[4],  # end_timestamp
+                    "confidence_score": clip[5],  # confidence_score
+                    "duration_seconds": clip[6],  # duration_seconds
+                    "speech_group_id": clip[8],  # speech_group_id
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                    "metadata": json.dumps(metadata)
+                }
+                
+                supabase_clips.append(supabase_clip)
+            
+            if not supabase_clips:
+                logger.warning("No valid clips to export to Supabase after filtering")
+                return {"warning": "No valid clips to export", "inserted": 0}
+            
+            logger.info(f"Prepared {len(supabase_clips)} clips for export to Supabase")
+            
+            # Export clips to Supabase
+            result = uploader.add_to_clip_creation_queue(supabase_clips)
+            
+            if "error" in result:
+                logger.error(f"Error exporting clips to Supabase: {result['error']}")
+                return result
+            
+            logger.info(f"Successfully exported {len(supabase_clips)} clips to Supabase")
+            return {"success": True, "inserted": len(supabase_clips), "total": clip_count}
+            
+        except Exception as e:
+            logger.error(f"Error querying SQLite database: {str(e)}")
+            return {"error": f"Error querying SQLite database: {str(e)}"}
+    
+    except Exception as e:
+        import traceback
+        error_details = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"Error saving member clips to Supabase: {error_details}")
+        logger.error(traceback.format_exc())
+        return {"error": error_details}
