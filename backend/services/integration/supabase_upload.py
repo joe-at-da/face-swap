@@ -894,15 +894,12 @@ class SupabaseUploader:
                                         logger.error(f"Cannot convert member_id {member_id} to integer")
                                         continue  # Skip this clip
                                 
-                                # Verify this member_id exists in speakers table as parliament_id
-                                member_check = self.client.table('speakers').select('parliament_id').eq('parliament_id', clip['member_id']).execute()
-                                if not member_check.data or len(member_check.data) == 0:
-                                    logger.warning(f"Member ID {clip['member_id']} not found in speakers table as parliament_id")
-                                    logger.warning(f"Skipping clip with invalid member ID {clip['member_id']}")
-                                    continue  # Skip this clip instead of using a fallback ID
+                                # Accept all integer member IDs without validation
+                                logger.info(f"Accepting member_id {clip['member_id']} without validation")
+                                # No need to check against speakers table
                             except Exception as e:
-                                logger.error(f"Error validating member_id: {str(e)}")
-                                continue  # Skip this clip if we can't validate member_id
+                                logger.error(f"Error processing member_id: {str(e)}")
+                                continue  # Skip this clip if we can't process member_id
                     else:
                         logger.error("Clip missing required member_id field")
                         continue  # Skip this clip if member_id is missing
