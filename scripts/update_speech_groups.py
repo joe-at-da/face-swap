@@ -362,10 +362,11 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
     # Sort all clips by timestamp
     sorted_all_clips = sorted(clips, key=lambda c: float(c[2]) if c[2] else 0)
     
-    # Create speech blocks based on speaker changes
+    # Create speech blocks based on speaker changes, counting speaker turns
     speech_blocks = []
     current_block = []
     current_speaker = None
+    speaker_turn_count = 0
     
     # Process clips sequentially
     for clip in sorted_all_clips:
@@ -376,8 +377,11 @@ def create_speech_blocks_from_diarization(clips: List[Tuple], diarization_data: 
         if not current_block:
             current_block = [clip]
             current_speaker = speaker
-        elif speaker != current_speaker:
-            # Speaker changed, start a new block
+            logger.debug(f"First speaker: {speaker} (turn #{speaker_turn_count})")
+        elif speaker != current_speaker and speaker is not None and current_speaker is not None:
+            # Speaker changed, start a new block and increment turn counter
+            speaker_turn_count += 1
+            logger.debug(f"Speaker turn detected: {current_speaker} -> {speaker} (turn #{speaker_turn_count})")
             speech_blocks.append(current_block)
             current_block = [clip]
             current_speaker = speaker
@@ -616,28 +620,34 @@ def update_speech_groups(video_id=None, debug=False, force=False):
                 speech_blocks = [block for block in speech_blocks if block]
             
             # Update speech_group_id for each speech block
-            block_updates = 0
-            for block_idx, block in enumerate(speech_blocks):
+            updated_clips = 0
+            for i, block in enumerate(speech_blocks):
                 if not block:  # Skip empty blocks
                     continue
                     
-                # Generate a unique speech group ID
-                first_clip = block[0]
-                first_start_time = float(first_clip[2]) if first_clip[2] else 0
-                speech_group_id = f"speech_group_{path_video_id}_{block_idx}_{int(first_start_time)}"
+                # Generate a sequential speech group ID based on turn number
+                # The format is speech_group_{video_id}_{turn_number}
+                speech_group_id = f"speech_group_{path_video_id}_{i}"
                 
-                # Update all clips in this block
+                # Log information about this speech group
+                first_clip = block[0]
+                last_clip = block[-1]
+                start_time = first_clip[2]
+                end_time = last_clip[3]
+                logger.debug(f"Creating speech group: {speech_group_id} with {len(block)} clips from {start_time} to {end_time}")
+                
+                # Update all clips in this block with the speech group ID
                 for clip in block:
                     clip_id = clip[0]
                     cursor.execute(
                         "UPDATE parliament_clips SET speech_group_id = ? WHERE id = ?",
                         (speech_group_id, clip_id)
                     )
-                    block_updates += 1
+                    updated_clips += 1
             
             conn.commit()
-            logger.info(f"Updated {block_updates} clips with speech group IDs for video {video_path}")
-            total_updated += block_updates
+            logger.info(f"Updated {updated_clips} clips with speech group IDs for video {video_path}")
+            total_updated += updated_clips
         
         # Verify updates
         cursor.execute("SELECT COUNT(*) FROM parliament_clips WHERE speech_group_id IS NOT NULL")

@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 def normalize_speaker_ids(segments):
     """
-    Normalize speaker IDs across speech segments by speaker identity only.
+    Normalize speaker IDs across speech segments by tracking speaker turns.
     
     This function:
-    1. Groups speech segments purely by speaker identity (ignoring time gaps)
-    2. Assigns a unique speech group ID to each speaker group
+    1. Groups speech segments by speaker turns (when speaker changes)
+    2. Assigns a sequential speech group ID to each turn
     3. Selects the member ID with the highest confidence score in each group
     4. Updates all segments in the group with this member ID
     
@@ -39,7 +39,10 @@ def normalize_speaker_ids(segments):
     current_block = []
     current_speaker = None
     
-    # Group segments purely by speaker identity, ignoring time gaps
+    # Group segments by speaker turns (when speaker changes)
+    speech_turn_counter = 0
+    
+    print(f"Processing {len(sorted_segments)} segments for speaker turns")
     
     for segment in sorted_segments:
         # Extract speaker_id from metadata if it exists there
@@ -59,17 +62,23 @@ def normalize_speaker_ids(segments):
             
         # Start a new block if this is the first segment or if the speaker changed
         if current_speaker is None or speaker_id != current_speaker:
+            # Count this as a speaker turn (except for the very first segment)
+            if current_speaker is not None:
+                speech_turn_counter += 1
+                print(f"Speaker turn detected: {current_speaker} -> {speaker_id} (turn #{speech_turn_counter})")
+            else:
+                print(f"First speaker: {speaker_id} (turn #0)")
+                
             # Save the previous block if it exists
             if current_block:
-                # Process the completed block
-                process_speech_block(current_block, speech_groups)
+                # Process the completed block with the turn counter
+                process_speech_block(current_block, speech_groups, speech_turn_counter)
                 
             # Start a new block with this segment
             current_block = [segment]
             current_speaker = speaker_id
         else:
-            # Add this segment to the current block regardless of time gaps
-            # since it's from the same speaker
+            # Add this segment to the current block since it's from the same speaker
             if current_block:
                 current_block.append(segment)
             else:
@@ -78,7 +87,8 @@ def normalize_speaker_ids(segments):
     
     # Process the last block
     if current_block:
-        process_speech_block(current_block, speech_groups)
+        # For the last block, use the current speech turn counter
+        process_speech_block(current_block, speech_groups, speech_turn_counter)
     
     # Now update all segments with their speech group IDs and normalized member IDs
     normalized_segments = []
@@ -98,7 +108,7 @@ def normalize_speaker_ids(segments):
     
     return normalized_segments, speech_groups
 
-def process_speech_block(block, speech_groups):
+def process_speech_block(block, speech_groups, turn_counter=0):
     """
     Process a block of continuous speech segments by the same speaker.
     
@@ -125,8 +135,8 @@ def process_speech_block(block, speech_groups):
     
     speaker_id = metadata.get('speaker_id') or first_segment.get('speaker_id')
     
-    # Generate a simple sequential ID for this speech group
-    speech_group_id = f"speech_group_{speaker_id}_{len(speech_groups)}"
+    # Generate a simple sequential ID based on the turn counter
+    speech_group_id = f"speech_group_{turn_counter}"
     
     # Debug information about the speech group
     print(f"Creating speech group: {speech_group_id} for speaker {speaker_id}")
