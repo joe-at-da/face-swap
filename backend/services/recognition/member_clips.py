@@ -155,7 +155,11 @@ def process_speech_block(block, speech_groups):
                 
         if "member_id" in segment and str(segment["member_id"]).isdigit():
             # Try to get confidence from metadata first, then from direct property
-            conf = seg_metadata.get("confidence", segment.get("confidence", 0))
+            # Check for both 'confidence' and 'confidence_score' fields
+            conf = seg_metadata.get("confidence_score", 
+                   seg_metadata.get("confidence", 
+                   segment.get("confidence_score", 
+                   segment.get("confidence", 0))))
             if conf > highest_conf:
                 highest_conf = conf
                 highest_conf_speaker_id = seg_metadata.get('speaker_id') or segment.get('speaker_id')
@@ -470,6 +474,24 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
                 logger.error(f"Failed to create SupabaseUploader: {str(e)}")
                 return {"error": f"Failed to create SupabaseUploader: {str(e)}"}
         
+        # First, get valid member IDs from PostgreSQL to ensure we only export valid IDs
+        valid_member_ids = []
+        try:
+            # Get valid member IDs from the parliament_members table in PostgreSQL
+            member_response = uploader.client.table('parliament_members').select('member_id').execute()
+            if hasattr(member_response, 'data') and member_response.data:
+                valid_member_ids = [member['member_id'] for member in member_response.data if 'member_id' in member]
+                logger.info(f"Found {len(valid_member_ids)} valid member IDs in PostgreSQL")
+                if valid_member_ids:
+                    sample_ids = valid_member_ids[:10] if len(valid_member_ids) > 10 else valid_member_ids
+                    logger.info(f"Sample valid member IDs: {sample_ids}")
+            
+            if not valid_member_ids:
+                logger.warning("No valid member IDs found in PostgreSQL. Clips may be rejected during export.")
+        except Exception as e:
+            logger.warning(f"Could not fetch valid member IDs from PostgreSQL: {str(e)}")
+            logger.warning("Proceeding with export, but clips may be rejected if member IDs don't exist in PostgreSQL.")
+        
         # Query the SQLite database for clips with the given video_id
         try:
             # First, check if we have any clips for this video
@@ -500,6 +522,9 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
             
             # Prepare clips for Supabase export
             supabase_clips = []
+            skipped_clips = 0
+            invalid_member_ids = set()
+            
             for clip in clips:
                 # Parse metadata JSON
                 metadata = clip[7]  # metadata is the 8th column
@@ -509,10 +534,30 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
                     except:
                         metadata = {}
                 
-                # Skip clips without member_id or with member_id = 0 (unknown)
+                # Get member_id and validate it
                 member_id = clip[1]  # member_id is the 2nd column
+                
+                # Skip clips without member_id or with member_id = 0 (unknown)
                 if not member_id or member_id == 0:
                     logger.warning(f"Skipping clip with missing or unknown member_id: {clip[0]}")
+                    skipped_clips += 1
+                    continue
+                
+                # Convert member_id to integer if it's a string
+                if isinstance(member_id, str):
+                    try:
+                        member_id = int(member_id)
+                    except ValueError:
+                        logger.warning(f"Skipping clip with non-integer member_id: {member_id}")
+                        skipped_clips += 1
+                        invalid_member_ids.add(member_id)
+                        continue
+                
+                # Check if member_id is valid in PostgreSQL (if we have valid IDs)
+                if valid_member_ids and member_id not in valid_member_ids:
+                    logger.warning(f"Member ID {member_id} not found in PostgreSQL parliament_members table")
+                    skipped_clips += 1
+                    invalid_member_ids.add(member_id)
                     continue
                 
                 # Create a clip record for Supabase
@@ -535,19 +580,42 @@ def save_member_clips_to_supabase(db, video_id, full_video_url=None, recognition
             
             if not supabase_clips:
                 logger.warning("No valid clips to export to Supabase after filtering")
-                return {"warning": "No valid clips to export", "inserted": 0}
+                if invalid_member_ids:
+                    logger.warning(f"Invalid member IDs found: {list(invalid_member_ids)}")
+                return {"warning": "No valid clips to export", "inserted": 0, "skipped": skipped_clips}
             
-            logger.info(f"Prepared {len(supabase_clips)} clips for export to Supabase")
+            logger.info(f"Prepared {len(supabase_clips)} clips for export to Supabase (skipped {skipped_clips})")
             
-            # Export clips to Supabase
-            result = uploader.add_to_clip_creation_queue(supabase_clips)
+            # Export clips to Supabase in smaller batches to avoid transaction issues
+            batch_size = 50  # Process in smaller batches
+            total_inserted = 0
             
-            if "error" in result:
-                logger.error(f"Error exporting clips to Supabase: {result['error']}")
-                return result
+            for i in range(0, len(supabase_clips), batch_size):
+                batch = supabase_clips[i:i+batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}/{(len(supabase_clips) + batch_size - 1)//batch_size} with {len(batch)} clips")
+                
+                try:
+                    result = uploader.add_to_clip_creation_queue(batch)
+                    
+                    if "error" in result:
+                        logger.error(f"Error exporting batch to Supabase: {result['error']}")
+                        # Continue with next batch instead of failing completely
+                    else:
+                        inserted = result.get("inserted", 0) if isinstance(result, dict) else 0
+                        total_inserted += inserted
+                        logger.info(f"Successfully exported batch with {inserted} clips")
+                        
+                except Exception as batch_error:
+                    logger.error(f"Error processing batch: {str(batch_error)}")
+                    # Continue with next batch
             
-            logger.info(f"Successfully exported {len(supabase_clips)} clips to Supabase")
-            return {"success": True, "inserted": len(supabase_clips), "total": clip_count}
+            logger.info(f"Export complete: {total_inserted} clips inserted, {skipped_clips} skipped")
+            return {
+                "success": total_inserted > 0,
+                "inserted": total_inserted,
+                "skipped": skipped_clips,
+                "total": clip_count
+            }
             
         except Exception as e:
             logger.error(f"Error querying SQLite database: {str(e)}")
