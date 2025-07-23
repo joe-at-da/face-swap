@@ -176,16 +176,44 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             logger.info(f"Identified {len(speech_blocks)} speech blocks across {len(speech_groups)} speakers")
             
             # Process each speech block to find the highest confidence member_id
+            # But DON'T generate new speech group IDs - preserve the original ones from SQLite
             speech_groups = []
             for block in speech_blocks:
-                process_speech_block(block, speech_groups)
+                # Instead of using process_speech_block which generates new speech_group_ids,
+                # we'll just find the highest confidence member_id in each block
+                if not block:
+                    continue
+                    
+                # Find the member ID with the highest confidence score in this block
+                highest_conf = -1
+                highest_conf_member_id = None
+                
+                # First, prioritize segments with numeric member IDs
+                for segment in block:
+                    if "member_id" in segment and str(segment["member_id"]).isdigit():
+                        conf = segment.get("confidence_score", 0)
+                        if conf > highest_conf:
+                            highest_conf = conf
+                            highest_conf_member_id = str(segment["member_id"])
+                
+                # Fallback if no numeric member_id found
+                if highest_conf_member_id is None and block:
+                    # Use the first segment's member_id as fallback
+                    highest_conf_member_id = block[0].get("member_id")
+                
+                # Create a simple speech group with just the member_id and segment_ids
+                # but DON'T generate a new speech_group_id
+                speech_group = {
+                    "member_id": highest_conf_member_id,
+                    "segment_ids": [segment.get('id') for segment in block if 'id' in segment],
+                }
+                speech_groups.append(speech_group)
             
             logger.info(f"Created {len(speech_groups)} speech groups with normalized member IDs")
             
-            # Update clips with speech group IDs and normalized member IDs
+            # Update clips with normalized member IDs only (preserve original speech_group_id)
             normalized_clips = []
             for speech_group in speech_groups:
-                group_id = speech_group["id"]
                 normalized_member_id = speech_group["member_id"]
                 
                 # Find all clips in this speech group
@@ -193,10 +221,10 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                     # Find the clip with this ID
                     for clip in clip_dicts:
                         if clip["id"] == segment_id:
-                            # Create a copy with normalized member_id and speech_group_id
+                            # Create a copy with normalized member_id only
                             normalized_clip = clip.copy()
                             normalized_clip["member_id"] = normalized_member_id
-                            normalized_clip["speech_group_id"] = group_id
+                            # DO NOT modify the speech_group_id - keep the original from SQLite
                             normalized_clips.append(normalized_clip)
                             break
             
@@ -206,16 +234,15 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             updated_count = 0
             try:
                 for clip in normalized_clips:
+                    # Only update the member_id, preserve the original speech_group_id
                     update_sql = text("""
                         UPDATE parliament_clips
-                        SET member_id = :member_id,
-                            speech_group_id = :speech_group_id
+                        SET member_id = :member_id
                         WHERE id = :id
                     """)
                     
                     db.execute(update_sql, {
                         "member_id": clip["member_id"],
-                        "speech_group_id": clip["speech_group_id"],
                         "id": clip["id"]
                     })
                     updated_count += 1
