@@ -149,84 +149,62 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             for speech_group_id, clips in speech_groups.items():
                 speech_groups[speech_group_id] = sorted(clips, key=lambda x: x["start_time"])
             
-            # Process each speech group to find continuous speech segments
-            speech_blocks = []
+            # Process each speech group to find the highest confidence member_id
+            # We'll work directly with speech groups instead of creating speech blocks
+            normalized_speech_groups = {}
             for speech_group_id, clips in speech_groups.items():
-                current_block = []
-                
-                for clip in clips:
-                    if not current_block:
-                        # Start a new block
-                        current_block.append(clip)
-                    else:
-                        # Check if this clip is continuous with the previous one
-                        prev_clip = current_block[-1]
-                        # Allow a small gap (e.g., 2 seconds) between clips
-                        if float(clip["start_time"]) - float(prev_clip["end_time"]) <= 2.0:
-                            current_block.append(clip)
-                        else:
-                            # This clip starts a new block
-                            speech_blocks.append(current_block)
-                            current_block = [clip]
-                
-                # Don't forget the last block
-                if current_block:
-                    speech_blocks.append(current_block)
-            
-            logger.info(f"Identified {len(speech_blocks)} speech blocks across {len(speech_groups)} speakers")
-            
-            # Process each speech block to find the highest confidence member_id
-            # But DON'T generate new speech group IDs - preserve the original ones from SQLite
-            speech_groups = []
-            for block in speech_blocks:
-                # Instead of using process_speech_block which generates new speech_group_ids,
-                # we'll just find the highest confidence member_id in each block
-                if not block:
+                if not clips:
                     continue
-                    
-                # Find the member ID with the highest confidence score in this block
+                
+                # Find the member ID with the highest confidence score in this speech group
                 highest_conf = -1
                 highest_conf_member_id = None
                 
-                # First, prioritize segments with numeric member IDs
-                for segment in block:
-                    if "member_id" in segment and str(segment["member_id"]).isdigit():
-                        conf = segment.get("confidence_score", 0)
+                # First, prioritize clips with valid member IDs
+                for clip in clips:
+                    member_id = clip.get("member_id")
+                    if member_id and member_id != "" and member_id != "0":
+                        conf = clip.get("confidence_score", 0)
                         if conf > highest_conf:
                             highest_conf = conf
-                            highest_conf_member_id = str(segment["member_id"])
+                            highest_conf_member_id = member_id
                 
-                # Fallback if no numeric member_id found
-                if highest_conf_member_id is None and block:
-                    # Use the first segment's member_id as fallback
-                    highest_conf_member_id = block[0].get("member_id")
+                # If no valid member_id found, skip this speech group
+                if highest_conf_member_id is None:
+                    logger.warning(f"No valid member_id found in speech group {speech_group_id}, skipping normalization")
+                    continue
                 
-                # Create a simple speech group with just the member_id and segment_ids
-                # but DON'T generate a new speech_group_id
-                speech_group = {
+                # Store the best member_id for this speech group
+                normalized_speech_groups[speech_group_id] = {
                     "member_id": highest_conf_member_id,
-                    "segment_ids": [segment.get('id') for segment in block if 'id' in segment],
+                    "clips": clips
                 }
-                speech_groups.append(speech_group)
+            
+            logger.info(f"Found highest confidence member IDs for {len(normalized_speech_groups)} speech groups")
             
             logger.info(f"Created {len(speech_groups)} speech groups with normalized member IDs")
             
-            # Update clips with normalized member IDs only (preserve original speech_group_id)
+            # Update clips with normalized member IDs only for clips without valid member IDs
+            # Always preserve original speech_group_id
             normalized_clips = []
-            for speech_group in speech_groups:
-                normalized_member_id = speech_group["member_id"]
+            for speech_group_id, group_data in normalized_speech_groups.items():
+                normalized_member_id = group_data["member_id"]
                 
-                # Find all clips in this speech group
-                for segment_id in speech_group["segment_ids"]:
-                    # Find the clip with this ID
-                    for clip in clip_dicts:
-                        if clip["id"] == segment_id:
-                            # Create a copy with normalized member_id only
-                            normalized_clip = clip.copy()
-                            normalized_clip["member_id"] = normalized_member_id
-                            # DO NOT modify the speech_group_id - keep the original from SQLite
-                            normalized_clips.append(normalized_clip)
-                            break
+                # Process all clips in this speech group
+                for clip in group_data["clips"]:
+                    # Create a copy of the clip
+                    normalized_clip = clip.copy()
+                    
+                    # Only update member_id if it's missing or empty
+                    if not clip.get("member_id") or clip.get("member_id") == "" or clip.get("member_id") == "0":
+                        normalized_clip["member_id"] = normalized_member_id
+                        logger.debug(f"Updating clip {clip['id']} with normalized member_id {normalized_member_id}")
+                    else:
+                        # Keep the original member_id
+                        logger.debug(f"Preserving original member_id {clip.get('member_id')} for clip {clip['id']}")
+                    
+                    # DO NOT modify the speech_group_id - keep the original from SQLite
+                    normalized_clips.append(normalized_clip)
             
             logger.info(f"Normalized {len(normalized_clips)} clips with consistent member IDs within speech groups")
             
@@ -234,18 +212,23 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             updated_count = 0
             try:
                 for clip in normalized_clips:
-                    # Only update the member_id, preserve the original speech_group_id
+                    # Only update the member_id if it's different from the original
+                    # and only for clips that had empty member_ids
+                    # Always preserve the original speech_group_id
                     update_sql = text("""
                         UPDATE parliament_clips
                         SET member_id = :member_id
-                        WHERE id = :id
+                        WHERE id = :id AND (member_id IS NULL OR member_id = '' OR member_id = '0')
                     """)
                     
-                    db.execute(update_sql, {
+                    result = db.execute(update_sql, {
                         "member_id": clip["member_id"],
                         "id": clip["id"]
                     })
-                    updated_count += 1
+                    
+                    # Check if a row was actually updated
+                    if hasattr(result, 'rowcount') and result.rowcount > 0:
+                        updated_count += 1
                 
                 db.commit()
                 logger.info(f"Updated {updated_count} clips in SQLite with normalized member IDs")
