@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir requests_toolbelt==1.0.0
 
 # Copy application code
 COPY . .
