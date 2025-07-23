@@ -11,6 +11,7 @@ This module provides a simplified approach to normalizing and exporting parliame
 import json
 import uuid
 import logging
+import re
 from datetime import datetime
 from sqlalchemy import text
 from typing import Dict, List, Any, Optional, Union
@@ -22,24 +23,27 @@ from backend.services.recognition.member_clips import process_speech_block
 # Set up logging
 logger = logging.getLogger(__name__)
 
-def normalize_and_export_clips(db, video_id: str, supabase_service=None):
+def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
     """
     Simplified process to normalize and export parliament member clips.
     
     This function:
-    1. Retrieves clips from SQLite for the given video_id
+    1. Retrieves clips from SQLite (optionally filtered by video_id)
     2. Groups clips by speaker and normalizes member IDs within speech groups
     3. Exports the normalized clips to Supabase
     
     Args:
         db: SQLite database session
-        video_id: ID of the video to process
+        video_id: Optional ID of the video to process. If None, processes all clips.
         supabase_service: Optional Supabase service instance
         
     Returns:
         Dict with results of the normalization and export process
     """
-    logger.info(f"Starting simplified normalization and export for video ID {video_id}")
+    if video_id:
+        logger.info(f"Starting simplified normalization and export for video ID {video_id}")
+    else:
+        logger.info("Starting simplified normalization and export for ALL clips")
     
     try:
         # Check if we're using SQLite
@@ -47,53 +51,79 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
         if not is_sqlite:
             return {"error": "This function requires an SQLite database connection"}
         
-        # Step 1: Retrieve all clips for this video from SQLite
+        # Step 1: Retrieve clips from SQLite (all or filtered by video_id)
         try:
-            # First check if we have any clips for this video
-            # Check for video_id in metadata in multiple formats
-            logger.info(f"Searching for clips with video_id {video_id} (type: {type(video_id).__name__})")
+            if video_id:
+                # Filter by video_id if provided
+                logger.info(f"Searching for clips with video_id {video_id} (type: {type(video_id).__name__})")
+                
+                count_sql = text("""
+                    SELECT COUNT(*) FROM parliament_clips 
+                    WHERE json_extract(metadata, '$.video_id') = :video_id
+                       OR json_extract(metadata, '$.video_id') = :video_id_str
+                       OR json_extract(metadata, '$.video_id') = :video_id_int
+                       OR metadata LIKE :video_id_pattern
+                """)
+                
+                result = db.execute(count_sql, {
+                    "video_id": video_id, 
+                    "video_id_str": str(video_id) if video_id is not None else "",
+                    "video_id_int": int(video_id) if video_id is not None and str(video_id).isdigit() else -1,
+                    "video_id_pattern": f'%"video_id": {video_id}%' if video_id is not None else "%"
+                })
+                clip_count = result.scalar() or 0
+                
+                if clip_count == 0:
+                    logger.warning(f"No clips found in SQLite for video ID {video_id}")
+                    return {"warning": f"No clips found for video ID {video_id}", "normalized": 0}
+                
+                logger.info(f"Found {clip_count} clips in SQLite for video ID {video_id}")
+                
+                # Use the exact schema provided with video_id filter
+                logger.info("Using exact schema for parliament_clips table with video_id filter")
+                query_sql = text("""
+                    SELECT id, member_id, transcript, full_video_path, start_timestamp, end_timestamp, 
+                           confidence_score, duration_seconds, metadata, speech_group_id
+                    FROM parliament_clips 
+                    WHERE json_extract(metadata, '$.video_id') = :video_id
+                       OR json_extract(metadata, '$.video_id') = :video_id_str
+                       OR json_extract(metadata, '$.video_id') = :video_id_int
+                       OR metadata LIKE :video_id_pattern
+                    ORDER BY start_timestamp
+                """)
+                
+                params = {
+                    "video_id": video_id, 
+                    "video_id_str": str(video_id) if video_id is not None else "",
+                    "video_id_int": int(video_id) if video_id is not None and str(video_id).isdigit() else -1,
+                    "video_id_pattern": f'%"video_id": {video_id}%' if video_id is not None else "%"
+                }
+            else:
+                # Get all clips if no video_id is provided
+                logger.info("Retrieving ALL clips from SQLite")
+                
+                count_sql = text("SELECT COUNT(*) FROM parliament_clips")
+                result = db.execute(count_sql)
+                clip_count = result.scalar() or 0
+                
+                if clip_count == 0:
+                    logger.warning("No clips found in SQLite database")
+                    return {"warning": "No clips found in SQLite database", "normalized": 0}
+                
+                logger.info(f"Found {clip_count} total clips in SQLite")
+                
+                # Query all clips
+                logger.info("Using exact schema for parliament_clips table")
+                query_sql = text("""
+                    SELECT id, member_id, transcript, full_video_path, start_timestamp, end_timestamp, 
+                           confidence_score, duration_seconds, metadata, speech_group_id
+                    FROM parliament_clips 
+                    ORDER BY start_timestamp
+                """)
+                
+                params = {}
             
-            count_sql = text("""
-                SELECT COUNT(*) FROM parliament_clips 
-                WHERE json_extract(metadata, '$.video_id') = :video_id
-                   OR json_extract(metadata, '$.video_id') = :video_id_str
-                   OR json_extract(metadata, '$.video_id') = :video_id_int
-                   OR metadata LIKE :video_id_pattern
-            """)
-            
-            result = db.execute(count_sql, {
-                "video_id": video_id, 
-                "video_id_str": str(video_id),
-                "video_id_int": int(video_id) if str(video_id).isdigit() else -1,
-                "video_id_pattern": f'%"video_id": {video_id}%'
-            })
-            clip_count = result.scalar() or 0
-            
-            if clip_count == 0:
-                logger.warning(f"No clips found in SQLite for video ID {video_id}")
-                return {"warning": f"No clips found for video ID {video_id}", "normalized": 0}
-            
-            logger.info(f"Found {clip_count} clips in SQLite for video ID {video_id}")
-            
-            # Use the exact schema provided
-            logger.info("Using exact schema for parliament_clips table")
-            query_sql = text("""
-                SELECT id, member_id, transcript, full_video_path, start_timestamp, end_timestamp, 
-                       confidence_score, duration_seconds, metadata, speech_group_id
-                FROM parliament_clips 
-                WHERE json_extract(metadata, '$.video_id') = :video_id
-                   OR json_extract(metadata, '$.video_id') = :video_id_str
-                   OR json_extract(metadata, '$.video_id') = :video_id_int
-                   OR metadata LIKE :video_id_pattern
-                ORDER BY start_timestamp
-            """)
-            
-            result = db.execute(query_sql, {
-                "video_id": video_id, 
-                "video_id_str": str(video_id),
-                "video_id_int": int(video_id) if str(video_id).isdigit() else -1,
-                "video_id_pattern": f'%"video_id": {video_id}%'
-            })
+            result = db.execute(query_sql, params)
             clips = result.fetchall()
             
             # Convert to list of dictionaries for easier processing
@@ -160,10 +190,10 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                 highest_conf = -1
                 highest_conf_member_id = None
                 
-                # First, prioritize clips with valid member IDs
+                # Find the clip with the highest confidence score
                 for clip in clips:
                     member_id = clip.get("member_id")
-                    if member_id and member_id != "" and member_id != "0":
+                    if member_id:  # Any non-empty member_id is considered
                         conf = clip.get("confidence_score", 0)
                         if conf > highest_conf:
                             highest_conf = conf
@@ -173,6 +203,8 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                 if highest_conf_member_id is None:
                     logger.warning(f"No valid member_id found in speech group {speech_group_id}, skipping normalization")
                     continue
+                
+                logger.info(f"Speech group {speech_group_id}: selected member_id {highest_conf_member_id} with confidence {highest_conf}")
                 
                 # Store the best member_id for this speech group
                 normalized_speech_groups[speech_group_id] = {
@@ -184,7 +216,7 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             
             logger.info(f"Created {len(speech_groups)} speech groups with normalized member IDs")
             
-            # Update clips with normalized member IDs only for clips without valid member IDs
+            # Update ALL clips in each speech group with the highest confidence member ID
             # Always preserve original speech_group_id
             normalized_clips = []
             for speech_group_id, group_data in normalized_speech_groups.items():
@@ -195,13 +227,12 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                     # Create a copy of the clip
                     normalized_clip = clip.copy()
                     
-                    # Only update member_id if it's missing or empty
-                    if not clip.get("member_id") or clip.get("member_id") == "" or clip.get("member_id") == "0":
-                        normalized_clip["member_id"] = normalized_member_id
-                        logger.debug(f"Updating clip {clip['id']} with normalized member_id {normalized_member_id}")
-                    else:
-                        # Keep the original member_id
-                        logger.debug(f"Preserving original member_id {clip.get('member_id')} for clip {clip['id']}")
+                    # Update all clips with the highest confidence member_id
+                    original_member_id = clip.get("member_id")
+                    normalized_clip["member_id"] = normalized_member_id
+                    
+                    if original_member_id != normalized_member_id:
+                        logger.debug(f"Updating clip {clip['id']} from member_id {original_member_id} to {normalized_member_id}")
                     
                     # DO NOT modify the speech_group_id - keep the original from SQLite
                     normalized_clips.append(normalized_clip)
@@ -212,13 +243,12 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             updated_count = 0
             try:
                 for clip in normalized_clips:
-                    # Only update the member_id if it's different from the original
-                    # and only for clips that had empty member_ids
+                    # Update the member_id for ALL clips in the speech group
                     # Always preserve the original speech_group_id
                     update_sql = text("""
                         UPDATE parliament_clips
                         SET member_id = :member_id
-                        WHERE id = :id AND (member_id IS NULL OR member_id = '' OR member_id = '0')
+                        WHERE id = :id
                     """)
                     
                     result = db.execute(update_sql, {
@@ -321,6 +351,7 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
             # Export clips to Supabase in smaller batches to avoid transaction issues
             batch_size = 50  # Process in smaller batches
             total_inserted = 0
+            exported_clip_ids = []  # Track successfully exported clip IDs for cleanup
             
             for i in range(0, len(supabase_clips), batch_size):
                 batch = supabase_clips[i:i+batch_size]
@@ -337,9 +368,45 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                         total_inserted += inserted
                         logger.info(f"Successfully exported batch with {inserted} clips")
                         
+                        # If successful, track the clip IDs for later cleanup
+                        if inserted > 0:
+                            batch_clip_ids = [clip['id'] for clip in batch]
+                            exported_clip_ids.extend(batch_clip_ids)
+                        
                 except Exception as batch_error:
                     logger.error(f"Error processing batch: {str(batch_error)}")
                     # Continue with next batch
+            
+            # Clean up SQLite database after successful export
+            if total_inserted > 0 and exported_clip_ids:
+                try:
+                    # Mark clips as exported in SQLite to avoid re-exporting
+                    logger.info(f"Marking {len(exported_clip_ids)} clips as exported in SQLite")
+                    
+                    # Option 1: Delete the exported clips from SQLite
+                    # This is commented out as it might be too destructive
+                    # db.execute(
+                    #     text("DELETE FROM parliament_clips WHERE id IN :clip_ids"),
+                    #     {"clip_ids": tuple(exported_clip_ids) if len(exported_clip_ids) > 1 else (exported_clip_ids[0],)}
+                    # )
+                    
+                    # Option 2: Mark clips as exported by adding an 'exported' flag to metadata
+                    # This preserves the data but prevents re-export
+                    for clip_id in exported_clip_ids:
+                        db.execute(
+                            text("""
+                                UPDATE parliament_clips 
+                                SET metadata = json_set(metadata, '$.exported', 'true', '$.exported_at', :timestamp) 
+                                WHERE id = :clip_id
+                            """),
+                            {"clip_id": clip_id, "timestamp": datetime.now().isoformat()}
+                        )
+                    
+                    db.commit()
+                    logger.info(f"Successfully marked {len(exported_clip_ids)} clips as exported in SQLite")
+                except Exception as cleanup_error:
+                    logger.error(f"Error cleaning up SQLite after export: {str(cleanup_error)}")
+                    # Don't fail the overall process if cleanup fails
             
             logger.info(f"Export complete: {total_inserted} clips inserted, {skipped_clips} skipped")
             return {
@@ -347,7 +414,8 @@ def normalize_and_export_clips(db, video_id: str, supabase_service=None):
                 "normalized": updated_count,
                 "inserted": total_inserted,
                 "skipped": skipped_clips,
-                "total": clip_count
+                "total": clip_count,
+                "cleaned_up": len(exported_clip_ids) if exported_clip_ids else 0
             }
             
         except Exception as e:
