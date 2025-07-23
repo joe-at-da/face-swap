@@ -776,81 +776,39 @@ class SupabaseUploader:
                         logger.info(f"Member ID is an unexpected type: {type(member_id).__name__}")
                         
                     if member_id is not None:
-                        # If we haven't fetched valid member IDs yet, do it now
-                        if valid_member_ids is None:
-                            try:
-                                # Get a list of valid parliament_ids (integer) from the speakers table
-                                member_response = self.client.table('speakers').select('parliament_id').execute()
-                                valid_member_ids = [speaker['parliament_id'] for speaker in member_response.data if 'parliament_id' in speaker] if member_response.data else []
-                                logger.info(f"Fetched {len(valid_member_ids)} valid parliament_ids from speakers table")
-                                
-                                # Log the first few valid member IDs for diagnostic purposes
-                                if valid_member_ids:
-                                    sample_ids = valid_member_ids[:10] if len(valid_member_ids) > 10 else valid_member_ids
-                                    logger.info(f"Sample valid member_ids: {sample_ids} (types: {[type(mid).__name__ for mid in sample_ids]})")
-                                
-                                # If we couldn't find any valid parliament IDs, log an error
-                                if not valid_member_ids:
-                                    logger.error("No valid parliament_ids found in speakers table")
-                                    # Return clear error instead of creating test data
-                                    return {
-                                        "success": False, 
-                                        "error": "No valid parliament_ids found in speakers table. Please ensure speakers table is populated."
-                                    }
-                            except Exception as fetch_error:
-                                logger.error(f"Error fetching valid member IDs: {str(fetch_error)}")
-                                valid_member_ids = []
+                        # Skip validation against speakers table - accept all member IDs
+                        logger.info(f"Accepting member_id {member_id} without validation against speakers table")
+                        # Set valid_member_ids to None to skip validation
+                        valid_member_ids = None
                         
-                        # Check if the member_id is in our list of valid IDs
-                        # Special case: Allow member_id -1 for unknown speakers even if not in valid_member_ids
-                        if member_id == -1:
-                            logger.info(f"Allowing special member ID -1 for unknown speaker")
-                            # Keep the -1 as is, don't replace with fallback
-                        elif valid_member_ids:
-                            # Ensure member_id is an integer for comparison
-                            try:
-                                if not isinstance(member_id, int):
-                                    if isinstance(member_id, str):
-                                        try:
-                                            member_id = int(member_id)
-                                            # Update the member_id in the clip data
-                                            clean_clip['member_id'] = member_id
-                                            logger.info(f"Converted string member_id '{member_id}' to integer for validation")
-                                        except ValueError:
-                                            logger.error(f"Cannot convert member_id string '{member_id}' to integer")
-                                            logger.warning(f"Skipping clip with non-integer member ID '{member_id}'")
-                                            continue
-                                    else:
-                                        logger.error(f"Member ID has unexpected type: {type(member_id).__name__}")
-                                        logger.warning(f"Skipping clip with invalid member ID type")
+                        # Accept all member IDs without validation
+                        # Just ensure member_id is an integer
+                        try:
+                            if not isinstance(member_id, int):
+                                if isinstance(member_id, str):
+                                    try:
+                                        member_id = int(member_id)
+                                        # Update the member_id in the clip data
+                                        clean_clip['member_id'] = member_id
+                                        logger.info(f"Converted string member_id '{member_id}' to integer")
+                                    except ValueError:
+                                        logger.error(f"Cannot convert member_id string '{member_id}' to integer")
+                                        logger.warning(f"Skipping clip with non-integer member ID '{member_id}'")
                                         continue
-                            except Exception as e:
-                                logger.error(f"Failed to convert member_id {member_id} to integer: {str(e)}")
-                                logger.warning(f"Skipping clip with problematic member ID {member_id}")
-                                continue
-                                
-                            # Convert valid_member_ids to integers if needed
-                            int_valid_member_ids = []
-                            for valid_id in valid_member_ids:
-                                try:
-                                    if not isinstance(valid_id, int):
-                                        int_valid_member_ids.append(int(valid_id))
-                                    else:
-                                        int_valid_member_ids.append(valid_id)
-                                except (ValueError, TypeError):
-                                    # Skip invalid IDs in the valid list
-                                    pass
-                            
-                            # Check if the member_id is in valid_member_ids
-                            if member_id not in int_valid_member_ids:
-                                # For non-special IDs that aren't valid, log a clear warning
-                                logger.warning(f"Member ID {member_id} not found in speakers table as parliament_id")
-                                logger.warning(f"Valid parliament_ids: {int_valid_member_ids[:10]}... (showing first 10)")
-                                logger.warning(f"Skipping clip with invalid member ID {member_id}")
-                                continue
-                        else:
-                            logger.warning(f"Member ID {member_id} not found and no fallbacks available. Skipping clip.")
+                                else:
+                                    logger.error(f"Member ID has unexpected type: {type(member_id).__name__}")
+                                    logger.warning(f"Skipping clip with invalid member ID type")
+                                    continue
+                        except Exception as e:
+                            logger.error(f"Failed to convert member_id {member_id} to integer: {str(e)}")
+                            logger.warning(f"Skipping clip with problematic member ID {member_id}")
                             continue
+                            
+                        # Accept all integer member IDs without validation
+                        logger.info(f"Accepting member_id {member_id} without validation")
+                        # Special case: Allow member_id -1 for unknown speaker
+                        if member_id == -1:
+                            logger.info(f"Using special ID -1 for unknown speaker")
                 except Exception as e:
                     logger.warning(f"Error checking member_id: {str(e)}. Skipping clip.")
                     continue
