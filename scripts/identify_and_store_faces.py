@@ -31,8 +31,17 @@ CENTER_FRAME_THRESHOLD_X = 0.25  # How close to center a face must be horizontal
 CENTER_FRAME_THRESHOLD_Y = 0.5  # Relaxed vertical threshold - much less important than horizontal
 MIN_FACE_SIZE = 80  # Minimum face size (width or height) in pixels - balanced for quality vs detection
 
-def load_encodings(encodings_file):
-    """Load face encodings from a JSON file."""
+def load_encodings(encodings_file, filter_category=None, max_encodings=None):
+    """Load face encodings from a JSON file.
+    
+    Args:
+        encodings_file: Path to the JSON file containing face encodings
+        filter_category: Optional category to filter MPs (e.g., 'commons' for House of Commons)
+        max_encodings: Optional maximum number of encodings to load
+        
+    Returns:
+        Dictionary containing names, encodings, and parliament_ids
+    """
     try:
         with open(encodings_file, 'r') as f:
             data = json.load(f)
@@ -52,6 +61,32 @@ def load_encodings(encodings_file):
                 "parliament_ids": [],
                 "empty": True
             }
+        
+        # Filter by category if specified
+        if filter_category and "categories" in data:
+            filtered_indices = [i for i, category in enumerate(data.get("categories", [])) 
+                              if category and filter_category.lower() in category.lower()]
+            
+            if filtered_indices:
+                logger.info(f"Filtering MPs by category: {filter_category}")
+                data["names"] = [data["names"][i] for i in filtered_indices]
+                data["encodings"] = [data["encodings"][i] for i in filtered_indices]
+                
+                # Also filter parliament_ids if available
+                if "parliament_ids" in data:
+                    data["parliament_ids"] = [data["parliament_ids"][i] for i in filtered_indices]
+                    
+                logger.info(f"Filtered to {len(data['names'])} MPs in category {filter_category}")
+        
+        # Limit number of encodings if specified
+        if max_encodings and max_encodings > 0 and max_encodings < len(data["names"]):
+            logger.info(f"Limiting to {max_encodings} encodings (out of {len(data['names'])})")
+            data["names"] = data["names"][:max_encodings]
+            data["encodings"] = data["encodings"][:max_encodings]
+            
+            # Also limit parliament_ids if available
+            if "parliament_ids" in data:
+                data["parliament_ids"] = data["parliament_ids"][:max_encodings]
         
         # Convert encodings back to numpy arrays
         data["encodings"] = [np.array(encoding) for encoding in data["encodings"]]
@@ -113,10 +148,87 @@ def save_unidentified_face(face_image, face_location, output_dir):
         logger.error(f"Error saving unidentified face: {str(e)}")
         return None, None
 
-def process_video(video_path, encodings_file, results_file, output_file=None, unidentified_dir=None, skip_frames_file=None):
-    """Process a video to identify known faces and store unidentified faces."""
-    # Load known face encodings
-    known_data = load_encodings(encodings_file)
+def calculate_face_quality(frame, face_location):
+    """Calculate a quality score for a face based on size, position, and basic image quality.
+    
+    Args:
+        frame: The video frame containing the face
+        face_location: Tuple of (top, right, bottom, left) coordinates
+        
+    Returns:
+        A quality score (higher is better)
+    """
+    try:
+        top, right, bottom, left = face_location
+        face_width = right - left
+        face_height = bottom - top
+        frame_height, frame_width = frame.shape[:2]
+        
+        # Calculate face size score (larger is better) - max 30 points
+        size_score = min((face_width * face_height) / (frame_width * frame_height) * 300, 30)
+        
+        # Calculate position score (centered horizontally is better) - max 50 points
+        face_center_x = (left + right) / 2
+        face_center_y = (top + bottom) / 2
+        x_distance = abs(face_center_x - frame_width/2) / (frame_width/2)  # 0 = center, 1 = edge
+        position_score = (1 - x_distance) * 50  # Horizontal position is most important
+        
+        # Extract a small sample of the face region for quality analysis (center area)
+        face_center_x_local = face_width // 2
+        face_center_y_local = face_height // 2
+        sample_size = min(face_width, face_height) // 4  # Use a quarter of the face for analysis
+        
+        sample_left = max(left + face_center_x_local - sample_size, left)
+        sample_right = min(left + face_center_x_local + sample_size, right)
+        sample_top = max(top + face_center_y_local - sample_size, top)
+        sample_bottom = min(top + face_center_y_local + sample_size, bottom)
+        
+        # If we can't get a proper sample, use the whole face
+        if sample_right - sample_left < 10 or sample_bottom - sample_top < 10:
+            sample_left, sample_right, sample_top, sample_bottom = left, right, top, bottom
+            
+        face_sample = frame[sample_top:sample_bottom, sample_left:sample_right]
+        
+        # Calculate basic image quality metrics - max 20 points
+        try:
+            # Convert to grayscale for analysis
+            if len(face_sample.shape) == 3:  # Color image
+                gray_sample = cv2.cvtColor(face_sample, cv2.COLOR_BGR2GRAY)
+            else:  # Already grayscale
+                gray_sample = face_sample
+                
+            # Simple contrast measure (standard deviation of pixel values)
+            contrast = gray_sample.std()
+            quality_score = min(contrast / 5, 20)  # Cap at 20 points
+        except Exception:
+            # If image analysis fails, assign a moderate score
+            quality_score = 10
+        
+        # Combine scores
+        total_score = size_score + position_score + quality_score
+        
+        return total_score
+    except Exception as e:
+        logger.warning(f"Error calculating face quality: {str(e)}")
+        return 0  # Return lowest score on error
+
+def process_video(video_path, encodings_file, results_file, output_file=None, unidentified_dir=None, skip_frames_file=None, frame_skip=5, filter_mps=None, max_encodings=None, detection_model="hog"):
+    """Process a video to identify known faces and store unidentified faces.
+    
+    Args:
+        video_path: Path to the video file
+        encodings_file: Path to the known face encodings file
+        results_file: Path to save the results JSON file
+        output_file: Optional path to save the output video with face boxes
+        unidentified_dir: Optional directory to save unidentified faces
+        skip_frames_file: Optional path to a JSON file containing frame numbers to skip
+        frame_skip: Process every Nth frame (default: 5)
+        filter_mps: Optional category to filter MPs (e.g., 'commons')
+        max_encodings: Optional maximum number of encodings to load
+        detection_model: Face detection model to use ('hog' or 'cnn')
+    """
+    # Load known face encodings with filtering options
+    known_data = load_encodings(encodings_file, filter_mps, max_encodings)
     if not known_data:
         return {
             "success": False,
@@ -149,13 +261,17 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
     # Initialize results
     results = {
         "video_path": video_path,
-        "processed_at": datetime.now().isoformat(),
-        "speakers": [],
+        "appearances": [],
         "unidentified_faces": [],
         "total_frames": total_frames,
         "processed_frames": 0,
-        "problematic_frames": []
+        "problematic_frames": [],
+        "speakers": [],
+        "best_faces": []
     }
+    
+    # Track best faces for each unique person - store minimal information to save memory
+    best_faces = defaultdict(lambda: {'score': 0, 'face_location': None, 'frame_number': None, 'timestamp': None, 'position': None})
     
     # Load frames to skip if provided
     frames_to_skip = set()
@@ -177,18 +293,30 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
     
     try:
         while True:
-            ret, frame = video.read()
-            if not ret:
-                break
-            
-            frame_count += 1
-            
-            # Process every Nth frame and skip problematic frames
-            if frame_count % frame_interval != 0 or frame_count in frames_to_skip:
+            # Log progress periodically
+            if frame_count > 0 and frame_count % 50 == 0:
+                logger.info(f"Processing progress: frame {frame_count}")
+                
+            try:
+                ret, frame = video.read()
+                if not ret:
+                    break
+                
+                frame_count += 1
+                
+                # Skip frames based on frame_skip parameter (process every Nth frame)
+                if frame_count % frame_skip != 0:
+                    continue
+                
+                # Skip frames that are in the skip list
                 if frame_count in frames_to_skip:
-                    logger.info(f"Skipping problematic frame {frame_count}")
-                if video_writer:
-                    video_writer.write(frame)
+                    logger.info(f"Skipping frame {frame_count} as requested")
+                    continue
+                    
+                logger.info(f"Processing frame {frame_count}")
+            except Exception as frame_error:
+                logger.error(f"Error reading frame {frame_count}: {str(frame_error)}")
+                # Continue to next frame if there's an error with this one
                 continue
             
             # Convert frame from BGR to RGB (face_recognition uses RGB)
@@ -203,16 +331,12 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                 
             # Find all faces in the frame
             try:
-                # First try with default model (CNN)
-                face_locations = face_recognition.face_locations(rgb_frame, model="cnn")
-                
-                # If no faces detected with CNN, try with HOG model as fallback
-                if not face_locations:
-                    logger.warning(f"No faces detected with CNN model in frame {frame_count}, trying HOG model")
-                    face_locations = face_recognition.face_locations(rgb_frame, model="hog")
+                # Use specified detection model (HOG is default as it's more memory-efficient)
+                logger.info(f"Detecting faces in frame {frame_count} using {detection_model} model")
+                face_locations = face_recognition.face_locations(rgb_frame, model=detection_model)
                 
                 if not face_locations:
-                    logger.warning(f"No faces detected in frame {frame_count} with either model")
+                    logger.warning(f"No faces detected in frame {frame_count} with {detection_model} model")
                     # Mark as problematic for future runs
                     results["problematic_frames"].append(frame_count)
                     if video_writer:
@@ -281,7 +405,17 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     
                     return face_encodings, face_names, face_ids
                 
-                face_encodings, face_names, face_ids = identify_faces(rgb_frame, face_locations, known_data["encodings"], known_data["names"], known_data["parliament_ids"])
+                # Call identify_faces function
+                try:
+                    logger.info(f"Identifying faces in frame {frame_count}")
+                    face_encodings, face_names, face_ids = identify_faces(rgb_frame, face_locations, known_data["encodings"], known_data["names"], known_data.get("parliament_ids", []))
+                    logger.info(f"Identified {len(face_names)} faces in frame {frame_count}")
+                except Exception as e:
+                    logger.error(f"Error identifying faces in frame {frame_count}: {str(e)}")
+                    results["problematic_frames"].append(frame_count)
+                    if video_writer:
+                        video_writer.write(frame)
+                    continue
                 
                 # Process each face
                 for i, (face_encoding, face_location, name) in enumerate(zip(face_encodings, face_locations, face_names)):
@@ -289,6 +423,9 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     top, right, bottom, left = face_location
                     face_width = right - left
                     face_height = bottom - top
+                    
+                    # Calculate face quality score for best face selection
+                    quality_score = calculate_face_quality(frame, face_location)
                     
                     # Skip small faces
                     if face_width < MIN_FACE_SIZE or face_height < MIN_FACE_SIZE:
@@ -318,6 +455,21 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     # Log the accepted face position
                     logger.info(f"Processing center frame face at position ({x_distance_pct:.2f}, {y_distance_pct:.2f}) relative to center")
                     
+                    # Track best face for this person (by name or by parliament_id if available)
+                    person_id = face_ids[i] if face_ids[i] else name
+                    
+                    # If this is a better quality face than what we've seen before, update it
+                    if quality_score > best_faces[person_id]['score']:
+                        logger.info(f"New best face for {person_id} with quality score {quality_score:.2f} (previous: {best_faces[person_id]['score']:.2f})")
+                        best_faces[person_id] = {
+                            'score': quality_score,
+                            'face_location': face_location,
+                            'frame_number': frame_count,
+                            'position': (x_distance_pct, y_distance_pct),
+                            'timestamp': frame_count / fps,
+                            'frame_position': video.get(cv2.CAP_PROP_POS_MSEC)  # Store frame position for later extraction
+                        }
+                    
                     # Get the timestamp
                     timestamp = frame_count / fps
                     
@@ -342,18 +494,17 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                         cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
                         cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                     
-                    # This is an unidentified face
-                    # Save it if unidentified_dir is specified
-                    if unidentified_dir and name == "Unknown":
-                        # Generate a unique ID for this face if we haven't seen it before
-                        # For simplicity, we're just using the face location as a key
-                        face_key = f"{face_location}"
+                    # This is an unidentified face - track it but don't save intermediate images
+                    # Just track it for best face selection
+                    if name == "Unknown":
+                        # Use a single key for all unidentified faces
+                        # We'll just track them as "Unknown" and save the best one
+                        face_key = "Unknown"
                         
                         if face_key not in unidentified_faces:
-                            face_id, face_filename = save_unidentified_face(rgb_frame, face_location, unidentified_dir)
                             unidentified_faces[face_key] = {
-                                "id": face_id,
-                                "filename": face_filename,
+                                "id": str(uuid.uuid4())[:8],  # Shorter ID for filename
+                                "filename": None,  # We'll only save the best face at the end
                                 "appearances": []
                             }
                         
@@ -369,39 +520,8 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                             top, right, bottom, left = face_location
                             cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
                             cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                    else:
-                        # This is an unidentified face
-                        # Save it if unidentified_dir is specified
-                        if unidentified_dir:
-                            # Generate a unique ID for this face if we haven't seen it before
-                            face_key = f"{face_location}"
-                            
-                            if face_key not in unidentified_faces:
-                                face_id, face_filename = save_unidentified_face(rgb_frame, face_location, unidentified_dir)
-                                
-                                if face_id:
-                                    timestamp = frame_count / fps
-                                    unidentified_faces[face_key] = {
-                                        "id": face_id,
-                                        "filename": face_filename,
-                                        "appearances": [{
-                                            "frame": frame_count,
-                                            "timestamp": timestamp,
-                                            "face_location": face_location
-                                        }]
-                                    }
-                                else:
-                                    # If face extraction failed, mark this frame as problematic
-                                    logger.warning(f"Failed to save unidentified face in frame {frame_count}")
-                                    results["problematic_frames"].append(frame_count)
-                            else:
-                                # We've seen this face before, just add another appearance
-                                timestamp = frame_count / fps
-                                unidentified_faces[face_key]["appearances"].append({
-                                    "frame": frame_count,
-                                    "timestamp": timestamp,
-                                    "face_location": face_location
-                                })
+                    # We've already handled both known and unknown faces above
+                    # No need for an else clause here
                         
                         # Draw a box around the unidentified face
                         if video_writer:
@@ -461,48 +581,82 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             "appearances": speaker["appearances"]
         })
     
-    # Add unidentified faces to results
-    for face_key, face_data in unidentified_faces.items():
-        # Calculate time segments from appearances
-        time_segments = []
-        current_segment = None
-        
-        for appearance in sorted(face_data["appearances"], key=lambda x: x["timestamp"]):
-            timestamp = appearance["timestamp"]
+    # We'll handle unidentified faces as part of the best face extraction below
+    # Clear the unidentified_faces list in results since we're only keeping best faces
+    results["unidentified_faces"] = []
+    
+    # Add best face information to results
+    results["best_faces"] = []
+    
+    # Reopen the video to extract best faces
+    video = cv2.VideoCapture(video_path)
+    if not video.isOpened():
+        logger.error(f"Could not reopen video for best face extraction: {video_path}")
+    
+    # Process and save the best face for each person (both identified and unidentified)
+    for person_id, face_data in best_faces.items():
+        if face_data['score'] > 0:  # Only include faces that were actually found
+            logger.info(f"Best face for {person_id}: quality score {face_data['score']:.2f}, frame {face_data['frame_number']}")
             
-            if current_segment is None:
-                current_segment = {"start": timestamp, "end": timestamp}
-            elif timestamp - current_segment["end"] < 5:  # If less than 5 seconds gap, extend the segment
-                current_segment["end"] = timestamp
-            else:
-                time_segments.append(current_segment)
-                current_segment = {"start": timestamp, "end": timestamp}
-        
-        if current_segment:
-            time_segments.append(current_segment)
-        
-        # Add to results
-        # Use basename of the filename to ensure consistency with the metadata
-        filename = os.path.basename(face_data["filename"]) if face_data["filename"] else ""
-        
-        results["unidentified_faces"].append({
-            "id": face_data["id"],
-            "filename": filename,
-            "time_segments": time_segments,
-            "appearances": face_data["appearances"]
-        })
+            if unidentified_dir:
+                # Create a generic filename for the face without using MP names
+                # Generate a unique face ID for all faces
+                face_id = str(uuid.uuid4())[:8]
+                if person_id.startswith("Unknown_"):
+                    # For unidentified faces
+                    face_id = unidentified_faces.get(person_id, {}).get('id', face_id)
+                
+                # Use the same generic filename format for all faces
+                best_face_filename = os.path.join(unidentified_dir, f"face_{face_id}.jpg")
+                
+                # Extract the face image from the video at the stored frame position
+                top, right, bottom, left = face_data['face_location']
+                
+                # Seek to the frame position where this face was found
+                video.set(cv2.CAP_PROP_POS_MSEC, face_data['frame_position'])
+                ret, frame = video.read()
+                
+                if ret:
+                    # Extract and save the face
+                    face_img = frame[top:bottom, left:right]
+                    cv2.imwrite(best_face_filename, face_img)
+                    
+                    # Add to results
+                    results["best_faces"].append({
+                        "person_id": person_id,
+                        "quality_score": face_data['score'],
+                        "frame_number": face_data['frame_number'],
+                        "timestamp": face_data['timestamp'],
+                        "face_location": face_data['face_location'],
+                        "position": face_data['position'],
+                        "filename": os.path.basename(best_face_filename)
+                    })
+                    
+                    # If this is an unidentified face, also add it to the unidentified_faces list
+                    if person_id.startswith("Unknown_"):
+                        face_id = unidentified_faces.get(person_id, {}).get('id', str(uuid.uuid4()))
+                        results["unidentified_faces"].append({
+                            "id": face_id,
+                            "filename": os.path.basename(best_face_filename),
+                            "quality_score": face_data['score'],
+                            "frame_number": face_data['frame_number'],
+                            "timestamp": face_data['timestamp']
+                        })
+                else:
+                    logger.warning(f"Could not extract best face for {person_id} at frame position {face_data['frame_position']}")
     
     # Save the results
     with open(results_file, 'w') as f:
         json.dump(results, f, indent=2)
     
-    logger.info(f"Processed {frame_count} frames, found {len(identified_speakers)} speakers and {len(unidentified_faces)} unidentified faces")
+    logger.info(f"Processed {frame_count} frames, found {len(identified_speakers)} speakers, {len(unidentified_faces)} unidentified faces, and {len(results['best_faces'])} best faces")
     
     return {
         "success": True,
-        "message": f"Processed {frame_count} frames, found {len(identified_speakers)} speakers and {len(unidentified_faces)} unidentified faces",
+        "message": f"Processed {frame_count} frames, found {len(identified_speakers)} speakers, {len(unidentified_faces)} unidentified faces, and {len(results['best_faces'])} best faces",
         "speakers": list(identified_speakers.values()),
         "unidentified_faces": list(unidentified_faces.values()),
+        "best_faces": results["best_faces"],
         "results_file": results_file,
         "output_file": output_file
     }
@@ -515,6 +669,11 @@ def main():
     parser.add_argument("--output", help="Path to save the output video with face boxes")
     parser.add_argument("--unidentified-dir", help="Directory to save unidentified faces")
     parser.add_argument("--skip-frames", help="Path to a JSON file containing frame numbers to skip")
+    parser.add_argument("--frame-skip", type=int, default=5, help="Process every Nth frame (default: 5)")
+    parser.add_argument("--filter-mps", help="Filter MPs by category (e.g., 'commons' for House of Commons only)")
+    parser.add_argument("--max-encodings", type=int, help="Maximum number of MP encodings to load (for testing with limited memory)")
+    parser.add_argument("--detection-model", choices=["hog", "cnn"], default="hog", help="Face detection model to use: 'hog' (faster, less memory) or 'cnn' (more accurate, more memory)")
+    
     
     args = parser.parse_args()
     
@@ -525,7 +684,11 @@ def main():
         args.results,
         args.output,
         args.unidentified_dir,
-        args.skip_frames
+        args.skip_frames,
+        args.frame_skip,
+        args.filter_mps,
+        args.max_encodings,
+        args.detection_model
     )
     
     if result["success"]:
