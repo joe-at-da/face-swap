@@ -5,6 +5,7 @@ Script to identify known faces and store unidentified faces for later identifica
 This script:
 1. Identifies faces that match existing profiles in the database
 2. Stores unidentified faces for later identification
+3. Filters out faces that aren't in the center of the frame
 """
 
 import os
@@ -18,11 +19,17 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import uuid
+from collections import defaultdict
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Constants
+CENTER_FRAME_THRESHOLD_X = 0.25  # How close to center a face must be horizontally (smaller = stricter)
+CENTER_FRAME_THRESHOLD_Y = 0.5  # Relaxed vertical threshold - much less important than horizontal
+MIN_FACE_SIZE = 80  # Minimum face size (width or height) in pixels - balanced for quality vs detection
 
 def load_encodings(encodings_file):
     """Load face encodings from a JSON file."""
@@ -278,6 +285,39 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                 
                 # Process each face
                 for i, (face_encoding, face_location, name) in enumerate(zip(face_encodings, face_locations, face_names)):
+                    # Get face dimensions and position
+                    top, right, bottom, left = face_location
+                    face_width = right - left
+                    face_height = bottom - top
+                    
+                    # Skip small faces
+                    if face_width < MIN_FACE_SIZE or face_height < MIN_FACE_SIZE:
+                        logger.debug(f"Skipping small face: {face_width}x{face_height} pixels")
+                        continue
+                    
+                    # Skip faces that aren't in the center frame
+                    face_center_x = (left + right) / 2
+                    face_center_y = (top + bottom) / 2
+                    frame_center_x = frame_width / 2
+                    frame_center_y = frame_height / 2
+                    
+                    # Calculate distance from center as a percentage of frame dimensions
+                    x_distance_pct = abs(face_center_x - frame_center_x) / (frame_width / 2)
+                    y_distance_pct = abs(face_center_y - frame_center_y) / (frame_height / 2)
+                    
+                    # Skip if the face is too far from center (lower values = stricter center requirement)
+                    if x_distance_pct > CENTER_FRAME_THRESHOLD_X:
+                        logger.info(f"Skipping face not in horizontal center (x_distance: {x_distance_pct:.2f})")
+                        continue
+                        
+                    # Also check vertical centering
+                    if y_distance_pct > CENTER_FRAME_THRESHOLD_Y:
+                        logger.info(f"Skipping face not in vertical center (y_distance: {y_distance_pct:.2f})")
+                        continue
+                        
+                    # Log the accepted face position
+                    logger.info(f"Processing center frame face at position ({x_distance_pct:.2f}, {y_distance_pct:.2f}) relative to center")
+                    
                     # Get the timestamp
                     timestamp = frame_count / fps
                     

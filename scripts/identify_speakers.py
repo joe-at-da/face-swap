@@ -34,8 +34,10 @@ logger = logging.getLogger("identify_speakers")
 # Constants
 DEFAULT_SAMPLE_RATE = 5  # Process every Nth frame
 FACE_RECOGNITION_TOLERANCE = 0.6  # Lower is more strict (0.6 is typical)
-MIN_FACE_SIZE = 40  # Minimum face size (width or height) in pixels
+MIN_FACE_SIZE = 80  # Minimum face size (width or height) in pixels - balanced for quality vs detection
 MIN_CONFIDENCE_THRESHOLD = 0.5  # Minimum confidence to include in results
+CENTER_FRAME_THRESHOLD_X = 0.25  # How close to center a face must be horizontally (smaller = stricter)
+CENTER_FRAME_THRESHOLD_Y = 0.5  # Relaxed vertical threshold - much less important than horizontal
 
 def ensure_directory(directory):
     """Ensure a directory exists."""
@@ -145,6 +147,29 @@ def identify_speakers_in_video(video_path, mp_encodings, output_path=None, sampl
                         if face_width < MIN_FACE_SIZE or face_height < MIN_FACE_SIZE:
                             logger.debug(f"Skipping small face: {face_width}x{face_height} pixels")
                             continue
+                        
+                        # Skip faces that aren't in the center frame
+                        face_center_x = (left + right) / 2
+                        face_center_y = (top + bottom) / 2
+                        frame_center_x = width / 2
+                        frame_center_y = height / 2
+                        
+                        # Calculate distance from center as a percentage of frame dimensions
+                        x_distance_pct = abs(face_center_x - frame_center_x) / (width / 2)
+                        y_distance_pct = abs(face_center_y - frame_center_y) / (height / 2)
+                        
+                        # Skip if the face is too far from center (lower values = stricter center requirement)
+                        if x_distance_pct > CENTER_FRAME_THRESHOLD_X:
+                            logger.info(f"Skipping face not in horizontal center (x_distance: {x_distance_pct:.2f})")
+                            continue
+                            
+                        # Also check vertical centering
+                        if y_distance_pct > CENTER_FRAME_THRESHOLD_Y:
+                            logger.info(f"Skipping face not in vertical center (y_distance: {y_distance_pct:.2f})")
+                            continue
+                            
+                        # Log the accepted face position
+                        logger.info(f"Processing center frame face at position ({x_distance_pct:.2f}, {y_distance_pct:.2f}) relative to center")
                         
                         # Compare with known MP encodings
                         matches = face_recognition.compare_faces(
