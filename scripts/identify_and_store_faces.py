@@ -26,10 +26,10 @@ logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants
-CENTER_FRAME_THRESHOLD_X = 0.25  # How close to center a face must be horizontally (smaller = stricter)
-CENTER_FRAME_THRESHOLD_Y = 0.5  # Relaxed vertical threshold - much less important than horizontal
-MIN_FACE_SIZE = 80  # Minimum face size (width or height) in pixels - balanced for quality vs detection
+# Constants for face detection and filtering
+MIN_FACE_SIZE = 20  # Minimum face size in pixels
+CENTER_FRAME_THRESHOLD_X = 0.8  # How far from center horizontally a face can be (0-1, lower = stricter)
+CENTER_FRAME_THRESHOLD_Y = 0.8  # How far from center vertically a face can be (0-1, lower = stricter)
 
 def load_encodings(encodings_file, filter_category=None, max_encodings=None):
     """Load face encodings from a JSON file.
@@ -594,56 +594,67 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
         logger.error(f"Could not reopen video for best face extraction: {video_path}")
     
     # Process and save the best face for each person (both identified and unidentified)
-    for person_id, face_data in best_faces.items():
-        if face_data['score'] > 0:  # Only include faces that were actually found
+    # After processing all frames, save the best faces with sequential numbering
+    if unidentified_dir:
+        # First, collect all the faces we want to save
+        faces_to_save = []
+        
+        # Collect all faces to save
+        for person_id, face_data in best_faces.items():
             logger.info(f"Best face for {person_id}: quality score {face_data['score']:.2f}, frame {face_data['frame_number']}")
             
-            if unidentified_dir:
-                # Create a generic filename for the face without using MP names
-                # Generate a unique face ID for all faces
-                face_id = str(uuid.uuid4())[:8]
-                if person_id.startswith("Unknown_"):
-                    # For unidentified faces
-                    face_id = unidentified_faces.get(person_id, {}).get('id', face_id)
+            # Extract the face image from the video at the stored frame position
+            top, right, bottom, left = face_data['face_location']
+            
+            # Seek to the frame position where this face was found
+            video.set(cv2.CAP_PROP_POS_MSEC, face_data['frame_position'])
+            ret, frame = video.read()
+            
+            if ret:
+                # Extract the face
+                face_img = frame[top:bottom, left:right]
                 
-                # Use the same generic filename format for all faces
-                best_face_filename = os.path.join(unidentified_dir, f"face_{face_id}.jpg")
-                
-                # Extract the face image from the video at the stored frame position
-                top, right, bottom, left = face_data['face_location']
-                
-                # Seek to the frame position where this face was found
-                video.set(cv2.CAP_PROP_POS_MSEC, face_data['frame_position'])
-                ret, frame = video.read()
-                
-                if ret:
-                    # Extract and save the face
-                    face_img = frame[top:bottom, left:right]
-                    cv2.imwrite(best_face_filename, face_img)
-                    
-                    # Add to results
-                    results["best_faces"].append({
-                        "person_id": person_id,
-                        "quality_score": face_data['score'],
-                        "frame_number": face_data['frame_number'],
-                        "timestamp": face_data['timestamp'],
-                        "face_location": face_data['face_location'],
-                        "position": face_data['position'],
-                        "filename": os.path.basename(best_face_filename)
-                    })
-                    
-                    # If this is an unidentified face, also add it to the unidentified_faces list
-                    if person_id.startswith("Unknown_"):
-                        face_id = unidentified_faces.get(person_id, {}).get('id', str(uuid.uuid4()))
-                        results["unidentified_faces"].append({
-                            "id": face_id,
-                            "filename": os.path.basename(best_face_filename),
-                            "quality_score": face_data['score'],
-                            "frame_number": face_data['frame_number'],
-                            "timestamp": face_data['timestamp']
-                        })
-                else:
-                    logger.warning(f"Could not extract best face for {person_id} at frame position {face_data['frame_position']}")
+                # Add to our collection with all necessary data
+                faces_to_save.append({
+                    "person_id": person_id,
+                    "face_img": face_img,
+                    "quality_score": face_data['score'],
+                    "frame_number": face_data['frame_number'],
+                    "timestamp": face_data['timestamp'],
+                    "face_location": face_data['face_location'],
+                    "position": face_data['position']
+                })
+            else:
+                logger.warning(f"Could not extract best face for {person_id} at frame position {face_data['frame_position']}")
+        
+        # Now save all faces with sequential numbering
+        for i, face_data in enumerate(faces_to_save, 1):
+            # Simple sequential filename
+            best_face_filename = os.path.join(unidentified_dir, f"{i}.jpg")
+            
+            # Save the face image
+            cv2.imwrite(best_face_filename, face_data["face_img"])
+            
+            # Add to results
+            results["best_faces"].append({
+                "person_id": face_data["person_id"],
+                "quality_score": face_data["quality_score"],
+                "frame_number": face_data["frame_number"],
+                "timestamp": face_data["timestamp"],
+                "face_location": face_data["face_location"],
+                "position": face_data["position"],
+                "filename": os.path.basename(best_face_filename)
+            })
+            
+            # If this is an unidentified face, also add it to the unidentified_faces list
+            if face_data["person_id"].startswith("Unknown_"):
+                results["unidentified_faces"].append({
+                    "id": str(i),  # Use the same number as the filename
+                    "filename": os.path.basename(best_face_filename),
+                    "quality_score": face_data["quality_score"],
+                    "frame_number": face_data["frame_number"],
+                    "timestamp": face_data["timestamp"]
+                })
     
     # Save the results
     with open(results_file, 'w') as f:
