@@ -168,7 +168,8 @@ def calculate_face_quality(frame, face_location):
         
         # Size component - larger faces are generally better quality
         # Heavily weight size to prioritize larger faces (like the main speaker)
-        size_score = face_width * face_height / 3000  # Even more weight on size
+        face_area = face_width * face_height
+        size_score = face_area / 1500  # Even more weight on size than before
         
         # Position component - faces in the center are generally better
         face_center_x = (left + right) / 2
@@ -448,9 +449,10 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     # Calculate face quality score for best face selection
                     quality_score = calculate_face_quality(frame, face_location)
                     
-                    # Skip small faces
-                    if face_width < MIN_FACE_SIZE or face_height < MIN_FACE_SIZE:
-                        logger.debug(f"Skipping small face: {face_width}x{face_height} pixels")
+                    # Skip small faces - check both dimensions and total area
+                    face_area = face_width * face_height
+                    if face_width < MIN_FACE_SIZE or face_height < MIN_FACE_SIZE or face_area < MIN_FACE_AREA:
+                        logger.info(f"Skipping small face: {face_width}x{face_height} pixels, area: {face_area}")
                         continue
                     
                     # Skip faces that aren't in the center frame
