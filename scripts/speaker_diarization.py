@@ -100,124 +100,147 @@ class SpeakerDiarizer:
         # We only care about speaker changes, not pauses
         
         try:
-            # Use a simple energy-based approach for speaker segmentation
+            # Use an improved approach for speaker segmentation
             # This doesn't require Hugging Face authentication
             import librosa
             import numpy as np
-            from sklearn.cluster import AgglomerativeClustering
-            from scipy.spatial.distance import pdist, squareform
+            from scipy.signal import medfilt
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.metrics.pairwise import cosine_similarity
             
-            logger.info("Using simple energy-based speaker segmentation without Hugging Face dependency")
+            logger.info("Using improved speaker segmentation without Hugging Face dependency")
             
             # Load audio
             y, sr = librosa.load(str(audio_path), sr=None)
             
-            # Parameters for segmentation
-            frame_length = int(sr * 0.025)  # 25ms frames
-            hop_length = int(sr * 0.010)    # 10ms hop
+            # Parameters for analysis - use smaller windows for more precise detection
+            window_size = 2.0   # 2 second windows for analysis
+            step_size = 0.5     # 0.5 second steps between windows for better resolution
             
-            # Extract audio features
-            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+            # We'll use dynamic thresholding instead of a fixed threshold
+            # This adapts to the specific audio characteristics
             
-            # Segment audio into chunks of 1 second
-            chunk_size = int(sr / hop_length)  # 1 second chunks
-            num_chunks = mfccs.shape[1] // chunk_size
+            # Convert window and step size to samples
+            window_samples = int(window_size * sr)
+            step_samples = int(step_size * sr)
+            
+            # Calculate number of windows
+            n_windows = max(1, int((len(y) - window_samples) / step_samples) + 1)
+            logger.info(f"Analyzing with {n_windows} windows of {window_size}s each")
             
             # Skip if audio is too short
-            if num_chunks < 2:
-                logger.warning("Audio too short for segmentation, creating single speaker segment")
-                segments = [{
-                    "speaker": "SPEAKER_1",
-                    "start_time": 0,
-                    "end_time": audio_duration,
-                    "duration": audio_duration,
-                    "speech_group_id": 1
-                }]
-                speech_groups = {1: {
-                    "id": "speech_group_1",
-                    "speaker": "SPEAKER_1",
-                    "segments": segments,
-                    "start_time": 0,
-                    "end_time": audio_duration,
-                    "duration": audio_duration
-                }}
-                speakers = {"SPEAKER_1": {"segments": 1, "total_duration": audio_duration, "metadata": {}, "speech_groups": {1}}}
-                raise Exception("Using single segment fallback")
+            # Extract features for each window
+            window_features = []
+            window_times = []
             
-            # Extract features for each chunk
-            chunk_features = []
-            for i in range(num_chunks):
-                start = i * chunk_size
-                end = min((i + 1) * chunk_size, mfccs.shape[1])
-                chunk_features.append(np.mean(mfccs[:, start:end], axis=1))
+            # Function to extract features - simplified to just use MFCCs
+            def extract_features(window_audio, sr):
+                # MFCCs capture vocal tract characteristics
+                mfcc = librosa.feature.mfcc(y=window_audio, sr=sr, n_mfcc=20)
+                # Average across time to get a single feature vector
+                return np.mean(mfcc, axis=1).tolist()  # Convert to Python list
             
-            # Cluster chunks into speakers
-            X = np.array(chunk_features)
+            for i in range(n_windows):
+                start_sample = i * step_samples
+                end_sample = start_sample + window_samples
+                
+                if end_sample <= len(y):
+                    window_audio = y[start_sample:end_sample]
+                    window_time = float(start_sample / sr)  # Convert to Python float
+                    
+                    # Extract features for this window
+                    features = extract_features(window_audio, sr)
+                    
+                    window_features.append(features)
+                    window_times.append(window_time)
             
-            # Calculate distance matrix
-            dist = pdist(X, metric='cosine')
-            dist_matrix = squareform(dist)
+            # Convert to numpy array for processing
+            window_features = np.array(window_features)
             
-            # Use a conservative number of clusters (speakers)
-            # For simplicity, let's use just 2 speakers to avoid over-segmentation
-            # This will help prevent the same speaker from being split into multiple speakers
-            n_clusters = 2  # Fixed at 2 speakers for simplicity
+            # Standardize features
+            if len(window_features) > 1:
+                from sklearn.preprocessing import StandardScaler
+                scaler = StandardScaler()
+                window_features = scaler.fit_transform(window_features)
             
-            # Perform clustering
-            clustering = AgglomerativeClustering(
-                n_clusters=n_clusters,
-                affinity='precomputed',
-                linkage='average'
-            ).fit(dist_matrix)
+            # Calculate similarity between adjacent windows
+            similarities = []
+            for i in range(1, len(window_features)):
+                # Use cosine similarity directly
+                from sklearn.metrics.pairwise import cosine_similarity
+                sim = float(cosine_similarity([window_features[i-1]], [window_features[i]])[0][0])
+                similarities.append(sim)
             
-            # Process the clustering results
+            # Apply median filter to smooth out similarities
+            if len(similarities) > 5:
+                similarities = medfilt(similarities, 3).tolist()  # Convert to Python list
+            
+            # Use dynamic thresholding - find local minima in similarity
+            from scipy.signal import find_peaks
+            # Invert similarities to find peaks (which are actually dips in similarity)
+            inv_similarities = [1.0 - sim for sim in similarities]  # Python list comprehension
+            
+            # Find peaks with prominence proportional to the standard deviation
+            prominence = max(0.1, float(np.std(inv_similarities) * 1.5))  # Adaptive threshold
+            peaks, _ = find_peaks(np.array(inv_similarities), prominence=prominence, distance=int(1.0/step_size))
+            
+            # These peaks represent potential speaker changes
+            # Convert to regular Python list
+            change_indices = [int(idx) for idx in peaks.tolist()]
+            
+            # Convert indices to timestamps (using Python native types)
+            change_times = [float(window_times[i+1]) for i in change_indices]  # +1 because we're comparing i-1 and i
+            
+            logger.info(f"Detected {len(change_times)} speaker changes")
+            if change_times:  # Use Python's truthiness check
+                logger.info(f"Changes at seconds: {[f'{t:.1f}' for t in change_times]}")
+                
+            # Calculate average similarity for debugging
+            avg_similarity = sum(similarities) / len(similarities) if similarities else 1.0
+            logger.info(f"Average similarity between adjacent windows: {avg_similarity:.3f}")
+            logger.info(f"Using prominence threshold: {prominence:.3f} for peak detection")
+            
+            # Create segments based on detected speaker changes
             segments = []
             speech_groups = {}
-            current_speech_group = 0
-            last_speaker = None
             
-            # Process each chunk and create segments
-            for i in range(num_chunks):
-                # Get the speaker label for this chunk
-                speaker_label = clustering.labels_[i]
-                speaker_id = f"SPEAKER_{speaker_label + 1}"  # +1 to start from SPEAKER_1 instead of SPEAKER_0
-                
-                # Calculate time boundaries
-                start_time = i * chunk_size * hop_length / sr
-                end_time = min((i + 1) * chunk_size * hop_length / sr, audio_duration)
+            # Add start and end points to create complete segments
+            all_change_points = [0.0] + change_times + [float(audio_duration)]
+            logger.info(f"Creating {len(all_change_points)-1} segments between change points")
+            
+            # Process each segment between change points
+            for i in range(len(all_change_points) - 1):
+                start_time = all_change_points[i]
+                end_time = all_change_points[i + 1]
                 segment_duration = end_time - start_time
                 
-                # Check if we need a new speech group based on speaker change only
-                if speaker_id != last_speaker:
-                    current_speech_group += 1
-                    
-                last_speaker = speaker_id
+                # Skip very short segments (less than 0.5 seconds)
+                if segment_duration < 0.5:
+                    logger.info(f"Skipping very short segment: {start_time:.1f}-{end_time:.1f} ({segment_duration:.1f}s)")
+                    continue
+                
+                # Each segment gets its own speech group ID
+                speech_group_id = i + 1
+                speaker_id = f"SPEAKER_{speech_group_id}"
+                
+                # Create segment with Python native types
                 segment = {
                     "speaker": speaker_id,
                     "start_time": start_time,
                     "end_time": end_time,
                     "duration": segment_duration,
-                    "speech_group_id": current_speech_group
+                    "speech_group_id": speech_group_id
                 }
                 segments.append(segment)
                 
-                # Create or update speech group
-                if current_speech_group not in speech_groups:
-                    speech_groups[current_speech_group] = {
-                        "id": f"speech_group_{current_speech_group}",
-                        "speaker": speaker_id,
-                        "segments": [],
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "duration": segment_duration
-                    }
-                else:
-                    # Update existing group
-                    speech_groups[current_speech_group]["end_time"] = end_time
-                    speech_groups[current_speech_group]["duration"] += segment_duration
-                
-                # Add segment to its group
-                speech_groups[current_speech_group]["segments"].append(segment)
+                # Create speech group with Python native types
+                speech_groups[speech_group_id] = {
+                    "speaker": speaker_id,
+                    "segments": [segment],
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration": segment_duration
+                }
                 
                 # We already set last_speaker above, no need to set it again
                 # And we don't use last_end_time anymore since we're not using pauses
@@ -237,8 +260,8 @@ class SpeakerDiarizer:
                 
                 speakers[speaker_id]["segments"] += 1
                 speakers[speaker_id]["total_duration"] += segment["duration"]
-                # Add the speech group ID to the set
-                speakers[speaker_id]["speech_groups"].add(segment["speech_group_id"])
+                # Add the speech group ID to the set (convert to int first to avoid numpy type issues)
+                speakers[speaker_id]["speech_groups"].add(int(segment["speech_group_id"]))
             
             logger.info(f"Diarization completed: found {len(segments)} segments in {len(speech_groups)} speech groups")
             
