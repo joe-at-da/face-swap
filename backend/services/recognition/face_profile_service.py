@@ -268,32 +268,79 @@ class FaceProfileService:
                                 continue
                             
                             # Distance from center of frame (normalized 0-1)
+                            # Calculate horizontal and vertical distances separately
+                            horizontal_distance = abs(face_center_x - frame_center_x) / (frame_width / 2)
+                            vertical_distance = abs(face_center_y - frame_center_y) / (frame_height / 2)
+                            
+                            # Overall distance (normalized 0-1, with higher penalty for horizontal offset)
                             distance_from_center = np.sqrt(
-                                ((face_center_x - frame_center_x) / frame_width) ** 2 +
-                                ((face_center_y - frame_center_y) / frame_height) ** 2
-                            )
+                                (horizontal_distance * 1.5) ** 2 +  # Apply higher weight to horizontal centering
+                                vertical_distance ** 2
+                            ) / np.sqrt(1.5**2 + 1)  # Normalize to 0-1 range
                             
                             # Calculate sharpness (Laplacian variance)
                             gray_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
                             sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+                            
+                            # Detect facial landmarks to check if eyes are open
+                            landmarks = face_recognition.face_landmarks(rgb_frame, [face_location])
+                            eyes_open_score = 0.0
+                            
+                            if landmarks and len(landmarks) > 0:
+                                face_landmarks = landmarks[0]
+                                if 'left_eye' in face_landmarks and 'right_eye' in face_landmarks:
+                                    # Calculate eye aspect ratio (EAR) for both eyes
+                                    # EAR = (height of eye) / (width of eye)
+                                    # Higher values indicate more open eyes
+                                    
+                                    def calculate_eye_aspect_ratio(eye_points):
+                                        # Calculate height (average of two height measurements)
+                                        h1 = np.linalg.norm(np.array(eye_points[1]) - np.array(eye_points[5]))
+                                        h2 = np.linalg.norm(np.array(eye_points[2]) - np.array(eye_points[4]))
+                                        # Calculate width
+                                        w = np.linalg.norm(np.array(eye_points[0]) - np.array(eye_points[3]))
+                                        # Return aspect ratio
+                                        return (h1 + h2) / (2.0 * w) if w > 0 else 0
+                                    
+                                    left_eye = face_landmarks['left_eye']
+                                    right_eye = face_landmarks['right_eye']
+                                    
+                                    left_ear = calculate_eye_aspect_ratio(left_eye)
+                                    right_ear = calculate_eye_aspect_ratio(right_eye)
+                                    
+                                    # Average EAR for both eyes
+                                    avg_ear = (left_ear + right_ear) / 2.0
+                                    
+                                    # Convert to score (typical EAR for open eyes is around 0.2-0.3)
+                                    # Values below 0.2 often indicate closed or partially closed eyes
+                                    eyes_open_score = min(avg_ear / 0.25, 1.0)
                             
                             # Calculate face quality score
                             quality_score = 0.0
                             
                             # Size component (bigger is better, up to a point)
                             size_score = min(face_size / (frame_width * frame_height) * 20, 1.0)
-                            # Increased weight for size component to prioritize larger faces
-                            quality_score += size_score * 0.4
+                            # Adjusted weight for size component 
+                            quality_score += size_score * 0.25
                             
                             # Center proximity component (closer to center is better)
                             if prioritize_center:
-                                # Center proximity component (closer to center is better)
-                                center_score = 1.0 - min(distance_from_center * 2.5, 1.0)  # Sharper falloff
-                                quality_score += center_score * 0.4  # Adjusted weight to balance with size
+                                # Apply a stricter center proximity scoring
+                                # Use a sharper falloff curve to heavily penalize off-center faces
+                                center_score = 1.0 - min(distance_from_center ** 2 * 3.0, 1.0)  # Much sharper falloff (quadratic)
+                                
+                                # Add a hard threshold for extremely off-center faces
+                                if horizontal_distance > 0.6:  # If face is more than 60% away from center horizontally
+                                    center_score *= 0.5  # Apply a severe penalty
+                                
+                                quality_score += center_score * 0.4  # Increased weight for center positioning
                             
                             # Sharpness component (sharper is better)
                             sharpness_score = min(sharpness / 1000, 1.0)
-                            quality_score += sharpness_score * 0.2  # Reduced weight from 0.3 to 0.2
+                            quality_score += sharpness_score * 0.15  # Reduced weight
+                            
+                            # Eye openness component (open eyes are better)
+                            quality_score += eyes_open_score * 0.2  # Adjusted weight
                             
                             timestamp = current_frame / fps
                             
@@ -306,7 +353,10 @@ class FaceProfileService:
                                 "quality_score": quality_score,
                                 "size": face_size,
                                 "distance_from_center": distance_from_center,
+                                "horizontal_distance": horizontal_distance,  # Store horizontal distance for logging
+                                "vertical_distance": vertical_distance,      # Store vertical distance for logging
                                 "sharpness": sharpness,
+                                "eyes_open_score": eyes_open_score,  # Add eye openness information
                                 "image": face_image,  # Store image temporarily
                                 "rgb_frame": rgb_frame  # Store full frame temporarily
                             }
@@ -360,7 +410,15 @@ class FaceProfileService:
                         face_data.append(best_face)
                         faces_found += 1
                         
-                        logger.debug(f"Selected best face at frame {best_face['frame']} with quality {best_face['quality_score']:.2f}")
+                        # Calculate center position as percentage from center (0% = center, 100% = edge)
+                        horizontal_pos = best_face.get('horizontal_distance', 0) * 100
+                        vertical_pos = best_face.get('vertical_distance', 0) * 100
+                        
+                        logger.info(f"Selected best face at frame {best_face['frame']} with:"
+                                  f"\n - Quality score: {best_face['quality_score']:.2f}"
+                                  f"\n - Eyes open score: {best_face.get('eyes_open_score', 0.0):.2f}"
+                                  f"\n - Horizontal position: {horizontal_pos:.1f}% from center"
+                                  f"\n - Vertical position: {vertical_pos:.1f}% from center")
                     
                     # Clear segment faces
                     segment_faces = []
