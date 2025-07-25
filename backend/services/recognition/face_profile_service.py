@@ -223,7 +223,7 @@ class FaceProfileService:
             
             # Process frames
             faces_found = 0
-            face_data = []
+            face_data = []  # Final output faces (best per person per segment)
             current_frame = 0
             
             # For best frame selection, we'll store candidate faces for each segment
@@ -414,11 +414,22 @@ class FaceProfileService:
                     (current_frame % segment_size == 0 or current_frame >= frame_count) and 
                     segment_faces):
                     
-                    # Group faces by similarity to find distinct people
-                    distinct_faces = self._group_similar_faces(segment_faces)
+                    # Log segment information
+                    segment_start = max(0, current_frame - segment_size)
+                    segment_end = current_frame
+                    segment_start_time = segment_start / fps if fps > 0 else 0
+                    segment_end_time = segment_end / fps if fps > 0 else 0
                     
-                    # For each distinct person, select the best quality face
-                    for person_faces in distinct_faces:
+                    logger.info(f"Processing segment from frame {segment_start} to {segment_end} "
+                              f"({segment_start_time:.2f}s to {segment_end_time:.2f}s) "
+                              f"with {len(segment_faces)} candidate faces")
+                    
+                    # Group faces by similarity to find distinct people in this segment
+                    distinct_faces = self._group_similar_faces(segment_faces)
+                    logger.info(f"Found {len(distinct_faces)} distinct people in this segment")
+                    
+                    # For each distinct person in this segment, select the best quality face
+                    for person_idx, person_faces in enumerate(distinct_faces):
                         if not person_faces:
                             continue
                             
@@ -438,6 +449,15 @@ class FaceProfileService:
                         
                         face_data.append(best_face)
                         faces_found += 1
+                        
+                        logger.info(f"Selected best face for person {person_idx+1} in segment {segment_start}-{segment_end} "
+                                  f"(at frame {best_face['frame']}, {best_face['timestamp']:.2f}s)")
+                        
+                        # Add segment information to the face data for easier transcript matching
+                        best_face["segment_start_frame"] = segment_start
+                        best_face["segment_end_frame"] = segment_end
+                        best_face["segment_start_time"] = segment_start_time
+                        best_face["segment_end_time"] = segment_end_time
                         
                         # Calculate center position as percentage from center (0% = center, 100% = edge)
                         horizontal_pos = best_face.get('horizontal_distance', 0) * 100
