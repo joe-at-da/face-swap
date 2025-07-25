@@ -382,6 +382,14 @@ class FaceProfileService:
                                 "rgb_frame": rgb_frame  # Store full frame temporarily
                             }
                             
+                            # ABSOLUTE THRESHOLD: Skip faces that are too far off-center horizontally
+                            # This is a hard requirement that cannot be overridden by other quality factors
+                            ABSOLUTE_HORIZONTAL_THRESHOLD = 0.4  # 40% from center is the absolute maximum allowed
+                            
+                            if prioritize_center and horizontal_distance > ABSOLUTE_HORIZONTAL_THRESHOLD:
+                                logger.info(f"REJECTING OFF-CENTER FACE at frame {current_frame}: horizontal={horizontal_distance*100:.1f}% exceeds absolute threshold of {ABSOLUTE_HORIZONTAL_THRESHOLD*100:.1f}%")
+                                continue  # Skip this face entirely
+                            
                             if select_best_frames:
                                 # Add to segment candidates
                                 segment_faces.append(face_info)
