@@ -100,40 +100,98 @@ class SpeakerDiarizer:
         # We only care about speaker changes, not pauses
         
         try:
-            # Try to use pyannote.audio for diarization - it's good at detecting speaker changes
-            import torch
-            from pyannote.audio import Pipeline
+            # Use a simple energy-based approach for speaker segmentation
+            # This doesn't require Hugging Face authentication
+            import librosa
+            import numpy as np
+            from sklearn.cluster import AgglomerativeClustering
+            from scipy.spatial.distance import pdist, squareform
             
-            # Initialize the diarization pipeline
-            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=True)
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            pipeline = pipeline.to(device)
+            logger.info("Using simple energy-based speaker segmentation without Hugging Face dependency")
             
-            logger.info(f"Running diarization on device: {device}")
+            # Load audio
+            y, sr = librosa.load(str(audio_path), sr=None)
             
-            # Run the diarization pipeline
-            diarization = pipeline(str(audio_path))
+            # Parameters for segmentation
+            frame_length = int(sr * 0.025)  # 25ms frames
+            hop_length = int(sr * 0.010)    # 10ms hop
             
-            # Process the diarization results
+            # Extract audio features
+            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+            
+            # Segment audio into chunks of 1 second
+            chunk_size = int(sr / hop_length)  # 1 second chunks
+            num_chunks = mfccs.shape[1] // chunk_size
+            
+            # Skip if audio is too short
+            if num_chunks < 2:
+                logger.warning("Audio too short for segmentation, creating single speaker segment")
+                segments = [{
+                    "speaker": "SPEAKER_1",
+                    "start_time": 0,
+                    "end_time": audio_duration,
+                    "duration": audio_duration,
+                    "speech_group_id": 1
+                }]
+                speech_groups = {1: {
+                    "id": "speech_group_1",
+                    "speaker": "SPEAKER_1",
+                    "segments": segments,
+                    "start_time": 0,
+                    "end_time": audio_duration,
+                    "duration": audio_duration
+                }}
+                speakers = {"SPEAKER_1": {"segments": 1, "total_duration": audio_duration, "metadata": {}, "speech_groups": {1}}}
+                raise Exception("Using single segment fallback")
+            
+            # Extract features for each chunk
+            chunk_features = []
+            for i in range(num_chunks):
+                start = i * chunk_size
+                end = min((i + 1) * chunk_size, mfccs.shape[1])
+                chunk_features.append(np.mean(mfccs[:, start:end], axis=1))
+            
+            # Cluster chunks into speakers
+            X = np.array(chunk_features)
+            
+            # Calculate distance matrix
+            dist = pdist(X, metric='cosine')
+            dist_matrix = squareform(dist)
+            
+            # Use a conservative number of clusters (speakers)
+            # For simplicity, let's use just 2 speakers to avoid over-segmentation
+            # This will help prevent the same speaker from being split into multiple speakers
+            n_clusters = 2  # Fixed at 2 speakers for simplicity
+            
+            # Perform clustering
+            clustering = AgglomerativeClustering(
+                n_clusters=n_clusters,
+                affinity='precomputed',
+                linkage='average'
+            ).fit(dist_matrix)
+            
+            # Process the clustering results
             segments = []
             speech_groups = {}
             current_speech_group = 0
             last_speaker = None
-            last_end_time = 0
             
-            # Convert pyannote.audio output to our format
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                start_time = turn.start
-                end_time = turn.end
-                speaker_id = f"SPEAKER_{speaker}"
+            # Process each chunk and create segments
+            for i in range(num_chunks):
+                # Get the speaker label for this chunk
+                speaker_label = clustering.labels_[i]
+                speaker_id = f"SPEAKER_{speaker_label + 1}"  # +1 to start from SPEAKER_1 instead of SPEAKER_0
+                
+                # Calculate time boundaries
+                start_time = i * chunk_size * hop_length / sr
+                end_time = min((i + 1) * chunk_size * hop_length / sr, audio_duration)
+                segment_duration = end_time - start_time
                 
                 # Check if we need a new speech group based on speaker change only
-                # We no longer consider pauses/gaps for speech group creation
                 if speaker_id != last_speaker:
                     current_speech_group += 1
-                
-                # Create segment with speech group ID
-                segment_duration = end_time - start_time
+                    
+                last_speaker = speaker_id
                 segment = {
                     "speaker": speaker_id,
                     "start_time": start_time,
@@ -161,9 +219,8 @@ class SpeakerDiarizer:
                 # Add segment to its group
                 speech_groups[current_speech_group]["segments"].append(segment)
                 
-                # Update tracking variables
-                last_speaker = speaker_id
-                last_end_time = end_time
+                # We already set last_speaker above, no need to set it again
+                # And we don't use last_end_time anymore since we're not using pauses
             
             # Create a simple speakers dictionary - we don't really care about speaker identities
             # but the rest of the code expects this structure
@@ -180,6 +237,7 @@ class SpeakerDiarizer:
                 
                 speakers[speaker_id]["segments"] += 1
                 speakers[speaker_id]["total_duration"] += segment["duration"]
+                # Add the speech group ID to the set
                 speakers[speaker_id]["speech_groups"].add(segment["speech_group_id"])
             
             logger.info(f"Diarization completed: found {len(segments)} segments in {len(speech_groups)} speech groups")
