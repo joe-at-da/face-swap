@@ -171,7 +171,8 @@ class FaceProfileService:
     
     def extract_faces_from_video(self, video_path: str, output_dir: Optional[str] = None, 
                            interval: float = 1.0, min_confidence: float = 0.6,
-                           prioritize_center: bool = True, select_best_frames: bool = True) -> Dict[str, Any]:
+                           prioritize_center: bool = True, select_best_frames: bool = True,
+                           min_face_size: int = 200, min_face_area: int = 40000) -> Dict[str, Any]:
         """
         Extract faces from a video file with intelligent frame selection.
         
@@ -182,6 +183,8 @@ class FaceProfileService:
             min_confidence: Minimum confidence score for face detection
             prioritize_center: Whether to prioritize faces in the center of the frame
             select_best_frames: Whether to select the best quality frames
+            min_face_size: Minimum width and height for detected faces (in pixels)
+            min_face_area: Minimum area for detected faces (in square pixels)
             
         Returns:
             Dictionary with extraction results
@@ -259,6 +262,11 @@ class FaceProfileService:
                             face_center_x = (left + right) / 2
                             face_center_y = (top + bottom) / 2
                             
+                            # Skip faces that are too small
+                            if face_width < min_face_size or face_height < min_face_size or face_size < min_face_area:
+                                logger.debug(f"Skipping small face: width={face_width}, height={face_height}, area={face_size}")
+                                continue
+                            
                             # Distance from center of frame (normalized 0-1)
                             distance_from_center = np.sqrt(
                                 ((face_center_x - frame_center_x) / frame_width) ** 2 +
@@ -274,13 +282,14 @@ class FaceProfileService:
                             
                             # Size component (bigger is better, up to a point)
                             size_score = min(face_size / (frame_width * frame_height) * 20, 1.0)
-                            quality_score += size_score * 0.3
+                            # Increased weight for size component to prioritize larger faces
+                            quality_score += size_score * 0.4
                             
                             # Center proximity component (closer to center is better)
                             if prioritize_center:
-                                # Enhanced center prioritization with stronger weighting and sharper falloff
+                                # Center proximity component (closer to center is better)
                                 center_score = 1.0 - min(distance_from_center * 2.5, 1.0)  # Sharper falloff
-                                quality_score += center_score * 0.5  # Increased weight from 0.3 to 0.5
+                                quality_score += center_score * 0.4  # Adjusted weight to balance with size
                             
                             # Sharpness component (sharper is better)
                             sharpness_score = min(sharpness / 1000, 1.0)

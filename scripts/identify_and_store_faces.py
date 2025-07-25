@@ -27,8 +27,8 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Constants for face detection and filtering
-MIN_FACE_SIZE = 60  # Minimum face size in pixels (increased from 20)
-MIN_FACE_AREA = 5000  # Minimum face area in square pixels
+MIN_FACE_SIZE = 200  # Minimum face size in pixels (width/height)
+MIN_FACE_AREA = 40000  # Minimum face area in square pixels (200x200)
 # Allow faces anywhere in the frame to ensure we capture all speakers
 CENTER_FRAME_THRESHOLD_X = 1.0  # How far from center horizontally a face can be (0-1, lower = stricter)
 CENTER_FRAME_THRESHOLD_Y = 1.0  # How far from center vertically a face can be (0-1, lower = stricter)

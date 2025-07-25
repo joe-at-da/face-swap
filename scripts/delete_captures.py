@@ -197,7 +197,8 @@ def clean_files():
     paths_to_clean = [
         "/app/data/temp",
         "/app/data/media",
-        "/app/data/temp/audio_extracts"
+        "/app/data/temp/audio_extracts",
+        "/app/data/multimodal_recognition"  # Added multimodal recognition data
     ]
     
     # Directories to preserve (do not delete these or their contents)

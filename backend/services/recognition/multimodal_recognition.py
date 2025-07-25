@@ -836,7 +836,9 @@ class MultimodalRecognitionService:
                 interval=0.5,  # Reduced interval for more frequent sampling
                 min_confidence=0.6,
                 prioritize_center=True,  # Enable center-frame prioritization
-                select_best_frames=True
+                select_best_frames=True,
+                min_face_size=200,  # Minimum face dimensions in pixels (width/height)
+                min_face_area=40000  # Minimum face area in square pixels (200x200)
             )
             
             if extraction_result.get("success", False):
