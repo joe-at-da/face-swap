@@ -315,32 +315,46 @@ class FaceProfileService:
                                     # Values below 0.2 often indicate closed or partially closed eyes
                                     eyes_open_score = min(avg_ear / 0.25, 1.0)
                             
-                            # Calculate face quality score
-                            quality_score = 0.0
+                            # Calculate face quality score using a two-tier approach
+                            
+                            # TIER 1: HORIZONTAL POSITION SCORE (most important)
+                            # This will dominate the overall score to ensure horizontal centering is prioritized
+                            horizontal_position_score = 1.0 - min(horizontal_distance * 2.5, 1.0)
+                            
+                            # Apply a severe penalty for faces beyond 45% from center horizontally
+                            if horizontal_distance > 0.45:
+                                horizontal_position_score *= 0.3  # 70% reduction in score
+                            
+                            # TIER 2: OTHER QUALITY METRICS
+                            # These will only matter when comparing faces with similar horizontal positioning
                             
                             # Size component (bigger is better, up to a point)
                             size_score = min(face_size / (frame_width * frame_height) * 20, 1.0)
-                            # Adjusted weight for size component 
-                            quality_score += size_score * 0.25
                             
-                            # Center proximity component (closer to center is better)
-                            if prioritize_center:
-                                # Apply a stricter center proximity scoring
-                                # Use a sharper falloff curve to heavily penalize off-center faces
-                                center_score = 1.0 - min(distance_from_center ** 2 * 3.0, 1.0)  # Much sharper falloff (quadratic)
-                                
-                                # Add a hard threshold for extremely off-center faces
-                                if horizontal_distance > 0.6:  # If face is more than 60% away from center horizontally
-                                    center_score *= 0.5  # Apply a severe penalty
-                                
-                                quality_score += center_score * 0.4  # Increased weight for center positioning
+                            # Vertical position component
+                            vertical_position_score = 1.0 - min(vertical_distance * 2.0, 1.0)
                             
                             # Sharpness component (sharper is better)
                             sharpness_score = min(sharpness / 1000, 1.0)
-                            quality_score += sharpness_score * 0.15  # Reduced weight
                             
                             # Eye openness component (open eyes are better)
-                            quality_score += eyes_open_score * 0.2  # Adjusted weight
+                            
+                            # Calculate secondary quality score (only matters for similarly positioned faces)
+                            secondary_quality = (
+                                (size_score * 0.35) +
+                                (vertical_position_score * 0.25) +
+                                (sharpness_score * 0.15) +
+                                (eyes_open_score * 0.25)
+                            )
+                            
+                            # Final quality score: horizontal position dominates, with secondary factors as tiebreakers
+                            # Scale is 0-10 to make logs more readable
+                            if prioritize_center:
+                                # Horizontal position is 80% of score, other factors only 20%
+                                quality_score = (horizontal_position_score * 8.0) + (secondary_quality * 2.0)
+                            else:
+                                # If not prioritizing center, use only secondary factors
+                                quality_score = secondary_quality * 10.0
                             
                             timestamp = current_frame / fps
                             
@@ -357,6 +371,13 @@ class FaceProfileService:
                                 "vertical_distance": vertical_distance,      # Store vertical distance for logging
                                 "sharpness": sharpness,
                                 "eyes_open_score": eyes_open_score,  # Add eye openness information
+                                
+                                # Store component scores for detailed logging
+                                "horizontal_position_score": horizontal_position_score,
+                                "vertical_position_score": vertical_position_score,
+                                "size_score": size_score,
+                                "sharpness_score": sharpness_score,
+                                
                                 "image": face_image,  # Store image temporarily
                                 "rgb_frame": rgb_frame  # Store full frame temporarily
                             }
@@ -414,11 +435,23 @@ class FaceProfileService:
                         horizontal_pos = best_face.get('horizontal_distance', 0) * 100
                         vertical_pos = best_face.get('vertical_distance', 0) * 100
                         
+                        # Calculate the horizontal position score for logging
+                        horizontal_score = 1.0 - min(best_face.get('horizontal_distance', 0) * 2.5, 1.0)
+                        if best_face.get('horizontal_distance', 0) > 0.45:
+                            horizontal_score *= 0.3
+                        
+                        # Get other component scores for logging
+                        size_score = best_face.get('size_score', 0.0)
+                        sharpness_score = best_face.get('sharpness_score', 0.0)
+                        eyes_open_score = best_face.get('eyes_open_score', 0.0)
+                        
                         logger.info(f"Selected best face at frame {best_face['frame']} with:"
-                                  f"\n - Quality score: {best_face['quality_score']:.2f}"
-                                  f"\n - Eyes open score: {best_face.get('eyes_open_score', 0.0):.2f}"
-                                  f"\n - Horizontal position: {horizontal_pos:.1f}% from center"
-                                  f"\n - Vertical position: {vertical_pos:.1f}% from center")
+                                  f"\n - FINAL QUALITY SCORE: {best_face['quality_score']:.2f}"
+                                  f"\n - Horizontal position: {horizontal_pos:.1f}% from center (score: {horizontal_score:.2f})"
+                                  f"\n - Vertical position: {vertical_pos:.1f}% from center"
+                                  f"\n - Face size score: {size_score:.2f}"
+                                  f"\n - Eyes open score: {eyes_open_score:.2f}"
+                                  f"\n - Sharpness score: {sharpness_score:.2f}")
                     
                     # Clear segment faces
                     segment_faces = []
