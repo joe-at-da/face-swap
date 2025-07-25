@@ -27,9 +27,11 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Constants for face detection and filtering
-MIN_FACE_SIZE = 20  # Minimum face size in pixels
-CENTER_FRAME_THRESHOLD_X = 0.8  # How far from center horizontally a face can be (0-1, lower = stricter)
-CENTER_FRAME_THRESHOLD_Y = 0.8  # How far from center vertically a face can be (0-1, lower = stricter)
+MIN_FACE_SIZE = 60  # Minimum face size in pixels (increased from 20)
+MIN_FACE_AREA = 5000  # Minimum face area in square pixels
+# Allow faces anywhere in the frame to ensure we capture all speakers
+CENTER_FRAME_THRESHOLD_X = 1.0  # How far from center horizontally a face can be (0-1, lower = stricter)
+CENTER_FRAME_THRESHOLD_Y = 1.0  # How far from center vertically a face can be (0-1, lower = stricter)
 
 def load_encodings(encodings_file, filter_category=None, max_encodings=None):
     """Load face encodings from a JSON file.
@@ -149,14 +151,14 @@ def save_unidentified_face(face_image, face_location, output_dir):
         return None, None
 
 def calculate_face_quality(frame, face_location):
-    """Calculate a quality score for a face based on size, position, and basic image quality.
+    """Calculate a quality score for a face to determine the best face to save.
     
     Args:
         frame: The video frame containing the face
-        face_location: Tuple of (top, right, bottom, left) coordinates
+        face_location: Tuple of (top, right, bottom, left) coordinates of the face
         
     Returns:
-        A quality score (higher is better)
+        float: Quality score (higher is better)
     """
     try:
         top, right, bottom, left = face_location
@@ -164,14 +166,29 @@ def calculate_face_quality(frame, face_location):
         face_height = bottom - top
         frame_height, frame_width = frame.shape[:2]
         
-        # Calculate face size score (larger is better) - max 30 points
-        size_score = min((face_width * face_height) / (frame_width * frame_height) * 300, 30)
+        # Size component - larger faces are generally better quality
+        # Heavily weight size to prioritize larger faces (like the main speaker)
+        size_score = face_width * face_height / 3000  # Even more weight on size
         
-        # Calculate position score (centered horizontally is better) - max 50 points
+        # Position component - faces in the center are generally better
         face_center_x = (left + right) / 2
         face_center_y = (top + bottom) / 2
-        x_distance = abs(face_center_x - frame_width/2) / (frame_width/2)  # 0 = center, 1 = edge
-        position_score = (1 - x_distance) * 50  # Horizontal position is most important
+        frame_center_x = frame_width / 2
+        frame_center_y = frame_height / 2
+        
+        # Calculate distance from center as a percentage of frame dimensions
+        x_distance_pct = abs(face_center_x - frame_center_x) / (frame_width / 2)
+        y_distance_pct = abs(face_center_y - frame_center_y) / (frame_height / 2)
+        
+        # Convert distance to a score (closer to center = higher score)
+        # Center position is still important but not as much as size
+        position_score = (1 - x_distance_pct) * 15 + (1 - y_distance_pct) * 10
+        
+        # Add a LARGE bonus for faces in the center-middle of the frame (where main speakers often are)
+        # This helps prioritize the main speaker at the podium
+        if face_center_y > frame_height * 0.3 and face_center_y < frame_height * 0.7 and \
+           face_center_x > frame_width * 0.3 and face_center_x < frame_width * 0.7:
+            position_score += 50
         
         # Extract a small sample of the face region for quality analysis (center area)
         face_center_x_local = face_width // 2
@@ -189,7 +206,7 @@ def calculate_face_quality(frame, face_location):
             
         face_sample = frame[sample_top:sample_bottom, sample_left:sample_right]
         
-        # Calculate basic image quality metrics - max 20 points
+        # Calculate basic image quality metrics
         try:
             # Convert to grayscale for analysis
             if len(face_sample.shape) == 3:  # Color image
@@ -212,7 +229,7 @@ def calculate_face_quality(frame, face_location):
         logger.warning(f"Error calculating face quality: {str(e)}")
         return 0  # Return lowest score on error
 
-def process_video(video_path, encodings_file, results_file, output_file=None, unidentified_dir=None, skip_frames_file=None, frame_skip=5, filter_mps=None, max_encodings=None, detection_model="hog"):
+def process_video(video_path, encodings_file, results_file, output_file=None, unidentified_dir=None, skip_frames_file=None, frame_skip=2, filter_mps=None, max_encodings=None, detection_model="hog"):
     """Process a video to identify known faces and store unidentified faces.
     
     Args:
@@ -424,6 +441,10 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     face_width = right - left
                     face_height = bottom - top
                     
+                    # Calculate face center coordinates for all faces (used for both center frame check and unknown face tracking)
+                    face_center_x = (left + right) / 2
+                    face_center_y = (top + bottom) / 2
+                    
                     # Calculate face quality score for best face selection
                     quality_score = calculate_face_quality(frame, face_location)
                     
@@ -433,8 +454,6 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                         continue
                     
                     # Skip faces that aren't in the center frame
-                    face_center_x = (left + right) / 2
-                    face_center_y = (top + bottom) / 2
                     frame_center_x = frame_width / 2
                     frame_center_y = frame_height / 2
                     
@@ -455,12 +474,17 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     # Log the accepted face position
                     logger.info(f"Processing center frame face at position ({x_distance_pct:.2f}, {y_distance_pct:.2f}) relative to center")
                     
-                    # Track best face for this person (by name or by parliament_id if available)
-                    person_id = face_ids[i] if face_ids[i] else name
+                    # Track best face for this person using position-based identifiers instead of names
+                    # This ensures we don't use MP names in our tracking
+                    position_bucket = f"Face_pos_{int(face_center_x/50)}_{int(face_center_y/50)}"
+                    person_id = position_bucket
+                    face_key = position_bucket  # Define face_key for use later in the code
                     
                     # If this is a better quality face than what we've seen before, update it
                     if quality_score > best_faces[person_id]['score']:
-                        logger.info(f"New best face for {person_id} with quality score {quality_score:.2f} (previous: {best_faces[person_id]['score']:.2f})")
+                        # Use a generic face ID for logging instead of potentially showing MP names
+                        face_log_id = f"Face_{len(best_faces)}"
+                        logger.info(f"New best face with quality score {quality_score:.2f} (previous: {best_faces[person_id]['score']:.2f})")
                         best_faces[person_id] = {
                             'score': quality_score,
                             'face_location': face_location,
@@ -494,32 +518,29 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                         cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
                         cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                     
-                    # This is an unidentified face - track it but don't save intermediate images
-                    # Just track it for best face selection
-                    if name == "Unknown":
-                        # Use a single key for all unidentified faces
-                        # We'll just track them as "Unknown" and save the best one
-                        face_key = "Unknown"
+                    # Face center coordinates were calculated at the beginning of the loop
+                    
+                    # Track all faces by position buckets, not by name
+                    # This ensures we don't use MP names in our tracking
+                    if face_key not in unidentified_faces:
+                        unidentified_faces[face_key] = {
+                            "id": str(uuid.uuid4())[:8],  # Shorter ID for filename
+                            "filename": None,  # We'll only save the best face at the end
+                            "appearances": []
+                        }
                         
-                        if face_key not in unidentified_faces:
-                            unidentified_faces[face_key] = {
-                                "id": str(uuid.uuid4())[:8],  # Shorter ID for filename
-                                "filename": None,  # We'll only save the best face at the end
-                                "appearances": []
-                            }
+                    # Add this appearance to unidentified faces
+                    unidentified_faces[face_key]["appearances"].append({
+                        "frame": frame_count,
+                        "timestamp": timestamp,
+                        "face_location": face_location
+                    })
                         
-                        # Add this appearance to unidentified faces
-                        unidentified_faces[face_key]["appearances"].append({
-                            "frame": frame_count,
-                            "timestamp": timestamp,
-                            "face_location": face_location
-                        })
-                        
-                        # Draw a box around the face and label it
-                        if video_writer:
-                            top, right, bottom, left = face_location
-                            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-                            cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    # Draw a box around the face and label it with position ID, not name
+                    if video_writer:
+                        top, right, bottom, left = face_location
+                        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                        cv2.putText(frame, f"Face {face_key[-5:]}", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                     # We've already handled both known and unknown faces above
                     # No need for an else clause here
                         
@@ -536,11 +557,11 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             # Update processed frames count
             results["processed_frames"] = frame_count
             
-            # Log progress every 100 processed frames
-            if frame_count % 100 == 0:
-                progress = (frame_count / total_frames) * 100
-                logger.info(f"Processing progress: {progress:.2f}% ({frame_count}/{total_frames})")
-    
+            # Log progress more frequently
+            if frame_count % 20 == 0:
+                logger.info(f"Processing progress: {frame_count / total_frames * 100:.2f}% ({frame_count}/{total_frames})")
+                logger.info(f"Processing progress: frame {frame_count}/{total_frames}")
+
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
         return {
@@ -627,6 +648,9 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
             else:
                 logger.warning(f"Could not extract best face for {person_id} at frame position {face_data['frame_position']}")
         
+        # Sort faces by quality score to ensure the best faces get the lowest numbers
+        faces_to_save.sort(key=lambda x: x["quality_score"], reverse=True)
+        
         # Now save all faces with sequential numbering
         for i, face_data in enumerate(faces_to_save, 1):
             # Simple sequential filename
@@ -655,6 +679,9 @@ def process_video(video_path, encodings_file, results_file, output_file=None, un
                     "frame_number": face_data["frame_number"],
                     "timestamp": face_data["timestamp"]
                 })
+                
+            # Log the saved face with its score for debugging
+            logger.info(f"Saved face {i} with score {face_data['quality_score']:.2f} from frame {face_data['frame_number']}")
     
     # Save the results
     with open(results_file, 'w') as f:
@@ -680,7 +707,7 @@ def main():
     parser.add_argument("--output", help="Path to save the output video with face boxes")
     parser.add_argument("--unidentified-dir", help="Directory to save unidentified faces")
     parser.add_argument("--skip-frames", help="Path to a JSON file containing frame numbers to skip")
-    parser.add_argument("--frame-skip", type=int, default=5, help="Process every Nth frame (default: 5)")
+    parser.add_argument('--frame-skip', type=int, default=10, help='Process every nth frame')
     parser.add_argument("--filter-mps", help="Filter MPs by category (e.g., 'commons' for House of Commons only)")
     parser.add_argument("--max-encodings", type=int, help="Maximum number of MP encodings to load (for testing with limited memory)")
     parser.add_argument("--detection-model", choices=["hog", "cnn"], default="hog", help="Face detection model to use: 'hog' (faster, less memory) or 'cnn' (more accurate, more memory)")
