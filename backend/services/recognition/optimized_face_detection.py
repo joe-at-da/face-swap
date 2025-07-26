@@ -127,19 +127,18 @@ class OptimizedFaceDetector:
         
         return adjusted_locations, face_encodings
     
-    def calculate_face_quality(self, frame, face_location, frame_center_x, frame_center_y, 
-                              frame_width, frame_height):
+    def calculate_face_quality(self, frame, face_location, frame_center_x, frame_center_y, frame_width, frame_height):
         """
-        Calculate quality metrics for a detected face
+        Calculate quality metrics for a face to determine the best face to use.
         
-        Args:
-            frame: Video frame
-            face_location: Face coordinates (top, right, bottom, left)
-            frame_center_x, frame_center_y: Center coordinates of the frame
-            frame_width, frame_height: Frame dimensions
-            
+        Factors considered:
+        1. Size of face relative to minimum requirements
+        2. Position in frame (centered faces score higher)
+        3. Brightness and contrast
+        4. Face angle (frontal faces score higher)
+        
         Returns:
-            dict: Quality metrics for the face
+            Dictionary with quality metrics and overall score
         """
         top, right, bottom, left = face_location
         face_image = frame[top:bottom, left:right]
@@ -148,12 +147,10 @@ class OptimizedFaceDetector:
         face_width = right - left
         face_height = bottom - top
         face_size = face_width * face_height
-        face_center_x = (left + right) / 2
-        face_center_y = (top + bottom) / 2
         
         # Calculate distance from center
-        horizontal_distance = abs(face_center_x - frame_center_x) / (frame_width / 2)
-        vertical_distance = abs(face_center_y - frame_center_y) / (frame_height / 2)
+        horizontal_distance = abs((left + right) / 2 - frame_center_x) / (frame_width / 2)
+        vertical_distance = abs((top + bottom) / 2 - frame_center_y) / (frame_height / 2)
         
         # Overall distance (normalized 0-1, with higher penalty for horizontal offset)
         distance_from_center = np.sqrt(
@@ -161,15 +158,38 @@ class OptimizedFaceDetector:
             vertical_distance ** 2
         ) / np.sqrt(1.5**2 + 1)  # Normalize to 0-1 range
         
+        # Calculate size score
+        size_score = min(1.0, face_size / (frame_width * frame_height))
+        
+        # Calculate position score
+        position_score = 1.0 - distance_from_center
+        
         # Calculate sharpness
         gray_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
         sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
         
-        # Calculate quality score (1.0 is best, 0.0 is worst)
-        # Prioritize centered faces (70%) and sharpness (30%)
-        centering_score = 1.0 - distance_from_center
-        sharpness_score = min(sharpness / 500.0, 1.0)  # Normalize sharpness
-        quality_score = (centering_score * 0.7) + (sharpness_score * 0.3)
+        # Calculate brightness and contrast scores
+        face_roi = frame[top:bottom, left:right]
+        if face_roi.size > 0:
+            # Convert to grayscale for brightness calculation
+            if len(face_roi.shape) == 3 and face_roi.shape[2] == 3:
+                gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+            else:
+                gray_roi = face_roi
+                
+            # Calculate brightness (mean pixel value)
+            brightness = np.mean(gray_roi)
+            brightness_score = min(1.0, brightness / 150.0)  # Normalize, optimal around 150
+            
+            # Calculate contrast (standard deviation of pixel values)
+            contrast = np.std(gray_roi)
+            contrast_score = min(1.0, contrast / 50.0)  # Normalize, optimal around 50
+        else:
+            brightness_score = 0.5
+            contrast_score = 0.5
+        
+        # Calculate quality score based on all factors
+        quality_score = (size_score * 0.4) + (position_score * 0.3) + (brightness_score * 0.15) + (contrast_score * 0.15)
         
         return {
             "face_width": face_width,
@@ -293,46 +313,60 @@ class OptimizedFaceDetector:
                                 frame_width, frame_height
                             )
                             
-                            # Initialize tracker - handle different OpenCV versions
-                            tracker = None
+                            # Use a simple custom tracking approach instead of OpenCV trackers
                             tracking_enabled = True
+                            tracker = None
                             
+                            # Extract face features for tracking
                             try:
-                                # OpenCV 4.5.1+ approach
-                                tracker = cv2.TrackerKCF_create()
-                            except AttributeError:
-                                try:
-                                    # OpenCV 4.x approach
-                                    tracker = cv2.TrackerKCF.create()
-                                except AttributeError:
-                                    # OpenCV 3.x approach with contrib
-                                    try:
-                                        tracker = cv2.Tracker_create("KCF")
-                                    except AttributeError:
-                                        # Fallback to CSRT which is more widely available
-                                        try:
-                                            tracker = cv2.TrackerCSRT_create()
-                                        except AttributeError:
-                                            # Final fallback - use CSRT from newer API
-                                            try:
-                                                tracker = cv2.TrackerCSRT.create()
-                                            except AttributeError:
-                                                # If all trackers fail, disable tracking for this face
-                                                logger.warning("No compatible tracker found in OpenCV installation - disabling tracking")
-                                                tracking_enabled = False
-                            
-                            # Initialize the tracker with the bounding box if available
-                            if tracking_enabled and tracker is not None:
-                                try:
-                                    success = tracker.init(frame, (left, top, right-left, bottom-top))
-                                    if not success:
-                                        logger.warning("Tracker initialization failed - disabling tracking")
-                                        tracking_enabled = False
-                                        tracker = None
-                                except Exception as e:
-                                    logger.warning(f"Tracker initialization error: {str(e)} - disabling tracking")
+                                # Convert bounding box to the format (x, y, width, height)
+                                bbox = (int(left), int(top), int(right-left), int(bottom-top))
+                                x, y, w, h = bbox
+                                
+                                # Ensure bbox is within frame boundaries
+                                frame_h, frame_w = frame.shape[:2]
+                                if x < 0 or y < 0 or x + w > frame_w or y + h > frame_h or w <= 0 or h <= 0:
+                                    # Adjust bbox to fit within frame
+                                    x = max(0, min(x, frame_w - 1))
+                                    y = max(0, min(y, frame_h - 1))
+                                    w = max(1, min(w, frame_w - x))
+                                    h = max(1, min(h, frame_h - y))
+                                    bbox = (x, y, w, h)
+                                
+                                # Extract the face region
+                                face_roi = frame[y:y+h, x:x+w].copy()
+                                
+                                # Check if ROI is valid
+                                if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
+                                    logger.warning(f"Invalid face ROI with shape {face_roi.shape if face_roi.size > 0 else 'empty'} - disabling tracking")
                                     tracking_enabled = False
-                                    tracker = None
+                                else:
+                                    # Create a simple custom tracker object
+                                    # Store the template, bbox, and face encoding for matching in subsequent frames
+                                    logger.info(f"Creating custom tracker with bbox: {bbox}")
+                                    
+                                    # Store the face template for template matching
+                                    # Resize to a standard size for faster processing
+                                    template_size = (64, 64)
+                                    try:
+                                        face_template = cv2.resize(face_roi, template_size)
+                                        
+                                        # Create custom tracker object with all necessary info
+                                        tracker = {
+                                            "bbox": bbox,
+                                            "template": face_template,
+                                            "template_size": template_size,
+                                            "face_encoding": face_encoding,  # Use face encoding for better matching
+                                            "search_region_scale": 1.5,  # Search region scale factor
+                                            "last_frame_idx": current_frame_idx
+                                        }
+                                        logger.info(f"Custom tracker created successfully")
+                                    except Exception as e:
+                                        logger.warning(f"Error creating custom tracker: {str(e)} - disabling tracking")
+                                        tracking_enabled = False
+                            except Exception as e:
+                                logger.warning(f"Custom tracker initialization error: {str(e)} - disabling tracking")
+                                tracking_enabled = False
                             
                             # Check if this is a new unique face
                             is_new_face = True
@@ -409,27 +443,138 @@ class OptimizedFaceDetector:
                                     "quality_score": quality_metrics["quality_score"]
                                 })
                             
-                            faces_found += 1
                     else:
-                        # Update trackers
+                        # Update trackers using our custom tracking approach
                         updated_trackers = []
+                        faces_found_by_tracking = 0
+                        
                         for tracker_info in trackers:
-                            # Handle tracker update with error handling for different OpenCV versions
                             try:
-                                success, box = tracker_info["tracker"].update(frame)
-                            except Exception as e:
-                                logger.warning(f"Tracker update failed: {str(e)}")
-                                success = False
-                            if success:
-                                x, y, w, h = [int(v) for v in box]
-                                face_loc = (y, x+w, y+h, x)
+                                # Get the custom tracker data
+                                custom_tracker = tracker_info["tracker"]
+                                face_id = tracker_info["face_id"]
+                                prev_face_loc = tracker_info["face_loc"]
                                 
-                                # Update tracker info
-                                tracker_info["face_loc"] = face_loc
-                                updated_trackers.append(tracker_info)
+                                # Get the previous bounding box and template
+                                prev_bbox = custom_tracker["bbox"]
+                                template = custom_tracker["template"]
+                                template_size = custom_tracker["template_size"]
+                                search_scale = custom_tracker["search_region_scale"]
+                                
+                                # Extract previous coordinates
+                                prev_x, prev_y, prev_w, prev_h = prev_bbox
+                                
+                                # Calculate search region with some margin
+                                search_x = max(0, int(prev_x - prev_w * (search_scale - 1) / 2))
+                                search_y = max(0, int(prev_y - prev_h * (search_scale - 1) / 2))
+                                search_w = min(frame.shape[1] - search_x, int(prev_w * search_scale))
+                                search_h = min(frame.shape[0] - search_y, int(prev_h * search_scale))
+                                
+                                # Check if search region is valid
+                                if search_w <= 0 or search_h <= 0:
+                                    logger.debug(f"Invalid search region: ({search_x}, {search_y}, {search_w}, {search_h})")
+                                    continue
+                                
+                                # Extract search region
+                                search_region = frame[search_y:search_y+search_h, search_x:search_x+search_w].copy()
+                                
+                                # Perform template matching
+                                if search_region.shape[0] > template.shape[0] and search_region.shape[1] > template.shape[1]:
+                                    # Use template matching to find the face in the search region
+                                    result = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
+                                    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                                    
+                                    # Check if the match is good enough
+                                    if max_val > 0.5:  # Threshold for good match
+                                        # Calculate new bounding box coordinates
+                                        x = search_x + max_loc[0]
+                                        y = search_y + max_loc[1]
+                                        w = prev_w
+                                        h = prev_h
+                                        
+                                        # Update tracker with new bbox
+                                        bbox = (x, y, w, h)
+                                        custom_tracker["bbox"] = bbox
+                                        custom_tracker["last_frame_idx"] = current_frame_idx
+                                        
+                                        # Convert back to face_recognition format (top, right, bottom, left)
+                                        face_loc = (y, x + w, y + h, x)
+                                        
+                                        # Log the updated face location
+                                        logger.debug(f"Custom tracker updated successfully. New face_loc: {face_loc}, match score: {max_val:.2f}")
+                                        
+                                        # Update tracker info
+                                        tracker_info["face_loc"] = face_loc
+                                        updated_trackers.append(tracker_info)
+                                        faces_found_by_tracking += 1
+                                        
+                                        # Extract and save face image for tracked faces too
+                                        top, right, bottom, left = face_loc
+                                        
+                                        # Save face image
+                                        face_filename = f"face_{face_id}_{timestamp:.2f}.jpg"
+                                        face_path = os.path.join(output_dir, face_filename)
+                                        
+                                        try:
+                                            # Ensure the directory exists before writing
+                                            os.makedirs(os.path.dirname(face_path), exist_ok=True)
+                                            
+                                            # Save the face image
+                                            success = cv2.imwrite(face_path, frame[top:bottom, left:right])
+                                            
+                                            if not success:
+                                                logger.warning(f"Failed to save tracked face image to {face_path}")
+                                                face_path = ""
+                                            else:
+                                                logger.debug(f"Saved tracked face image to {face_path}")
+                                                
+                                                # Calculate quality metrics for the tracked face
+                                                quality_metrics = self.calculate_face_quality(
+                                                    frame, face_loc, frame_center_x, frame_center_y, 
+                                                    frame_width, frame_height
+                                                )
+                                                
+                                                # Store face data
+                                                face_info = {
+                                                    "face_id": face_id,
+                                                    "timestamp": timestamp,
+                                                    "face_location": face_loc,
+                                                    "face_encoding": custom_tracker["face_encoding"].tolist(),
+                                                    "path": face_path,
+                                                    "face_image_path": face_path,
+                                                    "segment_key": segment_key,
+                                                    "tracked": True,
+                                                    **quality_metrics
+                                                }
+                                                
+                                                # Add to segment faces
+                                                if segment_key not in segment_faces:
+                                                    segment_faces[segment_key] = {}
+                                                
+                                                # Enhanced quality scoring - always keep the best face
+                                                # If this is a new face or has better quality than existing one, update it
+                                                if face_id not in segment_faces[segment_key]:
+                                                    segment_faces[segment_key][face_id] = face_info
+                                                    logger.debug(f"Added new tracked face for ID {face_id} with score {quality_metrics['quality_score']:.2f}")
+                                                elif quality_metrics["quality_score"] > segment_faces[segment_key][face_id]["quality_score"]:
+                                                    # Replace with better quality face
+                                                    prev_score = segment_faces[segment_key][face_id]["quality_score"]
+                                                    segment_faces[segment_key][face_id] = face_info
+                                                    logger.debug(f"Replaced face for ID {face_id}: improved score from {prev_score:.2f} to {quality_metrics['quality_score']:.2f}")
+                                                    
+                                        except Exception as e:
+                                            logger.warning(f"Error saving tracked face image: {str(e)}")
+                                    else:
+                                        logger.debug(f"Template matching score too low: {max_val:.2f} for face {face_id}")
+                                else:
+                                    logger.debug(f"Search region too small for template matching for face {face_id}")
+                            except Exception as e:
+                                logger.debug(f"Custom tracker update error: {str(e)}")
                         
                         # Replace trackers with updated ones
                         trackers = updated_trackers
+                        logger.debug(f"Updated {faces_found_by_tracking} faces using custom tracking")
+                        faces_found += faces_found_by_tracking
                 
                 # Increment frame counter
                 current_frame_idx += 1
