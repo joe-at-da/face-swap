@@ -1018,8 +1018,12 @@ class OptimizedFaceDetector:
             # Release video
             video.release()
             
-            # Select best faces from each segment
+            # Group consecutive detections of the same face and select only the best one
             best_faces = []
+            consecutive_faces = {}
+            
+            # Sort all faces by face_id and timestamp
+            all_faces = []
             for segment_key, faces_by_id in segment_faces.items():
                 for face_id, face_info in faces_by_id.items():
                     # Verify the face image exists before adding to results
@@ -1028,8 +1032,47 @@ class OptimizedFaceDetector:
                         logger.warning(f"Face image file does not exist: {face_image_path}")
                         face_info["path"] = ""
                         face_info["face_image_path"] = ""
+                        continue
                     
-                    best_faces.append(face_info)
+                    all_faces.append(face_info)
+            
+            # Sort by face_id and timestamp
+            all_faces.sort(key=lambda x: (x["face_id"], x["timestamp"]))
+            
+            # Group consecutive faces (same face_id with timestamps close together)
+            consecutive_group = []
+            current_face_id = None
+            max_time_gap = 3.0  # Maximum time gap in seconds to consider faces consecutive - increased to group more faces
+            
+            for face_info in all_faces:
+                face_id = face_info["face_id"]
+                timestamp = face_info["timestamp"]
+                
+                # Start a new group if this is a different face_id or there's a significant time gap
+                if (current_face_id is None or 
+                    face_id != current_face_id or 
+                    (consecutive_group and timestamp - consecutive_group[-1]["timestamp"] > max_time_gap)):
+                    
+                    # Process the previous group if it exists
+                    if consecutive_group:
+                        # Find the best face in this consecutive group
+                        best_face = max(consecutive_group, key=lambda x: x["quality_score"])
+                        best_faces.append(best_face)
+                        logger.debug(f"Selected best face for ID {current_face_id} from {len(consecutive_group)} consecutive faces")
+                    
+                    # Start a new group
+                    consecutive_group = [face_info]
+                    current_face_id = face_id
+                else:
+                    # Add to the current group
+                    consecutive_group.append(face_info)
+            
+            # Process the last group
+            if consecutive_group:
+                best_face = max(consecutive_group, key=lambda x: x["quality_score"])
+                best_faces.append(best_face)
+                logger.debug(f"Selected best face for ID {current_face_id} from {len(consecutive_group)} consecutive faces")
+
             
             logger.info(f"Face extraction complete. Found {faces_found} faces, selected {len(best_faces)} best faces")
             
