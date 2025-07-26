@@ -1018,12 +1018,8 @@ class OptimizedFaceDetector:
             # Release video
             video.release()
             
-            # Select best faces from each segment (original approach)
-            # But also track which faces to keep for deduplication
-            best_faces = []
-            faces_to_keep = set()  # Set of face paths to keep after deduplication
-            
-            # First, group consecutive faces of the same person and select the best one from each group
+            # Select best faces from each segment using a two-phase approach
+            # Phase 1: Group consecutive faces of the same person and select the best one from each group
             all_faces = []
             for segment_key, faces_by_id in segment_faces.items():
                 for face_id, face_info in faces_by_id.items():
@@ -1041,59 +1037,62 @@ class OptimizedFaceDetector:
             all_faces.sort(key=lambda x: (x["face_id"], x["timestamp"]))
             
             # Group consecutive faces (same face_id with timestamps close together)
-            consecutive_group = []
-            current_face_id = None
+            consecutive_groups = {}  # Dictionary to store groups by face_id
             max_time_gap = 1.5  # Maximum time gap in seconds to consider faces consecutive
             
-            # Process faces to identify which ones to keep (the best from each consecutive group)
+            # First, organize all faces by face_id
+            face_id_groups = {}
             for face_info in all_faces:
                 face_id = face_info["face_id"]
-                timestamp = face_info["timestamp"]
+                if face_id not in face_id_groups:
+                    face_id_groups[face_id] = []
+                face_id_groups[face_id].append(face_info)
+            
+            # Then, for each face_id, group consecutive appearances
+            for face_id, faces in face_id_groups.items():
+                # Sort by timestamp
+                faces.sort(key=lambda x: x["timestamp"])
                 
-                # Start a new group if this is a different face_id or there's a significant time gap
-                if (current_face_id is None or 
-                    face_id != current_face_id or 
-                    (consecutive_group and timestamp - consecutive_group[-1]["timestamp"] > max_time_gap)):
+                current_group = []
+                for face_info in faces:
+                    timestamp = face_info["timestamp"]
                     
-                    # Process the previous group if it exists
-                    if consecutive_group:
-                        # Find the best face in this consecutive group
-                        best_face = max(consecutive_group, key=lambda x: x["quality_score"])
-                        # Add the path of this best face to our keep set
-                        face_path = best_face.get("path", "")
-                        if face_path:
-                            faces_to_keep.add(face_path)
-                        logger.debug(f"Selected best face for ID {current_face_id} from {len(consecutive_group)} consecutive faces")
-                    
-                    # Start a new group
-                    consecutive_group = [face_info]
-                    current_face_id = face_id
-                else:
-                    # Add to the current group
-                    consecutive_group.append(face_info)
+                    if not current_group or (timestamp - current_group[-1]["timestamp"] <= max_time_gap):
+                        # Add to current group if within time gap
+                        current_group.append(face_info)
+                    else:
+                        # Start a new group
+                        if current_group:
+                            group_id = f"{face_id}_{len(consecutive_groups)}"
+                            consecutive_groups[group_id] = current_group
+                        current_group = [face_info]
+                
+                # Don't forget the last group
+                if current_group:
+                    group_id = f"{face_id}_{len(consecutive_groups)}"
+                    consecutive_groups[group_id] = current_group
             
-            # Process the last group
-            if consecutive_group:
-                best_face = max(consecutive_group, key=lambda x: x["quality_score"])
-                face_path = best_face.get("path", "")
-                if face_path:
-                    faces_to_keep.add(face_path)
-                logger.debug(f"Selected best face for ID {current_face_id} from {len(consecutive_group)} consecutive faces")
+            # Find the best face in each consecutive group
+            best_faces_by_group = {}
+            for group_id, group in consecutive_groups.items():
+                best_face = max(group, key=lambda x: x["quality_score"])
+                best_faces_by_group[group_id] = best_face
             
-            # Now use the original approach to build the best_faces list, but filter out duplicates
-            # This preserves the original structure while still reducing duplicates
-            for segment_key, faces_by_id in segment_faces.items():
-                for face_id, face_info in faces_by_id.items():
-                    # Verify the face image exists before adding to results
-                    face_image_path = face_info.get("path", "")
-                    if face_image_path and not os.path.exists(face_image_path):
-                        continue
-                    
-                    # Only include faces that were selected as the best in their consecutive group
-                    if face_image_path in faces_to_keep:
-                        best_faces.append(face_info)
-
+            # Phase 2: Rebuild the final face list by filtering original segment faces
+            # This preserves the original segment structure expected by downstream code
+            best_face_timestamps = {best_face["timestamp"] for best_face in best_faces_by_group.values()}
             
+            # Build the final list of best faces while preserving the original structure
+            best_faces = []
+            for face_info in all_faces:
+                if face_info["timestamp"] in best_face_timestamps:
+                    best_faces.append(face_info)
+            
+            # Log statistics
+            original_count = len(all_faces)
+            final_count = len(best_faces)
+            reduction_percent = ((original_count - final_count) / original_count * 100) if original_count > 0 else 0
+            logger.info(f"Face reduction: {original_count} original faces → {final_count} best faces ({reduction_percent:.1f}% reduction)")
             logger.info(f"Face extraction complete. Found {faces_found} faces, selected {len(best_faces)} best faces")
             
             return {
