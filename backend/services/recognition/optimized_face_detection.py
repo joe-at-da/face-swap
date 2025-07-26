@@ -172,7 +172,8 @@ class OptimizedFaceDetector:
             hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
             
             # Detect skin pixels (relaxed range)
-            skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))
+            # Wider HSV range to detect all skin tones including darker skin
+            skin_mask = cv2.inRange(hsv_roi, (0, 5, 25), (50, 255, 255))  # This is correct, hsv_roi is defined on line 172
             skin_pixels = cv2.countNonZero(skin_mask)
             skin_ratio = skin_pixels / total_pixels
             
@@ -182,7 +183,7 @@ class OptimizedFaceDetector:
                 
             # Check brightness to filter out dark clothing like suits
             avg_brightness = np.mean(hsv_roi[:,:,2])
-            if avg_brightness < 70:  # Filter out very dark regions
+            if avg_brightness < 50:  # Lower threshold for darker skin tones - Filter out very dark regions
                 logger.debug(f"Face validation: low brightness: {avg_brightness:.2f}")
                 continue
                 
@@ -347,17 +348,18 @@ class OptimizedFaceDetector:
                 # 4. Brightness check - reject very dark regions (likely clothing)
                 hsv_face = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
                 avg_brightness = np.mean(hsv_face[:,:,2])
-                if avg_brightness < 70:
+                if avg_brightness < 50:  # Lower threshold for darker skin tones
                     logger.debug(f"Initial detection: too dark (brightness={avg_brightness:.2f})")
                     continue
                     
                 # 5. Skin tone check - ensure minimum amount of skin tone pixels
-                skin_mask = cv2.inRange(hsv_face, (0, 10, 60), (35, 150, 255))
+                # Wider HSV range to detect all skin tones including darker skin
+                skin_mask = cv2.inRange(hsv_face, (0, 5, 25), (50, 255, 255))
                 skin_pixels = cv2.countNonZero(skin_mask)
                 total_pixels = face_crop.shape[0] * face_crop.shape[1]
                 skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
                 
-                if skin_ratio < 0.15:  # Minimum skin tone ratio
+                if skin_ratio < 0.05:  # Lower threshold for darker skin tones - Minimum skin tone ratio
                     logger.debug(f"Initial detection: insufficient skin tone (ratio={skin_ratio:.2f})")
                     continue
                     
@@ -868,17 +870,19 @@ class OptimizedFaceDetector:
                                             avg_brightness = np.mean(hsv_face[:,:,2])
                                             
                                             # Check if face is too dark (likely clothing)
-                                            if avg_brightness < 70:
+                                            if avg_brightness < 50:  # Lower threshold for darker skin tones
                                                 logger.debug(f"Tracked face rejected: too dark (brightness={avg_brightness:.2f})")
                                                 is_valid_face = False
                                             
                                             # Check skin tone ratio
-                                            skin_mask = cv2.inRange(hsv_face, (0, 10, 60), (35, 150, 255))
+                                            # Expanded HSV range to better detect diverse skin tones including darker skin
+                                            # Wider HSV range to detect all skin tones including darker skin
+                                            skin_mask = cv2.inRange(hsv_face, (0, 5, 25), (50, 255, 255))
                                             skin_pixels = cv2.countNonZero(skin_mask)
                                             total_pixels = potential_face.shape[0] * potential_face.shape[1]
                                             skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
                                             
-                                            if skin_ratio < 0.15:  # Minimum skin tone ratio
+                                            if skin_ratio < 0.05:  # Lower threshold for darker skin tones - Minimum skin tone ratio
                                                 logger.debug(f"Tracked face rejected: insufficient skin tone (ratio={skin_ratio:.2f})")
                                                 is_valid_face = False
                                                 
