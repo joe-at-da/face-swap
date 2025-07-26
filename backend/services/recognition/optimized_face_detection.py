@@ -20,9 +20,16 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # Constants for YuNet face detector
-YUNET_SCORE_THRESHOLD = 0.5  # Balanced threshold for filtering
+YUNET_SCORE_THRESHOLD = 0.7  # Higher threshold for stricter filtering
 YUNET_NMS_THRESHOLD = 0.3
 YUNET_TOP_K = 5000
+
+# Constants for face validation
+MIN_FACE_CONFIDENCE = 0.6  # Minimum confidence for face detection
+MIN_LANDMARK_CONFIDENCE = 0.8  # Minimum confidence for landmark detection
+MIN_EYE_ASPECT_RATIO = 0.15  # Minimum eye aspect ratio for open eyes
+MIN_FACE_ASPECT_RATIO = 1.0  # Minimum face aspect ratio (height/width)
+MAX_FACE_ASPECT_RATIO = 1.8  # Maximum face aspect ratio (height/width)
 
 class OptimizedFaceDetector:
     """
@@ -82,6 +89,164 @@ class OptimizedFaceDetector:
         except Exception as e:
             logger.warning(f"Failed to initialize YuNet face detector: {e}")
             self.yunet_detector = None
+    
+    def validate_faces_with_yunet(self, frame, face_locations):
+        """Validate detected faces using YuNet face detector
+        
+        Args:
+            frame: The video frame
+            face_locations: List of face locations as (top, right, bottom, left)
+            
+        Returns:
+            List of indices of validated faces
+        """
+        validated_indices = []
+        
+        # Process each face location with YuNet
+        for i, (top, right, bottom, left) in enumerate(face_locations):
+            # First check face aspect ratio to filter out obvious non-faces
+            face_width = right - left
+            face_height = bottom - top
+            if face_width == 0:
+                logger.debug(f"Skipping face with zero width at {top}, {right}, {bottom}, {left}")
+                continue
+                
+            aspect_ratio = face_height / face_width
+            if aspect_ratio < MIN_FACE_ASPECT_RATIO or aspect_ratio > MAX_FACE_ASPECT_RATIO:
+                logger.debug(f"Skipping face with invalid aspect ratio: {aspect_ratio:.2f}")
+                continue
+            
+            # Extract the face region with padding
+            height, width = frame.shape[:2]
+            padding_x = int((right - left) * 0.2)
+            padding_y = int((bottom - top) * 0.2)
+            
+            # Apply padding with boundary checks
+            adj_left = max(0, left - padding_x)
+            adj_top = max(0, top - padding_y)
+            adj_right = min(width, right + padding_x)
+            adj_bottom = min(height, bottom + padding_y)
+            
+            face_roi = frame[adj_top:adj_bottom, adj_left:adj_right]
+            
+            if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
+                logger.debug(f"Skipping empty face ROI at {top}, {right}, {bottom}, {left}")
+                continue
+            
+            # Check for skin tone in the face region (basic heuristic)
+            hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
+            
+            # Skin tones typically have certain hue and saturation ranges
+            # This is a very basic heuristic and can be improved
+            skin_mask = cv2.inRange(hsv_roi, (0, 20, 70), (25, 170, 255))  # Typical skin tone range
+            skin_pixels = cv2.countNonZero(skin_mask)
+            total_pixels = face_roi.shape[0] * face_roi.shape[1]
+            skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
+            
+            # Furniture and other objects typically have different color distributions
+            if skin_ratio < 0.15:  # At least 15% of pixels should be in skin tone range
+                logger.debug(f"Skipping face with low skin tone ratio: {skin_ratio:.2f}")
+                continue
+            
+            # Detect faces in the ROI using YuNet
+            try:
+                self.yunet_detector.setInputSize((face_roi.shape[1], face_roi.shape[0]))
+                faces = self.yunet_detector.detect(face_roi)
+                
+                # Check if any faces were detected by YuNet
+                if faces[1] is not None and len(faces[1]) > 0:
+                    # Get the highest confidence face
+                    best_confidence = 0
+                    for face in faces[1]:
+                        confidence = face[14]
+                        if confidence > best_confidence:
+                            best_confidence = confidence
+                    
+                    logger.debug(f"YuNet validation: face {i} confidence {best_confidence:.2f}")
+                    
+                    # Validate if confidence is above threshold
+                    if best_confidence >= YUNET_SCORE_THRESHOLD:
+                        validated_indices.append(i)
+                        logger.debug(f"YuNet validation passed for face {i} with confidence {best_confidence:.2f}")
+                    else:
+                        logger.debug(f"YuNet validation failed for face {i}: low confidence {best_confidence:.2f}")
+                else:
+                    logger.debug(f"YuNet validation failed for face {i}: no faces detected")
+            except Exception as e:
+                logger.warning(f"Error in YuNet validation for face {i}: {str(e)}")
+        
+        # If no faces were validated with the higher threshold, try with a lower threshold
+        if not validated_indices and len(face_locations) > 0:
+            logger.debug("No faces validated with higher threshold, trying with lower threshold")
+            original_threshold = self.yunet_detector.getScoreThreshold()
+            self.yunet_detector.setScoreThreshold(0.4)  # Lower threshold for retry
+            
+            try:
+                for i, (top, right, bottom, left) in enumerate(face_locations):
+                    # Check face aspect ratio again
+                    face_width = right - left
+                    face_height = bottom - top
+                    if face_width == 0:
+                        continue
+                        
+                    aspect_ratio = face_height / face_width
+                    if aspect_ratio < MIN_FACE_ASPECT_RATIO or aspect_ratio > MAX_FACE_ASPECT_RATIO:
+                        continue
+                    
+                    # Extract the face region with padding
+                    height, width = frame.shape[:2]
+                    padding_x = int((right - left) * 0.2)
+                    padding_y = int((bottom - top) * 0.2)
+                    
+                    # Apply padding with boundary checks
+                    adj_left = max(0, left - padding_x)
+                    adj_top = max(0, top - padding_y)
+                    adj_right = min(width, right + padding_x)
+                    adj_bottom = min(height, bottom + padding_y)
+                    
+                    face_roi = frame[adj_top:adj_bottom, adj_left:adj_right]
+                    
+                    if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
+                        continue
+                    
+                    # Check for skin tone
+                    hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
+                    skin_mask = cv2.inRange(hsv_roi, (0, 20, 70), (25, 170, 255))
+                    skin_pixels = cv2.countNonZero(skin_mask)
+                    total_pixels = face_roi.shape[0] * face_roi.shape[1]
+                    skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
+                    
+                    if skin_ratio < 0.15:
+                        continue
+                    
+                    # Detect faces in the ROI using YuNet with lower threshold
+                    try:
+                        self.yunet_detector.setInputSize((face_roi.shape[1], face_roi.shape[0]))
+                        faces = self.yunet_detector.detect(face_roi)
+                        
+                        # Check if any faces were detected by YuNet
+                        if faces[1] is not None and len(faces[1]) > 0:
+                            # Get the highest confidence face
+                            best_confidence = 0
+                            for face in faces[1]:
+                                confidence = face[14]
+                                if confidence > best_confidence:
+                                    best_confidence = confidence
+                            
+                            # Validate if confidence is above lower threshold
+                            if best_confidence >= 0.4:  # Lower threshold for retry
+                                validated_indices.append(i)
+                                logger.debug(f"YuNet validation passed with lower threshold for face {i}: {best_confidence:.2f}")
+                            else:
+                                logger.debug(f"YuNet validation failed with lower threshold for face {i}: {best_confidence:.2f}")
+                    except Exception as e:
+                        logger.warning(f"Error in YuNet validation with lower threshold for face {i}: {str(e)}")
+            finally:
+                # Restore original threshold
+                self.yunet_detector.setScoreThreshold(original_threshold)
+                
+        logger.debug(f"YuNet validation: {len(validated_indices)}/{len(face_locations)} faces validated")
+        return validated_indices
     
     def detect_scene_change(self, current_frame, previous_frame, threshold=0.2):
         """
@@ -180,81 +345,7 @@ class OptimizedFaceDetector:
         if self.yunet_detector is not None:
             try:
                 # For each HOG detection, validate with YuNet
-                for i, (top, right, bottom, left) in enumerate(adjusted_locations):
-                    # Extract region with padding
-                    pad = 20
-                    y1 = max(0, top - pad)
-                    y2 = min(frame.shape[0], bottom + pad)
-                    x1 = max(0, left - pad)
-                    x2 = min(frame.shape[1], right + pad)
-                    
-                    face_region = frame[y1:y2, x1:x2]
-                    if face_region.size == 0:
-                        continue
-                    
-                    # Set detector input size to region dimensions
-                    h, w = face_region.shape[:2]
-                    self.yunet_detector.setInputSize((w, h))
-                    
-                    # Detect faces in the region
-                    _, yunet_faces = self.yunet_detector.detect(face_region)
-                    
-                    # If YuNet found a face with good confidence, validate this detection
-                    if yunet_faces is not None and len(yunet_faces) > 0:
-                        # Get highest confidence detection
-                        best_detection = yunet_faces[np.argmax(yunet_faces[:, 14])]
-                        confidence = best_detection[14]
-                        
-                        if confidence >= YUNET_SCORE_THRESHOLD:
-                            validated_indices.append(i)
-                            logger.debug(f"YuNet validated face with confidence {confidence:.2f}")
-                        else:
-                            logger.debug(f"Face rejected by YuNet with low confidence: {confidence:.2f}")
-                    else:
-                        logger.debug(f"No face found by YuNet in region from HOG detection")
-                
-                logger.debug(f"YuNet validation: {len(validated_indices)}/{len(adjusted_locations)} faces validated")
-                
-                # If YuNet rejected all faces, try with a lower threshold as a fallback
-                if len(validated_indices) == 0 and len(adjusted_locations) > 0:
-                    logger.debug("Retrying YuNet validation with lower threshold")
-                    original_threshold = self.yunet_detector.getScoreThreshold()
-                    self.yunet_detector.setScoreThreshold(0.3)  # Lower threshold for retry
-                    
-                    try:
-                        # Retry validation with lower threshold
-                        for i, (top, right, bottom, left) in enumerate(adjusted_locations):
-                            # Extract region with padding
-                            pad = 20
-                            y1 = max(0, top - pad)
-                            y2 = min(frame.shape[0], bottom + pad)
-                            x1 = max(0, left - pad)
-                            x2 = min(frame.shape[1], right + pad)
-                            
-                            face_region = frame[y1:y2, x1:x2]
-                            if face_region.size == 0:
-                                continue
-                            
-                            # Set detector input size to region dimensions
-                            h, w = face_region.shape[:2]
-                            self.yunet_detector.setInputSize((w, h))
-                            
-                            # Detect faces in the region
-                            _, yunet_faces = self.yunet_detector.detect(face_region)
-                            
-                            if yunet_faces is not None and len(yunet_faces) > 0:
-                                # Get highest confidence detection
-                                best_detection = yunet_faces[np.argmax(yunet_faces[:, 14])]
-                                confidence = best_detection[14]
-                                
-                                if confidence >= 0.3:  # Lower threshold for retry
-                                    validated_indices.append(i)
-                                    logger.debug(f"YuNet validated face with lower threshold: {confidence:.2f}")
-                        
-                        logger.debug(f"YuNet retry validation: {len(validated_indices)}/{len(adjusted_locations)} faces validated")
-                    finally:
-                        # Restore original threshold
-                        self.yunet_detector.setScoreThreshold(original_threshold)
+                validated_indices = self.validate_faces_with_yunet(frame, adjusted_locations)
             except Exception as e:
                 logger.warning(f"YuNet validation failed: {e}, falling back to landmark validation")
                 # If YuNet fails, fall back to landmark validation
@@ -267,9 +358,94 @@ class OptimizedFaceDetector:
             
             # Only keep faces where landmarks were detected
             for i, landmark_dict in enumerate(landmarks):
+                # First check face aspect ratio
+                top, right, bottom, left = adjusted_locations[i]
+                face_width = right - left
+                face_height = bottom - top
+                if face_width == 0:
+                    logger.debug(f"Landmark validation: skipping face with zero width")
+                    continue
+                    
+                aspect_ratio = face_height / face_width
+                if aspect_ratio < MIN_FACE_ASPECT_RATIO or aspect_ratio > MAX_FACE_ASPECT_RATIO:
+                    logger.debug(f"Landmark validation: skipping face with invalid aspect ratio: {aspect_ratio:.2f}")
+                    continue
+                
+                # Check for skin tone in the face region
+                face_roi = frame[top:bottom, left:right]
+                if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
+                    logger.debug(f"Landmark validation: skipping empty face ROI")
+                    continue
+                    
+                hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
+                skin_mask = cv2.inRange(hsv_roi, (0, 20, 70), (25, 170, 255))
+                skin_pixels = cv2.countNonZero(skin_mask)
+                total_pixels = face_roi.shape[0] * face_roi.shape[1]
+                skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
+                
+                if skin_ratio < 0.15:
+                    logger.debug(f"Landmark validation: skipping face with low skin tone ratio: {skin_ratio:.2f}")
+                    continue
+                
                 # Check if we found eyes and other key facial features
                 if landmark_dict and ('left_eye' in landmark_dict and 'right_eye' in landmark_dict):
-                    validated_indices.append(i)
+                    # Additional validation: check if this is really a face by verifying multiple facial features
+                    required_features = ['left_eye', 'right_eye', 'nose_tip', 'top_lip', 'bottom_lip']
+                    has_all_features = all(feature in landmark_dict for feature in required_features)
+                    
+                    # Calculate eye aspect ratio to check if eyes are open
+                    eye_aspect_ratio = 0
+                    if has_all_features:
+                        left_eye = landmark_dict['left_eye']
+                        right_eye = landmark_dict['right_eye']
+                        
+                        # Calculate eye aspect ratio
+                        def calculate_eye_aspect_ratio(eye_points):
+                            # Calculate height (average of two height measurements)
+                            h1 = np.linalg.norm(np.array(eye_points[1]) - np.array(eye_points[5]))
+                            h2 = np.linalg.norm(np.array(eye_points[2]) - np.array(eye_points[4]))
+                            # Calculate width
+                            w = np.linalg.norm(np.array(eye_points[0]) - np.array(eye_points[3]))
+                            # Return aspect ratio
+                            return (h1 + h2) / (2.0 * w) if w > 0 else 0
+                        
+                        left_ear = calculate_eye_aspect_ratio(left_eye)
+                        right_ear = calculate_eye_aspect_ratio(right_eye)
+                        eye_aspect_ratio = (left_ear + right_ear) / 2.0
+                    
+                    # Check symmetry of facial features (asymmetric features often indicate false positives)
+                    facial_symmetry = 1.0
+                    if has_all_features:
+                        # Calculate center points of eyes
+                        left_eye_center = np.mean(left_eye, axis=0)
+                        right_eye_center = np.mean(right_eye, axis=0)
+                        
+                        # Calculate distance between eyes
+                        eye_distance = np.linalg.norm(left_eye_center - right_eye_center)
+                        
+                        # Calculate nose position relative to eye midpoint
+                        nose_tip = np.mean(landmark_dict['nose_tip'], axis=0)
+                        eye_midpoint = (left_eye_center + right_eye_center) / 2
+                        
+                        # Nose should be roughly below the midpoint between eyes
+                        nose_offset = abs(nose_tip[0] - eye_midpoint[0]) / eye_distance if eye_distance > 0 else 1.0
+                        
+                        # Facial symmetry score (lower is better)
+                        facial_symmetry = nose_offset
+                    
+                    # Verify face has all required features, reasonable eye aspect ratio, and good symmetry
+                    if has_all_features and eye_aspect_ratio >= MIN_EYE_ASPECT_RATIO and facial_symmetry < 0.3:
+                        validated_indices.append(i)
+                        logger.debug(f"Landmark validation passed: face has all features, EAR={eye_aspect_ratio:.2f}, symmetry={facial_symmetry:.2f}, aspect ratio={aspect_ratio:.2f}")
+                    else:
+                        if not has_all_features:
+                            logger.debug(f"Landmark validation failed: missing required facial features")
+                        elif eye_aspect_ratio < MIN_EYE_ASPECT_RATIO:
+                            logger.debug(f"Landmark validation failed: low eye aspect ratio {eye_aspect_ratio:.2f}")
+                        else:
+                            logger.debug(f"Landmark validation failed: poor facial symmetry {facial_symmetry:.2f}")
+                else:
+                    logger.debug("Landmark validation failed: missing eye landmarks")
         
         # Filter locations to only include validated faces
         validated_locations = [adjusted_locations[i] for i in validated_indices]
@@ -735,7 +911,7 @@ class OptimizedFaceDetector:
                                         # Extract and save face image for tracked faces too
                                         top, right, bottom, left = face_loc
                                         
-                                        # Save face image
+                                        # Save face image for tracked face
                                         face_filename = f"face_{face_id}_{timestamp:.2f}.jpg"
                                         face_path = os.path.join(output_dir, face_filename)
                                         
