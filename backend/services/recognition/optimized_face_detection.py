@@ -1018,11 +1018,12 @@ class OptimizedFaceDetector:
             # Release video
             video.release()
             
-            # Group consecutive detections of the same face and select only the best one
+            # Select best faces from each segment (original approach)
+            # But also track which faces to keep for deduplication
             best_faces = []
-            consecutive_faces = {}
+            faces_to_keep = set()  # Set of face paths to keep after deduplication
             
-            # Sort all faces by face_id and timestamp
+            # First, group consecutive faces of the same person and select the best one from each group
             all_faces = []
             for segment_key, faces_by_id in segment_faces.items():
                 for face_id, face_info in faces_by_id.items():
@@ -1042,8 +1043,9 @@ class OptimizedFaceDetector:
             # Group consecutive faces (same face_id with timestamps close together)
             consecutive_group = []
             current_face_id = None
-            max_time_gap = 3.0  # Maximum time gap in seconds to consider faces consecutive - increased to group more faces
+            max_time_gap = 1.5  # Maximum time gap in seconds to consider faces consecutive
             
+            # Process faces to identify which ones to keep (the best from each consecutive group)
             for face_info in all_faces:
                 face_id = face_info["face_id"]
                 timestamp = face_info["timestamp"]
@@ -1057,7 +1059,10 @@ class OptimizedFaceDetector:
                     if consecutive_group:
                         # Find the best face in this consecutive group
                         best_face = max(consecutive_group, key=lambda x: x["quality_score"])
-                        best_faces.append(best_face)
+                        # Add the path of this best face to our keep set
+                        face_path = best_face.get("path", "")
+                        if face_path:
+                            faces_to_keep.add(face_path)
                         logger.debug(f"Selected best face for ID {current_face_id} from {len(consecutive_group)} consecutive faces")
                     
                     # Start a new group
@@ -1070,8 +1075,23 @@ class OptimizedFaceDetector:
             # Process the last group
             if consecutive_group:
                 best_face = max(consecutive_group, key=lambda x: x["quality_score"])
-                best_faces.append(best_face)
+                face_path = best_face.get("path", "")
+                if face_path:
+                    faces_to_keep.add(face_path)
                 logger.debug(f"Selected best face for ID {current_face_id} from {len(consecutive_group)} consecutive faces")
+            
+            # Now use the original approach to build the best_faces list, but filter out duplicates
+            # This preserves the original structure while still reducing duplicates
+            for segment_key, faces_by_id in segment_faces.items():
+                for face_id, face_info in faces_by_id.items():
+                    # Verify the face image exists before adding to results
+                    face_image_path = face_info.get("path", "")
+                    if face_image_path and not os.path.exists(face_image_path):
+                        continue
+                    
+                    # Only include faces that were selected as the best in their consecutive group
+                    if face_image_path in faces_to_keep:
+                        best_faces.append(face_info)
 
             
             logger.info(f"Face extraction complete. Found {faces_found} faces, selected {len(best_faces)} best faces")
