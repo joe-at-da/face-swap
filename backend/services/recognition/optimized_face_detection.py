@@ -16,23 +16,32 @@ import time
 import uuid
 from typing import Dict, List, Tuple, Optional, Any
 from datetime import datetime
+from scipy.spatial import distance as dist
 
 logger = logging.getLogger(__name__)
 
 # Constants for YuNet face detector
-YUNET_SCORE_THRESHOLD = 0.4  # Lowered to match dev branch (which uses 0.3)
+YUNET_SCORE_THRESHOLD = 0.3  # Exactly matching dev branch
 YUNET_NMS_THRESHOLD = 0.3  # Same as dev branch
 YUNET_TOP_K = 5000  # Same as dev branch
 
 # Constants for face validation
-MIN_FACE_CONFIDENCE = 0.4  # Further lowered to match dev branch approach
-MIN_LANDMARK_CONFIDENCE = 0.6  # Further lowered for landmark detection
-MIN_EYE_ASPECT_RATIO = 0.1   # Further lowered minimum eye aspect ratio
-MIN_FACE_ASPECT_RATIO = 0.7  # Further lowered minimum face aspect ratio (height/width)
-MAX_FACE_ASPECT_RATIO = 2.5  # Further increased maximum face aspect ratio (height/width)
+MIN_FACE_WIDTH = 200
+MIN_FACE_HEIGHT = 200
+MIN_FACE_AREA = 40000
+MIN_ASPECT_RATIO = 0.5
+MAX_ASPECT_RATIO = 2.0
+MIN_SKIN_RATIO = 0.3
+YUNET_SCORE_THRESHOLD = 0.3
+MIN_EYE_ASPECT_RATIO = 0.15  # Threshold for open eyes
+MIN_SHARPNESS = 30.0  # Minimum variance of Laplacian for sharpness
+MAX_HORIZONTAL_OFFSET = 0.4  # Maximum distance from center (40%)
 
-# Constants for skin tone detection
-MIN_SKIN_RATIO = 0.05  # Very permissive skin tone threshold (dev branch doesn't use this)
+# Constants for face size and position
+MIN_FACE_WIDTH = 200  # Minimum width in pixels
+MIN_FACE_HEIGHT = 200  # Minimum height in pixels
+MIN_FACE_AREA = 40000  # Minimum area in square pixels
+MAX_HORIZONTAL_OFFSET = 0.4  # Maximum allowed horizontal offset from center (as fraction of frame width)
 
 def calculate_eye_aspect_ratio(eye_points):
     """
@@ -106,163 +115,104 @@ class OptimizedFaceDetector:
             logger.warning(f"Failed to initialize YuNet face detector: {e}")
             self.yunet_detector = None
     
-    def validate_faces_with_yunet(self, frame, face_locations):
-        """Validate detected faces using YuNet face detector
+    def calculate_eye_aspect_ratio(self, eye_landmarks):
+        # Compute the euclidean distances between the vertical eye landmarks
+        A = dist.euclidean(eye_landmarks[1], eye_landmarks[5])
+        B = dist.euclidean(eye_landmarks[2], eye_landmarks[4])
         
-        Args:
-            frame: The video frame
-            face_locations: List of face locations as (top, right, bottom, left)
+        # Compute the euclidean distance between the horizontal eye landmarks
+        C = dist.euclidean(eye_landmarks[0], eye_landmarks[3])
+        
+        # Compute the eye aspect ratio
+        ear = (A + B) / (2.0 * C)
+        return ear
+    
+    def calculate_sharpness(self, image):
+        # Convert to grayscale if needed
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
             
-        Returns:
-            List of indices of validated faces
-        """
+        # Calculate variance of Laplacian as a measure of sharpness
+        return cv2.Laplacian(gray, cv2.CV_64F).var()
+    
+    def validate_face_geometry(self, frame, face_locations):
         validated_indices = []
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Process each face location with YuNet
-        for i, (top, right, bottom, left) in enumerate(face_locations):
-            # First check face aspect ratio to filter out obvious non-faces
-            face_width = right - left
-            face_height = bottom - top
-            if face_width == 0:
-                logger.debug(f"Skipping face with zero width at {top}, {right}, {bottom}, {left}")
+        for idx, (top, right, bottom, left) in enumerate(face_locations):
+            # Check face dimensions
+            width = right - left
+            height = bottom - top
+            
+            if width < MIN_FACE_WIDTH or height < MIN_FACE_HEIGHT or (width * height) < MIN_FACE_AREA:
+                logger.debug(f"Face validation: face too small: {width}x{height}, area={width*height}")
                 continue
                 
-            aspect_ratio = face_height / face_width
-            if aspect_ratio < MIN_FACE_ASPECT_RATIO or aspect_ratio > MAX_FACE_ASPECT_RATIO:
-                logger.debug(f"Skipping face with invalid aspect ratio: {aspect_ratio:.2f}")
+            # Check aspect ratio
+            aspect_ratio = width / height
+            if aspect_ratio < MIN_ASPECT_RATIO or aspect_ratio > MAX_ASPECT_RATIO:
+                logger.debug(f"Face validation: invalid aspect ratio: {aspect_ratio:.2f}")
+                continue
+                
+            # Check horizontal centering
+            face_center_x = left + width / 2
+            frame_center_x = frame.shape[1] / 2
+            distance_from_center = abs(face_center_x - frame_center_x) / frame_center_x
+            if distance_from_center > MAX_HORIZONTAL_OFFSET:  # 40% threshold from center
+                logger.debug(f"Face validation: face too far from center: {distance_from_center:.2f}")
                 continue
             
-            # Extract the face region with padding
-            height, width = frame.shape[:2]
-            padding_x = int((right - left) * 0.2)
-            padding_y = int((bottom - top) * 0.2)
+            # Check skin tone
+            face_roi = frame[top:bottom, left:right]
+            total_pixels = width * height
             
-            # Apply padding with boundary checks
-            adj_left = max(0, left - padding_x)
-            adj_top = max(0, top - padding_y)
-            adj_right = min(width, right + padding_x)
-            adj_bottom = min(height, bottom + padding_y)
-            
-            face_roi = frame[adj_top:adj_bottom, adj_left:adj_right]
-            
-            if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
-                logger.debug(f"Skipping empty face ROI at {top}, {right}, {bottom}, {left}")
-                continue
-            
-            # Check for skin tone in the face region (basic heuristic)
+            # Convert to HSV for better skin detection
             hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
             
-            # Skin tones typically have certain hue and saturation ranges
-            # This is a very basic heuristic and can be improved
-            # Further expanded range to include more diverse skin tones
-            skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))  # Further expanded skin tone range
+            # Detect skin pixels (relaxed range)
+            skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))
             skin_pixels = cv2.countNonZero(skin_mask)
-            total_pixels = face_roi.shape[0] * face_roi.shape[1]
-            skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
+            skin_ratio = skin_pixels / total_pixels
             
-            # Furniture and other objects typically have different color distributions
-            if skin_ratio < MIN_SKIN_RATIO:  # Using the new constant
-                logger.debug(f"Skipping face with low skin tone ratio: {skin_ratio:.2f}")
+            if skin_ratio < MIN_SKIN_RATIO:
+                logger.debug(f"Face validation: insufficient skin tone ratio: {skin_ratio:.2f}")
                 continue
-            
-            # Detect faces in the ROI using YuNet
-            try:
-                self.yunet_detector.setInputSize((face_roi.shape[1], face_roi.shape[0]))
-                faces = self.yunet_detector.detect(face_roi)
                 
-                # Check if any faces were detected by YuNet
-                if faces[1] is not None and len(faces[1]) > 0:
-                    # Get the highest confidence face
-                    best_confidence = 0
-                    for face in faces[1]:
-                        confidence = face[14]
-                        if confidence > best_confidence:
-                            best_confidence = confidence
-                    
-                    logger.debug(f"YuNet validation: face {i} confidence {best_confidence:.2f}")
-                    
-                    # Validate if confidence is above threshold
-                    if best_confidence >= YUNET_SCORE_THRESHOLD:
-                        validated_indices.append(i)
-                        logger.debug(f"YuNet validation passed for face {i} with confidence {best_confidence:.2f}")
-                    else:
-                        logger.debug(f"YuNet validation failed for face {i}: low confidence {best_confidence:.2f}")
-                else:
-                    logger.debug(f"YuNet validation failed for face {i}: no faces detected")
+            # Check brightness to filter out dark clothing like suits
+            avg_brightness = np.mean(hsv_roi[:,:,2])
+            if avg_brightness < 70:  # Filter out very dark regions
+                logger.debug(f"Face validation: low brightness: {avg_brightness:.2f}")
+                continue
+                
+            # Check sharpness
+            sharpness = self.calculate_sharpness(face_roi)
+            if sharpness < MIN_SHARPNESS:
+                logger.debug(f"Face validation: face too blurry: {sharpness:.2f}")
+                continue
+                
+            # Check for open eyes using landmarks
+            try:
+                landmarks = face_recognition.face_landmarks(rgb_frame[top:bottom, left:right])
+                if landmarks and len(landmarks) > 0:
+                    landmark_dict = landmarks[0]
+                    if 'left_eye' in landmark_dict and 'right_eye' in landmark_dict:
+                        # Calculate eye aspect ratio for both eyes
+                        left_ear = self.calculate_eye_aspect_ratio(landmark_dict['left_eye'])
+                        right_ear = self.calculate_eye_aspect_ratio(landmark_dict['right_eye'])
+                        avg_ear = (left_ear + right_ear) / 2.0
+                        
+                        if avg_ear < MIN_EYE_ASPECT_RATIO:
+                            logger.debug(f"Face validation: eyes closed or squinting: {avg_ear:.2f}")
+                            continue
             except Exception as e:
-                logger.warning(f"Error in YuNet validation for face {i}: {str(e)}")
-        
-        # If no faces were validated with the higher threshold, try with a lower threshold
-        if not validated_indices and len(face_locations) > 0:
-            logger.debug("No faces validated with higher threshold, trying with lower threshold")
-            original_threshold = self.yunet_detector.getScoreThreshold()
-            self.yunet_detector.setScoreThreshold(0.4)  # Lower threshold for retry
-            
-            try:
-                for i, (top, right, bottom, left) in enumerate(face_locations):
-                    # Check face aspect ratio again
-                    face_width = right - left
-                    face_height = bottom - top
-                    if face_width == 0:
-                        continue
-                        
-                    aspect_ratio = face_height / face_width
-                    if aspect_ratio < MIN_FACE_ASPECT_RATIO or aspect_ratio > MAX_FACE_ASPECT_RATIO:
-                        continue
-                    
-                    # Extract the face region with padding
-                    height, width = frame.shape[:2]
-                    padding_x = int((right - left) * 0.2)
-                    padding_y = int((bottom - top) * 0.2)
-                    
-                    # Apply padding with boundary checks
-                    adj_left = max(0, left - padding_x)
-                    adj_top = max(0, top - padding_y)
-                    adj_right = min(width, right + padding_x)
-                    adj_bottom = min(height, bottom + padding_y)
-                    
-                    face_roi = frame[adj_top:adj_bottom, adj_left:adj_right]
-                    
-                    if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
-                        continue
-                    
-                    # Check for skin tone
-                    hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
-                    skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))  # Further expanded skin tone range
-                    skin_pixels = cv2.countNonZero(skin_mask)
-                    total_pixels = face_roi.shape[0] * face_roi.shape[1]
-                    skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
-                    
-                    if skin_ratio < MIN_SKIN_RATIO:  # Using the new constant
-                        continue
-                    
-                    # Detect faces in the ROI using YuNet with lower threshold
-                    try:
-                        self.yunet_detector.setInputSize((face_roi.shape[1], face_roi.shape[0]))
-                        faces = self.yunet_detector.detect(face_roi)
-                        
-                        # Check if any faces were detected by YuNet
-                        if faces[1] is not None and len(faces[1]) > 0:
-                            # Get the highest confidence face
-                            best_confidence = 0
-                            for face in faces[1]:
-                                confidence = face[14]
-                                if confidence > best_confidence:
-                                    best_confidence = confidence
-                            
-                            # Validate if confidence is above lower threshold
-                            if best_confidence >= 0.4:  # Lower threshold for retry
-                                validated_indices.append(i)
-                                logger.debug(f"YuNet validation passed with lower threshold for face {i}: {best_confidence:.2f}")
-                            else:
-                                logger.debug(f"YuNet validation failed with lower threshold for face {i}: {best_confidence:.2f}")
-                    except Exception as e:
-                        logger.warning(f"Error in YuNet validation with lower threshold for face {i}: {str(e)}")
-            finally:
-                # Restore original threshold
-                self.yunet_detector.setScoreThreshold(original_threshold)
+                logger.debug(f"Error checking eye landmarks: {str(e)}")
+                # Continue even if landmark detection fails
+                pass
                 
-        logger.debug(f"YuNet validation: {len(validated_indices)}/{len(face_locations)} faces validated")
+            validated_indices.append(idx)
+            
         return validated_indices
     
     def detect_scene_change(self, current_frame, previous_frame, threshold=0.2):
@@ -324,127 +274,131 @@ class OptimizedFaceDetector:
     
     def detect_faces_in_roi(self, frame, roi_scale=0.6):
         """
-        Detect faces in a region of interest within a frame.
-        Uses a two-stage approach: HOG detection followed by YuNet validation.
+        Detect faces in a region of interest within a frame using YuNet detector.
+        Falls back to landmark-based validation if YuNet is not available.
         """
         # Get ROI
         roi, x_start, y_start = self.get_frame_roi(frame, roi_scale)
         
-        # Convert ROI to RGB
-        rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-        
-        # STAGE 1: Detect faces in ROI with HOG (fast but can have false positives)
-        face_locations = face_recognition.face_locations(
-            rgb_roi, 
-            model="hog",
-            number_of_times_to_upsample=0  # Reduced from default 1 to 0
-        )
-        
-        # Adjust face coordinates back to original frame
+        # Initialize empty results
         adjusted_locations = []
-        for top, right, bottom, left in face_locations:
-            adjusted_locations.append(
-                (top + y_start, right + x_start, bottom + y_start, left + x_start)
+        
+        # Check if YuNet detector is available
+        if self.yunet_detector is None:
+            logger.warning("YuNet detector not available, falling back to landmark detection")
+            # Convert ROI to RGB for face_recognition library
+            rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+            
+            # Detect faces with HOG as fallback
+            face_locations = face_recognition.face_locations(
+                rgb_roi, 
+                model="hog",
+                number_of_times_to_upsample=0
             )
+            
+            # Adjust face coordinates back to original frame
+            for top, right, bottom, left in face_locations:
+                adjusted_locations.append(
+                    (top + y_start, right + x_start, bottom + y_start, left + x_start)
+                )
+            
+            # If no faces found with HOG fallback, return empty results
+            if not adjusted_locations:
+                return [], []
+        else:
+            # Use YuNet as primary detector (more accurate than HOG)
+            height, width = roi.shape[:2]
+            self.yunet_detector.setInputSize((width, height))
+            _, faces = self.yunet_detector.detect(roi)
+            
+            # If no faces detected, return empty results
+            if faces is None:
+                return [], []
+            
+            # Process YuNet detections
+            for face in faces:
+                # YuNet returns [x, y, w, h, score, ...]
+                score = face[4]
+                if score < YUNET_SCORE_THRESHOLD:
+                    continue
+                    
+                # Convert to (top, right, bottom, left) format
+                x, y, w, h = map(int, face[:4])
+                
+                # Apply minimal checks similar to original code
+                # 1. Check minimum size (but more permissive)
+                if w < MIN_FACE_WIDTH * 0.75 or h < MIN_FACE_HEIGHT * 0.75 or (w * h) < MIN_FACE_AREA * 0.5:
+                    logger.debug(f"Initial detection: face too small: {w}x{h}, area={w*h}")
+                    continue
+                    
+                # 2. Check if face is within reasonable bounds of the ROI
+                if x < 0 or y < 0 or x + w > roi.shape[1] or y + h > roi.shape[0]:
+                    logger.debug(f"Initial detection: face outside ROI bounds")
+                    continue
+                    
+                # 3. Extract face crop for validation
+                face_crop = roi[y:y+h, x:x+w]
+                
+                # Skip if face crop is invalid
+                if face_crop.size == 0 or face_crop.shape[0] == 0 or face_crop.shape[1] == 0:
+                    logger.debug(f"Initial detection: invalid face crop dimensions")
+                    continue
+                    
+                # 4. Brightness check - reject very dark regions (likely clothing)
+                hsv_face = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
+                avg_brightness = np.mean(hsv_face[:,:,2])
+                if avg_brightness < 70:
+                    logger.debug(f"Initial detection: too dark (brightness={avg_brightness:.2f})")
+                    continue
+                    
+                # 5. Skin tone check - ensure minimum amount of skin tone pixels
+                skin_mask = cv2.inRange(hsv_face, (0, 10, 60), (35, 150, 255))
+                skin_pixels = cv2.countNonZero(skin_mask)
+                total_pixels = face_crop.shape[0] * face_crop.shape[1]
+                skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
+                
+                if skin_ratio < 0.15:  # Minimum skin tone ratio
+                    logger.debug(f"Initial detection: insufficient skin tone (ratio={skin_ratio:.2f})")
+                    continue
+                    
+                # 6. Sharpness check - reject blurry detections
+                gray_face = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+                sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+                if sharpness < 40:  # Slightly lower threshold than tracking for initial detection
+                    logger.debug(f"Initial detection: too blurry (sharpness={sharpness:.2f})")
+                    continue
+                    
+                # 7. Check horizontal centering (absolute threshold)
+                face_center_x = x + w/2
+                frame_center_x = roi.shape[1] / 2
+                distance_from_center = abs(face_center_x - frame_center_x) / frame_center_x
+                if distance_from_center > MAX_HORIZONTAL_OFFSET:  # Reject faces beyond 40% from horizontal center
+                    logger.debug(f"Initial detection: face too far from center: {distance_from_center:.2f}")
+                    continue
+                
+                left = x
+                top = y
+                right = x + w
+                bottom = y + h
+                
+                # Adjust coordinates back to original frame
+                adjusted_locations.append(
+                    (top + y_start, right + x_start, bottom + y_start, left + x_start)
+                )
+            
+            # If no faces found with YuNet, return empty results
+            if not adjusted_locations:
+                return [], []
         
-        # If no faces found with HOG, return empty results
-        if not adjusted_locations:
-            return [], []
-        
-        # STAGE 2: Validate with YuNet detector if available
+        # Apply additional validation to the detected faces
         validated_locations = []
         validated_indices = []
         
         # Convert full frame to RGB for encodings
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Try YuNet validation if available
-        if self.yunet_detector is not None:
-            try:
-                # For each HOG detection, validate with YuNet
-                validated_indices = self.validate_faces_with_yunet(frame, adjusted_locations)
-            except Exception as e:
-                logger.warning(f"YuNet validation failed: {e}, falling back to landmark validation")
-                # If YuNet fails, fall back to landmark validation
-                validated_indices = []
-        
-        # If YuNet validation failed or unavailable, fall back to landmark validation
-        if not validated_indices:
-            # Validate faces by checking for facial landmarks
-            landmarks = face_recognition.face_landmarks(rgb_frame, adjusted_locations)
-            
-            # Only keep faces where landmarks were detected
-            for i, landmark_dict in enumerate(landmarks):
-                # First check face aspect ratio
-                top, right, bottom, left = adjusted_locations[i]
-                face_width = right - left
-                face_height = bottom - top
-                if face_width == 0:
-                    logger.debug(f"Landmark validation: skipping face with zero width")
-                    continue
-                    
-                aspect_ratio = face_height / face_width
-                if aspect_ratio < MIN_FACE_ASPECT_RATIO or aspect_ratio > MAX_FACE_ASPECT_RATIO:
-                    logger.debug(f"Landmark validation: skipping face with invalid aspect ratio: {aspect_ratio:.2f}")
-                    continue
-                
-                # Check for skin tone in the face region (basic heuristic)
-                face_roi = frame[top:bottom, left:right]
-                if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
-                    logger.debug(f"Landmark validation: skipping empty face ROI")
-                    continue
-                    
-                hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
-                
-                # Skin tones typically have certain hue and saturation ranges
-                # Further expanded range to include more diverse skin tones
-                skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))
-                skin_pixels = cv2.countNonZero(skin_mask)
-                total_pixels = face_roi.shape[0] * face_roi.shape[1]
-                skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
-                
-                if skin_ratio < MIN_SKIN_RATIO:  # Using the new constant
-                    logger.debug(f"Landmark validation: skipping face with low skin tone ratio: {skin_ratio:.2f}")
-                    continue
-                
-                # Check if at least some facial features are present (less strict)
-                has_min_features = any(key in landmark_dict for key in ['left_eye', 'right_eye', 'nose_tip'])
-                
-                # Calculate eye aspect ratio (EAR) if eye landmarks are present
-                eye_aspect_ratio = 0
-                if 'left_eye' in landmark_dict and 'right_eye' in landmark_dict:
-                    # Calculate EAR for left and right eyes
-                    left_ear = calculate_eye_aspect_ratio(landmark_dict['left_eye'])
-                    right_ear = calculate_eye_aspect_ratio(landmark_dict['right_eye'])
-                    eye_aspect_ratio = (left_ear + right_ear) / 2
-                
-                # Calculate facial symmetry based on eye and nose positions
-                facial_symmetry = 1.0  # Default perfect symmetry
-                if 'left_eye' in landmark_dict and 'right_eye' in landmark_dict and 'nose_tip' in landmark_dict:
-                    # Get average positions
-                    left_eye_center = np.mean(landmark_dict['left_eye'], axis=0)
-                    right_eye_center = np.mean(landmark_dict['right_eye'], axis=0)
-                    nose_tip = np.mean(landmark_dict['nose_tip'], axis=0)
-                    
-                    # Calculate horizontal distances from nose to each eye
-                    left_dist = abs(nose_tip[0] - left_eye_center[0])
-                    right_dist = abs(right_eye_center[0] - nose_tip[0])
-                    
-                    # Calculate symmetry ratio (1.0 is perfect symmetry)
-                    if max(left_dist, right_dist) > 0:
-                        facial_symmetry = min(left_dist, right_dist) / max(left_dist, right_dist)
-                
-                # Validate face based on features, EAR, and symmetry (less strict)
-                if has_min_features and (eye_aspect_ratio >= MIN_EYE_ASPECT_RATIO or eye_aspect_ratio == 0) and facial_symmetry >= 0.5:
-                    validated_indices.append(i)
-                    logger.debug(f"Landmark validation passed: face has features, EAR={eye_aspect_ratio:.2f}, symmetry={facial_symmetry:.2f}, aspect ratio={aspect_ratio:.2f}")
-                else:
-                    if not has_min_features:
-                        logger.debug(f"Landmark validation failed: missing required facial features")
-                    elif eye_aspect_ratio < MIN_EYE_ASPECT_RATIO and eye_aspect_ratio > 0:
-                        logger.debug(f"Landmark validation failed: low eye aspect ratio {eye_aspect_ratio:.2f}")
-                    else:
-                        logger.debug(f"Landmark validation failed: poor facial symmetry {facial_symmetry:.2f}")
+        # Apply size, position, and aspect ratio validation
+        validated_indices = self.validate_face_geometry(frame, adjusted_locations)
         
         # Filter locations to only include validated faces
         validated_locations = [adjusted_locations[i] for i in validated_indices]
@@ -457,7 +411,7 @@ class OptimizedFaceDetector:
         if len(validated_locations) < len(adjusted_locations):
             logger.debug(f"Filtered out {len(adjusted_locations) - len(validated_locations)} false positive face detections")
         
-        return validated_locations, face_encodings
+        return validated_locations, face_encodings        
     
     def calculate_face_quality(self, frame, face_location, frame_center_x, frame_center_y, frame_width, frame_height):
         """
@@ -535,7 +489,7 @@ class OptimizedFaceDetector:
         contrast_score = min(contrast / 80, 1.0)  # Normalize to [0, 1]
         
         # Calculate sharpness (Laplacian variance)
-        sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+        sharpness = self.calculate_sharpness(face_image)
         sharpness_score = min(sharpness / 1000, 1.0)
         
         # Detect facial landmarks to check if eyes are open
@@ -846,6 +800,7 @@ class OptimizedFaceDetector:
                         # Update trackers using our custom tracking approach
                         updated_trackers = []
                         faces_found_by_tracking = 0
+                        logger.debug(f"Updating {len(trackers)} trackers with custom tracking approach")
                         
                         for tracker_info in trackers:
                             try:
@@ -899,70 +854,144 @@ class OptimizedFaceDetector:
                                         # Convert back to face_recognition format (top, right, bottom, left)
                                         face_loc = (y, x + w, y + h, x)
                                         
-                                        # Log the updated face location
-                                        logger.debug(f"Custom tracker updated successfully. New face_loc: {face_loc}, match score: {max_val:.2f}")
-                                        
-                                        # Update tracker info
-                                        tracker_info["face_loc"] = face_loc
-                                        updated_trackers.append(tracker_info)
-                                        faces_found_by_tracking += 1
-                                        
-                                        # Extract and save face image for tracked faces too
+                                        # Extract the potential face region for validation
                                         top, right, bottom, left = face_loc
+                                        potential_face = frame[top:bottom, left:right]
                                         
-                                        # Save face image for tracked face
-                                        face_filename = f"face_{face_id}_{timestamp:.2f}.jpg"
-                                        face_path = os.path.join(output_dir, face_filename)
+                                        # Validate the tracked face with multiple checks
+                                        is_valid_face = True
                                         
-                                        try:
-                                            # Ensure the directory exists before writing
-                                            os.makedirs(os.path.dirname(face_path), exist_ok=True)
+                                        # Check face brightness and skin tone
+                                        if potential_face.size > 0 and potential_face.shape[0] > 0 and potential_face.shape[1] > 0:
+                                            # Convert to HSV for brightness check
+                                            hsv_face = cv2.cvtColor(potential_face, cv2.COLOR_BGR2HSV)
+                                            avg_brightness = np.mean(hsv_face[:,:,2])
                                             
-                                            # Save the face image
-                                            success = cv2.imwrite(face_path, frame[top:bottom, left:right])
+                                            # Check if face is too dark (likely clothing)
+                                            if avg_brightness < 70:
+                                                logger.debug(f"Tracked face rejected: too dark (brightness={avg_brightness:.2f})")
+                                                is_valid_face = False
                                             
-                                            if not success:
-                                                logger.warning(f"Failed to save tracked face image to {face_path}")
-                                                face_path = ""
-                                            else:
-                                                logger.debug(f"Saved tracked face image to {face_path}")
+                                            # Check skin tone ratio
+                                            skin_mask = cv2.inRange(hsv_face, (0, 10, 60), (35, 150, 255))
+                                            skin_pixels = cv2.countNonZero(skin_mask)
+                                            total_pixels = potential_face.shape[0] * potential_face.shape[1]
+                                            skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
+                                            
+                                            if skin_ratio < 0.15:  # Minimum skin tone ratio
+                                                logger.debug(f"Tracked face rejected: insufficient skin tone (ratio={skin_ratio:.2f})")
+                                                is_valid_face = False
                                                 
-                                                # Calculate quality metrics for the tracked face
-                                                quality_metrics = self.calculate_face_quality(
-                                                    frame, face_loc, frame_center_x, frame_center_y, 
-                                                    frame_width, frame_height
-                                                )
-                                                
-                                                # Store face data
-                                                face_info = {
-                                                    "face_id": face_id,
-                                                    "timestamp": timestamp,
-                                                    "face_location": face_loc,
-                                                    "face_encoding": custom_tracker["face_encoding"].tolist(),
-                                                    "path": face_path,
-                                                    "face_image_path": face_path,
-                                                    "segment_key": segment_key,
-                                                    "tracked": True,
-                                                    **quality_metrics
-                                                }
-                                                
-                                                # Add to segment faces
-                                                if segment_key not in segment_faces:
-                                                    segment_faces[segment_key] = {}
-                                                
-                                                # Enhanced quality scoring - always keep the best face
-                                                # If this is a new face or has better quality than existing one, update it
-                                                if face_id not in segment_faces[segment_key]:
-                                                    segment_faces[segment_key][face_id] = face_info
-                                                    logger.debug(f"Added new tracked face for ID {face_id} with score {quality_metrics['quality_score']:.2f}")
-                                                elif quality_metrics["quality_score"] > segment_faces[segment_key][face_id]["quality_score"]:
-                                                    # Replace with better quality face
-                                                    prev_score = segment_faces[segment_key][face_id]["quality_score"]
-                                                    segment_faces[segment_key][face_id] = face_info
-                                                    logger.debug(f"Replaced face for ID {face_id}: improved score from {prev_score:.2f} to {quality_metrics['quality_score']:.2f}")
+                                            # Check face sharpness (blurry faces are often false positives)
+                                            if is_valid_face:
+                                                gray_face = cv2.cvtColor(potential_face, cv2.COLOR_BGR2GRAY)
+                                                sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+                                                if sharpness < 50:  # Threshold for minimum sharpness
+                                                    logger.debug(f"Tracked face rejected: too blurry (sharpness={sharpness:.2f})")
+                                                    is_valid_face = False
+                                            
+                                            # Check for facial landmarks to confirm it's a face
+                                            if is_valid_face:
+                                                try:
+                                                    # Convert to RGB for face_recognition library
+                                                    rgb_face = cv2.cvtColor(potential_face, cv2.COLOR_BGR2RGB)
+                                                    face_landmarks = face_recognition.face_landmarks(rgb_face)
                                                     
-                                        except Exception as e:
-                                            logger.warning(f"Error saving tracked face image: {str(e)}")
+                                                    # Check if we detected landmarks and if eyes are present
+                                                    if not face_landmarks or not all(key in face_landmarks[0] for key in ['left_eye', 'right_eye']):
+                                                        logger.debug(f"Tracked face rejected: no valid facial landmarks detected")
+                                                        is_valid_face = False
+                                                    else:
+                                                        # Calculate eye aspect ratio to check if eyes are open
+                                                        left_eye = face_landmarks[0]['left_eye']
+                                                        right_eye = face_landmarks[0]['right_eye']
+                                                        left_ear = self.calculate_eye_aspect_ratio(left_eye)
+                                                        right_ear = self.calculate_eye_aspect_ratio(right_eye)
+                                                        eye_aspect_ratio = (left_ear + right_ear) / 2
+                                                        
+                                                        if eye_aspect_ratio < 0.15:  # Minimum eye aspect ratio
+                                                            logger.debug(f"Tracked face rejected: eyes not clearly visible (EAR={eye_aspect_ratio:.2f})")
+                                                            is_valid_face = False
+                                                except Exception as e:
+                                                    logger.debug(f"Error checking facial landmarks: {str(e)}")
+                                        else:
+                                            is_valid_face = False
+                                        
+                                        # Check horizontal centering
+                                        face_center_x = (left + right) / 2
+                                        frame_center_x = frame.shape[1] / 2
+                                        distance_from_center = abs(face_center_x - frame_center_x) / frame_center_x
+                                        if distance_from_center > 0.4:  # Same as detection threshold
+                                            logger.debug(f"Tracked face rejected: too far from center (offset={distance_from_center:.2f})")
+                                            is_valid_face = False
+                                            
+                                        # Only proceed if the face passes all validation checks
+                                        if is_valid_face:
+                                            # Log the updated face location
+                                            logger.debug(f"Custom tracker updated successfully. New face_loc: {face_loc}, match score: {max_val:.2f}")
+                                            
+                                            # Update tracker info
+                                            tracker_info["face_loc"] = face_loc
+                                            updated_trackers.append(tracker_info)
+                                            faces_found_by_tracking += 1
+                                            
+                                            # Extract and save face image for tracked faces too
+                                            top, right, bottom, left = face_loc
+                                            
+                                            # Save face image for tracked face
+                                            face_filename = f"face_{face_id}_{timestamp:.2f}.jpg"
+                                            face_path = os.path.join(output_dir, face_filename)
+                                            
+                                            try:
+                                                # Ensure the directory exists before writing
+                                                os.makedirs(os.path.dirname(face_path), exist_ok=True)
+                                                
+                                                # Save the face image
+                                                success = cv2.imwrite(face_path, frame[top:bottom, left:right])
+                                                
+                                                if not success:
+                                                    logger.warning(f"Failed to save tracked face image to {face_path}")
+                                                    face_path = ""
+                                                else:
+                                                    logger.debug(f"Saved tracked face image to {face_path}")
+                                                    
+                                                    # Calculate quality metrics for the tracked face
+                                                    quality_metrics = self.calculate_face_quality(
+                                                        frame, face_loc, frame_center_x, frame_center_y, 
+                                                        frame_width, frame_height
+                                                    )
+                                                    
+                                                    # Store face data
+                                                    face_info = {
+                                                        "face_id": face_id,
+                                                        "timestamp": timestamp,
+                                                        "face_location": face_loc,
+                                                        "face_encoding": custom_tracker["face_encoding"].tolist(),
+                                                        "path": face_path,
+                                                        "face_image_path": face_path,
+                                                        "segment_key": segment_key,
+                                                        "tracked": True,
+                                                        **quality_metrics
+                                                    }
+                                                    
+                                                    # Add to segment faces
+                                                    if segment_key not in segment_faces:
+                                                        segment_faces[segment_key] = {}
+                                                    
+                                                    # Enhanced quality scoring - always keep the best face
+                                                    # If this is a new face or has better quality than existing one, update it
+                                                    if face_id not in segment_faces[segment_key]:
+                                                        segment_faces[segment_key][face_id] = face_info
+                                                        logger.debug(f"Added new tracked face for ID {face_id} with score {quality_metrics['quality_score']:.2f}")
+                                                    elif quality_metrics["quality_score"] > segment_faces[segment_key][face_id]["quality_score"]:
+                                                        # Replace with better quality face
+                                                        prev_score = segment_faces[segment_key][face_id]["quality_score"]
+                                                        segment_faces[segment_key][face_id] = face_info
+                                                        logger.debug(f"Replaced face for ID {face_id}: improved score from {prev_score:.2f} to {quality_metrics['quality_score']:.2f}")
+                                            except Exception as e:
+                                                logger.warning(f"Error saving tracked face image: {str(e)}")
+                                        else:
+                                            logger.debug(f"Tracked face failed validation checks")
                                     else:
                                         logger.debug(f"Template matching score too low: {max_val:.2f} for face {face_id}")
                                 else:
