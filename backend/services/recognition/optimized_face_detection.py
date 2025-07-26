@@ -5,16 +5,24 @@ Implements several performance optimizations:
 2. Face tracking
 3. Region of Interest (ROI) restriction
 4. Reduced HOG upsampling
+5. YuNet face detector validation
 """
 import os
 import cv2
 import face_recognition
 import numpy as np
 import logging
-from typing import Dict, Any, List, Optional, Tuple, Union
-from pathlib import Path
+import time
+import uuid
+from typing import Dict, List, Tuple, Optional, Any
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Constants for YuNet face detector
+YUNET_SCORE_THRESHOLD = 0.6  # Higher threshold for stricter filtering
+YUNET_NMS_THRESHOLD = 0.3
+YUNET_TOP_K = 5000
 
 class OptimizedFaceDetector:
     """
@@ -22,13 +30,46 @@ class OptimizedFaceDetector:
     Implements scene change detection, face tracking, and ROI restriction.
     """
     
-    def __init__(self):
-        """Initialize the optimized face detector"""
+    def __init__(self, output_dir=None):
+        self.output_dir = output_dir or os.path.join(os.getcwd(), 'extracted_faces')
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Initialize YuNet face detector for validation
+        self.initialize_yunet_detector()
+        
         # Initialize trackers list
         self.trackers = []
         self.previous_frame = None
         self.current_segment_faces = []
         self.segment_duration = 5  # seconds
+    
+    def initialize_yunet_detector(self):
+        """Initialize the YuNet face detector from OpenCV"""
+        try:
+            # Try to load YuNet face detector model
+            model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                     "../../../models/face_detection_yunet_2023mar.onnx")
+            
+            # Check if model exists, if not, download it
+            if not os.path.exists(model_path):
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                logger.info(f"YuNet model not found at {model_path}, creating empty detector")
+                self.yunet_detector = None
+                return
+                
+            # Create face detector using YuNet model
+            self.yunet_detector = cv2.FaceDetectorYN.create(
+                model_path,
+                "",  # Empty config path
+                (320, 320),  # Default input size, will be resized for each frame
+                YUNET_SCORE_THRESHOLD,
+                YUNET_NMS_THRESHOLD,
+                YUNET_TOP_K
+            )
+            logger.info("YuNet face detector initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize YuNet face detector: {e}")
+            self.yunet_detector = None
     
     def detect_scene_change(self, current_frame, previous_frame, threshold=0.2):
         """
@@ -89,14 +130,8 @@ class OptimizedFaceDetector:
     
     def detect_faces_in_roi(self, frame, roi_scale=0.6):
         """
-        Detect faces only in the central region of the frame
-        
-        Args:
-            frame: Input video frame
-            roi_scale: Scale factor for ROI (0-1)
-            
-        Returns:
-            tuple: (face_locations, face_encodings) - Adjusted to original frame coordinates
+        Detect faces in a region of interest within a frame.
+        Uses a two-stage approach: HOG detection followed by YuNet validation.
         """
         # Get ROI
         roi, x_start, y_start = self.get_frame_roi(frame, roi_scale)
@@ -104,7 +139,7 @@ class OptimizedFaceDetector:
         # Convert ROI to RGB
         rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
         
-        # Detect faces in ROI with reduced upsampling
+        # STAGE 1: Detect faces in ROI with HOG (fast but can have false positives)
         face_locations = face_recognition.face_locations(
             rgb_roi, 
             model="hog",
@@ -118,14 +153,79 @@ class OptimizedFaceDetector:
                 (top + y_start, right + x_start, bottom + y_start, left + x_start)
             )
         
-        # Get face encodings if faces were found
-        face_encodings = []
-        if adjusted_locations:
-            # Convert full frame to RGB for encodings
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            face_encodings = face_recognition.face_encodings(rgb_frame, adjusted_locations)
+        # If no faces found with HOG, return empty results
+        if not adjusted_locations:
+            return [], []
         
-        return adjusted_locations, face_encodings
+        # STAGE 2: Validate with YuNet detector if available
+        validated_locations = []
+        validated_indices = []
+        
+        # Convert full frame to RGB for encodings
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Try YuNet validation if available
+        if self.yunet_detector is not None:
+            try:
+                # For each HOG detection, validate with YuNet
+                for i, (top, right, bottom, left) in enumerate(adjusted_locations):
+                    # Extract region with padding
+                    pad = 20
+                    y1 = max(0, top - pad)
+                    y2 = min(frame.shape[0], bottom + pad)
+                    x1 = max(0, left - pad)
+                    x2 = min(frame.shape[1], right + pad)
+                    
+                    face_region = frame[y1:y2, x1:x2]
+                    if face_region.size == 0:
+                        continue
+                    
+                    # Set detector input size to region dimensions
+                    h, w = face_region.shape[:2]
+                    self.yunet_detector.setInputSize((w, h))
+                    
+                    # Detect faces in the region
+                    _, yunet_faces = self.yunet_detector.detect(face_region)
+                    
+                    # If YuNet found a face with good confidence, validate this detection
+                    if yunet_faces is not None and len(yunet_faces) > 0:
+                        # Get highest confidence detection
+                        best_detection = yunet_faces[np.argmax(yunet_faces[:, 14])]
+                        confidence = best_detection[14]
+                        
+                        if confidence >= YUNET_SCORE_THRESHOLD:
+                            validated_indices.append(i)
+                            logger.debug(f"YuNet validated face with confidence {confidence:.2f}")
+                
+                logger.debug(f"YuNet validation: {len(validated_indices)}/{len(adjusted_locations)} faces validated")
+            except Exception as e:
+                logger.warning(f"YuNet validation failed: {e}, falling back to landmark validation")
+                # If YuNet fails, fall back to landmark validation
+                validated_indices = []
+        
+        # If YuNet validation failed or unavailable, fall back to landmark validation
+        if not validated_indices:
+            # Validate faces by checking for facial landmarks
+            landmarks = face_recognition.face_landmarks(rgb_frame, adjusted_locations)
+            
+            # Only keep faces where landmarks were detected
+            for i, landmark_dict in enumerate(landmarks):
+                # Check if we found eyes and other key facial features
+                if landmark_dict and ('left_eye' in landmark_dict and 'right_eye' in landmark_dict):
+                    validated_indices.append(i)
+        
+        # Filter locations to only include validated faces
+        validated_locations = [adjusted_locations[i] for i in validated_indices]
+        
+        # Get face encodings for validated faces
+        face_encodings = []
+        if validated_locations:
+            face_encodings = face_recognition.face_encodings(rgb_frame, validated_locations)
+        
+        if len(validated_locations) < len(adjusted_locations):
+            logger.debug(f"Filtered out {len(adjusted_locations) - len(validated_locations)} false positive face detections")
+        
+        return validated_locations, face_encodings
     
     def calculate_face_quality(self, frame, face_location, frame_center_x, frame_center_y, frame_width, frame_height):
         """
@@ -135,7 +235,8 @@ class OptimizedFaceDetector:
         1. Size of face relative to minimum requirements
         2. Position in frame (centered faces score higher)
         3. Brightness and contrast
-        4. Face angle (frontal faces score higher)
+        4. Eye openness (faces with open eyes score higher)
+        5. Sharpness
         
         Returns:
             Dictionary with quality metrics and overall score
@@ -148,55 +249,121 @@ class OptimizedFaceDetector:
         face_height = bottom - top
         face_size = face_width * face_height
         
-        # Calculate distance from center
-        horizontal_distance = abs((left + right) / 2 - frame_center_x) / (frame_width / 2)
-        vertical_distance = abs((top + bottom) / 2 - frame_center_y) / (frame_height / 2)
+        # Calculate distance from center of frame
+        face_center_x = (left + right) / 2
+        face_center_y = (top + bottom) / 2
         
-        # Overall distance (normalized 0-1, with higher penalty for horizontal offset)
+        # Calculate horizontal and vertical distances separately
+        horizontal_distance = abs(face_center_x - frame_center_x) / (frame_width / 2)
+        vertical_distance = abs(face_center_y - frame_center_y) / (frame_height / 2)
+        
+        # Normalize distance to be in range [0, 1]
         distance_from_center = np.sqrt(
-            (horizontal_distance * 1.5) ** 2 +  # Apply higher weight to horizontal centering
-            vertical_distance ** 2
-        ) / np.sqrt(1.5**2 + 1)  # Normalize to 0-1 range
+            ((face_center_x - frame_center_x) / frame_width) ** 2 + 
+            ((face_center_y - frame_center_y) / frame_height) ** 2
+        )
         
-        # Calculate size score
-        size_score = min(1.0, face_size / (frame_width * frame_height))
+        # STRICT HORIZONTAL CENTERING CHECK
+        # Reject faces that are too far from center horizontally (more than 40% from center)
+        if horizontal_distance > 0.4:
+            logger.debug(f"Rejecting face at position {horizontal_distance:.2f} from center (threshold: 0.4)")
+            # Return very low quality score to ensure this face is not selected
+            return {
+                "face_width": face_width,
+                "face_height": face_height,
+                "face_size": face_size,
+                "distance_from_center": distance_from_center,
+                "horizontal_distance": horizontal_distance,
+                "vertical_distance": vertical_distance,
+                "sharpness": 0,
+                "eyes_open_score": 0,
+                "quality_score": -1.0  # Negative score ensures rejection
+            }
         
-        # Calculate position score
-        position_score = 1.0 - distance_from_center
+        # Calculate size score (larger faces score higher)
+        size_score = min(face_size / (frame_width * frame_height * 0.1), 1.0)
         
-        # Calculate sharpness
-        gray_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
-        sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+        # Calculate position scores
+        horizontal_position_score = 1.0 - min(horizontal_distance * 2.5, 1.0)
+        vertical_position_score = 1.0 - min(vertical_distance * 2.0, 1.0)
         
-        # Calculate brightness and contrast scores
-        face_roi = frame[top:bottom, left:right]
-        if face_roi.size > 0:
-            # Convert to grayscale for brightness calculation
-            if len(face_roi.shape) == 3 and face_roi.shape[2] == 3:
-                gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-            else:
-                gray_roi = face_roi
-                
-            # Calculate brightness (mean pixel value)
-            brightness = np.mean(gray_roi)
-            brightness_score = min(1.0, brightness / 150.0)  # Normalize, optimal around 150
-            
-            # Calculate contrast (standard deviation of pixel values)
-            contrast = np.std(gray_roi)
-            contrast_score = min(1.0, contrast / 50.0)  # Normalize, optimal around 50
+        # Calculate brightness and contrast
+        if len(face_image.shape) == 3 and face_image.shape[2] == 3:
+            # Convert to grayscale for brightness/contrast calculation
+            gray_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
         else:
-            brightness_score = 0.5
-            contrast_score = 0.5
+            gray_face = face_image
+            
+        # Calculate brightness (mean pixel value)
+        brightness = np.mean(gray_face)
+        brightness_score = min(brightness / 200, 1.0)  # Normalize to [0, 1]
         
-        # Calculate quality score based on all factors
-        quality_score = (size_score * 0.4) + (position_score * 0.3) + (brightness_score * 0.15) + (contrast_score * 0.15)
+        # Calculate contrast (standard deviation of pixel values)
+        contrast = np.std(gray_face)
+        contrast_score = min(contrast / 80, 1.0)  # Normalize to [0, 1]
+        
+        # Calculate sharpness (Laplacian variance)
+        sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+        sharpness_score = min(sharpness / 1000, 1.0)
+        
+        # Detect facial landmarks to check if eyes are open
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        landmarks = face_recognition.face_landmarks(rgb_frame, [face_location])
+        eyes_open_score = 0.0
+        
+        if landmarks and len(landmarks) > 0:
+            face_landmarks = landmarks[0]
+            if 'left_eye' in face_landmarks and 'right_eye' in face_landmarks:
+                # Calculate eye aspect ratio (EAR) for both eyes
+                # EAR = (height of eye) / (width of eye)
+                # Higher values indicate more open eyes
+                
+                def calculate_eye_aspect_ratio(eye_points):
+                    # Calculate height (average of two height measurements)
+                    h1 = np.linalg.norm(np.array(eye_points[1]) - np.array(eye_points[5]))
+                    h2 = np.linalg.norm(np.array(eye_points[2]) - np.array(eye_points[4]))
+                    # Calculate width
+                    w = np.linalg.norm(np.array(eye_points[0]) - np.array(eye_points[3]))
+                    # Return aspect ratio
+                    return (h1 + h2) / (2.0 * w) if w > 0 else 0
+                
+                left_eye = face_landmarks['left_eye']
+                right_eye = face_landmarks['right_eye']
+                
+                left_ear = calculate_eye_aspect_ratio(left_eye)
+                right_ear = calculate_eye_aspect_ratio(right_eye)
+                
+                # Average EAR for both eyes
+                avg_ear = (left_ear + right_ear) / 2.0
+                
+                # Convert to score (typical EAR for open eyes is around 0.2-0.3)
+                # Values below 0.2 often indicate closed or partially closed eyes
+                eyes_open_score = min(avg_ear / 0.25, 1.0)
+        
+        # Calculate quality score with two-tier approach
+        # TIER 1: Horizontal position is most important (70%)
+        # TIER 2: Other factors (30%)
+        secondary_quality = (
+            (size_score * 0.3) + 
+            (vertical_position_score * 0.2) + 
+            (sharpness_score * 0.15) + 
+            (brightness_score * 0.1) + 
+            (contrast_score * 0.05) + 
+            (eyes_open_score * 0.2)
+        )
+        
+        # Final quality score: horizontal position dominates, with secondary factors as tiebreakers
+        quality_score = (horizontal_position_score * 0.7) + (secondary_quality * 0.3)
         
         return {
             "face_width": face_width,
             "face_height": face_height,
             "face_size": face_size,
             "distance_from_center": distance_from_center,
+            "horizontal_distance": horizontal_distance,
+            "vertical_distance": vertical_distance,
             "sharpness": sharpness,
+            "eyes_open_score": eyes_open_score,
             "quality_score": quality_score
         }
     
