@@ -838,7 +838,8 @@ class MultimodalRecognitionService:
                 prioritize_center=True,  # Enable center-frame prioritization
                 select_best_frames=True,
                 min_face_size=200,  # Minimum face dimensions in pixels (width/height)
-                min_face_area=40000  # Minimum face area in square pixels (200x200)
+                min_face_area=40000,  # Minimum face area in square pixels (200x200)
+                detection_interval=30  # Run face detection every 30 frames (about once per second at 25-30 FPS)
             )
             
             if extraction_result.get("success", False):

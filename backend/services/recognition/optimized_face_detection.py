@@ -184,7 +184,7 @@ class OptimizedFaceDetector:
                                interval: float = 3.0, min_confidence: float = 0.6,
                                prioritize_center: bool = True, select_best_frames: bool = True,
                                min_face_size: int = 200, min_face_area: int = 40000,
-                               roi_scale: float = 0.6, detection_interval: int = 150) -> Dict[str, Any]:
+                               roi_scale: float = 0.6, detection_interval: int = 30) -> Dict[str, Any]:
         """
         Extract faces from a video file with optimized performance for parliamentary videos
         
