@@ -7,9 +7,11 @@ by combining evidence from both modalities.
 
 import os
 import json
-import logging
-import subprocess
+import time
 import math
+import copy
+import logging
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -856,6 +858,32 @@ class MultimodalRecognitionService:
                 
                 # First pass: Group faces by segment and collect quality scores
                 logger.info("First pass: Grouping faces by segment and collecting quality scores")
+                
+                # Pre-process segments for easier access
+                segment_time_ranges = []
+                for segment in segments:
+                    start_time = segment.get("start", 0)
+                    end_time = segment.get("end", 0)
+                    segment_id = segment.get("id", f"{start_time}-{end_time}")
+                    segment_time_ranges.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "id": segment_id,
+                        "segment": segment
+                    })
+                
+                # Sort segments by start time for more efficient matching
+                segment_time_ranges.sort(key=lambda x: x["start"])
+                
+                # Initialize segment_faces dictionary for all segments
+                for segment in segments:
+                    segment_id = segment.get("id", f"{segment.get('start', 0)}-{segment.get('end', 0)}")
+                    if segment_id not in segment_faces:
+                        segment_faces[segment_id] = []
+                
+                # Track faces that couldn't be matched to any segment
+                unmatched_faces = []
+                
                 for face_info in face_data:
                     face_time = face_info.get("timestamp", 0)
                     # Get face path - check both possible key names
@@ -869,16 +897,13 @@ class MultimodalRecognitionService:
                     
                     # Find the segment that contains this timestamp
                     matching_segment = None
-                    for segment in segments:
-                        start_time = segment.get("start", 0)
-                        end_time = segment.get("end", 0)
-                        if start_time <= face_time <= end_time:
-                            matching_segment = segment
-                            segment_id = segment.get("id", f"{start_time}-{end_time}")
-                            
-                            # Add to segment faces dictionary
-                            if segment_id not in segment_faces:
-                                segment_faces[segment_id] = []
+                    matched = False
+                    
+                    # First try exact timestamp matching
+                    for segment_info in segment_time_ranges:
+                        if segment_info["start"] <= face_time <= segment_info["end"]:
+                            matching_segment = segment_info["segment"]
+                            segment_id = segment_info["id"]
                             
                             # Store face info with segment
                             segment_faces[segment_id].append({
@@ -886,14 +911,154 @@ class MultimodalRecognitionService:
                                 "face_time": face_time,
                                 "face_path": face_path,
                                 "quality_score": quality_score,
-                                "segment": segment
+                                "segment": matching_segment,
+                                "match_type": "exact"
                             })
+                            matched = True
                             break
+                    
+                    # If not matched, collect for potential proximity matching
+                    if not matched:
+                        unmatched_faces.append({
+                            "face_info": face_info,
+                            "face_time": face_time,
+                            "face_path": face_path,
+                            "quality_score": quality_score
+                        })
+                
+                # Second matching pass: try to match unmatched faces to nearby segments
+                # This helps with faces that might be slightly outside segment boundaries
+                if unmatched_faces:
+                    logger.info(f"Found {len(unmatched_faces)} faces not directly matching any segment. Trying proximity matching.")
+                    max_time_gap = 1.0  # Maximum time gap in seconds to consider for proximity matching
+                    
+                    for face in unmatched_faces:
+                        face_time = face["face_time"]
+                        closest_segment = None
+                        min_distance = float('inf')
+                        
+                        # Find the closest segment by time
+                        for segment_info in segment_time_ranges:
+                            # Calculate distance to segment start and end
+                            if face_time < segment_info["start"]:
+                                distance = segment_info["start"] - face_time
+                            elif face_time > segment_info["end"]:
+                                distance = face_time - segment_info["end"]
+                            else:
+                                distance = 0  # Should not happen as these would have been matched in first pass
+                            
+                            if distance < min_distance and distance <= max_time_gap:
+                                min_distance = distance
+                                closest_segment = segment_info
+                        
+                        # If we found a close segment, add the face
+                        if closest_segment:
+                            segment_id = closest_segment["id"]
+                            segment_faces[segment_id].append({
+                                "face_info": face["face_info"],
+                                "face_time": face_time,
+                                "face_path": face["face_path"],
+                                "quality_score": face["quality_score"],
+                                "segment": closest_segment["segment"],
+                                "match_type": "proximity",
+                                "time_gap": min_distance
+                            })
+                            logger.info(f"Proximity matched face at {face_time:.2f}s to segment {segment_id} with gap of {min_distance:.2f}s")
+                
+                # Check for segments with no faces and try to assign faces from temporally adjacent segments
+                # This is especially important for the optimized face detection which may group faces differently
+                empty_segments = [segment_id for segment_id, faces in segment_faces.items() if not faces]
+                if empty_segments:
+                    logger.info(f"Found {len(empty_segments)} segments with no faces. Attempting to assign faces from adjacent segments.")
+                    
+                    # Sort segment IDs by start time for temporal analysis
+                    all_segment_ids = list(segment_faces.keys())
+                    
+                    # Convert all segment IDs to strings and extract start time for sorting
+                    def get_segment_start_time(segment_id):
+                        # Convert to string if it's not already
+                        segment_id_str = str(segment_id)
+                        # Try to extract start time from format like "123.45-678.90"
+                        if '-' in segment_id_str:
+                            try:
+                                return float(segment_id_str.split('-')[0])
+                            except (ValueError, IndexError):
+                                pass
+                        # If that fails, try to convert the whole ID to a float
+                        try:
+                            return float(segment_id_str)
+                        except ValueError:
+                            return 0.0
+                    
+                    # Sort using the helper function
+                    all_segment_ids.sort(key=get_segment_start_time)
+                    
+                    for empty_id in empty_segments:
+                        # Find this segment's position in the timeline
+                        if empty_id not in all_segment_ids:
+                            continue
+                            
+                        idx = all_segment_ids.index(empty_id)
+                        
+                        # Convert to string and safely extract start/end times
+                        empty_id_str = str(empty_id)
+                        try:
+                            if '-' in empty_id_str:
+                                parts = empty_id_str.split('-')
+                                empty_start = float(parts[0])
+                                empty_end = float(parts[1])
+                            else:
+                                # If no hyphen, use the ID as both start and end
+                                empty_start = float(empty_id_str)
+                                empty_end = empty_start
+                        except (ValueError, IndexError):
+                            # Fallback if parsing fails
+                            empty_start = 0
+                            empty_end = 0
+                        
+                        # Try to get faces from adjacent segments (previous then next)
+                        borrowed_face = None
+                        
+                        # Check previous segment if it exists
+                        if idx > 0:
+                            prev_id = all_segment_ids[idx-1]
+                            prev_faces = segment_faces.get(prev_id, [])
+                            if prev_faces:
+                                # Sort by quality and take the best face
+                                prev_faces.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+                                borrowed_face = prev_faces[0]
+                                logger.info(f"Borrowing face from previous segment {prev_id} for empty segment {empty_id}")
+                        
+                        # If no face from previous, try next segment
+                        if not borrowed_face and idx < len(all_segment_ids) - 1:
+                            next_id = all_segment_ids[idx+1]
+                            next_faces = segment_faces.get(next_id, [])
+                            if next_faces:
+                                # Sort by quality and take the best face
+                                next_faces.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+                                borrowed_face = next_faces[0]
+                                logger.info(f"Borrowing face from next segment {next_id} for empty segment {empty_id}")
+                        
+                        # If we found a face to borrow, add it to this segment
+                        if borrowed_face:
+                            # Create a copy of the face info to avoid modifying the original
+                            borrowed_copy = copy.deepcopy(borrowed_face)
+                            borrowed_copy["match_type"] = "borrowed"
+                            borrowed_copy["borrowed_from"] = "previous" if idx > 0 else "next"
+                            
+                            # Find the segment object for this empty segment
+                            for segment_info in segment_time_ranges:
+                                if segment_info["id"] == empty_id:
+                                    borrowed_copy["segment"] = segment_info["segment"]
+                                    break
+                            
+                            segment_faces[empty_id].append(borrowed_copy)
                 
                 # Second pass: Process each segment and select the best face based on quality score
                 logger.info("Second pass: Processing segments and selecting best faces based on quality scores")
                 for segment_id, faces in segment_faces.items():
                     if not faces:
+                        logger.warning(f"Segment {segment_id} still has no faces after all matching attempts")
                         continue
                         
                     # Sort faces by quality score (highest first)
@@ -1093,8 +1258,25 @@ class MultimodalRecognitionService:
                     # If current segment has no identified speaker but previous does, and they're close in time
                     # (within 2 seconds), assume it's the same speaker continuing
                     if prev_member_id and not curr_member_id:
-                        prev_end = float(prev_id.split('-')[1]) if '-' in prev_id else 0
-                        curr_start = float(curr_id.split('-')[0]) if '-' in curr_id else 0
+                        # Safely parse previous segment end time
+                        prev_id_str = str(prev_id)
+                        try:
+                            if '-' in prev_id_str:
+                                prev_end = float(prev_id_str.split('-')[1])
+                            else:
+                                prev_end = float(prev_id_str)
+                        except (ValueError, IndexError):
+                            prev_end = 0
+                            
+                        # Safely parse current segment start time
+                        curr_id_str = str(curr_id)
+                        try:
+                            if '-' in curr_id_str:
+                                curr_start = float(curr_id_str.split('-')[0])
+                            else:
+                                curr_start = float(curr_id_str)
+                        except (ValueError, IndexError):
+                            curr_start = 0
                         
                         if curr_start - prev_end < 2.0:  # Within 2 seconds
                             for event in curr_events:
