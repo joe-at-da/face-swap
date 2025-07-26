@@ -857,7 +857,8 @@ class MultimodalRecognitionService:
                 logger.info("First pass: Grouping faces by segment and collecting quality scores")
                 for face_info in face_data:
                     face_time = face_info.get("timestamp", 0)
-                    face_path = face_info.get("path", "")
+                    # Get face path - check both possible key names
+                    face_path = face_info.get("face_image_path", face_info.get("path", ""))
                     quality_score = face_info.get("quality_score", 0)
                     
                     # Skip if we've already processed this face (deduplication)
@@ -974,7 +975,9 @@ class MultimodalRecognitionService:
                         else:
                             logger.warning(f"Failed to identify speaker in frame {face_path}: {face_result.get('error', 'Unknown error')}")
                     else:
-                        if not os.path.exists(face_path):
+                        if not face_path:
+                            logger.debug("Face path is empty, skipping file existence check")
+                        elif not os.path.exists(face_path):
                             logger.warning(f"Face image file not found: {face_path}")
                 
                 # Perform timeline-based speaker analysis to improve attribution

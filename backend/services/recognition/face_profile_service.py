@@ -170,341 +170,55 @@ class FaceProfileService:
         return db.query(models.FaceSample).filter(models.FaceSample.face_profile_id == profile_id).all()
     
     def extract_faces_from_video(self, video_path: str, output_dir: Optional[str] = None, 
-                           interval: float = 1.0, min_confidence: float = 0.6,
-                           prioritize_center: bool = True, select_best_frames: bool = True,
-                           min_face_size: int = 200, min_face_area: int = 40000) -> Dict[str, Any]:
+                            interval: float = 3.0, min_confidence: float = 0.6,
+                            prioritize_center: bool = True, select_best_frames: bool = True,
+                            min_face_size: int = 200, min_face_area: int = 40000,
+                            roi_scale: float = 0.6, detection_interval: int = 150) -> Dict[str, Any]:
         """
-        Extract faces from a video file with intelligent frame selection.
+        Extract faces from a video file with optimized detection for parliamentary videos.
         
         Args:
             video_path: Path to the video file
             output_dir: Directory to save extracted face images
-            interval: Interval in seconds between frame processing
+            interval: Interval in seconds between frame processing (increased from default 1.0 to 3.0)
             min_confidence: Minimum confidence score for face detection
             prioritize_center: Whether to prioritize faces in the center of the frame
             select_best_frames: Whether to select the best quality frames
             min_face_size: Minimum width and height for detected faces (in pixels)
             min_face_area: Minimum area for detected faces (in square pixels)
+            roi_scale: Scale factor for region of interest (0-1)
+            detection_interval: Frame interval for forced detection when using tracking
             
         Returns:
             Dictionary with extraction results
         """
+        from .optimized_face_detection import OptimizedFaceDetector
         try:
-            import cv2
-            import face_recognition
-            import numpy as np
-            
-            logger.info(f"Extracting faces from video: {video_path} with intelligent frame selection")
+            logger.info(f"Extracting faces from video: {video_path} with optimized detection")
             
             # Create output directory if not provided
             if not output_dir:
                 output_dir = str(self.face_profiles_dir / "extracted")
                 os.makedirs(output_dir, exist_ok=True)
             
-            # Open the video file
-            video = cv2.VideoCapture(video_path)
-            if not video.isOpened():
-                logger.error(f"Could not open video file: {video_path}")
-                return {"success": False, "error": "Could not open video file"}
-            
-            # Get video properties
-            fps = video.get(cv2.CAP_PROP_FPS)
-            frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-            frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-            frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            duration = frame_count / fps if fps > 0 else 0
-            
-            logger.info(f"Video properties: FPS={fps}, Frames={frame_count}, Resolution={frame_width}x{frame_height}, Duration={duration:.2f}s")
-            
-            # Calculate frame interval
-            frame_interval = int(fps * interval)
-            if frame_interval < 1:
-                frame_interval = 1
-            
-            # Process frames
-            faces_found = 0
-            face_data = []  # Final output faces (best per person per segment)
-            current_frame = 0
-            
-            # For best frame selection, we'll store candidate faces for each segment
-            segment_faces = []
-            segment_size = int(fps * 5)  # 5-second segments
-            
-            # Calculate frame center for prioritization
-            frame_center_x = frame_width / 2
-            frame_center_y = frame_height / 2
-            
-            while True:
-                ret, frame = video.read()
-                if not ret:
-                    break
-                
-                # Process only every Nth frame
-                if current_frame % frame_interval == 0:
-                    # Convert BGR to RGB (face_recognition uses RGB)
-                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    
-                    # Find faces in the frame
-                    face_locations = face_recognition.face_locations(rgb_frame)
-                    if face_locations:
-                        # Get face encodings
-                        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-                        
-                        # Process each face
-                        for i, (face_location, face_encoding) in enumerate(zip(face_locations, face_encodings)):
-                            top, right, bottom, left = face_location
-                            face_image = frame[top:bottom, left:right]
-                            
-                            # Calculate face quality metrics
-                            face_width = right - left
-                            face_height = bottom - top
-                            face_size = face_width * face_height
-                            face_center_x = (left + right) / 2
-                            face_center_y = (top + bottom) / 2
-                            
-                            # Skip faces that are too small
-                            if face_width < min_face_size or face_height < min_face_size or face_size < min_face_area:
-                                logger.debug(f"Skipping small face: width={face_width}, height={face_height}, area={face_size}")
-                                continue
-                            
-                            # Distance from center of frame (normalized 0-1)
-                            # Calculate horizontal and vertical distances separately
-                            horizontal_distance = abs(face_center_x - frame_center_x) / (frame_width / 2)
-                            vertical_distance = abs(face_center_y - frame_center_y) / (frame_height / 2)
-                            
-                            # Overall distance (normalized 0-1, with higher penalty for horizontal offset)
-                            distance_from_center = np.sqrt(
-                                (horizontal_distance * 1.5) ** 2 +  # Apply higher weight to horizontal centering
-                                vertical_distance ** 2
-                            ) / np.sqrt(1.5**2 + 1)  # Normalize to 0-1 range
-                            
-                            # Calculate sharpness (Laplacian variance)
-                            gray_face = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
-                            sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
-                            
-                            # Detect facial landmarks to check if eyes are open
-                            landmarks = face_recognition.face_landmarks(rgb_frame, [face_location])
-                            eyes_open_score = 0.0
-                            
-                            if landmarks and len(landmarks) > 0:
-                                face_landmarks = landmarks[0]
-                                if 'left_eye' in face_landmarks and 'right_eye' in face_landmarks:
-                                    # Calculate eye aspect ratio (EAR) for both eyes
-                                    # EAR = (height of eye) / (width of eye)
-                                    # Higher values indicate more open eyes
-                                    
-                                    def calculate_eye_aspect_ratio(eye_points):
-                                        # Calculate height (average of two height measurements)
-                                        h1 = np.linalg.norm(np.array(eye_points[1]) - np.array(eye_points[5]))
-                                        h2 = np.linalg.norm(np.array(eye_points[2]) - np.array(eye_points[4]))
-                                        # Calculate width
-                                        w = np.linalg.norm(np.array(eye_points[0]) - np.array(eye_points[3]))
-                                        # Return aspect ratio
-                                        return (h1 + h2) / (2.0 * w) if w > 0 else 0
-                                    
-                                    left_eye = face_landmarks['left_eye']
-                                    right_eye = face_landmarks['right_eye']
-                                    
-                                    left_ear = calculate_eye_aspect_ratio(left_eye)
-                                    right_ear = calculate_eye_aspect_ratio(right_eye)
-                                    
-                                    # Average EAR for both eyes
-                                    avg_ear = (left_ear + right_ear) / 2.0
-                                    
-                                    # Convert to score (typical EAR for open eyes is around 0.2-0.3)
-                                    # Values below 0.2 often indicate closed or partially closed eyes
-                                    eyes_open_score = min(avg_ear / 0.25, 1.0)
-                            
-                            # Calculate face quality score using a two-tier approach
-                            
-                            # TIER 1: HORIZONTAL POSITION SCORE (most important)
-                            # This will dominate the overall score to ensure horizontal centering is prioritized
-                            horizontal_position_score = 1.0 - min(horizontal_distance * 2.5, 1.0)
-                            
-                            # Apply a severe penalty for faces beyond 45% from center horizontally
-                            if horizontal_distance > 0.45:
-                                horizontal_position_score *= 0.3  # 70% reduction in score
-                            
-                            # TIER 2: OTHER QUALITY METRICS
-                            # These will only matter when comparing faces with similar horizontal positioning
-                            
-                            # Size component (bigger is better, up to a point)
-                            size_score = min(face_size / (frame_width * frame_height) * 20, 1.0)
-                            
-                            # Vertical position component
-                            vertical_position_score = 1.0 - min(vertical_distance * 2.0, 1.0)
-                            
-                            # Sharpness component (sharper is better)
-                            sharpness_score = min(sharpness / 1000, 1.0)
-                            
-                            # Eye openness component (open eyes are better)
-                            
-                            # Calculate secondary quality score (only matters for similarly positioned faces)
-                            secondary_quality = (
-                                (size_score * 0.35) +
-                                (vertical_position_score * 0.25) +
-                                (sharpness_score * 0.15) +
-                                (eyes_open_score * 0.25)
-                            )
-                            
-                            # Final quality score: horizontal position dominates, with secondary factors as tiebreakers
-                            # Scale is 0-10 to make logs more readable
-                            if prioritize_center:
-                                # Horizontal position is 80% of score, other factors only 20%
-                                quality_score = (horizontal_position_score * 8.0) + (secondary_quality * 2.0)
-                            else:
-                                # If not prioritizing center, use only secondary factors
-                                quality_score = secondary_quality * 10.0
-                            
-                            timestamp = current_frame / fps
-                            
-                            # Store face data with quality metrics
-                            face_info = {
-                                "frame": current_frame,
-                                "timestamp": timestamp,
-                                "location": face_location,
-                                "encoding": face_encoding.tolist(),
-                                "quality_score": quality_score,
-                                "size": face_size,
-                                "distance_from_center": distance_from_center,
-                                "horizontal_distance": horizontal_distance,  # Store horizontal distance for logging
-                                "vertical_distance": vertical_distance,      # Store vertical distance for logging
-                                "sharpness": sharpness,
-                                "eyes_open_score": eyes_open_score,  # Add eye openness information
-                                
-                                # Store component scores for detailed logging
-                                "horizontal_position_score": horizontal_position_score,
-                                "vertical_position_score": vertical_position_score,
-                                "size_score": size_score,
-                                "sharpness_score": sharpness_score,
-                                
-                                "image": face_image,  # Store image temporarily
-                                "rgb_frame": rgb_frame  # Store full frame temporarily
-                            }
-                            
-                            # ABSOLUTE THRESHOLD: Skip faces that are too far off-center horizontally
-                            # This is a hard requirement that cannot be overridden by other quality factors
-                            ABSOLUTE_HORIZONTAL_THRESHOLD = 0.4  # 40% from center is the absolute maximum allowed
-                            
-                            if prioritize_center and horizontal_distance > ABSOLUTE_HORIZONTAL_THRESHOLD:
-                                logger.info(f"REJECTING OFF-CENTER FACE at frame {current_frame}: horizontal={horizontal_distance*100:.1f}% exceeds absolute threshold of {ABSOLUTE_HORIZONTAL_THRESHOLD*100:.1f}%")
-                                continue  # Skip this face entirely
-                            
-                            if select_best_frames:
-                                # Add to segment candidates
-                                segment_faces.append(face_info)
-                            else:
-                                # Save immediately if not selecting best frames
-                                face_filename = f"face_{current_frame}_{i}_{timestamp:.2f}.jpg"
-                                face_path = os.path.join(output_dir, face_filename)
-                                cv2.imwrite(face_path, face_image)
-                                
-                                # Add path to face info and remove image data
-                                face_info["path"] = face_path
-                                del face_info["image"]
-                                del face_info["rgb_frame"]
-                                
-                                face_data.append(face_info)
-                                faces_found += 1
-                
-                current_frame += 1
-                
-                # Process segment faces at segment boundaries or end of video
-                if (select_best_frames and 
-                    (current_frame % segment_size == 0 or current_frame >= frame_count) and 
-                    segment_faces):
-                    
-                    # Log segment information
-                    segment_start = max(0, current_frame - segment_size)
-                    segment_end = current_frame
-                    segment_start_time = segment_start / fps if fps > 0 else 0
-                    segment_end_time = segment_end / fps if fps > 0 else 0
-                    
-                    logger.info(f"Processing segment from frame {segment_start} to {segment_end} "
-                              f"({segment_start_time:.2f}s to {segment_end_time:.2f}s) "
-                              f"with {len(segment_faces)} candidate faces")
-                    
-                    # Group faces by similarity to find distinct people in this segment
-                    distinct_faces = self._group_similar_faces(segment_faces)
-                    logger.info(f"Found {len(distinct_faces)} distinct people in this segment")
-                    
-                    # For each distinct person in this segment, select the best quality face
-                    for person_idx, person_faces in enumerate(distinct_faces):
-                        if not person_faces:
-                            continue
-                            
-                        # Sort by quality score and take the best one
-                        best_face = max(person_faces, key=lambda x: x["quality_score"])
-                        
-                        # Save the best face image
-                        timestamp = best_face["timestamp"]
-                        face_filename = f"face_best_{best_face['frame']}_{timestamp:.2f}.jpg"
-                        face_path = os.path.join(output_dir, face_filename)
-                        cv2.imwrite(face_path, best_face["image"])
-                        
-                        # Add path to face info and remove image data
-                        best_face["path"] = face_path
-                        del best_face["image"]
-                        del best_face["rgb_frame"]
-                        
-                        face_data.append(best_face)
-                        faces_found += 1
-                        
-                        logger.info(f"Selected best face for person {person_idx+1} in segment {segment_start}-{segment_end} "
-                                  f"(at frame {best_face['frame']}, {best_face['timestamp']:.2f}s)")
-                        
-                        # Add segment information to the face data for easier transcript matching
-                        best_face["segment_start_frame"] = segment_start
-                        best_face["segment_end_frame"] = segment_end
-                        best_face["segment_start_time"] = segment_start_time
-                        best_face["segment_end_time"] = segment_end_time
-                        
-                        # Calculate center position as percentage from center (0% = center, 100% = edge)
-                        horizontal_pos = best_face.get('horizontal_distance', 0) * 100
-                        vertical_pos = best_face.get('vertical_distance', 0) * 100
-                        
-                        # Calculate the horizontal position score for logging
-                        horizontal_score = 1.0 - min(best_face.get('horizontal_distance', 0) * 2.5, 1.0)
-                        if best_face.get('horizontal_distance', 0) > 0.45:
-                            horizontal_score *= 0.3
-                        
-                        # Get other component scores for logging
-                        size_score = best_face.get('size_score', 0.0)
-                        sharpness_score = best_face.get('sharpness_score', 0.0)
-                        eyes_open_score = best_face.get('eyes_open_score', 0.0)
-                        
-                        logger.info(f"Selected best face at frame {best_face['frame']} with:"
-                                  f"\n - FINAL QUALITY SCORE: {best_face['quality_score']:.2f}"
-                                  f"\n - Horizontal position: {horizontal_pos:.1f}% from center (score: {horizontal_score:.2f})"
-                                  f"\n - Vertical position: {vertical_pos:.1f}% from center"
-                                  f"\n - Face size score: {size_score:.2f}"
-                                  f"\n - Eyes open score: {eyes_open_score:.2f}"
-                                  f"\n - Sharpness score: {sharpness_score:.2f}")
-                    
-                    # Clear segment faces
-                    segment_faces = []
-                
-                # Log progress periodically
-                if current_frame % 100 == 0:
-                    logger.info(f"Processed {current_frame}/{frame_count} frames, found {faces_found} faces")
-            
-            video.release()
-            
-            logger.info(f"Completed face extraction. Found {faces_found} faces in {current_frame} frames")
-            
-            return {
-                "success": True,
-                "faces_found": faces_found,
-                "frames_processed": current_frame,
-                "face_data": face_data,
-                "output_dir": output_dir
-            }
+            # Use the optimized face detector
+            detector = OptimizedFaceDetector()
+            return detector.extract_faces_from_video(
+                video_path=video_path,
+                output_dir=output_dir,
+                interval=interval,
+                min_confidence=min_confidence,
+                prioritize_center=prioritize_center,
+                select_best_frames=select_best_frames,
+                min_face_size=min_face_size,
+                min_face_area=min_face_area,
+                roi_scale=roi_scale,
+                detection_interval=detection_interval
+            )
             
         except Exception as e:
-            logger.error(f"Error extracting faces: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return {"success": False, "error": str(e)}
+            logger.error(f"Error extracting faces: {str(e)}", exc_info=True)
+            return {"success": False, "error": str(e)}            
             
     def _group_similar_faces(self, faces, similarity_threshold=0.6):
         """
@@ -713,9 +427,6 @@ class FaceProfileService:
                 # Calculate frame range
                 start_frame = int(start_time * fps)
                 end_frame = int(end_time * fps)
-                
-                # Seek to start frame
-                video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
                 
                 # Process frames in this segment
                 faces_found = 0
