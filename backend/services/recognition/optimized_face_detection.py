@@ -20,16 +20,32 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # Constants for YuNet face detector
-YUNET_SCORE_THRESHOLD = 0.7  # Higher threshold for stricter filtering
-YUNET_NMS_THRESHOLD = 0.3
-YUNET_TOP_K = 5000
+YUNET_SCORE_THRESHOLD = 0.4  # Lowered to match dev branch (which uses 0.3)
+YUNET_NMS_THRESHOLD = 0.3  # Same as dev branch
+YUNET_TOP_K = 5000  # Same as dev branch
 
 # Constants for face validation
-MIN_FACE_CONFIDENCE = 0.6  # Minimum confidence for face detection
-MIN_LANDMARK_CONFIDENCE = 0.8  # Minimum confidence for landmark detection
-MIN_EYE_ASPECT_RATIO = 0.15  # Minimum eye aspect ratio for open eyes
-MIN_FACE_ASPECT_RATIO = 1.0  # Minimum face aspect ratio (height/width)
-MAX_FACE_ASPECT_RATIO = 1.8  # Maximum face aspect ratio (height/width)
+MIN_FACE_CONFIDENCE = 0.4  # Further lowered to match dev branch approach
+MIN_LANDMARK_CONFIDENCE = 0.6  # Further lowered for landmark detection
+MIN_EYE_ASPECT_RATIO = 0.1   # Further lowered minimum eye aspect ratio
+MIN_FACE_ASPECT_RATIO = 0.7  # Further lowered minimum face aspect ratio (height/width)
+MAX_FACE_ASPECT_RATIO = 2.5  # Further increased maximum face aspect ratio (height/width)
+
+# Constants for skin tone detection
+MIN_SKIN_RATIO = 0.05  # Very permissive skin tone threshold (dev branch doesn't use this)
+
+def calculate_eye_aspect_ratio(eye_points):
+    """
+    Calculate the eye aspect ratio to determine if eyes are open.
+    A higher ratio indicates more open eyes.
+    """
+    # Calculate height (average of two height measurements)
+    h1 = np.linalg.norm(np.array(eye_points[1]) - np.array(eye_points[5]))
+    h2 = np.linalg.norm(np.array(eye_points[2]) - np.array(eye_points[4]))
+    # Calculate width
+    w = np.linalg.norm(np.array(eye_points[0]) - np.array(eye_points[3]))
+    # Return aspect ratio
+    return (h1 + h2) / (2.0 * w) if w > 0 else 0
 
 class OptimizedFaceDetector:
     """
@@ -138,13 +154,14 @@ class OptimizedFaceDetector:
             
             # Skin tones typically have certain hue and saturation ranges
             # This is a very basic heuristic and can be improved
-            skin_mask = cv2.inRange(hsv_roi, (0, 20, 70), (25, 170, 255))  # Typical skin tone range
+            # Further expanded range to include more diverse skin tones
+            skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))  # Further expanded skin tone range
             skin_pixels = cv2.countNonZero(skin_mask)
             total_pixels = face_roi.shape[0] * face_roi.shape[1]
             skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
             
             # Furniture and other objects typically have different color distributions
-            if skin_ratio < 0.15:  # At least 15% of pixels should be in skin tone range
+            if skin_ratio < MIN_SKIN_RATIO:  # Using the new constant
                 logger.debug(f"Skipping face with low skin tone ratio: {skin_ratio:.2f}")
                 continue
             
@@ -211,12 +228,12 @@ class OptimizedFaceDetector:
                     
                     # Check for skin tone
                     hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
-                    skin_mask = cv2.inRange(hsv_roi, (0, 20, 70), (25, 170, 255))
+                    skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))  # Further expanded skin tone range
                     skin_pixels = cv2.countNonZero(skin_mask)
                     total_pixels = face_roi.shape[0] * face_roi.shape[1]
                     skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
                     
-                    if skin_ratio < 0.15:
+                    if skin_ratio < MIN_SKIN_RATIO:  # Using the new constant
                         continue
                     
                     # Detect faces in the ROI using YuNet with lower threshold
@@ -371,81 +388,63 @@ class OptimizedFaceDetector:
                     logger.debug(f"Landmark validation: skipping face with invalid aspect ratio: {aspect_ratio:.2f}")
                     continue
                 
-                # Check for skin tone in the face region
+                # Check for skin tone in the face region (basic heuristic)
                 face_roi = frame[top:bottom, left:right]
                 if face_roi.size == 0 or face_roi.shape[0] == 0 or face_roi.shape[1] == 0:
                     logger.debug(f"Landmark validation: skipping empty face ROI")
                     continue
                     
                 hsv_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
-                skin_mask = cv2.inRange(hsv_roi, (0, 20, 70), (25, 170, 255))
+                
+                # Skin tones typically have certain hue and saturation ranges
+                # Further expanded range to include more diverse skin tones
+                skin_mask = cv2.inRange(hsv_roi, (0, 10, 50), (35, 200, 255))
                 skin_pixels = cv2.countNonZero(skin_mask)
                 total_pixels = face_roi.shape[0] * face_roi.shape[1]
                 skin_ratio = skin_pixels / total_pixels if total_pixels > 0 else 0
                 
-                if skin_ratio < 0.15:
+                if skin_ratio < MIN_SKIN_RATIO:  # Using the new constant
                     logger.debug(f"Landmark validation: skipping face with low skin tone ratio: {skin_ratio:.2f}")
                     continue
                 
-                # Check if we found eyes and other key facial features
-                if landmark_dict and ('left_eye' in landmark_dict and 'right_eye' in landmark_dict):
-                    # Additional validation: check if this is really a face by verifying multiple facial features
-                    required_features = ['left_eye', 'right_eye', 'nose_tip', 'top_lip', 'bottom_lip']
-                    has_all_features = all(feature in landmark_dict for feature in required_features)
+                # Check if at least some facial features are present (less strict)
+                has_min_features = any(key in landmark_dict for key in ['left_eye', 'right_eye', 'nose_tip'])
+                
+                # Calculate eye aspect ratio (EAR) if eye landmarks are present
+                eye_aspect_ratio = 0
+                if 'left_eye' in landmark_dict and 'right_eye' in landmark_dict:
+                    # Calculate EAR for left and right eyes
+                    left_ear = calculate_eye_aspect_ratio(landmark_dict['left_eye'])
+                    right_ear = calculate_eye_aspect_ratio(landmark_dict['right_eye'])
+                    eye_aspect_ratio = (left_ear + right_ear) / 2
+                
+                # Calculate facial symmetry based on eye and nose positions
+                facial_symmetry = 1.0  # Default perfect symmetry
+                if 'left_eye' in landmark_dict and 'right_eye' in landmark_dict and 'nose_tip' in landmark_dict:
+                    # Get average positions
+                    left_eye_center = np.mean(landmark_dict['left_eye'], axis=0)
+                    right_eye_center = np.mean(landmark_dict['right_eye'], axis=0)
+                    nose_tip = np.mean(landmark_dict['nose_tip'], axis=0)
                     
-                    # Calculate eye aspect ratio to check if eyes are open
-                    eye_aspect_ratio = 0
-                    if has_all_features:
-                        left_eye = landmark_dict['left_eye']
-                        right_eye = landmark_dict['right_eye']
-                        
-                        # Calculate eye aspect ratio
-                        def calculate_eye_aspect_ratio(eye_points):
-                            # Calculate height (average of two height measurements)
-                            h1 = np.linalg.norm(np.array(eye_points[1]) - np.array(eye_points[5]))
-                            h2 = np.linalg.norm(np.array(eye_points[2]) - np.array(eye_points[4]))
-                            # Calculate width
-                            w = np.linalg.norm(np.array(eye_points[0]) - np.array(eye_points[3]))
-                            # Return aspect ratio
-                            return (h1 + h2) / (2.0 * w) if w > 0 else 0
-                        
-                        left_ear = calculate_eye_aspect_ratio(left_eye)
-                        right_ear = calculate_eye_aspect_ratio(right_eye)
-                        eye_aspect_ratio = (left_ear + right_ear) / 2.0
+                    # Calculate horizontal distances from nose to each eye
+                    left_dist = abs(nose_tip[0] - left_eye_center[0])
+                    right_dist = abs(right_eye_center[0] - nose_tip[0])
                     
-                    # Check symmetry of facial features (asymmetric features often indicate false positives)
-                    facial_symmetry = 1.0
-                    if has_all_features:
-                        # Calculate center points of eyes
-                        left_eye_center = np.mean(left_eye, axis=0)
-                        right_eye_center = np.mean(right_eye, axis=0)
-                        
-                        # Calculate distance between eyes
-                        eye_distance = np.linalg.norm(left_eye_center - right_eye_center)
-                        
-                        # Calculate nose position relative to eye midpoint
-                        nose_tip = np.mean(landmark_dict['nose_tip'], axis=0)
-                        eye_midpoint = (left_eye_center + right_eye_center) / 2
-                        
-                        # Nose should be roughly below the midpoint between eyes
-                        nose_offset = abs(nose_tip[0] - eye_midpoint[0]) / eye_distance if eye_distance > 0 else 1.0
-                        
-                        # Facial symmetry score (lower is better)
-                        facial_symmetry = nose_offset
-                    
-                    # Verify face has all required features, reasonable eye aspect ratio, and good symmetry
-                    if has_all_features and eye_aspect_ratio >= MIN_EYE_ASPECT_RATIO and facial_symmetry < 0.3:
-                        validated_indices.append(i)
-                        logger.debug(f"Landmark validation passed: face has all features, EAR={eye_aspect_ratio:.2f}, symmetry={facial_symmetry:.2f}, aspect ratio={aspect_ratio:.2f}")
-                    else:
-                        if not has_all_features:
-                            logger.debug(f"Landmark validation failed: missing required facial features")
-                        elif eye_aspect_ratio < MIN_EYE_ASPECT_RATIO:
-                            logger.debug(f"Landmark validation failed: low eye aspect ratio {eye_aspect_ratio:.2f}")
-                        else:
-                            logger.debug(f"Landmark validation failed: poor facial symmetry {facial_symmetry:.2f}")
+                    # Calculate symmetry ratio (1.0 is perfect symmetry)
+                    if max(left_dist, right_dist) > 0:
+                        facial_symmetry = min(left_dist, right_dist) / max(left_dist, right_dist)
+                
+                # Validate face based on features, EAR, and symmetry (less strict)
+                if has_min_features and (eye_aspect_ratio >= MIN_EYE_ASPECT_RATIO or eye_aspect_ratio == 0) and facial_symmetry >= 0.5:
+                    validated_indices.append(i)
+                    logger.debug(f"Landmark validation passed: face has features, EAR={eye_aspect_ratio:.2f}, symmetry={facial_symmetry:.2f}, aspect ratio={aspect_ratio:.2f}")
                 else:
-                    logger.debug("Landmark validation failed: missing eye landmarks")
+                    if not has_min_features:
+                        logger.debug(f"Landmark validation failed: missing required facial features")
+                    elif eye_aspect_ratio < MIN_EYE_ASPECT_RATIO and eye_aspect_ratio > 0:
+                        logger.debug(f"Landmark validation failed: low eye aspect ratio {eye_aspect_ratio:.2f}")
+                    else:
+                        logger.debug(f"Landmark validation failed: poor facial symmetry {facial_symmetry:.2f}")
         
         # Filter locations to only include validated faces
         validated_locations = [adjusted_locations[i] for i in validated_indices]

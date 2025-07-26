@@ -101,12 +101,7 @@ class FacialRecognitionService:
             
             if not face_results:
                 logger.warning(f"No faces detected in {image_path}")
-                # Save a debug copy of the image
-                debug_dir = "/app/data/temp/debug"
-                os.makedirs(debug_dir, exist_ok=True)
-                debug_path = f"{debug_dir}/no_face_{os.path.basename(image_path)}"
-                cv2.imwrite(debug_path, cv2.imread(image_path))
-                logger.info(f"Saved debug image to {debug_path}")
+                logger.info(f"No faces detected in image")
                 
                 return {
                     "success": False,
@@ -218,32 +213,6 @@ class FacialRecognitionService:
                         "left": face_left
                     },
                 })
-                
-                # Save face crop for debugging
-                try:
-                    debug_dir = "/app/data/temp/debug/faces"
-                    os.makedirs(debug_dir, exist_ok=True)
-                    
-                    # Load image with OpenCV to crop face
-                    cv_image = cv2.imread(image_path)
-                    if cv_image is not None:
-                        face_width = face_right - face_left
-                        face_height = face_bottom - face_top
-                        face_crop = cv_image[face_top:face_top+face_height, face_left:face_left+face_width]
-                        face_path = f"{debug_dir}/face_{i}_{os.path.basename(image_path)}"
-                        
-                        # Check if face_crop is empty before saving
-                        if face_crop is not None and face_crop.size > 0 and not face_crop.shape[0] == 0 and not face_crop.shape[1] == 0:
-                            cv2.imwrite(face_path, face_crop)
-                            logger.debug(f"Saved face crop {i} to {face_path}")
-                        else:
-                            logger.warning(f"Skipping empty face crop for face {i}")
-                        
-                    else:
-                        logger.warning(f"Could not read image {image_path} with OpenCV")
-                except Exception as e:
-                    logger.error(f"Error saving face crop: {str(e)}")
-            
                 
             return {
                 "success": True,
