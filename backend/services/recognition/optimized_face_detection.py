@@ -20,7 +20,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # Constants for YuNet face detector
-YUNET_SCORE_THRESHOLD = 0.6  # Higher threshold for stricter filtering
+YUNET_SCORE_THRESHOLD = 0.5  # Balanced threshold for filtering
 YUNET_NMS_THRESHOLD = 0.3
 YUNET_TOP_K = 5000
 
@@ -46,14 +46,26 @@ class OptimizedFaceDetector:
     def initialize_yunet_detector(self):
         """Initialize the YuNet face detector from OpenCV"""
         try:
-            # Try to load YuNet face detector model
-            model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                     "../../../models/face_detection_yunet_2023mar.onnx")
+            # Try multiple possible locations for the YuNet model
+            model_paths = [
+                "/app/models/face_recognition/face_detection_yunet_2023mar.onnx",  # Docker container path
+                "/app/models/face_detection_yunet_2023mar.onnx",  # Alternative path
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                             "../../../models/face_detection_yunet_2023mar.onnx"),  # Local development path
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                             "../../../models/face_recognition/face_detection_yunet_2023mar.onnx")  # Another local path
+            ]
             
-            # Check if model exists, if not, download it
-            if not os.path.exists(model_path):
-                os.makedirs(os.path.dirname(model_path), exist_ok=True)
-                logger.info(f"YuNet model not found at {model_path}, creating empty detector")
+            # Find the first existing model path
+            model_path = None
+            for path in model_paths:
+                if os.path.exists(path):
+                    model_path = path
+                    logger.info(f"Found YuNet model at: {model_path}")
+                    break
+            
+            if model_path is None:
+                logger.warning("YuNet model file not found in any of the expected locations")
                 self.yunet_detector = None
                 return
                 
@@ -196,8 +208,53 @@ class OptimizedFaceDetector:
                         if confidence >= YUNET_SCORE_THRESHOLD:
                             validated_indices.append(i)
                             logger.debug(f"YuNet validated face with confidence {confidence:.2f}")
+                        else:
+                            logger.debug(f"Face rejected by YuNet with low confidence: {confidence:.2f}")
+                    else:
+                        logger.debug(f"No face found by YuNet in region from HOG detection")
                 
                 logger.debug(f"YuNet validation: {len(validated_indices)}/{len(adjusted_locations)} faces validated")
+                
+                # If YuNet rejected all faces, try with a lower threshold as a fallback
+                if len(validated_indices) == 0 and len(adjusted_locations) > 0:
+                    logger.debug("Retrying YuNet validation with lower threshold")
+                    original_threshold = self.yunet_detector.getScoreThreshold()
+                    self.yunet_detector.setScoreThreshold(0.3)  # Lower threshold for retry
+                    
+                    try:
+                        # Retry validation with lower threshold
+                        for i, (top, right, bottom, left) in enumerate(adjusted_locations):
+                            # Extract region with padding
+                            pad = 20
+                            y1 = max(0, top - pad)
+                            y2 = min(frame.shape[0], bottom + pad)
+                            x1 = max(0, left - pad)
+                            x2 = min(frame.shape[1], right + pad)
+                            
+                            face_region = frame[y1:y2, x1:x2]
+                            if face_region.size == 0:
+                                continue
+                            
+                            # Set detector input size to region dimensions
+                            h, w = face_region.shape[:2]
+                            self.yunet_detector.setInputSize((w, h))
+                            
+                            # Detect faces in the region
+                            _, yunet_faces = self.yunet_detector.detect(face_region)
+                            
+                            if yunet_faces is not None and len(yunet_faces) > 0:
+                                # Get highest confidence detection
+                                best_detection = yunet_faces[np.argmax(yunet_faces[:, 14])]
+                                confidence = best_detection[14]
+                                
+                                if confidence >= 0.3:  # Lower threshold for retry
+                                    validated_indices.append(i)
+                                    logger.debug(f"YuNet validated face with lower threshold: {confidence:.2f}")
+                        
+                        logger.debug(f"YuNet retry validation: {len(validated_indices)}/{len(adjusted_locations)} faces validated")
+                    finally:
+                        # Restore original threshold
+                        self.yunet_detector.setScoreThreshold(original_threshold)
             except Exception as e:
                 logger.warning(f"YuNet validation failed: {e}, falling back to landmark validation")
                 # If YuNet fails, fall back to landmark validation
