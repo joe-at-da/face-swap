@@ -1268,44 +1268,15 @@ class MultimodalRecognitionService:
                 best_member_id = best_event.get("member_id")
                 best_name = best_event.get("name", "Unknown")
                 
-                # Only override diarization speaker if we have high confidence face recognition
-                # This ensures we respect diarization speaker boundaries unless we're very confident
-                confidence_threshold = 0.75  # High confidence threshold to override diarization
+                # We're only preserving diarization segment boundaries here
+                # Member ID assignment will happen later when matching faces with photos
                 
-                # Check if this is a diarization segment (stricter rules for diarization segments)
-                is_diarization_segment = any(e.get("diarization_segment", False) for e in events)
-                if is_diarization_segment:
-                    # Use higher threshold for diarization segments
-                    confidence_threshold = 0.85
-                    logger.info(f"Using higher confidence threshold ({confidence_threshold}) for diarization segment {segment_id}")
+                # Log segment information for debugging
+                logger.info(f"Timeline analysis: Preserving diarization segment {segment_id}")
                 
-                if best_member_id and best_confidence >= confidence_threshold:
-                    for event in events:
-                        # Only update events with lower quality or no member_id
-                        if (not event.get("member_id") or 
-                            event.get("quality_score", 0) < best_event.get("quality_score", 0)):
-                            event["member_id"] = best_member_id
-                            event["name"] = best_name
-                            event["updated_by_timeline"] = True
-                            event["diarization_override"] = True  # Flag that we overrode diarization
-                            # Store the original diarization speaker for reference
-                            event["original_diarization_speaker"] = original_speaker
-                    
-                    logger.info(f"Timeline analysis: Updated segment {segment_id} with best speaker: "
-                              f"member_id={best_member_id}, name={best_name}, confidence={best_confidence:.2f}, "
-                              f"OVERRIDING diarization speaker: {original_speaker}")
-                else:
-                    logger.info(f"Timeline analysis: Preserving diarization speaker for segment {segment_id}: "
-                              f"speaker={original_speaker}, face confidence too low: {best_confidence:.2f} < {confidence_threshold}")
-                    
-                    # We still want to update the segment with the member_id if available
-                    # but we'll preserve the diarization speaker boundaries by not merging segments
-                    for event in events:
-                        if best_member_id and not event.get("member_id"):
-                            event["member_id"] = best_member_id
-                            event["name"] = best_name
-                            event["updated_by_timeline"] = True
-                            event["diarization_preserved"] = True  # Flag that we preserved diarization
+                # Mark all events in this segment as preserving diarization
+                for event in events:
+                    event["diarization_segment_preserved"] = True
             
             # Analyze speaker transitions across adjacent segments
             segment_ids = list(segment_events.keys())
@@ -1374,26 +1345,24 @@ class MultimodalRecognitionService:
                         same_diarization_speaker = prev_diarization_speaker == curr_diarization_speaker
                         high_confidence = prev_best.get("confidence", 0) >= 0.8
                         
-                        if curr_start - prev_end < 2.0 and (same_diarization_speaker or high_confidence):
-                            for event in curr_events:
-                                event["member_id"] = prev_member_id
-                                event["name"] = prev_best.get("name", "Unknown")
-                                event["updated_by_timeline"] = True
-                                event["timeline_continuity"] = True
-                                
-                                # Flag if we're overriding a diarization speaker boundary
-                                if not same_diarization_speaker:
-                                    event["diarization_boundary_override"] = True
+                        # We're only preserving diarization segment boundaries
+                        # Member ID assignment will happen later when matching faces with photos
+                        
+                        # Just log the segment continuity for debugging
+                        if curr_start - prev_end < 2.0 and same_diarization_speaker:
+                            logger.info(f"Timeline continuity: Segments {prev_id} and {curr_id} have the same diarization speaker and are close in time")
                             
-                            logger.info(f"Timeline continuity: Updated segment {curr_id} with previous speaker: "
-                                      f"member_id={prev_member_id}, name={prev_best.get('name', 'Unknown')}, "
-                                      f"same_diarization_speaker={same_diarization_speaker}, high_confidence={high_confidence}")
+                            for event in curr_events:
+                                event["diarization_segment_continuity"] = True
+                                
+                            logger.info(f"Timeline continuity: Marked segment {curr_id} as continuous with {prev_id}")
                         else:
                             # Log that we're preserving the diarization speaker boundary
                             if not same_diarization_speaker and curr_start - prev_end < 2.0:
                                 logger.info(f"Preserving diarization speaker boundary between segments {prev_id} and {curr_id}: "
-                                          f"speakers {prev_diarization_speaker} -> {curr_diarization_speaker}, "
-                                          f"confidence too low: {prev_best.get('confidence', 0):.2f} < 0.8")
+                                          f"speakers {prev_diarization_speaker} -> {curr_diarization_speaker}")
+                            
+                            logger.info(f"Timeline continuity: Segments {prev_id} and {curr_id} represent a speaker change")
             
             # Log segments after timeline analysis to see what changed
             logger.info("===== SEGMENT DEBUG INFO - AFTER TIMELINE ANALYSIS =====")
