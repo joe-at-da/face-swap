@@ -172,10 +172,32 @@ class SupabaseUploader:
             }
             
         except Exception as e:
-            logger.error(f"Error uploading file: {str(e)}")
+            error_str = str(e)
+            logger.error(f"Error uploading file: {error_str}")
+            
+            # Handle 409 Conflict (duplicate file) as success
+            if "409" in error_str or "Duplicate" in error_str or "already exists" in error_str:
+                logger.info(f"File appears to already exist in storage. Treating as success.")
+                
+                # Try to get the public URL anyway
+                try:
+                    public_url = self.client.storage.from_(target_bucket).get_public_url(destination_path)
+                    
+                    return {
+                        "success": True,
+                        "file_path": file_path,
+                        "url": public_url,
+                        "bucket": target_bucket,
+                        "path": destination_path,
+                        "size": file_size,
+                        "note": "File already existed in storage"
+                    }
+                except:
+                    pass
+                    
             return {
                 "success": False,
-                "error": str(e),
+                "error": error_str,
                 "file_path": file_path
             }
         
@@ -319,6 +341,10 @@ class SupabaseUploader:
                 if response.status_code == 200:
                     success = True
                     logger.info(f"Upload successful with status code {response.status_code}")
+                # Handle 409 Conflict (duplicate file) as success
+                elif response.status_code == 409 or (response.status_code == 400 and "Duplicate" in response.text):
+                    success = True
+                    logger.info(f"File already exists in storage (status code {response.status_code}). Treating as success.")
                 else:
                     raise Exception(f"Upload failed with status code {response.status_code}: {response.text}")
             

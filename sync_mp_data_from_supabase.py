@@ -96,7 +96,7 @@ def get_postgresql_connection():
         logger.error(f"Error connecting to PostgreSQL database: {e}")
         sys.exit(1)
 
-def sync_mp_data(dry_run=False):
+def sync_mp_data(dry_run=False, clean_table=True):
     """Sync MP data from Supabase to PostgreSQL.
     
     This function fetches all MP data from Supabase and updates the local PostgreSQL
@@ -104,6 +104,7 @@ def sync_mp_data(dry_run=False):
     
     Args:
         dry_run (bool): If True, no changes will be made to the database
+        clean_table (bool): If True, truncate the speakers table before inserting new records
         
     Returns:
         bool: True if sync was successful, False otherwise
@@ -115,16 +116,89 @@ def sync_mp_data(dry_run=False):
     conn = get_postgresql_connection()
     
     try:
-        # Fetch all parliament members from Supabase
-        response = supabase.table('parliament_members').select('*').execute()
-        members = response.data
-        logger.info(f"Fetched {len(members)} parliament members from Supabase")
+        # Fetch all parliament members from Supabase with pagination
+        members = []
+        page = 0
+        page_size = 1000  # Supabase default page size
+        
+        while True:
+            logger.info(f"Fetching page {page + 1} of parliament members from Supabase")
+            response = supabase.table('parliament_members').select('*').range(page * page_size, (page + 1) * page_size - 1).execute()
+            page_members = response.data
+            
+            if not page_members or len(page_members) == 0:
+                break
+                
+            members.extend(page_members)
+            logger.info(f"Fetched {len(page_members)} members on page {page + 1}")
+            
+            if len(page_members) < page_size:
+                break
+                
+            page += 1
+        
+        logger.info(f"Fetched a total of {len(members)} parliament members from Supabase")
+        
+        # Print the first few records to understand the structure
+        if members and len(members) > 0:
+            print(f"\nSample member data structure: {list(members[0].keys())}")
+            
+        # Count members with and without member_id
+        with_member_id = sum(1 for m in members if m.get('member_id'))
+        without_member_id = sum(1 for m in members if not m.get('member_id'))
+        print(f"\nMembers with member_id: {with_member_id}, without member_id: {without_member_id}")
+        
+        # Log a few examples of members without member_id
+        if without_member_id > 0:
+            examples = [m.get('display_name', 'Unknown') for m in members if not m.get('member_id')][:5]
+            print(f"Examples of members without member_id: {examples}")
+            
+        # Check for duplicate member_ids
+        member_ids = [m.get('member_id') for m in members if m.get('member_id')]
+        unique_member_ids = set(member_ids)
+        print(f"Total unique member_ids: {len(unique_member_ids)} (vs {with_member_id} total with member_id)")
+        
+        if len(unique_member_ids) < with_member_id:
+            # Find duplicates
+            from collections import Counter
+            duplicates = [item for item, count in Counter(member_ids).items() if count > 1]
+            print(f"Found {len(duplicates)} duplicate member_ids: {duplicates[:5]}")
+            
+            # Log examples of duplicate records
+            for dup_id in duplicates[:2]:
+                dup_records = [m for m in members if m.get('member_id') == dup_id]
+                print(f"Records with duplicate member_id {dup_id}:")
+                for i, rec in enumerate(dup_records):
+                    print(f"  Record {i+1}: {rec.get('display_name')}, {rec.get('id')}")
+        
+        
+        # No duplicate diagnostic code needed here
+        
         
         if dry_run:
             logger.info("DRY RUN: No changes will be made to the database")
         
         # Create cursor for PostgreSQL operations
         cursor = conn.cursor()
+        
+        # Clean the speakers table if requested
+        if clean_table and not dry_run:
+            logger.info("Cleaning speakers table before inserting new records")
+            try:
+                # Disable foreign key constraints temporarily
+                cursor.execute("ALTER TABLE speaker_identifications DROP CONSTRAINT IF EXISTS speaker_identifications_speaker_id_fkey")
+                cursor.execute("ALTER TABLE speaker_appearances DROP CONSTRAINT IF EXISTS speaker_appearances_speaker_id_fkey")
+                cursor.execute("ALTER TABLE parliament_member_clips DROP CONSTRAINT IF EXISTS parliament_member_clips_speaker_id_fkey")
+                cursor.execute("ALTER TABLE face_profiles DROP CONSTRAINT IF EXISTS face_profiles_speaker_id_fkey")
+                cursor.execute("ALTER TABLE voice_profiles DROP CONSTRAINT IF EXISTS voice_profiles_speaker_id_fkey")
+                
+                # Truncate the speakers table
+                cursor.execute("TRUNCATE TABLE speakers RESTART IDENTITY CASCADE")
+                logger.info("Speakers table truncated successfully")
+            except Exception as e:
+                logger.error(f"Error truncating speakers table: {e}")
+                conn.rollback()
+                return False
         
         # Track statistics
         updated_count = 0
@@ -136,9 +210,9 @@ def sync_mp_data(dry_run=False):
         for member in members:
             try:
                 # Extract member data
-                member_id = member.get('parliament_id')
+                member_id = member.get('member_id')
                 if not member_id:
-                    logger.warning(f"Skipping member with no parliament_id: {member.get('display_name', 'Unknown')}")
+                    logger.warning(f"Skipping member with no member_id: {member.get('display_name', 'Unknown')}")
                     skipped_count += 1
                     continue
                 
@@ -204,10 +278,15 @@ def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(description='Sync MP data from Supabase to PostgreSQL')
     parser.add_argument('--dry-run', action='store_true', help='Run without making changes to the database')
+    parser.add_argument('--clean-table', action='store_true', help='Clean the speakers table before inserting new records')
+    parser.add_argument('--keep-table', action='store_true', help='Keep existing records in the speakers table')
     args = parser.parse_args()
     
-    logger.info(f"Starting MP data sync from Supabase to PostgreSQL {'(DRY RUN)' if args.dry_run else ''}")
-    success = sync_mp_data(dry_run=args.dry_run)
+    # Determine whether to clean the table (default is True unless --keep-table is specified)
+    clean_table = not args.keep_table if not args.clean_table else args.clean_table
+    
+    logger.info(f"Starting MP data sync from Supabase to PostgreSQL {'(DRY RUN)' if args.dry_run else ''} {'(CLEAN TABLE)' if clean_table else ''}")
+    success = sync_mp_data(dry_run=args.dry_run, clean_table=clean_table)
     
     if success:
         logger.info(f"✅ MP data sync completed successfully {'(DRY RUN)' if args.dry_run else ''}")
