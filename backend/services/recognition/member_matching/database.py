@@ -71,6 +71,15 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
             else:
                 logger.warning("No 'embedding' field found in member data")
         
+        # Add 'name' field to each member using display_name to avoid warnings
+        for member in members:
+            if 'name' not in member and 'display_name' in member:
+                member['name'] = member['display_name']
+            elif 'name' not in member and 'given_name' in member and 'family_name' in member:
+                member['name'] = f"{member['given_name']} {member['family_name']}"
+            elif 'name' not in member:
+                member['name'] = f"Member {member.get('id', 'Unknown')}"
+                
         logger.info(f"Loaded {len(members)} parliament members from Supabase")
         return members
     except Exception as e:
