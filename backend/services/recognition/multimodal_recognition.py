@@ -536,8 +536,10 @@ class MultimodalRecognitionService:
                             speaker = seg.get("speaker", "Unknown")
                             
                             # Create a segment with required fields
+                            # Use a string ID that includes start and end times to preserve diarization boundaries
+                            segment_id = f"{start_time}-{end_time}"
                             segment = {
-                                "id": i,
+                                "id": segment_id,  # Use string ID with start-end format to preserve boundaries
                                 "seek": start_time,
                                 "start": start_time,
                                 "end": end_time,
@@ -1092,11 +1094,15 @@ class MultimodalRecognitionService:
                             speaker = matching_segment.get("speaker", "unknown")
                             face_data["segment_speaker"] = speaker
                             
+                            # Create a unique segment ID for deduplication
+                            segment_id = f"{matching_segment.get('start', 0)}-{matching_segment.get('end', 0)}"
+                            
                             # Add to recognition events with comprehensive structure and enhanced quality score
                             recognition_event = {
                                 "type": "speaker",
-                                "start_time": face_time,
-                                "end_time": min(face_time + 5, matching_segment.get("end", face_time + 5)),
+                                # Use segment start/end times instead of face_time to preserve diarization boundaries
+                                "start_time": matching_segment.get("start", face_time),
+                                "end_time": matching_segment.get("end", min(face_time + 5, matching_segment.get("end", face_time + 5))),
                                 "member_id": face_data.get("member_id"),
                                 "name": face_data.get("name", "Unknown"),
                                 "confidence": face_data.get("confidence", 0.0),
@@ -1108,11 +1114,27 @@ class MultimodalRecognitionService:
                                 "segment_speaker": speaker,
                                 "time": face_time,  # Add time field for backward compatibility
                                 "quality_score": best_face.get("quality_score", 0),  # Use the quality score from best face
-                                "center_frame_priority": True  # Flag to indicate this was selected with center-frame prioritization
+                                "center_frame_priority": True,  # Flag to indicate this was selected with center-frame prioritization
+                                "segment_id": segment_id  # Add segment_id for deduplication
                             }
                             
-                            recognition_events.append(recognition_event)
-                            matched_faces += 1
+                            # Check if we already have a recognition event for this segment
+                            existing_event = next((e for e in recognition_events if e.get("segment_id") == segment_id), None)
+                            
+                            if existing_event:
+                                # Only replace if this event has higher confidence or quality score
+                                if (recognition_event["confidence"] > existing_event.get("confidence", 0) or 
+                                    recognition_event["quality_score"] > existing_event.get("quality_score", 0)):
+                                    # Remove the existing event
+                                    recognition_events.remove(existing_event)
+                                    # Add the new event
+                                    recognition_events.append(recognition_event)
+                                    logger.info(f"Replaced existing recognition event for segment {segment_id} with higher quality event")
+                                    matched_faces += 1
+                            else:
+                                # No existing event for this segment, add the new one
+                                recognition_events.append(recognition_event)
+                                matched_faces += 1
                             
                             # Store face by time for later reference with enhanced quality score
                             time_key = int(face_time)
@@ -1174,6 +1196,20 @@ class MultimodalRecognitionService:
             recognition_events: List of recognition events
             segments: List of transcription segments
         """
+        # Log segments before timeline analysis to see original diarization segments
+        logger.info("===== SEGMENT DEBUG INFO - BEFORE TIMELINE ANALYSIS =====")
+        logger.info(f"Total segments: {len(segments)}")
+        
+        # Create a map of segment IDs to their original speakers from diarization
+        original_speakers = {}
+        for i, segment in enumerate(segments):
+            segment_id = segment.get("id", f"{segment.get('start', 0)}-{segment.get('end', 0)}")
+            speaker = segment.get("speaker", "None")
+            start = segment.get("start", 0)
+            end = segment.get("end", 0)
+            text = segment.get("text", "")[:30] + "..." if len(segment.get("text", "")) > 30 else segment.get("text", "")
+            logger.info(f"Segment {i}: ID={segment_id}, Speaker={speaker}, Time=[{start:.2f}-{end:.2f}], Text={text}")
+            original_speakers[str(segment_id)] = speaker
         try:
             logger.info("Starting timeline-based speaker analysis")
             
@@ -1204,20 +1240,29 @@ class MultimodalRecognitionService:
                 if not events:
                     continue
                     
+                # Get the original speaker from diarization for this segment
+                original_speaker = original_speakers.get(str(segment_id), "None")
+                logger.info(f"Segment {segment_id} original diarization speaker: {original_speaker}")
+                
                 # Sort events by confidence gap, quality score and center-frame priority
                 events.sort(key=lambda x: (x.get("center_frame_priority", False), 
-                                        x.get("confidence_gap", 0), 
-                                        x.get("quality_score", 0)), 
+                                         x.get("confidence_gap", 0), 
+                                         x.get("quality_score", 0)), 
                           reverse=True)
                 
                 # Select the best event (highest quality, center-frame prioritized)
                 best_event = events[0]
+                best_confidence = best_event.get("confidence", 0)
                 
                 # Update all events in this segment with the best speaker information
                 best_member_id = best_event.get("member_id")
                 best_name = best_event.get("name", "Unknown")
                 
-                if best_member_id:
+                # Only override diarization speaker if we have high confidence face recognition
+                # This ensures we respect diarization speaker boundaries unless we're very confident
+                confidence_threshold = 0.75  # High confidence threshold to override diarization
+                
+                if best_member_id and best_confidence >= confidence_threshold:
                     for event in events:
                         # Only update events with lower quality or no member_id
                         if (not event.get("member_id") or 
@@ -1225,10 +1270,23 @@ class MultimodalRecognitionService:
                             event["member_id"] = best_member_id
                             event["name"] = best_name
                             event["updated_by_timeline"] = True
-                            
+                            event["diarization_override"] = True  # Flag that we overrode diarization
+                    
                     logger.info(f"Timeline analysis: Updated segment {segment_id} with best speaker: "
-                              f"member_id={best_member_id}, name={best_name}, "
-                              f"quality_score={best_event.get('quality_score', 0):.2f}")
+                              f"member_id={best_member_id}, name={best_name}, confidence={best_confidence:.2f}, "
+                              f"OVERRIDING diarization speaker: {original_speaker}")
+                else:
+                    logger.info(f"Timeline analysis: Preserving diarization speaker for segment {segment_id}: "
+                              f"speaker={original_speaker}, face confidence too low: {best_confidence:.2f} < {confidence_threshold}")
+                    
+                    # We still want to update the segment with the member_id if available
+                    # but we'll preserve the diarization speaker boundaries by not merging segments
+                    for event in events:
+                        if best_member_id and not event.get("member_id"):
+                            event["member_id"] = best_member_id
+                            event["name"] = best_name
+                            event["updated_by_timeline"] = True
+                            event["diarization_preserved"] = True  # Flag that we preserved diarization
             
             # Analyze speaker transitions across adjacent segments
             segment_ids = list(segment_events.keys())
@@ -1278,15 +1336,54 @@ class MultimodalRecognitionService:
                         except (ValueError, IndexError):
                             curr_start = 0
                         
-                        if curr_start - prev_end < 2.0:  # Within 2 seconds
+                        # Check if the current segment has a different diarization speaker than the previous segment
+                        prev_diarization_speaker = original_speakers.get(str(prev_id), "None")
+                        curr_diarization_speaker = original_speakers.get(str(curr_id), "None")
+                        
+                        # Only apply timeline continuity if:
+                        # 1. Segments are close in time (within 2 seconds)
+                        # 2. Either the diarization speakers are the same OR we have high confidence face recognition
+                        same_diarization_speaker = prev_diarization_speaker == curr_diarization_speaker
+                        high_confidence = prev_best.get("confidence", 0) >= 0.8
+                        
+                        if curr_start - prev_end < 2.0 and (same_diarization_speaker or high_confidence):
                             for event in curr_events:
                                 event["member_id"] = prev_member_id
                                 event["name"] = prev_best.get("name", "Unknown")
                                 event["updated_by_timeline"] = True
                                 event["timeline_continuity"] = True
+                                
+                                # Flag if we're overriding a diarization speaker boundary
+                                if not same_diarization_speaker:
+                                    event["diarization_boundary_override"] = True
                             
                             logger.info(f"Timeline continuity: Updated segment {curr_id} with previous speaker: "
-                                      f"member_id={prev_member_id}, name={prev_best.get('name', 'Unknown')}")
+                                      f"member_id={prev_member_id}, name={prev_best.get('name', 'Unknown')}, "
+                                      f"same_diarization_speaker={same_diarization_speaker}, high_confidence={high_confidence}")
+                        else:
+                            # Log that we're preserving the diarization speaker boundary
+                            if not same_diarization_speaker and curr_start - prev_end < 2.0:
+                                logger.info(f"Preserving diarization speaker boundary between segments {prev_id} and {curr_id}: "
+                                          f"speakers {prev_diarization_speaker} -> {curr_diarization_speaker}, "
+                                          f"confidence too low: {prev_best.get('confidence', 0):.2f} < 0.8")
+            
+            # Log segments after timeline analysis to see what changed
+            logger.info("===== SEGMENT DEBUG INFO - AFTER TIMELINE ANALYSIS =====")
+            logger.info(f"Total segments: {len(segments)}")
+            
+            for i, segment in enumerate(segments):
+                segment_id = segment.get("id", f"{segment.get('start', 0)}-{segment.get('end', 0)}")
+                speaker = segment.get("speaker", "None")
+                start = segment.get("start", 0)
+                end = segment.get("end", 0)
+                text = segment.get("text", "")[:30] + "..." if len(segment.get("text", "")) > 30 else segment.get("text", "")
+                
+                # Check if this segment's speaker was changed from the original diarization
+                original_speaker = original_speakers.get(str(segment_id), "None")
+                speaker_changed = original_speaker != speaker
+                
+                logger.info(f"Segment {i}: ID={segment_id}, Speaker={speaker}, Time=[{start:.2f}-{end:.2f}], Text={text}, " 
+                          f"Changed={speaker_changed}, Original={original_speaker}")
             
             logger.info("Completed timeline-based speaker analysis")
             
