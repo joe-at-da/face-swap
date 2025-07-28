@@ -113,9 +113,9 @@ class SpeakerDiarizer:
             # Load audio
             y, sr = librosa.load(str(audio_path), sr=None)
             
-            # Parameters for analysis - balanced for accurate speaker change detection
-            window_size = 2.5   # 2.5 second windows for analysis (balanced between 2.0 and 3.0)
-            step_size = 0.5     # 0.5 second steps between windows for better resolution
+            # Parameters for analysis - balanced window size for accurate speaker change detection
+            window_size = 2.0   # 2.0 second windows for analysis (balanced between precision and stability)
+            step_size = 0.5     # 0.5 second steps between windows (balanced resolution)
             
             # We'll use dynamic thresholding instead of a fixed threshold
             # This adapts to the specific audio characteristics
@@ -133,12 +133,29 @@ class SpeakerDiarizer:
             window_features = []
             window_times = []
             
-            # Function to extract features - simplified to just use MFCCs
+            # Function to extract multiple features for better speaker differentiation
             def extract_features(window_audio, sr):
                 # MFCCs capture vocal tract characteristics
-                mfcc = librosa.feature.mfcc(y=window_audio, sr=sr, n_mfcc=20)
-                # Average across time to get a single feature vector
-                return np.mean(mfcc, axis=1).tolist()  # Convert to Python list
+                mfcc = librosa.feature.mfcc(y=window_audio, sr=sr, n_mfcc=13)
+                
+                # Spectral contrast (voice timbre)
+                contrast = librosa.feature.spectral_contrast(y=window_audio, sr=sr)
+                
+                # Spectral bandwidth (voice quality)
+                bandwidth = librosa.feature.spectral_bandwidth(y=window_audio, sr=sr)
+                
+                # Spectral flatness (voice resonance)
+                flatness = librosa.feature.spectral_flatness(y=window_audio)
+                
+                # Combine and flatten features
+                features = np.concatenate([
+                    np.mean(mfcc, axis=1),
+                    np.mean(contrast, axis=1),
+                    [np.mean(bandwidth)],
+                    [np.mean(flatness)]
+                ])
+                
+                return features.tolist()  # Convert to Python list
             
             for i in range(n_windows):
                 start_sample = i * step_samples
@@ -147,6 +164,8 @@ class SpeakerDiarizer:
                 if end_sample <= len(y):
                     window_audio = y[start_sample:end_sample]
                     window_time = float(start_sample / sr)  # Convert to Python float
+                    
+                    # Process all windows, don't skip based on silence
                     
                     # Extract features for this window
                     features = extract_features(window_audio, sr)
@@ -171,20 +190,109 @@ class SpeakerDiarizer:
                 sim = float(cosine_similarity([window_features[i-1]], [window_features[i]])[0][0])
                 similarities.append(sim)
             
-            # Apply balanced median filter to smooth out similarities
+            # Apply median filter to smooth out similarities
             if len(similarities) > 5:
-                similarities = medfilt(similarities, 3).tolist()  # Median filter size must be odd
+                similarities = medfilt(similarities, 5).tolist()  # Increased filter size for better smoothing
             
             # Use dynamic thresholding - find local minima in similarity
             from scipy.signal import find_peaks
             # Invert similarities to find peaks (which are actually dips in similarity)
             inv_similarities = [1.0 - sim for sim in similarities]  # Python list comprehension
             
-            # Find peaks with prominence proportional to the standard deviation
-            # Use a balanced multiplier to detect real speaker changes while avoiding false positives
-            prominence = max(0.12, float(np.std(inv_similarities) * 1.75))  # Balanced adaptive threshold
-            # Use a balanced minimum distance between peaks
-            peaks, _ = find_peaks(np.array(inv_similarities), prominence=prominence, distance=int(1.5/step_size))
+            # Calculate energy (volume) for each window to help with change detection
+            window_energy = []
+            for i in range(n_windows):
+                if i * step_samples + window_samples <= len(y):
+                    segment = y[i * step_samples:i * step_samples + window_samples]
+                    energy = np.mean(np.abs(segment))
+                    window_energy.append(float(energy))  # Convert to Python float
+                    
+            # Normalize energy values
+            if window_energy:
+                max_energy = max(window_energy)
+                if max_energy > 0:
+                    window_energy = [e / max_energy for e in window_energy]
+            
+            # Find peaks with balanced adaptive thresholding
+            # Calculate average similarity for reference
+            avg_similarity = float(np.mean(similarities)) if similarities else 0.9
+            
+            # Use a balanced adaptive multiplier that scales based on average similarity
+            # Higher threshold for more similar audio to avoid false positives
+            adaptive_multiplier = 1.8 if avg_similarity > 0.9 else 1.5
+            
+            # Balanced prominence threshold - not too sensitive, not too strict
+            prominence = max(0.12, float(np.std(inv_similarities) * adaptive_multiplier))
+            
+            # Use a more conservative minimum distance between peaks
+            # With step_size of 0.5, this allows peaks to be as close as 3 seconds apart
+            min_distance = int(3.0/step_size)
+            
+            # Find peaks with these adaptive parameters
+            peaks, peak_properties = find_peaks(np.array(inv_similarities), 
+                                              prominence=prominence, 
+                                              distance=min_distance)
+            
+            # Log detailed information about the parameters used
+            logger.info(f"Average similarity between adjacent windows: {avg_similarity:.3f}")
+            logger.info(f"Using prominence threshold: {prominence:.3f} for peak detection")
+            logger.info(f"Using minimum distance between peaks: {min_distance} windows ({min_distance * step_size:.2f} seconds)")
+            
+            # Check for potential speaker changes around specific times of interest
+            time_of_interest = 27.0  # seconds
+            window_index = int(time_of_interest / step_size)
+            
+            # Find the closest window indices
+            if window_index < len(window_times) and window_index > 0:
+                closest_time = window_times[window_index]
+                logger.info(f"Checking for potential speaker change around {time_of_interest} seconds (closest window: {closest_time:.2f}s)")
+                
+                # Get similarity values around this time
+                if window_index < len(similarities):
+                    sim_value = similarities[window_index]
+                    inv_sim = inv_similarities[window_index]
+                    logger.info(f"Similarity at {closest_time:.2f}s: {sim_value:.3f}, inverted: {inv_sim:.3f}")
+                    
+                    # Check if this would be a peak with lower threshold
+                    lower_threshold = prominence * 0.5
+                    is_local_min = True
+                    for i in range(max(0, window_index-2), min(len(similarities), window_index+3)):
+                        if i != window_index and similarities[i] <= similarities[window_index]:
+                            is_local_min = False
+                    
+                    logger.info(f"Is local minimum: {is_local_min}, would be detected with threshold below {lower_threshold:.3f}")
+            
+            # Log the most prominent peaks that were just below the threshold
+            if hasattr(peak_properties, 'get') and 'prominences' in peak_properties:
+                all_prominences = peak_properties['prominences']
+                logger.info(f"Found {len(all_prominences)} peaks with prominences: {[f'{p:.3f}' for p in all_prominences]}")
+                
+                # Find peaks that were just below the threshold
+                almost_peaks = []
+                for i in range(len(inv_similarities)):
+                    if i not in peaks and i > 0 and i < len(inv_similarities) - 1:
+                        if inv_similarities[i] > inv_similarities[i-1] and inv_similarities[i] > inv_similarities[i+1]:
+                            # This is a local maximum in inverted similarity (local minimum in similarity)
+                            # Calculate its prominence
+                            left_base = max(0, i-10)
+                            right_base = min(len(inv_similarities), i+10)
+                            left_min = min(inv_similarities[left_base:i])
+                            right_min = min(inv_similarities[i+1:right_base])
+                            base = max(left_min, right_min)
+                            peak_prominence = inv_similarities[i] - base
+                            
+                            if peak_prominence > prominence * 0.7:
+                                almost_peaks.append((i, window_times[i+1], peak_prominence))
+                
+                if almost_peaks:
+                    logger.info(f"Almost detected {len(almost_peaks)} additional peaks:")
+                    for idx, time, prom in almost_peaks:
+                        logger.info(f"  - At {time:.2f}s with prominence {prom:.3f} (threshold: {prominence:.3f})")
+                        
+            # No special handling for specific timestamps - rely on the algorithm to detect changes naturally
+            
+            # Sort peaks by position
+            peaks = np.sort(peaks)
             
             # These peaks represent potential speaker changes
             # Convert to regular Python list
