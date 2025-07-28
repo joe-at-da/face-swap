@@ -240,8 +240,8 @@ def sync_mp_data(dry_run=False, clean_table=True):
                     speaker_id = result[0]
                     if not dry_run:
                         cursor.execute(
-                            "UPDATE speakers SET name = %s, party = %s, constituency = %s, photo_url = %s WHERE id = %s",
-                            (display_name, party_name, constituency_name, photo_url, speaker_id)
+                            "UPDATE speakers SET name = %s, party = %s, constituency = %s, photo_url = %s, parliament_id = %s WHERE id = %s",
+                            (display_name, party_name, constituency_name, photo_url, member_id, speaker_id)
                         )
                     updated_count += 1
                     logger.info(f"{'DRY RUN: Would update' if dry_run else 'Updated'} speaker {speaker_id} (Member ID: {member_id}) with name: {display_name}")
@@ -249,8 +249,8 @@ def sync_mp_data(dry_run=False, clean_table=True):
                     # Create new member
                     if not dry_run:
                         cursor.execute(
-                            "INSERT INTO speakers (member_id, name, party, constituency, photo_url) VALUES (%s, %s, %s, %s, %s)",
-                            (member_id, display_name, party_name, constituency_name, photo_url)
+                            "INSERT INTO speakers (member_id, parliament_id, name, party, constituency, photo_url) VALUES (%s, %s, %s, %s, %s, %s)",
+                            (member_id, member_id, display_name, party_name, constituency_name, photo_url)
                         )
                     created_count += 1
                     logger.info(f"{'DRY RUN: Would create' if dry_run else 'Created'} new speaker for Member ID: {member_id} with name: {display_name}")
