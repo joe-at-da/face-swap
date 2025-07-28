@@ -113,8 +113,8 @@ class SpeakerDiarizer:
             # Load audio
             y, sr = librosa.load(str(audio_path), sr=None)
             
-            # Parameters for analysis - use smaller windows for more precise detection
-            window_size = 2.0   # 2 second windows for analysis
+            # Parameters for analysis - balanced for accurate speaker change detection
+            window_size = 2.5   # 2.5 second windows for analysis (balanced between 2.0 and 3.0)
             step_size = 0.5     # 0.5 second steps between windows for better resolution
             
             # We'll use dynamic thresholding instead of a fixed threshold
@@ -171,9 +171,9 @@ class SpeakerDiarizer:
                 sim = float(cosine_similarity([window_features[i-1]], [window_features[i]])[0][0])
                 similarities.append(sim)
             
-            # Apply median filter to smooth out similarities
+            # Apply balanced median filter to smooth out similarities
             if len(similarities) > 5:
-                similarities = medfilt(similarities, 3).tolist()  # Convert to Python list
+                similarities = medfilt(similarities, 3).tolist()  # Median filter size must be odd
             
             # Use dynamic thresholding - find local minima in similarity
             from scipy.signal import find_peaks
@@ -181,8 +181,10 @@ class SpeakerDiarizer:
             inv_similarities = [1.0 - sim for sim in similarities]  # Python list comprehension
             
             # Find peaks with prominence proportional to the standard deviation
-            prominence = max(0.1, float(np.std(inv_similarities) * 1.5))  # Adaptive threshold
-            peaks, _ = find_peaks(np.array(inv_similarities), prominence=prominence, distance=int(1.0/step_size))
+            # Use a balanced multiplier to detect real speaker changes while avoiding false positives
+            prominence = max(0.12, float(np.std(inv_similarities) * 1.75))  # Balanced adaptive threshold
+            # Use a balanced minimum distance between peaks
+            peaks, _ = find_peaks(np.array(inv_similarities), prominence=prominence, distance=int(1.5/step_size))
             
             # These peaks represent potential speaker changes
             # Convert to regular Python list
