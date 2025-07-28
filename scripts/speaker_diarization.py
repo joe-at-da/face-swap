@@ -133,26 +133,23 @@ class SpeakerDiarizer:
             window_features = []
             window_times = []
             
-            # Function to extract multiple features for better speaker differentiation
+            # Function to extract features focused on voice characteristics
             def extract_features(window_audio, sr):
-                # MFCCs capture vocal tract characteristics
+                # MFCCs capture vocal tract characteristics (voice identity)
                 mfcc = librosa.feature.mfcc(y=window_audio, sr=sr, n_mfcc=13)
                 
                 # Spectral contrast (voice timbre)
                 contrast = librosa.feature.spectral_contrast(y=window_audio, sr=sr)
                 
-                # Spectral bandwidth (voice quality)
-                bandwidth = librosa.feature.spectral_bandwidth(y=window_audio, sr=sr)
+                # Chroma features (pitch content)
+                chroma = librosa.feature.chroma_stft(y=window_audio, sr=sr)
                 
-                # Spectral flatness (voice resonance)
-                flatness = librosa.feature.spectral_flatness(y=window_audio)
-                
-                # Combine and flatten features
+                # Combine and flatten features - focusing on voice identity characteristics
+                # rather than energy or pause-based features
                 features = np.concatenate([
-                    np.mean(mfcc, axis=1),
-                    np.mean(contrast, axis=1),
-                    [np.mean(bandwidth)],
-                    [np.mean(flatness)]
+                    np.mean(mfcc, axis=1),      # Voice identity
+                    np.mean(contrast, axis=1),  # Voice timbre
+                    np.mean(chroma, axis=1)     # Pitch content
                 ])
                 
                 return features.tolist()  # Convert to Python list
@@ -199,19 +196,8 @@ class SpeakerDiarizer:
             # Invert similarities to find peaks (which are actually dips in similarity)
             inv_similarities = [1.0 - sim for sim in similarities]  # Python list comprehension
             
-            # Calculate energy (volume) for each window to help with change detection
-            window_energy = []
-            for i in range(n_windows):
-                if i * step_samples + window_samples <= len(y):
-                    segment = y[i * step_samples:i * step_samples + window_samples]
-                    energy = np.mean(np.abs(segment))
-                    window_energy.append(float(energy))  # Convert to Python float
-                    
-            # Normalize energy values
-            if window_energy:
-                max_energy = max(window_energy)
-                if max_energy > 0:
-                    window_energy = [e / max_energy for e in window_energy]
+            # Skip energy-based detection as it relies on pauses/volume changes
+            # Focus purely on voice characteristics through feature comparison
             
             # Find peaks with balanced adaptive thresholding
             # Calculate average similarity for reference
@@ -238,56 +224,14 @@ class SpeakerDiarizer:
             logger.info(f"Using prominence threshold: {prominence:.3f} for peak detection")
             logger.info(f"Using minimum distance between peaks: {min_distance} windows ({min_distance * step_size:.2f} seconds)")
             
-            # Check for potential speaker changes around specific times of interest
-            time_of_interest = 27.0  # seconds
-            window_index = int(time_of_interest / step_size)
+            # Focus on general algorithm performance, not specific timestamps
+            logger.info(f"Total windows analyzed: {len(window_times)}")
+            logger.info(f"Window size: {window_size:.1f}s, Step size: {step_size:.2f}s")
             
-            # Find the closest window indices
-            if window_index < len(window_times) and window_index > 0:
-                closest_time = window_times[window_index]
-                logger.info(f"Checking for potential speaker change around {time_of_interest} seconds (closest window: {closest_time:.2f}s)")
-                
-                # Get similarity values around this time
-                if window_index < len(similarities):
-                    sim_value = similarities[window_index]
-                    inv_sim = inv_similarities[window_index]
-                    logger.info(f"Similarity at {closest_time:.2f}s: {sim_value:.3f}, inverted: {inv_sim:.3f}")
-                    
-                    # Check if this would be a peak with lower threshold
-                    lower_threshold = prominence * 0.5
-                    is_local_min = True
-                    for i in range(max(0, window_index-2), min(len(similarities), window_index+3)):
-                        if i != window_index and similarities[i] <= similarities[window_index]:
-                            is_local_min = False
-                    
-                    logger.info(f"Is local minimum: {is_local_min}, would be detected with threshold below {lower_threshold:.3f}")
-            
-            # Log the most prominent peaks that were just below the threshold
+            # Log basic information about detected peaks
             if hasattr(peak_properties, 'get') and 'prominences' in peak_properties:
                 all_prominences = peak_properties['prominences']
-                logger.info(f"Found {len(all_prominences)} peaks with prominences: {[f'{p:.3f}' for p in all_prominences]}")
-                
-                # Find peaks that were just below the threshold
-                almost_peaks = []
-                for i in range(len(inv_similarities)):
-                    if i not in peaks and i > 0 and i < len(inv_similarities) - 1:
-                        if inv_similarities[i] > inv_similarities[i-1] and inv_similarities[i] > inv_similarities[i+1]:
-                            # This is a local maximum in inverted similarity (local minimum in similarity)
-                            # Calculate its prominence
-                            left_base = max(0, i-10)
-                            right_base = min(len(inv_similarities), i+10)
-                            left_min = min(inv_similarities[left_base:i])
-                            right_min = min(inv_similarities[i+1:right_base])
-                            base = max(left_min, right_min)
-                            peak_prominence = inv_similarities[i] - base
-                            
-                            if peak_prominence > prominence * 0.7:
-                                almost_peaks.append((i, window_times[i+1], peak_prominence))
-                
-                if almost_peaks:
-                    logger.info(f"Almost detected {len(almost_peaks)} additional peaks:")
-                    for idx, time, prom in almost_peaks:
-                        logger.info(f"  - At {time:.2f}s with prominence {prom:.3f} (threshold: {prominence:.3f})")
+                logger.info(f"Found {len(all_prominences)} peaks with average prominence: {np.mean(all_prominences):.3f}")
                         
             # No special handling for specific timestamps - rely on the algorithm to detect changes naturally
             
