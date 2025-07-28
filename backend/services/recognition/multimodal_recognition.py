@@ -535,10 +535,10 @@ class MultimodalRecognitionService:
                             end_time = seg.get("end_time", 0)
                             speaker = seg.get("speaker", "Unknown")
                             
-                            # Ensure start and end times are floats with 2 decimal precision
-                            # This ensures consistent formatting throughout the pipeline
-                            start_time = float(f"{float(start_time):.2f}")
-                            end_time = float(f"{float(end_time):.2f}")
+                            # Use exact timestamps from diarization data without rounding
+                            # This preserves the precise timing information needed for accurate matching
+                            start_time = float(start_time)
+                            end_time = float(end_time)
                             
                             # Create a segment with required fields
                             # Use a string ID that includes start and end times to preserve diarization boundaries
@@ -1101,9 +1101,9 @@ class MultimodalRecognitionService:
                             face_data["segment_speaker"] = speaker
                             
                             # Create a unique segment ID for deduplication that exactly matches diarization segment boundaries
-                            # Format with 2 decimal places for consistency
-                            segment_start = float(f"{float(matching_segment.get('start', 0)):.2f}")
-                            segment_end = float(f"{float(matching_segment.get('end', 0)):.2f}")
+                            # Use the exact timestamps from the segment without rounding
+                            segment_start = float(matching_segment.get('start', 0))
+                            segment_end = float(matching_segment.get('end', 0))
                             segment_id = f"{segment_start}-{segment_end}"
                             
                             # Add to recognition events with comprehensive structure and enhanced quality score
