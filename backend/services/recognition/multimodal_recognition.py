@@ -843,13 +843,13 @@ class MultimodalRecognitionService:
             extraction_result = self.face_profile_service.extract_faces_from_video(
                 video_path=video_path,
                 output_dir=video_dir,
-                interval=0.5,  # Reduced interval for more frequent sampling
+                interval=1.0,  # Match dev branch interval (1.0 second between frames)
                 min_confidence=0.6,
                 prioritize_center=True,  # Enable center-frame prioritization
                 select_best_frames=True,
                 min_face_size=200,  # Minimum face dimensions in pixels (width/height)
-                min_face_area=40000,  # Minimum face area in square pixels (200x200)
-                detection_interval=30  # Run face detection every 30 frames (about once per second at 25-30 FPS)
+                min_face_area=40000  # Minimum face area in square pixels (200x200)
+                # Removed detection_interval parameter to match dev branch behavior
             )
             
             if extraction_result.get("success", False):
@@ -1449,7 +1449,7 @@ class MultimodalRecognitionService:
             # IMPROVED: Skip low-confidence detections
             if best_detection.get('confidence', 0) < 0.7:  # Minimum face detection confidence
                 logger.warning(f"⚠️ Best face detection has low confidence: {best_detection.get('confidence', 0):.4f}")
-                # Continue anyway, but log the warning
+                # Continue anyway, but log the warning - matching dev branch behavior
             
             # Try to match with our improved ParliamentMemberMatcher
             face_embedding = best_detection.get("embedding")
