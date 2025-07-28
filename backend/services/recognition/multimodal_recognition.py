@@ -535,6 +535,11 @@ class MultimodalRecognitionService:
                             end_time = seg.get("end_time", 0)
                             speaker = seg.get("speaker", "Unknown")
                             
+                            # Ensure start and end times are floats with 2 decimal precision
+                            # This ensures consistent formatting throughout the pipeline
+                            start_time = float(f"{float(start_time):.2f}")
+                            end_time = float(f"{float(end_time):.2f}")
+                            
                             # Create a segment with required fields
                             # Use a string ID that includes start and end times to preserve diarization boundaries
                             segment_id = f"{start_time}-{end_time}"
@@ -549,7 +554,8 @@ class MultimodalRecognitionService:
                                 "avg_logprob": -0.5,
                                 "compression_ratio": 1.0,
                                 "no_speech_prob": 0.1,
-                                "speaker": speaker
+                                "speaker": speaker,
+                                "diarization_segment": True  # Flag to indicate this is a diarization segment
                             }
                             segments.append(segment)
                         
@@ -1094,15 +1100,18 @@ class MultimodalRecognitionService:
                             speaker = matching_segment.get("speaker", "unknown")
                             face_data["segment_speaker"] = speaker
                             
-                            # Create a unique segment ID for deduplication
-                            segment_id = f"{matching_segment.get('start', 0)}-{matching_segment.get('end', 0)}"
+                            # Create a unique segment ID for deduplication that exactly matches diarization segment boundaries
+                            # Format with 2 decimal places for consistency
+                            segment_start = float(f"{float(matching_segment.get('start', 0)):.2f}")
+                            segment_end = float(f"{float(matching_segment.get('end', 0)):.2f}")
+                            segment_id = f"{segment_start}-{segment_end}"
                             
                             # Add to recognition events with comprehensive structure and enhanced quality score
                             recognition_event = {
                                 "type": "speaker",
-                                # Use segment start/end times instead of face_time to preserve diarization boundaries
-                                "start_time": matching_segment.get("start", face_time),
-                                "end_time": matching_segment.get("end", min(face_time + 5, matching_segment.get("end", face_time + 5))),
+                                # CRITICAL: Use EXACT segment start/end times to preserve diarization boundaries
+                                "start_time": segment_start,  # Use precise segment start time
+                                "end_time": segment_end,      # Use precise segment end time
                                 "member_id": face_data.get("member_id"),
                                 "name": face_data.get("name", "Unknown"),
                                 "confidence": face_data.get("confidence", 0.0),
@@ -1112,10 +1121,11 @@ class MultimodalRecognitionService:
                                 "matched_by": face_data.get("matched_by", "unknown"),
                                 "profile_id": face_data.get("profile_id"),
                                 "segment_speaker": speaker,
-                                "time": face_time,  # Add time field for backward compatibility
+                                "time": face_time,  # Keep original face time for reference
                                 "quality_score": best_face.get("quality_score", 0),  # Use the quality score from best face
                                 "center_frame_priority": True,  # Flag to indicate this was selected with center-frame prioritization
-                                "segment_id": segment_id  # Add segment_id for deduplication
+                                "segment_id": segment_id,  # Add segment_id for deduplication
+                                "diarization_segment": matching_segment.get("diarization_segment", False)  # Preserve diarization segment flag
                             }
                             
                             # Check if we already have a recognition event for this segment
@@ -1262,6 +1272,13 @@ class MultimodalRecognitionService:
                 # This ensures we respect diarization speaker boundaries unless we're very confident
                 confidence_threshold = 0.75  # High confidence threshold to override diarization
                 
+                # Check if this is a diarization segment (stricter rules for diarization segments)
+                is_diarization_segment = any(e.get("diarization_segment", False) for e in events)
+                if is_diarization_segment:
+                    # Use higher threshold for diarization segments
+                    confidence_threshold = 0.85
+                    logger.info(f"Using higher confidence threshold ({confidence_threshold}) for diarization segment {segment_id}")
+                
                 if best_member_id and best_confidence >= confidence_threshold:
                     for event in events:
                         # Only update events with lower quality or no member_id
@@ -1271,6 +1288,8 @@ class MultimodalRecognitionService:
                             event["name"] = best_name
                             event["updated_by_timeline"] = True
                             event["diarization_override"] = True  # Flag that we overrode diarization
+                            # Store the original diarization speaker for reference
+                            event["original_diarization_speaker"] = original_speaker
                     
                     logger.info(f"Timeline analysis: Updated segment {segment_id} with best speaker: "
                               f"member_id={best_member_id}, name={best_name}, confidence={best_confidence:.2f}, "
@@ -1292,7 +1311,16 @@ class MultimodalRecognitionService:
             segment_ids = list(segment_events.keys())
             # Convert all segment_ids to strings before sorting to avoid TypeError with integers
             segment_ids = [str(x) for x in segment_ids]
-            segment_ids.sort(key=lambda x: float(x.split('-')[0]) if '-' in x else 0)
+            
+            # Sort segments by start time to ensure proper timeline analysis
+            # This is critical for preserving diarization segment boundaries
+            try:
+                segment_ids.sort(key=lambda x: float(x.split('-')[0]) if '-' in x else 0)
+                logger.info(f"Sorted segment IDs for timeline analysis: {segment_ids}")
+            except Exception as e:
+                logger.error(f"Error sorting segment IDs: {e}")
+                # Fallback sorting if the format is unexpected
+                segment_ids.sort()
             
             for i in range(1, len(segment_ids)):
                 prev_id = segment_ids[i-1]
