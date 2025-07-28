@@ -424,25 +424,78 @@ class SupabaseIntegration:
                     logger.info(f"Found combined AV file: {combined_url}")
             
             if combined_url and os.path.exists(combined_url):
-                logger.info(f"Uploading combined audio-video file: {combined_url}")
-                try:
-                    # Verify file exists and has proper size
-                    file_size = os.path.getsize(combined_url)
-                    logger.info(f"Combined AV file exists: {os.path.exists(combined_url)}, size: {file_size} bytes")
-                    
-                    # Make sure filename has combined_av_ prefix
-                    filename = os.path.basename(combined_url)
-                    if 'combined_av_' not in filename:
-                        logger.warning(f"Combined AV file does not have combined_av_ prefix: {filename}")
-                        # Rename the file to include the combined_av_ prefix if needed
-                        new_filename = f"combined_av_{video_id}_{int(time.time())}.mp4"
-                        new_path = os.path.join(os.path.dirname(combined_url), new_filename)
-                        logger.info(f"Renaming file to include combined_av_ prefix: {new_path}")
-                        shutil.copy(combined_url, new_path)
-                        combined_url = new_path
-                    
-                    # Force re-initialize the Supabase client with service role
-                    self.supabase = SupabaseUploader(use_service_role=True)
+                logger.info(f"Combined audio-video file found: {combined_url}")
+                
+                # Check if this file has already been uploaded to Supabase
+                already_uploaded = False
+                existing_url = None
+                
+                # Check if we have a database session and video_id to look up existing uploads
+                if db_session and video_id:
+                    try:
+                        from backend.db.models import CaptureSession, RecognitionProcess
+                        
+                        # Check CaptureSession first
+                        capture = db_session.query(CaptureSession).filter(CaptureSession.id == video_id).first()
+                        if capture and capture.capture_metadata:
+                            metadata = capture.capture_metadata
+                            if isinstance(metadata, str):
+                                try:
+                                    metadata = json_module.loads(metadata)
+                                except Exception:
+                                    metadata = {}
+                                    
+                            if isinstance(metadata, dict) and metadata.get("supabase_url"):
+                                already_uploaded = True
+                                existing_url = metadata.get("supabase_url")
+                                logger.info(f"File already uploaded to Supabase according to CaptureSession metadata: {existing_url}")
+                        
+                        # If not found in CaptureSession, check RecognitionProcess
+                        if not already_uploaded:
+                            rec_process = db_session.query(RecognitionProcess).filter(RecognitionProcess.video_id == video_id).first()
+                            if rec_process and rec_process.results:
+                                results = rec_process.results
+                                if isinstance(results, str):
+                                    try:
+                                        results = json_module.loads(results)
+                                    except Exception:
+                                        results = {}
+                                
+                                if isinstance(results, dict) and results.get("supabase_urls", {}).get("combined_av_url"):
+                                    already_uploaded = True
+                                    existing_url = results.get("supabase_urls", {}).get("combined_av_url")
+                                    logger.info(f"File already uploaded to Supabase according to RecognitionProcess results: {existing_url}")
+                    except Exception as e:
+                        logger.error(f"Error checking for existing uploads: {str(e)}")
+                
+                if already_uploaded and existing_url:
+                    logger.info(f"Skipping upload as file is already uploaded to Supabase: {existing_url}")
+                    # Add the existing URL to our result
+                    result["supabase_urls"]["combined_av_url"] = existing_url
+                else:
+                    # File hasn't been uploaded yet, proceed with upload
+                    logger.info(f"Uploading combined audio-video file: {combined_url}")
+                    try:
+                        # Verify file exists and has proper size
+                        file_size = os.path.getsize(combined_url)
+                        logger.info(f"Combined AV file exists: {os.path.exists(combined_url)}, size: {file_size} bytes")
+                        
+                        # Make sure filename has combined_av_ prefix
+                        filename = os.path.basename(combined_url)
+                        if 'combined_av_' not in filename:
+                            logger.warning(f"Combined AV file does not have combined_av_ prefix: {filename}")
+                            # Rename the file to include the combined_av_ prefix if needed
+                            new_filename = f"combined_av_{video_id}_{int(time.time())}.mp4"
+                            new_path = os.path.join(os.path.dirname(combined_url), new_filename)
+                            logger.info(f"Renaming file to include combined_av_ prefix: {new_path}")
+                            shutil.copy(combined_url, new_path)
+                            combined_url = new_path
+                        
+                        # Force re-initialize the Supabase client with service role
+                        self.supabase = SupabaseUploader(use_service_role=True)
+                    except Exception as e:
+                        logger.error(f"Error preparing file for upload: {str(e)}")
+                        raise
                     logger.info("Re-initialized Supabase client with service role (using SupabaseUploader)")
                     
                     # Upload the combined file directly to the full_videos bucket
@@ -520,34 +573,34 @@ class SupabaseIntegration:
                                         rec_process = db_session.query(RecognitionProcess).filter(RecognitionProcess.video_id == video_id).first()
                                         if rec_process:
                                             logger.info(f"Updating RecognitionProcess for video {video_id} with Supabase URL")
-                                            # Store URL in recognition_results JSON field
-                                            if not hasattr(rec_process, 'recognition_results') or not rec_process.recognition_results:
-                                                rec_process.recognition_results = {}
-                                            elif isinstance(rec_process.recognition_results, str):
+                                            # Store URL in results JSON field
+                                            if not hasattr(rec_process, 'results') or not rec_process.results:
+                                                rec_process.results = {}
+                                            elif isinstance(rec_process.results, str):
                                                 try:
-                                                    rec_process.recognition_results = json_module.loads(rec_process.recognition_results)
+                                                    rec_process.results = json_module.loads(rec_process.results)
                                                 except json_module.JSONDecodeError:
-                                                    rec_process.recognition_results = {}
+                                                    rec_process.results = {}
                                         
                                             # Ensure recognition_results is a dictionary
-                                            if not isinstance(rec_process.recognition_results, dict):
-                                                rec_process.recognition_results = {}
+                                            if not isinstance(rec_process.results, dict):
+                                                rec_process.results = {}
                                             
                                             # Create supabase_urls dict if it doesn't exist
-                                            if "supabase_urls" not in rec_process.recognition_results:
-                                                rec_process.recognition_results["supabase_urls"] = {}
+                                            if "supabase_urls" not in rec_process.results:
+                                                rec_process.results["supabase_urls"] = {}
                                             
                                             # Log before value
-                                            logger.info(f"Before update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
+                                            logger.info(f"Before update - RecognitionProcess for video {video_id} results: {rec_process.results}")
                                             
-                                            # Ensure recognition_results is a dictionary
-                                            if isinstance(rec_process.recognition_results, str):
+                                            # Ensure results is a dictionary
+                                            if isinstance(rec_process.results, str):
                                                 try:
-                                                    recognition_results_dict = json_module.loads(rec_process.recognition_results)
+                                                    recognition_results_dict = json_module.loads(rec_process.results)
                                                 except json_module.JSONDecodeError:
                                                     recognition_results_dict = {"supabase_urls": {}}
                                             else:
-                                                recognition_results_dict = rec_process.recognition_results if isinstance(rec_process.recognition_results, dict) else {"supabase_urls": {}}
+                                                recognition_results_dict = rec_process.results if isinstance(rec_process.results, dict) else {"supabase_urls": {}}
                                             
                                             # Ensure supabase_urls exists
                                             if "supabase_urls" not in recognition_results_dict:
@@ -557,19 +610,19 @@ class SupabaseIntegration:
                                             recognition_results_dict["supabase_urls"]["combined_av_url"] = supabase_url
                                             
                                             # Convert to JSON string before saving to database
-                                            rec_process.recognition_results = json_module.dumps(recognition_results_dict)
+                                            rec_process.results = json_module.dumps(recognition_results_dict)
                                             
                                             # Commit the changes
                                             db_session.commit()
                                             
                                             # Verify the update
                                             db_session.refresh(rec_process)
-                                            logger.info(f"After update - RecognitionProcess for video {video_id} recognition_results: {rec_process.recognition_results}")
+                                            logger.info(f"After update - RecognitionProcess for video {video_id} results: {rec_process.results}")
                                             
                                             # Check if the URL was properly saved
                                             try:
                                                 # Parse the JSON string to check the values
-                                                saved_results = json_module.loads(rec_process.recognition_results) if isinstance(rec_process.recognition_results, str) else rec_process.recognition_results
+                                                saved_results = json_module.loads(rec_process.results) if isinstance(rec_process.results, str) else rec_process.results
                                                 if saved_results.get("supabase_urls", {}).get("combined_av_url") == supabase_url:
                                                     logger.info(f"Successfully updated RecognitionProcess with Supabase URL")
                                                 else:
@@ -585,10 +638,6 @@ class SupabaseIntegration:
                                 logger.error(f"Database update traceback: {traceback.format_exc()}")
                     else:
                         logger.error(f"Failed to upload combined AV file to Supabase: {upload_result.get('error')}")
-                except Exception as e:
-                    logger.error(f"Error during combined AV file upload: {str(e)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
             else:
                 logger.error(f"Combined AV file not found or upload failed: {combined_url}")
                 # Try to find the combined AV file in export_result using a different key

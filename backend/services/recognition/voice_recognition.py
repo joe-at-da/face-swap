@@ -138,41 +138,84 @@ class VoiceRecognitionService:
         sys.path.append(str(Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))))  # Add project root
         from scripts.chunked_transcription import ChunkedTranscriber
         
-        try:
-            # Initialize the chunked transcriber with appropriate settings
-            # Use a smaller model size for better memory efficiency
-            # Get chunk size from environment variable or use default (10 minutes)
-            chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', 600))  # Default: 10 minutes
-            logger.info(f"Using audio chunk size of {chunk_size} seconds")
+        # Maximum number of retries
+        max_retries = 2
+        retry_count = 0
+        last_error = None
+        
+        # Get model size from environment variable or use default
+        # For hour-long videos, we want to balance quality and memory usage
+        # Options: tiny, base, small, medium, large
+        model_size = os.environ.get('LONG_AUDIO_MODEL_SIZE', 'base')  # Default to 'base' instead of 'tiny'
+        logger.info(f"Using model size '{model_size}' for long audio transcription")
+        
+        # Get chunk size from environment variable or use default (10 minutes)
+        chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', 600))  # Default: 10 minutes
+        logger.info(f"Using audio chunk size of {chunk_size} seconds")
+        
+        # Check if we should include chunk markers in the transcript
+        include_markers = os.environ.get('INCLUDE_CHUNK_MARKERS', '').lower() in ('true', '1', 'yes')
+        logger.info(f"Including chunk markers in transcript: {include_markers}")
+        
+        # Try transcription with retries
+        while retry_count <= max_retries:
+            try:
+                # Initialize the chunked transcriber with appropriate settings
+                transcriber = ChunkedTranscriber(model_size=model_size, chunk_size=chunk_size)
+                
+                # Transcribe the audio file
+                result = transcriber.transcribe(audio_path, output_file, include_markers=include_markers)
+                
+                # Log the result
+                if result["success"]:
+                    logger.info(f"Chunked transcription completed successfully on attempt {retry_count + 1}")
+                    if "chunks" in result:
+                        logger.info(f"Processed {len(result['chunks'])} chunks")
+                    
+                    # Verify we have actual transcript content and not just placeholder
+                    transcript = result.get("transcript", "")
+                    if isinstance(transcript, str) and len(transcript.strip()) > 50:
+                        logger.info(f"Transcript length: {len(transcript)} characters")
+                        # Check if transcript contains actual content and not just placeholder text
+                        if "[Transcription failed" not in transcript and "[No speech detected" not in transcript:
+                            return result
+                        else:
+                            logger.warning(f"Transcript contains placeholder text: {transcript[:100]}...")
+                            last_error = "Transcript contains placeholder text"
+                    else:
+                        logger.warning("Transcript is too short or empty")
+                        last_error = "Transcript is too short or empty"
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    logger.error(f"Chunked transcription failed on attempt {retry_count + 1}: {error_msg}")
+                    last_error = error_msg
+                
+                # If we got here and haven't returned, the transcription wasn't successful
+                # Try with a different model size if we're going to retry
+                if retry_count == 0 and model_size != "small":
+                    model_size = "small"  # Try with small model on first retry
+                    logger.info(f"Retrying with model size '{model_size}'")
+                elif retry_count == 1 and model_size != "base":
+                    model_size = "base"  # Try with base model on second retry
+                    logger.info(f"Retrying with model size '{model_size}'")
+                
+            except Exception as e:
+                logger.error(f"Error in chunked transcription attempt {retry_count + 1}: {str(e)}")
+                last_error = str(e)
             
-            # Check if we should include chunk markers in the transcript
-            include_markers = os.environ.get('INCLUDE_CHUNK_MARKERS', '').lower() in ('true', '1', 'yes')
-            logger.info(f"Including chunk markers in transcript: {include_markers}")
-            
-            transcriber = ChunkedTranscriber(model_size="tiny", chunk_size=chunk_size)
-            
-            # Transcribe the audio file
-            result = transcriber.transcribe(audio_path, output_file, include_markers=include_markers)
-            
-            # Log the result
-            if result["success"]:
-                logger.info(f"Chunked transcription completed successfully")
-                if "chunks" in result:
-                    logger.info(f"Processed {len(result['chunks'])} chunks")
-            else:
-                logger.error(f"Chunked transcription failed: {result.get('error', 'Unknown error')}")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in chunked transcription: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Error in chunked transcription: {str(e)}",
-                "output_file": None,
-                "message": "Transcription failed due to an error in the chunked transcription process.",
-                "transcript": "[Transcription failed due to an unexpected error]"
-            }
+            retry_count += 1
+            if retry_count <= max_retries:
+                logger.info(f"Retrying chunked transcription (attempt {retry_count + 1} of {max_retries + 1})")
+        
+        # If we get here, all retries failed
+        logger.error(f"All chunked transcription attempts failed after {max_retries + 1} tries. Last error: {last_error}")
+        return {
+            "success": False,
+            "error": f"Failed after {max_retries + 1} attempts. Last error: {last_error}",
+            "output_file": None,
+            "message": f"Transcription failed after multiple attempts. Please check the logs for details.",
+            "transcript": f"[Transcription could not be completed after {max_retries + 1} attempts. Last error: {last_error}]"
+        }
     
     def _transcribe_standard_audio(self, audio_path: str, output_file: Optional[str] = None) -> Dict:
         """
