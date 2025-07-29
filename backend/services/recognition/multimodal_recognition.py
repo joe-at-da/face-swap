@@ -536,6 +536,22 @@ class MultimodalRecognitionService:
             if not segments:
                 logger.warning("No segments found in transcription, attempting to retranscribe or use diarization data")
                 
+                # Get or create the recognition process record for this video
+                recognition_process = db.query(models.RecognitionProcess).filter(
+                    models.RecognitionProcess.video_id == video_id
+                ).first()
+                
+                if not recognition_process:
+                    logger.info(f"Creating new RecognitionProcess record for video {video_id}")
+                    recognition_process = models.RecognitionProcess(
+                        video_id=video_id,
+                        status="processing",
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+                    db.add(recognition_process)
+                    db.commit()
+                
                 # Check if we should retry transcription
                 # Use a session variable to track if we've retried transcription
                 if not getattr(recognition_process, '_transcription_retried', False):
@@ -547,6 +563,14 @@ class MultimodalRecognitionService:
                     # Retry transcription with explicit chunked approach
                     from backend.services.recognition.voice_recognition import VoiceRecognitionService
                     voice_service = VoiceRecognitionService()
+                    
+                    # Get the audio path from the video record
+                    audio_path = video.audio_path
+                    if not audio_path or not os.path.exists(audio_path):
+                        logger.error(f"Audio file not found for retry: {audio_path}")
+                        return {"success": False, "error": f"Audio file not found for retry: {audio_path}"}
+                    
+                    logger.info(f"Retrying transcription with chunked approach for audio: {audio_path}")
                     
                     # Force using chunked transcription
                     os.environ['FORCE_CHUNKED_TRANSCRIPTION'] = 'true'
