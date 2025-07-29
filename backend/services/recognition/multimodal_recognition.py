@@ -622,13 +622,21 @@ class MultimodalRecognitionService:
                             os.path.join("/app/data/temp", f"{video_id}.diarization.json")
                         ]
                         
+                        # Initialize diarization_path to None before attempting to find it
+                        diarization_path = None
+                        
                         for alt_path in alternative_paths:
                             if os.path.exists(alt_path):
                                 diarization_path = alt_path
                                 logger.info(f"Found diarization data at alternative path: {alt_path}")
                                 break
+                        
+                        # Check if diarization_path was found
+                        if diarization_path is None:
+                            logger.warning(f"No diarization data found for video {video_id} in any of the expected locations")
                 
-                if os.path.exists(diarization_path):
+                # Only proceed if diarization_path is defined and exists
+                if diarization_path is not None and os.path.exists(diarization_path):
                     try:
                         with open(diarization_path, 'r') as f:
                             diarization_data = json.load(f)
