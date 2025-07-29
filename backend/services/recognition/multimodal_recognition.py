@@ -577,6 +577,9 @@ class MultimodalRecognitionService:
                     transcription_result = voice_service.transcribe_audio(audio_path)
                     os.environ.pop('FORCE_CHUNKED_TRANSCRIPTION', None)
                     
+                    # Initialize transcript_data to ensure it's always defined
+                    transcript_data = {}
+                    
                     if transcription_result.get("success", False):
                         transcript_data = transcription_result.get("transcript", {})
                         if isinstance(transcript_data, dict) and transcript_data.get("segments"):
@@ -611,6 +614,8 @@ class MultimodalRecognitionService:
                 # If we still have no segments, try diarization data
                 if not segments:
                     logger.warning("Falling back to diarization data for segments")
+                    # Initialize segments as empty list to ensure it's always defined
+                    segments = []
                     # Look for diarization data
                     diarization_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
                     
@@ -637,6 +642,9 @@ class MultimodalRecognitionService:
                 
                 # Only proceed if diarization_path is defined and exists
                 if diarization_path is not None and os.path.exists(diarization_path):
+                    # Initialize diarization_data to ensure it's always defined
+                    diarization_data = {"segments": [], "speakers": {}}
+                    
                     try:
                         with open(diarization_path, 'r') as f:
                             diarization_data = json.load(f)
@@ -1205,8 +1213,9 @@ class MultimodalRecognitionService:
                 # Second pass: Process each segment and select the best face based on quality score
                 logger.info("Second pass: Processing segments and selecting best faces based on quality scores")
                 for segment_id, faces in segment_faces.items():
-                    if not faces:
-                        logger.warning(f"Segment {segment_id} still has no faces after all matching attempts")
+                    # Skip if no faces for this segment
+                    if not faces:  # This ensures we don't process empty face lists
+                        logger.warning(f"Segment {segment_id} has no faces after all matching attempts")
                         continue
                         
                     # Sort faces by quality score (highest first)
@@ -1215,12 +1224,13 @@ class MultimodalRecognitionService:
                     # Get the best face (highest quality score, prioritizing center-frame)
                     best_face = faces[0]
                     face_path = best_face.get("face_path")
-                    face_time = best_face.get("face_time")
-                    matching_segment = best_face.get("segment")
+                    face_time = best_face.get("face_time", 0.0)  # Default to 0.0 if not present
+                    matching_segment = best_face.get("segment", {})  # Default to empty dict if not present
                     
                     logger.info(f"Selected best face for segment {segment_id} with quality score {best_face.get('quality_score', 0):.2f}")
                     
-                    if os.path.exists(face_path):
+                    # Check if face_path is defined and exists
+                    if face_path is not None and os.path.exists(face_path):
                         # Process this high-quality face
                         logger.info(f"Processing high-quality face at {face_time:.2f}s")
                         
@@ -1234,7 +1244,7 @@ class MultimodalRecognitionService:
                         )
                         
                         if face_result["success"]:
-                            face_data = face_result["data"]
+                            face_data = face_result.get("data", {})
                             face_data["frame_path"] = face_path
                             face_data["frame_time"] = face_time
                             speaker = matching_segment.get("speaker", "unknown")
@@ -1841,7 +1851,11 @@ class MultimodalRecognitionService:
                             timestamp=frame_time, 
                             video_id=str(video_id)  # Convert to string as expected by the matcher
                         )
-                        if face_result["success"]:
+                        # Initialize face_result if it's None to avoid potential KeyError
+                        if face_result is None:
+                            face_result = {"success": False, "error": "No result returned from identify_speaker_in_frame"}
+                            
+                        if face_result.get("success", False):
                             face_data = face_result["data"]
                             face_data["frame_path"] = frame_path
                             face_data["frame_time"] = frame_time
