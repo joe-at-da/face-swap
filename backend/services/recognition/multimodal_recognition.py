@@ -518,33 +518,70 @@ class MultimodalRecognitionService:
                 
                 # Look for diarization data
                 diarization_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
+                
+                # Try alternative paths if the primary path doesn't exist
+                if not os.path.exists(diarization_path):
+                    alternative_paths = [
+                        os.path.join("/app/data/media", f"{video_id}.audio.diarization.json"),
+                        os.path.join("/app/data/media", f"{video_id}_audio.diarization.json"),
+                        os.path.join("/app/data/temp", f"{video_id}.diarization.json")
+                    ]
+                    
+                    for alt_path in alternative_paths:
+                        if os.path.exists(alt_path):
+                            diarization_path = alt_path
+                            logger.info(f"Found diarization data at alternative path: {alt_path}")
+                            break
+                
                 if os.path.exists(diarization_path):
                     try:
                         with open(diarization_path, 'r') as f:
                             diarization_data = json.load(f)
                             
+                        # Validate diarization data structure
+                        if "segments" not in diarization_data or not isinstance(diarization_data["segments"], list):
+                            logger.error(f"Invalid diarization data format: missing or invalid 'segments' field")
+                            return {"success": False, "error": "Invalid diarization data format: missing segments"}
+                        
                         # Log diarization data stats
                         diarization_segments = diarization_data.get("segments", [])
                         diarization_speakers = diarization_data.get("speakers", {})
                         logger.info(f"Loaded diarization data: {len(diarization_segments)} segments, {len(diarization_speakers)} speakers")
                         
+                        # Check for empty segments list
+                        if not diarization_segments:
+                            logger.error("Diarization data contains empty segments list")
+                            return {"success": False, "error": "Diarization data contains empty segments list"}
+                        
                         # Create segments from diarization data
                         segments = []
                         for i, seg in enumerate(diarization_segments):
-                            start_time = seg.get("start_time", 0)
-                            end_time = seg.get("end_time", 0)
-                            speaker = seg.get("speaker", "Unknown")
+                            # Handle potential missing fields with defaults
+                            start_time = seg.get("start_time", i * 60.0)  # Default to 1-minute segments if missing
+                            end_time = seg.get("end_time", (i + 1) * 60.0)
+                            speaker = seg.get("speaker", f"SPEAKER_{(i % 5) + 1}")  # Cycle through 5 default speakers
                             
-                            # Use exact timestamps from diarization data without rounding
-                            # This preserves the precise timing information needed for accurate matching
-                            start_time = float(start_time)
-                            end_time = float(end_time)
+                            # Validate timestamps
+                            try:
+                                start_time = float(start_time)
+                                end_time = float(end_time)
+                                
+                                # Ensure end time is greater than start time
+                                if end_time <= start_time:
+                                    logger.error(f"Invalid segment timing: start={start_time}, end={end_time}")
+                                    return {"success": False, "error": f"Invalid segment timing in diarization data: start={start_time}, end={end_time}"}
+                                
+                                # Log warning for unusually long segments but don't modify them
+                                if end_time - start_time > 1800:
+                                    logger.warning(f"Unusually long segment detected: {end_time - start_time} seconds")
+                            except (ValueError, TypeError) as e:
+                                logger.error(f"Invalid timestamp in segment {i}: {e}")
+                                return {"success": False, "error": f"Invalid timestamp in diarization segment {i}: {e}"}
                             
                             # Create a segment with required fields
-                            # Use a string ID that includes start and end times to preserve diarization boundaries
                             segment_id = f"{start_time}-{end_time}"
                             segment = {
-                                "id": segment_id,  # Use string ID with start-end format to preserve boundaries
+                                "id": segment_id,
                                 "seek": start_time,
                                 "start": start_time,
                                 "end": end_time,
@@ -565,10 +602,10 @@ class MultimodalRecognitionService:
                             logger.info(f"Created {len(segments)} segments from diarization data")
                         else:
                             logger.error("Failed to create segments from diarization data")
-                            return {"success": False, "error": "No segments found in transcription and failed to create from diarization"}
+                            return {"success": False, "error": "No segments could be created from diarization data"}
                     except Exception as e:
                         logger.error(f"Error creating segments from diarization data: {str(e)}")
-                        return {"success": False, "error": f"No segments found in transcription and error creating from diarization: {str(e)}"}
+                        return {"success": False, "error": f"Error creating segments from diarization data: {str(e)}"}
                 else:
                     logger.error(f"No segments found in transcription and no diarization data at {diarization_path}")
                     return {"success": False, "error": "No segments found in transcription and no diarization data available"}
