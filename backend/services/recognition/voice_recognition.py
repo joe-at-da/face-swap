@@ -34,7 +34,7 @@ class VoiceRecognitionService:
         
     def transcribe_audio(self, audio_path: str, output_file: Optional[str] = None) -> Dict:
         """
-        Transcribe audio file using Whisper.
+        Transcribe an audio file using the appropriate method based on its duration.
         
         Args:
             audio_path: Path to the audio file
@@ -43,8 +43,6 @@ class VoiceRecognitionService:
         Returns:
             Dict with transcription results
         """
-        logger.info(f"Transcribing audio: {audio_path}")
-        
         # Check if audio file exists
         if not os.path.exists(audio_path):
             error_msg = f"Audio file not found: {audio_path}"
@@ -57,36 +55,13 @@ class VoiceRecognitionService:
                 "transcript": "No audio file available for transcription."
             }
         
-        # Check if the audio file has content (size > 0)
-        audio_size = os.path.getsize(audio_path)
-        logger.info(f"Audio file size: {audio_size} bytes")
-        if audio_size == 0:
-            error_msg = f"Audio file is empty (0 bytes): {audio_path}"
-            logger.error(error_msg)
-            return {
-                "success": False,
-                "error": error_msg,
-                "output_file": None,
-                "message": "Audio file is empty. Please check the audio extraction process.",
-                "transcript": "Empty audio file cannot be transcribed."
-            }
-        
-        # Validate audio file with ffprobe to ensure it's a valid audio file
+        # Get audio duration
         try:
-            ffprobe_cmd = [
-                "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "json",
-                audio_path
-            ]
-            result = subprocess.run(ffprobe_cmd, capture_output=True, text=True, check=True)
-            audio_info = json.loads(result.stdout)
-            duration = float(audio_info.get('format', {}).get('duration', 0))
+            duration = self._get_audio_duration(audio_path)
             logger.info(f"Audio duration: {duration} seconds")
             
             if duration <= 0:
-                error_msg = f"Audio file has invalid duration: {duration} seconds"
+                error_msg = f"Invalid audio duration: {duration} seconds"
                 logger.error(error_msg)
                 return {
                     "success": False,
@@ -95,27 +70,31 @@ class VoiceRecognitionService:
                     "message": "Audio file has invalid duration. Please check the audio extraction process.",
                     "transcript": "Invalid audio file cannot be transcribed."
                 }
-                
-            # Check if this is a long audio file (over the threshold)
-            # For long files, use the chunked transcription approach to avoid memory issues
-            # Get threshold from environment variable or use default (30 minutes)
-            long_audio_threshold = int(os.environ.get('LONG_AUDIO_THRESHOLD_SECONDS', 1800))  # Default: 30 minutes
-            logger.info(f"Long audio threshold set to {long_audio_threshold} seconds")
-            
-            if duration > long_audio_threshold:
-                logger.info(f"Long audio file detected ({duration} seconds). Using chunked transcription approach.")
-                return self._transcribe_long_audio(audio_path, output_file, duration)
-                
-        except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
-            error_msg = f"Failed to validate audio file: {str(e)}"
+        except Exception as e:
+            error_msg = f"Error getting audio duration: {str(e)}"
             logger.error(error_msg)
             return {
                 "success": False,
                 "error": error_msg,
                 "output_file": None,
-                "message": "Failed to validate audio file. Please check the audio extraction process.",
-                "transcript": "Invalid audio file cannot be transcribed."
+                "message": "Failed to get audio duration. Please check the audio file.",
+                "transcript": "Audio file cannot be processed."
             }
+        
+        # Get threshold for long audio from environment variable or use default (30 minutes)
+        long_audio_threshold = int(os.environ.get('LONG_AUDIO_THRESHOLD_SECONDS', 1800))  # Default: 30 minutes
+        logger.info(f"Long audio threshold: {long_audio_threshold} seconds")
+        
+        # Check if we should force chunked transcription
+        force_chunked = os.environ.get('FORCE_CHUNKED_TRANSCRIPTION', '').lower() in ('true', '1', 'yes')
+        if force_chunked:
+            logger.info("Forcing chunked transcription approach regardless of duration")
+            return self._transcribe_long_audio(audio_path, output_file, duration)
+        
+        # Choose transcription method based on duration
+        if duration > long_audio_threshold:
+            logger.info(f"Long audio file detected ({duration} seconds). Using chunked transcription approach.")
+            return self._transcribe_long_audio(audio_path, output_file, duration)
         
         # For regular-length audio files, use the standard approach
         return self._transcribe_standard_audio(audio_path, output_file)
@@ -130,7 +109,7 @@ class VoiceRecognitionService:
             duration: Duration of the audio file in seconds
             
         Returns:
-            Dict with transcription results
+            Dict with transcription results formatted with segments
         """
         logger.info(f"Using chunked transcription for long audio file: {audio_path} ({duration} seconds)")
         
@@ -178,7 +157,19 @@ class VoiceRecognitionService:
                         logger.info(f"Transcript length: {len(transcript)} characters")
                         # Check if transcript contains actual content and not just placeholder text
                         if "[Transcription failed" not in transcript and "[No speech detected" not in transcript:
-                            return result
+                            # Convert the chunked transcript into segments format that multimodal recognition expects
+                            segments = self._convert_chunked_transcript_to_segments(result)
+                            
+                            # Return the result with segments
+                            return {
+                                "success": True,
+                                "output_file": result.get("output_file"),
+                                "transcript": {
+                                    "segments": segments,
+                                    "text": transcript
+                                },
+                                "message": f"Successfully transcribed audio with {len(segments)} segments"
+                            }
                         else:
                             logger.warning(f"Transcript contains placeholder text: {transcript[:100]}...")
                             last_error = "Transcript contains placeholder text"
@@ -216,6 +207,175 @@ class VoiceRecognitionService:
             "message": f"Transcription failed after multiple attempts. Please check the logs for details.",
             "transcript": f"[Transcription could not be completed after {max_retries + 1} attempts. Last error: {last_error}]"
         }
+    
+    def _convert_chunked_transcript_to_segments(self, chunked_result: Dict) -> List[Dict]:
+        """
+        Convert a chunked transcript into segments format that multimodal recognition expects.
+        Preserves speaker turn information for proper speech group assignment.
+        
+        Args:
+            chunked_result: Result from the chunked transcriber
+            
+        Returns:
+            List of segments in the format expected by multimodal recognition
+        """
+        segments = []
+        chunk_results = chunked_result.get("chunks", [])
+        
+        if not chunk_results:
+            # If no chunks are available, create a single segment from the transcript
+            transcript = chunked_result.get("transcript", "")
+            if transcript:
+                segments.append({
+                    "id": "0",
+                    "seek": 0,
+                    "start": 0,
+                    "end": chunked_result.get("duration", 0),
+                    "text": transcript,
+                    "tokens": [],
+                    "temperature": 0.0,
+                    "avg_logprob": -0.5,
+                    "compression_ratio": 1.0,
+                    "no_speech_prob": 0.1,
+                    "speaker": "SPEAKER_0",  # Add a default speaker
+                    "speech_group_marker": "speech_group_0"  # Add a speech group marker
+                })
+            return segments
+        
+        # Process each chunk to create segments and identify potential speaker turns
+        # We'll use a simple heuristic to split by sentences and identify potential speaker changes
+        current_speaker = "SPEAKER_0"
+        speech_group_counter = 0
+        
+        for i, chunk in enumerate(chunk_results):
+            # Extract start and end times
+            start_time = chunk.get("start_time", i * 600)  # Default to 10-minute chunks
+            end_time = chunk.get("end_time", (i + 1) * 600)
+            transcript = chunk.get("transcript", "")
+            
+            # Skip empty transcripts
+            if not transcript.strip():
+                continue
+            
+            # Split transcript into sentences to better identify speaker turns
+            # This is a simple approximation - in a real system, we'd use a more sophisticated approach
+            import re
+            sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
+            
+            # Group sentences into potential speaker turns
+            # Look for speaker indicators like "Speaker:" or "MP:" or dialog markers
+            current_turn_text = ""
+            current_turn_start = start_time
+            
+            for j, sentence in enumerate(sentences):
+                # Skip empty sentences
+                if not sentence.strip():
+                    continue
+                    
+                # Calculate approximate time for this sentence
+                sentence_duration = (end_time - start_time) * (len(sentence) / len(transcript))
+                sentence_start = start_time + (end_time - start_time) * (sum(len(s) for s in sentences[:j]) / len(transcript))
+                sentence_end = sentence_start + sentence_duration
+                
+                # Check for potential speaker change indicators
+                speaker_change = False
+                
+                # Look for dialog markers or speaker prefixes
+                if re.search(r'^[A-Z][a-z]+:', sentence) or sentence.startswith("-") or sentence.startswith("—"):
+                    speaker_change = True
+                    # Extract potential speaker name
+                    speaker_match = re.match(r'^([A-Z][a-z]+):', sentence)
+                    if speaker_match:
+                        current_speaker = f"SPEAKER_{speaker_match.group(1)}"
+                    else:
+                        # Increment speaker counter for dialog markers
+                        current_speaker = f"SPEAKER_{speech_group_counter}"
+                
+                # If we detect a speaker change or this is the first sentence, start a new turn
+                if speaker_change or not current_turn_text:
+                    # If we have accumulated text, create a segment for the previous turn
+                    if current_turn_text:
+                        segment_id = f"{current_turn_start}-{sentence_start}"
+                        segment = {
+                            "id": segment_id,
+                            "seek": current_turn_start,
+                            "start": current_turn_start,
+                            "end": sentence_start,
+                            "text": current_turn_text,
+                            "tokens": [],
+                            "temperature": 0.0,
+                            "avg_logprob": -0.5,
+                            "compression_ratio": 1.0,
+                            "no_speech_prob": 0.1,
+                            "speaker": current_speaker,
+                            "speech_group_marker": f"speech_group_{speech_group_counter}"
+                        }
+                        segments.append(segment)
+                        speech_group_counter += 1
+                    
+                    # Start a new turn
+                    current_turn_text = sentence
+                    current_turn_start = sentence_start
+                else:
+                    # Continue current turn
+                    current_turn_text += " " + sentence
+            
+            # Add the last turn if there's any text
+            if current_turn_text:
+                segment_id = f"{current_turn_start}-{end_time}"
+                segment = {
+                    "id": segment_id,
+                    "seek": current_turn_start,
+                    "start": current_turn_start,
+                    "end": end_time,
+                    "text": current_turn_text,
+                    "tokens": [],
+                    "temperature": 0.0,
+                    "avg_logprob": -0.5,
+                    "compression_ratio": 1.0,
+                    "no_speech_prob": 0.1,
+                    "speaker": current_speaker,
+                    "speech_group_marker": f"speech_group_{speech_group_counter}"
+                }
+                segments.append(segment)
+                speech_group_counter += 1
+        
+        logger.info(f"Converted chunked transcript to {len(segments)} segments with speech group markers")
+        return segments
+    
+    def _get_audio_duration(self, audio_path: str) -> float:
+        """
+        Get the duration of an audio file in seconds.
+        
+        Args:
+            audio_path: Path to the audio file
+            
+        Returns:
+            Duration in seconds
+        """
+        try:
+            import subprocess
+            import json
+            
+            # Use ffprobe to get duration
+            cmd = [
+                'ffprobe', 
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'json',
+                audio_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            duration = float(data['format']['duration'])
+            
+            logger.info(f"Audio duration: {duration} seconds")
+            return duration
+        except Exception as e:
+            logger.error(f"Error getting audio duration: {str(e)}")
+            # Return a default duration if we can't determine it
+            return 0.0
     
     def _transcribe_standard_audio(self, audio_path: str, output_file: Optional[str] = None) -> Dict:
         """

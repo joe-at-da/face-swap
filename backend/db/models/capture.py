@@ -45,6 +45,7 @@ class CaptureSession(Base):
     transcription_error = Column(Text, nullable=True)  # Error message if transcription failed
     transcription_completed_at = Column(DateTime(timezone=True), nullable=True)  # When transcription process completed
     transcription_results = Column(Text, nullable=True)  # JSON string with transcription results
+    # Note: We use a session-level attribute '_transcription_retried' instead of a database column
     
     # Use capture_metadata as the attribute name to avoid conflict with SQLAlchemy's metadata
     # This maps to the 'metadata' column in the database

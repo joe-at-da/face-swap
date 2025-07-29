@@ -158,6 +158,7 @@ class MultimodalRecognitionService:
                 voice_service = VoiceRecognitionService()
                 
                 # Transcribe the audio
+                logger.info(f"Starting transcription for audio: {audio_path}")
                 transcription_result = voice_service.transcribe_audio(audio_path)
                 if not transcription_result.get("success", False):
                     error_msg = f"Transcription failed: {transcription_result.get('error', 'Unknown error')}"
@@ -173,8 +174,16 @@ class MultimodalRecognitionService:
                     db.commit()
                     return {"success": False, "error": error_msg}
                 
+                # Log the transcription result structure
+                transcript_data = transcription_result.get("transcript", {})
+                if isinstance(transcript_data, dict):
+                    segments_count = len(transcript_data.get("segments", []))
+                    logger.info(f"Received transcription with {segments_count} segments")
+                else:
+                    logger.warning(f"Unexpected transcript data type: {type(transcript_data)}")
+                
                 # Save transcription results
-                video.transcription_results = json.dumps(transcription_result.get("transcript", {}))
+                video.transcription_results = json.dumps(transcript_data)
                 db.commit()
                 
                 # Identify speakers in the audio
@@ -503,10 +512,21 @@ class MultimodalRecognitionService:
             
             # Check if we have any segments with speakers
             has_speakers = False
+            has_speech_group_markers = False
+            
             for segment in segments:
                 if "speaker" in segment and segment["speaker"] != "Unknown":
                     has_speakers = True
-                    break
+                
+                # Check if segments have speech_group_marker field from chunked transcription
+                if "speech_group_marker" in segment:
+                    has_speech_group_markers = True
+                    # Use these markers to set speech_group_id for consistent speaker attribution
+                    segment["speech_group_id"] = segment["speech_group_marker"]
+            
+            if has_speech_group_markers:
+                logger.info("Found speech group markers in segments from chunked transcription")
+                # These will be used for proper speaker turn grouping
             
             # Update the video with the processed transcription
             video.transcription_results = json.dumps(transcription)
@@ -514,24 +534,75 @@ class MultimodalRecognitionService:
             
             # If there are no segments, try to create them from diarization data
             if not segments:
-                logger.warning("No segments found in transcription, attempting to use diarization data")
+                logger.warning("No segments found in transcription, attempting to retranscribe or use diarization data")
                 
-                # Look for diarization data
-                diarization_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
-                
-                # Try alternative paths if the primary path doesn't exist
-                if not os.path.exists(diarization_path):
-                    alternative_paths = [
-                        os.path.join("/app/data/media", f"{video_id}.audio.diarization.json"),
-                        os.path.join("/app/data/media", f"{video_id}_audio.diarization.json"),
-                        os.path.join("/app/data/temp", f"{video_id}.diarization.json")
-                    ]
+                # Check if we should retry transcription
+                # Use a session variable to track if we've retried transcription
+                if not getattr(recognition_process, '_transcription_retried', False):
+                    logger.info("Attempting to retranscribe the audio with chunked approach")
                     
-                    for alt_path in alternative_paths:
-                        if os.path.exists(alt_path):
-                            diarization_path = alt_path
-                            logger.info(f"Found diarization data at alternative path: {alt_path}")
-                            break
+                    # Mark that we've retried transcription using a session attribute
+                    recognition_process._transcription_retried = True
+                    
+                    # Retry transcription with explicit chunked approach
+                    from backend.services.recognition.voice_recognition import VoiceRecognitionService
+                    voice_service = VoiceRecognitionService()
+                    
+                    # Force using chunked transcription
+                    os.environ['FORCE_CHUNKED_TRANSCRIPTION'] = 'true'
+                    transcription_result = voice_service.transcribe_audio(audio_path)
+                    os.environ.pop('FORCE_CHUNKED_TRANSCRIPTION', None)
+                    
+                    if transcription_result.get("success", False):
+                        transcript_data = transcription_result.get("transcript", {})
+                        if isinstance(transcript_data, dict) and transcript_data.get("segments"):
+                            segments_count = len(transcript_data.get("segments", []))
+                            logger.info(f"Retry successful! Received transcription with {segments_count} segments")
+                            
+                            # Save the new transcription results
+                            video.transcription_results = json.dumps(transcript_data)
+                            db.commit()
+                            
+                            # Reload segments from the new transcription
+                            try:
+                                transcription = json.loads(video.transcription_results)
+                                segments = transcription.get("segments", [])
+                                logger.info(f"Loaded {len(segments)} segments from retry transcription")
+                                
+                                # If we have segments now, don't proceed to diarization fallback
+                                if segments:
+                                    logger.info("Using segments from retry transcription instead of diarization fallback")
+                                    # Update the video with the processed transcription
+                                    video.transcription_results = json.dumps(transcription)
+                                    db.commit()
+                                    # Skip the diarization fallback
+                                    # Fall through to continue processing with the new segments
+                                else:
+                                    logger.warning("Retry transcription still produced no segments")
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.error(f"Failed to load retry transcription results: {str(e)}")
+                    else:
+                        logger.warning(f"Retry transcription failed: {transcription_result.get('error', 'Unknown error')}")
+                
+                # If we still have no segments, try diarization data
+                if not segments:
+                    logger.warning("Falling back to diarization data for segments")
+                    # Look for diarization data
+                    diarization_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
+                    
+                    # Try alternative paths if the primary path doesn't exist
+                    if not os.path.exists(diarization_path):
+                        alternative_paths = [
+                            os.path.join("/app/data/media", f"{video_id}.audio.diarization.json"),
+                            os.path.join("/app/data/media", f"{video_id}_audio.diarization.json"),
+                            os.path.join("/app/data/temp", f"{video_id}.diarization.json")
+                        ]
+                        
+                        for alt_path in alternative_paths:
+                            if os.path.exists(alt_path):
+                                diarization_path = alt_path
+                                logger.info(f"Found diarization data at alternative path: {alt_path}")
+                                break
                 
                 if os.path.exists(diarization_path):
                     try:
