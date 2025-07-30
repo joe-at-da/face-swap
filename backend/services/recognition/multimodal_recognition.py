@@ -325,6 +325,7 @@ class MultimodalRecognitionService:
         speaker_to_face_profile = {}
         segments = []
         correlations = []
+        diarization_path = None  # Initialize diarization_path to prevent UnboundLocalError
 
         try:
             logger.info(f"Processing video with transcription: {video_id}")
