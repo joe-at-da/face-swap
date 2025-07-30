@@ -644,8 +644,13 @@ class MultimodalRecognitionService:
                         if diarization_path is None:
                             logger.warning(f"No diarization data found for video {video_id} in any of the expected locations")
                 
-                # Only proceed if diarization_path is defined and exists
-                if diarization_path is not None and os.path.exists(diarization_path):
+                # Check if we already have segments from retry transcription
+                if segments:
+                    # We already have segments from retry transcription, skip diarization processing
+                    logger.info(f"Using {len(segments)} segments from retry transcription, skipping diarization processing")
+                    # Continue to face recognition with these segments
+                # If no segments yet but diarization_path is available, process diarization data
+                elif diarization_path is not None and os.path.exists(diarization_path):
                     # Initialize diarization_data to ensure it's always defined
                     diarization_data = {"segments": [], "speakers": {}}
                     
@@ -722,7 +727,7 @@ class MultimodalRecognitionService:
                         logger.error(f"Error creating segments from diarization data: {str(e)}")
                         return {"success": False, "error": f"Error creating segments from diarization data: {str(e)}"}
                 else:
-                    # Safe error message that doesn't reference potentially undefined diarization_path
+                    # No segments and no diarization data
                     logger.error(f"No segments found in transcription and no valid diarization data found for video {video_id}")
                     return {"success": False, "error": "No segments found in transcription and no diarization data available"}
             
