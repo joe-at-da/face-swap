@@ -186,14 +186,21 @@ class ParliamentClipsIntegrationService:
             sample_event = speaker_events[0]
             logger.info(f"Sample speaker event: {json.dumps(sample_event, indent=2)}")
         
-        # We'll temporarily assign a placeholder speech group ID to each clip
-        # Later, we'll run the update_speech_groups.py script to properly group by diarization data
-        speech_group_id = f"temp_speech_group_{video_id}"
+        # Check if events have diarization data
+        has_diarization = any(event.get("recognition_method") == "diarization" for event in speaker_events)
+        logger.info(f"Events contain diarization data: {has_diarization}")
+        
+        # For diarization-based events, we'll use the speaker's turn index as part of the speech group ID
+        # This preserves the original diarization-driven segmentation
+        # Later, we'll run the update_speech_groups.py script to properly group by temporal proximity
         
         # Sort events by start time for consistent processing
         sorted_events = sorted(speaker_events, key=lambda x: x.get("start_time", 0))
         
-        logger.info(f"Will save {len(sorted_events)} events with temporary speech group IDs")
+        # Create a mapping of speaker to turn index to preserve diarization segmentation
+        speaker_turn_indices = {}
+        
+        logger.info(f"Will save {len(sorted_events)} events as individual clips with original timestamps")
         logger.info(f"Speech groups will be updated using diarization data after saving clips")
         
         for event in sorted_events:
@@ -233,6 +240,23 @@ class ParliamentClipsIntegrationService:
                 errors.append(f"Video path does not exist: {video_path}")
                 continue
             
+            # Generate a speech group ID based on speaker and turn index
+            speaker_id = str(member_id)
+            if speaker_id not in speaker_turn_indices:
+                speaker_turn_indices[speaker_id] = 0
+            else:
+                speaker_turn_indices[speaker_id] += 1
+                
+            # Use diarization-based speech group ID if available, otherwise use temporary ID
+            if event.get("recognition_method") == "diarization" and "speech_group_id" in event:
+                # Use the speech_group_id from diarization data
+                speech_group_id = f"diarization_group_{video_id}_{event.get('speech_group_id')}"
+            else:
+                # Create a speech group ID based on video ID and speaker turn index
+                speech_group_id = f"speech_group_{video_id}_{speaker_id}_{speaker_turn_indices[speaker_id]}"
+            
+            logger.info(f"Using speech group ID: {speech_group_id} for event at {start_time}-{end_time}")
+            
             # Create clip data for parliament_clips table
             clip_data = {
                 'member_id': member_id,
@@ -250,7 +274,9 @@ class ParliamentClipsIntegrationService:
                     'video_id': video_id,
                     'face_image_url': event.get("face_image_url", ""),
                     'matched_by': event.get("matched_by", "unknown"),
-                    'recognition_method': event.get("recognition_method", "multimodal")
+                    'recognition_method': event.get("recognition_method", "multimodal"),
+                    'original_start_time': start_time,
+                    'original_end_time': end_time
                 })
             }
             

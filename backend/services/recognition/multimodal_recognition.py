@@ -6,6 +6,7 @@ by combining evidence from both modalities.
 """
 
 import os
+import sys
 import json
 import time
 import math
@@ -17,13 +18,15 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 
-from backend.db import models
-from backend.db.session import get_db
-from backend.services.recognition.facial_recognition import FacialRecognitionService
-from backend.services.recognition.face_profile_service import FaceProfileService
-from backend.services.recognition.timeline_service import TimelineService
-from backend.services.recognition.member_matcher import ParliamentMemberMatcher
+from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+
+from backend.services.recognition.voice_recognition import VoiceRecognitionService
+from backend.services.recognition.face_recognition import FaceRecognitionService
+from backend.services.recognition.parliament_member_matcher import ParliamentMemberMatcher
+from backend.services.recognition.timeline_combiner import combine_recognition_and_transcription
 from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+from backend.services.recognition.sentence_segmentation import merge_incomplete_sentences
+from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
 from backend.services.utils import make_json_serializable
 
 # Set up logging
@@ -705,16 +708,48 @@ class MultimodalRecognitionService:
                                 "seek": start_time,
                                 "start": start_time,
                                 "end": end_time,
-                                "text": f"Speech segment {i+1}",  # Placeholder text
+                                "text": f"Speech segment from {speaker}",  # Default placeholder text (will be replaced if transcript is found)
                                 "tokens": [],
                                 "temperature": 0.0,
                                 "avg_logprob": -0.5,
                                 "compression_ratio": 1.0,
                                 "no_speech_prob": 0.1,
                                 "speaker": speaker,
-                                "diarization_segment": True  # Flag to indicate this is a diarization segment
+                                "diarization_segment": True,  # Flag to indicate this is a diarization segment
+                                "start_time": start_time,  # Add start_time for transcript matcher
+                                "end_time": end_time  # Add end_time for transcript matcher
                             }
                             segments.append(segment)
+                        
+                        # Try to match transcripts with diarization segments
+                        if segments:
+                            try:
+                                # Define the transcript directory
+                                transcript_dir = os.path.join("/app/data/temp/audio_extracts")
+                                
+                                # Check if transcript directory exists
+                                if os.path.exists(transcript_dir):
+                                    logger.info(f"Attempting to match transcripts from {transcript_dir} with {len(segments)} diarization segments")
+                                    
+                                    # Match transcripts to diarization segments
+                                    segments = match_transcripts_to_diarization_segments(segments, transcript_dir)
+                                    
+                                    # Count segments with real transcripts vs. placeholders
+                                    placeholder_count = 0
+                                    for segment in segments:
+                                        if segment['text'].startswith("Speech segment from"):
+                                            placeholder_count += 1
+                                    
+                                    if placeholder_count > 0:
+                                        logger.warning(f"{placeholder_count} out of {len(segments)} segments ({placeholder_count/len(segments)*100:.1f}%) still have placeholder transcripts")
+                                    else:
+                                        logger.info("Successfully matched all segments with transcript text")
+                                else:
+                                    logger.warning(f"Transcript directory not found: {transcript_dir}")
+                            except Exception as e:
+                                logger.error(f"Error matching transcripts with diarization segments: {str(e)}")
+                                # Continue with placeholder transcripts if matching fails
+                                logger.warning("Continuing with placeholder transcripts due to matching error")
                         
                         # Update transcription with segments
                         if segments:
