@@ -616,19 +616,22 @@ class MultimodalRecognitionService:
                     logger.warning("Falling back to diarization data for segments")
                     # Initialize segments as empty list to ensure it's always defined
                     segments = []
+                    # Initialize diarization_path to None to prevent UnboundLocalError
+                    diarization_path = None
                     # Look for diarization data
-                    diarization_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
+                    primary_path = os.path.join("/app/data/media", f"{video_id}.diarization.json")
+                    if os.path.exists(primary_path):
+                        diarization_path = primary_path
                     
-                    # Try alternative paths if the primary path doesn't exist
-                    if not os.path.exists(diarization_path):
+                    # Try alternative paths if the primary path doesn't exist or diarization_path is still None
+                    if diarization_path is None or not os.path.exists(diarization_path):
                         alternative_paths = [
                             os.path.join("/app/data/media", f"{video_id}.audio.diarization.json"),
                             os.path.join("/app/data/media", f"{video_id}_audio.diarization.json"),
                             os.path.join("/app/data/temp", f"{video_id}.diarization.json")
                         ]
                         
-                        # Initialize diarization_path to None before attempting to find it
-                        diarization_path = None
+                        # diarization_path is already initialized to None above
                         
                         for alt_path in alternative_paths:
                             if os.path.exists(alt_path):
@@ -718,7 +721,8 @@ class MultimodalRecognitionService:
                         logger.error(f"Error creating segments from diarization data: {str(e)}")
                         return {"success": False, "error": f"Error creating segments from diarization data: {str(e)}"}
                 else:
-                    logger.error(f"No segments found in transcription and no diarization data at {diarization_path}")
+                    # Safe error message that doesn't reference potentially undefined diarization_path
+                    logger.error(f"No segments found in transcription and no valid diarization data found for video {video_id}")
                     return {"success": False, "error": "No segments found in transcription and no diarization data available"}
             
             # Create output directory for frames
