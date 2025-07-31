@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from backend.core.config import settings
-from backend.core.recognition_config import AudioConfig, DiarizationConfig
+from backend.core.recognition_config import AudioConfig, DiarizationConfig, TimeoutConfig
 from backend.services.utils import make_json_serializable
 
 # Set up logging
