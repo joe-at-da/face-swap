@@ -58,6 +58,7 @@ X-API-Key: 8448700525
   "url": "https://parliamentlive.tv/event/index/97c409d6-cd51-4596-9921-96e0bfeb7677",
   "title": "Session Title",
   "description": "Session Description",
+  "debug": false,
   "duration": 7200
 }
 ```

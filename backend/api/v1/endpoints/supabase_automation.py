@@ -42,6 +42,7 @@ async def process_parliament_tv_to_supabase(
     title: str = Body(..., description="Title for the capture session"),
     description: str = Body(None, description="Description for the capture session"),
     duration: int = Body(7200, description="Duration to capture in seconds (default: 2 hours)"),
+    debug: bool = Body(False, description="Enable debug/test mode with shorter durations for testing"),
     db: Session = Depends(get_db)
 ):
     """
@@ -60,6 +61,7 @@ async def process_parliament_tv_to_supabase(
         title: Title for the capture session
         description: Description for the capture session
         duration: Duration to capture in seconds (default: 2 hours)
+        debug: Enable debug/test mode with shorter durations for testing (default: False)
         
     Returns:
         Status information about the initiated process
@@ -69,6 +71,13 @@ async def process_parliament_tv_to_supabase(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Supabase integration is not enabled"
         )
+    
+    # Set TEST_MODE environment variable based on debug parameter
+    if debug:
+        os.environ["TEST_MODE"] = "true"
+        logger.info("Debug mode enabled: Using shorter durations for testing")
+    else:
+        os.environ["TEST_MODE"] = "false"
     
     logger.info(f"Starting unified Parliament TV processing for URL: {url}")
     

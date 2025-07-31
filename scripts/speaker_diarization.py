@@ -23,6 +23,22 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 
+# Add parent directory to path to import local modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import AudioConfig, DiarizationConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class AudioConfig:
+        DEFAULT_AUDIO_DURATION = 30
+        DEFAULT_CHUNK_SIZE = 60
+    
+    class DiarizationConfig:
+        DEFAULT_MODEL = "base"
+        MAX_SPEAKER_GAP = 1.0
+
 # We no longer need voice profile manager since we only care about voice changes
 VOICE_PROFILE_MANAGER_AVAILABLE = False
 
@@ -94,7 +110,7 @@ class SpeakerDiarizer:
             logger.info(f"Audio duration: {audio_duration} seconds")
         except Exception as e:
             logger.error(f"Error getting audio duration: {e}")
-            audio_duration = 600  # Default to 10 minutes
+            audio_duration = AudioConfig.DEFAULT_AUDIO_DURATION  # Use centralized config
         
         # Maximum gap between segments from same speaker to still be considered same speech group
         # We only care about speaker changes, not pauses
@@ -908,10 +924,10 @@ class SpeakerDiarizer:
                 return duration
             else:
                 logger.warning(f"Failed to get audio duration: {result.stderr}")
-                return 600  # Default to 10 minutes
+                return AudioConfig.DEFAULT_AUDIO_DURATION  # Use centralized config
         except Exception as e:
             logger.error(f"Error getting audio duration with ffprobe: {e}")
-            return 600  # Default to 10 minutes
+            return AudioConfig.DEFAULT_AUDIO_DURATION  # Use centralized config
     
     def _basic_speaker_identification(self, diarization_results: Dict) -> Dict:
         """
@@ -1002,7 +1018,7 @@ def main():
     parser.add_argument("--model", default="base", choices=["tiny", "base", "small", "medium", "large"],
                         help="Model size to use for diarization")
     parser.add_argument("--force", action="store_true", help="Force reprocessing even if output file exists")
-    parser.add_argument("--chunk-size", type=int, default=3600, help="Maximum chunk size in seconds for long audio files")
+    parser.add_argument("--chunk-size", type=int, default=AudioConfig.DEFAULT_CHUNK_SIZE, help="Maximum chunk size in seconds for long audio files")
     parser.add_argument("--debug", "-d", action="store_true", help="Enable debug mode with extra logging")
     parser.add_argument("--update-db", action="store_true", help="Update the voice database")
     args = parser.parse_args()

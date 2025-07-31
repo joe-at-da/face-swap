@@ -12,9 +12,24 @@ import json
 import time
 import logging
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple, Union
-from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional, Union, Any
 from collections import defaultdict, Counter
+from datetime import datetime, timedelta
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import MemberMatcherConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class MemberMatcherConfig:
+        MIN_CONFIDENCE_THRESHOLD = 0.5
+        MIN_CONFIDENCE_GAP = 0.15
+        COOLDOWN_PERIOD = 60
+        MAX_CONSECUTIVE_MATCHES = 3
+        DIVERSITY_BOOST_FACTOR = 0.05
+        MAX_VALID_SIMILARITY = 1.05
+        MIN_VALID_SIMILARITY = -1.05
+        SIMILARITY_ANOMALY_THRESHOLD = 3.0
 
 # Import database functions and embedding utilities
 from backend.services.recognition.member_matching.database import load_members_from_supabase
@@ -59,14 +74,14 @@ class ParliamentMemberMatcher:
         self.mp_encodings_file = os.path.join(self.data_dir, 'mp_encodings.json')
         self.uuid_to_member_id_file = os.path.join(photos_dir, 'uuid_to_member_id.json')
         
-        # Matching parameters
-        self.min_confidence_threshold = 0.5
-        self.min_confidence_gap = 0.15  # Minimum gap between top match and second match
+        # Matching parameters from centralized configuration
+        self.min_confidence_threshold = MemberMatcherConfig.MIN_CONFIDENCE_THRESHOLD
+        self.min_confidence_gap = MemberMatcherConfig.MIN_CONFIDENCE_GAP  # Minimum gap between top match and second match
         
-        # Diversity promotion parameters
-        self.cooldown_period = 60  # seconds
-        self.max_consecutive_matches = 3
-        self.diversity_boost_factor = 0.05
+        # Diversity promotion parameters from centralized configuration
+        self.cooldown_period = MemberMatcherConfig.COOLDOWN_PERIOD  # seconds
+        self.max_consecutive_matches = MemberMatcherConfig.MAX_CONSECUTIVE_MATCHES
+        self.diversity_boost_factor = MemberMatcherConfig.DIVERSITY_BOOST_FACTOR
         
         # Match history for diversity promotion
         self.match_history = {}
@@ -74,10 +89,10 @@ class ParliamentMemberMatcher:
         self.consecutive_matches = {}
         self.video_match_counts = defaultdict(Counter)
         
-        # Statistical validation parameters
-        self.max_valid_similarity = 1.05  # Slightly above 1.0 to allow for floating point errors
-        self.min_valid_similarity = -1.05  # Slightly below -1.0 to allow for floating point errors
-        self.similarity_anomaly_threshold = 3.0  # Standard deviations from mean
+        # Statistical validation parameters from centralized configuration
+        self.max_valid_similarity = MemberMatcherConfig.MAX_VALID_SIMILARITY  # Slightly above 1.0 to allow for floating point errors
+        self.min_valid_similarity = MemberMatcherConfig.MIN_VALID_SIMILARITY  # Slightly below -1.0 to allow for floating point errors
+        self.similarity_anomaly_threshold = MemberMatcherConfig.SIMILARITY_ANOMALY_THRESHOLD  # Standard deviations from mean
     
     def load_parliament_members(self) -> bool:
         """Load parliament members and their embeddings."""

@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from backend.core.config import settings
+from backend.core.recognition_config import AudioConfig, DiarizationConfig
 from backend.services.utils import make_json_serializable
 
 # Set up logging
@@ -59,7 +60,6 @@ class VoiceRecognitionService:
         try:
             duration = self._get_audio_duration(audio_path)
             logger.info(f"Audio duration: {duration} seconds")
-            
             if duration <= 0:
                 error_msg = f"Invalid audio duration: {duration} seconds"
                 logger.error(error_msg)
@@ -81,12 +81,15 @@ class VoiceRecognitionService:
                 "transcript": "Audio file cannot be processed."
             }
         
-        # Get threshold for long audio from environment variable or use default (30 minutes)
-        long_audio_threshold = int(os.environ.get('LONG_AUDIO_THRESHOLD_SECONDS', 1800))  # Default: 30 minutes
+        # Get threshold for long audio from centralized config or environment variable
+        long_audio_threshold = int(os.environ.get('LONG_AUDIO_THRESHOLD_SECONDS', AudioConfig.MAX_NON_CHUNKED_DURATION))
         logger.info(f"Long audio threshold: {long_audio_threshold} seconds")
         
         # Check if we should force chunked transcription
         force_chunked = os.environ.get('FORCE_CHUNKED_TRANSCRIPTION', '').lower() in ('true', '1', 'yes')
+
+        force_chunked = True
+
         if force_chunked:
             logger.info("Forcing chunked transcription approach regardless of duration")
             return self._transcribe_long_audio(audio_path, output_file, duration)
@@ -128,8 +131,8 @@ class VoiceRecognitionService:
         model_size = os.environ.get('LONG_AUDIO_MODEL_SIZE', 'base')  # Default to 'base' instead of 'tiny'
         logger.info(f"Using model size '{model_size}' for long audio transcription")
         
-        # Get chunk size from environment variable or use default (10 minutes)
-        chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', 600))  # Default: 10 minutes
+        # Get chunk size from centralized config or environment variable
+        chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', AudioConfig.DEFAULT_CHUNK_SIZE))
         logger.info(f"Using audio chunk size of {chunk_size} seconds")
         
         # Check if we should include chunk markers in the transcript
@@ -291,8 +294,8 @@ class VoiceRecognitionService:
         
         for i, chunk in enumerate(chunk_results):
             # Extract start and end times
-            start_time = chunk.get("start_time", i * 600)  # Default to 10-minute chunks
-            end_time = chunk.get("end_time", (i + 1) * 600)
+            start_time = chunk.get("start_time", i * 30)
+            end_time = chunk.get("end_time", (i + 1) * 30)
             transcript = chunk.get("transcript", "")
             
             # Skip empty transcripts
@@ -491,20 +494,24 @@ class VoiceRecognitionService:
             )
             
             try:
-                stdout, stderr = process.communicate(timeout=1200)  # 20 minute timeout
+                # Use centralized timeout configuration
+                timeout_seconds = TimeoutConfig.MAX_TRANSCRIPTION_PROCESSING_TIME
+                stdout, stderr = process.communicate(timeout=timeout_seconds)
                 logger.info(f"Transcription process stdout: {stdout}")
                 if stderr:
                     logger.warning(f"Transcription process stderr: {stderr}")
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
-                logger.error("Transcription process timed out after 20 minutes")
+                timeout_minutes = timeout_seconds // 60
+                error_msg = f"Transcription process timed out after {timeout_minutes} minutes"
+                logger.error(error_msg)
                 return {
                     "success": False,
-                    "error": "Transcription process timed out after 20 minutes",
+                    "error": error_msg,
                     "output_file": None,
-                    "message": "Transcription failed due to timeout. The audio file may be too large or complex.",
-                    "transcript": "[Transcription failed: Process timed out after 20 minutes]"
+                    "message": f"Transcription failed due to timeout. The audio file may be too large or complex.",
+                    "transcript": f"[Transcription failed: Process timed out after {timeout_minutes} minutes]"
                 }
             
             # Check if the process was successful

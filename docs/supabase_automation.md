@@ -49,7 +49,8 @@ This endpoint initiates the full processing pipeline for a Parliament TV URL.
   "url": "https://parliamentlive.tv/event/index/123456789",
   "title": "Parliament Session Title",
   "description": "Description of the session",
-  "duration": 7200
+  "duration": 7200,
+  "debug": false
 }
 ```
 
@@ -58,6 +59,7 @@ This endpoint initiates the full processing pipeline for a Parliament TV URL.
 | url | string | Parliament TV URL to process |
 | title | string | Title for the capture session |
 | description | string | Description for the capture session (optional) |
+| debug | boolean | Enable debug/test mode with shorter durations for testing (default: false) |
 | duration | integer | Duration to capture in seconds (default: 7200 = 2 hours) |
 
 #### Authentication

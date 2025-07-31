@@ -16,6 +16,17 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
+# Add parent directory to path to import local modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import AudioConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class AudioConfig:
+        DEFAULT_CHUNK_SIZE = 600
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -23,8 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("audio_chunker")
 
-# Default chunk size in seconds (10 minutes)
-DEFAULT_CHUNK_SIZE = 600
+# Use centralized configuration for chunk size
+DEFAULT_CHUNK_SIZE = AudioConfig.DEFAULT_CHUNK_SIZE
 
 class AudioChunker:
     """Class for splitting long audio files into smaller chunks."""

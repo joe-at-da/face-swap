@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
 
 from backend.db import models
+from backend.core.recognition_config import AudioConfig, DiarizationConfig
 from backend.services.recognition.voice_recognition import VoiceRecognitionService
 from backend.services.recognition.facial_recognition import FacialRecognitionService
 from backend.services.recognition.face_profile_service import FaceProfileService
@@ -1135,7 +1136,7 @@ class MultimodalRecognitionService:
                 # This helps with faces that might be slightly outside segment boundaries
                 if unmatched_faces:
                     logger.info(f"Found {len(unmatched_faces)} faces not directly matching any segment. Trying proximity matching.")
-                    max_time_gap = 1.0  # Maximum time gap in seconds to consider for proximity matching
+                    max_time_gap = DiarizationConfig.PROXIMITY_MATCHING_TIME_GAP  # Maximum time gap in seconds for proximity matching
                     
                     for face in unmatched_faces:
                         face_time = face["face_time"]
@@ -1512,7 +1513,7 @@ class MultimodalRecognitionService:
                     curr_member_id = curr_best.get("member_id")
                     
                     # If current segment has no identified speaker but previous does, and they're close in time
-                    # (within 2 seconds), assume it's the same speaker continuing
+                    # (within the configured time gap), assume it's the same speaker continuing
                     if prev_member_id and not curr_member_id:
                         # Safely parse previous segment end time
                         prev_id_str = str(prev_id)
@@ -1539,7 +1540,7 @@ class MultimodalRecognitionService:
                         curr_diarization_speaker = original_speakers.get(str(curr_id), "None")
                         
                         # Only apply timeline continuity if:
-                        # 1. Segments are close in time (within 2 seconds)
+                        # 1. Segments are close in time (within the configured time gap)
                         # 2. Either the diarization speakers are the same OR we have high confidence face recognition
                         same_diarization_speaker = prev_diarization_speaker == curr_diarization_speaker
                         high_confidence = prev_best.get("confidence", 0) >= 0.8
@@ -1852,10 +1853,10 @@ class MultimodalRecognitionService:
                 
             # Determine frame extraction interval based on segment duration
             segment_duration = end_time - start_time
-            if segment_duration < 10:
-                interval = 1.0  # Frame every second for short segments
+            if segment_duration < DiarizationConfig.SHORT_SEGMENT_THRESHOLD:
+                interval = DiarizationConfig.SHORT_SEGMENT_FRAME_INTERVAL  # Frame interval for short segments
             else:
-                interval = 4.0  # Frame every 3-5 seconds for long segments
+                interval = DiarizationConfig.LONG_SEGMENT_FRAME_INTERVAL  # Frame interval for long segments
             
             logger.info(f"Processing segment {start_time:.2f}s - {end_time:.2f}s with interval {interval:.1f}s")
             

@@ -8,13 +8,19 @@ audio-video files while maintaining separate streams internally.
 
 import os
 import json
-import shutil
+import uuid
 import logging
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
-import subprocess
-
-from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import TimeoutConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class TimeoutConfig:
+        UPLOAD_TIMEOUT = 3600
 
 from backend.core.config import settings
 from backend.db.models import RecognitionProcess, ParliamentTranscription
@@ -249,8 +255,8 @@ def export_recognition_results(
     from backend.services.integration.supabase_client import SupabaseService
     from backend.services.integration.supabase_upload import SupabaseUploader
     
-    # Use the improved SupabaseUploader with extended timeout (1 hour) for large video uploads
-    supabase = SupabaseUploader(use_service_role=True, timeout=3600)
+    # Use the improved SupabaseUploader with centralized timeout config for large video uploads
+    supabase = SupabaseUploader(use_service_role=True, timeout=TimeoutConfig.UPLOAD_TIMEOUT)
     
     # Upload ONLY the combined video to Supabase storage (this is the full video)
     # We only want combined_av_ files in the Supabase bucket
@@ -265,8 +271,8 @@ def export_recognition_results(
             logger.warning("SUPABASE_INTEGRATION_ENABLED is set to False. Enabling it temporarily for this upload.")
             # We'll proceed with the upload anyway, but log this warning
         
-        # Make sure we're using the service role for Supabase with extended timeout for large videos
-        supabase = SupabaseUploader(use_service_role=True, timeout=3600)
+        # Make sure we're using the service role for Supabase with centralized timeout config for large videos
+        supabase = SupabaseUploader(use_service_role=True, timeout=TimeoutConfig.UPLOAD_TIMEOUT)
         logger.info(f"Supabase client initialized with service role: {supabase.client is not None}")
         logger.info(f"Supabase URL: {settings.SUPABASE_URL}, API key set: {bool(settings.SUPABASE_SERVICE_ROLE_KEY)}")
         logger.info(f"Supabase bucket: {settings.SUPABASE_FULL_VIDEOS_BUCKET}")

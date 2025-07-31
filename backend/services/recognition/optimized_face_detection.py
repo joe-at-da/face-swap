@@ -9,12 +9,23 @@ Implements several performance optimizations:
 """
 import os
 import cv2
-import face_recognition
-import numpy as np
-import logging
 import time
-import uuid
-from typing import Dict, List, Tuple, Optional, Any
+import math
+import json
+import logging
+import numpy as np
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import FaceDetectionConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class FaceDetectionConfig:
+        SEGMENT_DURATION = 5
+        MAX_TIME_GAP = 1.5
+
 from datetime import datetime
 from scipy.spatial import distance as dist
 
@@ -73,7 +84,7 @@ class OptimizedFaceDetector:
         self.trackers = []
         self.previous_frame = None
         self.current_segment_faces = []
-        self.segment_duration = 5  # seconds
+        self.segment_duration = FaceDetectionConfig.SEGMENT_DURATION  # seconds
     
     def initialize_yunet_detector(self):
         """Initialize the YuNet face detector from OpenCV"""
@@ -1038,7 +1049,7 @@ class OptimizedFaceDetector:
             
             # Group consecutive faces (same face_id with timestamps close together)
             consecutive_groups = {}  # Dictionary to store groups by face_id
-            max_time_gap = 1.5  # Maximum time gap in seconds to consider faces consecutive
+            max_time_gap = FaceDetectionConfig.MAX_TIME_GAP  # Maximum time gap in seconds to consider faces consecutive
             
             # First, organize all faces by face_id
             face_id_groups = {}

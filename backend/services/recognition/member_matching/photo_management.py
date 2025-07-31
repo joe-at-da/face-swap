@@ -2,14 +2,22 @@
 Module for handling MP photo downloading and processing
 """
 import os
-import logging
 import json
+import logging
 import requests
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 import face_recognition
 import cv2
 from pathlib import Path
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import TimeoutConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class TimeoutConfig:
+        REQUEST_TIMEOUT = 10
 
 logger = logging.getLogger(__name__)
 
@@ -217,8 +225,8 @@ class PhotoManager:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             
-            # Download the photo
-            response = requests.get(photo_url, headers=headers, timeout=10)
+            # Download the photo using centralized timeout configuration
+            response = requests.get(photo_url, headers=headers, timeout=TimeoutConfig.REQUEST_TIMEOUT)
             response.raise_for_status()
             
             # Save the photo

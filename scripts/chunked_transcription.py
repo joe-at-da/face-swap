@@ -17,9 +17,19 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-# Import the audio chunker
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent directory to path to import local modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import the audio chunker and centralized configuration
 from scripts.audio_chunker import AudioChunker
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import AudioConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class AudioConfig:
+        DEFAULT_CHUNK_SIZE = 30
 
 # Set up logging
 logging.basicConfig(
@@ -28,8 +38,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("chunked_transcription")
 
-# Default chunk size in seconds (10 minutes)
-DEFAULT_CHUNK_SIZE = 600
+# Use centralized configuration for chunk size
+DEFAULT_CHUNK_SIZE = AudioConfig.DEFAULT_CHUNK_SIZE
 
 class ChunkedTranscriber:
     """Class for transcribing long audio files in chunks."""

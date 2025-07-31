@@ -8,16 +8,29 @@ import os
 import sys
 import json
 import logging
+import argparse
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+# Add parent directory to path to import local modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import centralized configuration
+try:
+    from backend.core.recognition_config import TimeoutConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class TimeoutConfig:
+        MAX_RECOGNITION_PROCESSING_TIME = 60
+        MAX_TRANSCRIPTION_PROCESSING_TIME = 60
+
+import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from pathlib import Path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Add the current directory to the path so we can import the backend modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the necessary models and settings
 from backend.core.config import settings
@@ -84,10 +97,9 @@ def validate_and_fix_capture(capture_id=None, fix=True):
         # Check if recognition is stuck in processing state
         if capture.recognition_status == "processing" and capture.recognition_started_at:
             # Check if it's been processing for more than 10 minutes
-            import datetime
             now = datetime.datetime.now(capture.recognition_started_at.tzinfo)
             processing_time = now - capture.recognition_started_at
-            if processing_time.total_seconds() > 600:  # 10 minutes
+            if processing_time.total_seconds() > TimeoutConfig.MAX_RECOGNITION_PROCESSING_TIME:
                 logger.warning(f"Recognition has been processing for {processing_time.total_seconds()/60:.1f} minutes")
                 if fix:
                     capture.recognition_status = None
@@ -98,10 +110,9 @@ def validate_and_fix_capture(capture_id=None, fix=True):
         # Check if transcription is stuck in processing state
         if capture.transcription_status == "processing" and capture.transcription_started_at:
             # Check if it's been processing for more than 10 minutes
-            import datetime
             now = datetime.datetime.now(capture.transcription_started_at.tzinfo)
             processing_time = now - capture.transcription_started_at
-            if processing_time.total_seconds() > 600:  # 10 minutes
+            if processing_time.total_seconds() > TimeoutConfig.MAX_TRANSCRIPTION_PROCESSING_TIME:
                 logger.warning(f"Transcription has been processing for {processing_time.total_seconds()/60:.1f} minutes")
                 if fix:
                     capture.transcription_status = None
