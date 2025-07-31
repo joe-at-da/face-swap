@@ -99,9 +99,6 @@ class VoiceRecognitionService:
             logger.info("Forcing chunked transcription approach regardless of duration")
             return self._transcribe_long_audio(audio_path, output_file, duration)
         
-        # Log the threshold only after checking debug mode
-        logger.info(f"Long audio threshold: {long_audio_threshold} seconds")
-        
         # Choose transcription method based on duration
         if duration > long_audio_threshold:
             logger.info(f"Long audio file detected ({duration} seconds). Using chunked transcription approach.")
