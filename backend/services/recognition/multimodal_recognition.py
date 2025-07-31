@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
 
+from backend.db import models
 from backend.services.recognition.voice_recognition import VoiceRecognitionService
 from backend.services.recognition.facial_recognition import FacialRecognitionService
 from backend.services.recognition.face_profile_service import FaceProfileService
