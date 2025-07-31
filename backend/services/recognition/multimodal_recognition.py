@@ -21,8 +21,10 @@ from sqlalchemy.orm import Session
 from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
 
 from backend.services.recognition.voice_recognition import VoiceRecognitionService
-from backend.services.recognition.face_recognition import FaceRecognitionService
-from backend.services.recognition.parliament_member_matcher import ParliamentMemberMatcher
+from backend.services.recognition.facial_recognition import FacialRecognitionService
+from backend.services.recognition.face_profile_service import FaceProfileService
+from backend.services.recognition.member_matcher import ParliamentMemberMatcher
+from backend.services.recognition.timeline_service import TimelineService
 from backend.services.recognition.timeline_combiner import combine_recognition_and_transcription
 from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
 from backend.services.recognition.sentence_segmentation import merge_incomplete_sentences
