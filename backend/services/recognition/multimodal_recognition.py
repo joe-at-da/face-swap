@@ -711,7 +711,7 @@ class MultimodalRecognitionService:
                                 "seek": start_time,
                                 "start": start_time,
                                 "end": end_time,
-                                "text": f"Speech segment from {speaker}",  # Default placeholder text (will be replaced if transcript is found)
+                                "text": "",  # Empty placeholder, will be filled by transcript matcher
                                 "tokens": [],
                                 "temperature": 0.0,
                                 "avg_logprob": -0.5,
@@ -720,7 +720,8 @@ class MultimodalRecognitionService:
                                 "speaker": speaker,
                                 "diarization_segment": True,  # Flag to indicate this is a diarization segment
                                 "start_time": start_time,  # Add start_time for transcript matcher
-                                "end_time": end_time  # Add end_time for transcript matcher
+                                "end_time": end_time,  # Add end_time for transcript matcher
+                                "speech_group_id": diarization_segment.get("speech_group_id", "")  # Preserve speech group ID if available
                             }
                             segments.append(segment)
                         

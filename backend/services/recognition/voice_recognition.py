@@ -211,7 +211,7 @@ class VoiceRecognitionService:
     def _convert_chunked_transcript_to_segments(self, chunked_result: Dict) -> List[Dict]:
         """
         Convert a chunked transcript into segments format that multimodal recognition expects.
-        Preserves speaker turn information for proper speech group assignment.
+        Uses diarization-driven segmentation to ensure consistent output with non-chunked transcription.
         
         Args:
             chunked_result: Result from the chunked transcriber
@@ -219,6 +219,47 @@ class VoiceRecognitionService:
         Returns:
             List of segments in the format expected by multimodal recognition
         """
+        logger.info("Converting chunked transcript to diarization-driven segments")
+        
+        # Check if we have diarization data in the chunked result
+        if "diarization" in chunked_result and chunked_result["diarization"].get("segments"):
+            # Use the diarization segments directly - this is the preferred approach
+            logger.info(f"Using {len(chunked_result['diarization']['segments'])} diarization segments from chunked result")
+            diarization_segments = chunked_result["diarization"]["segments"]
+            
+            # Convert diarization segments to the format expected by multimodal recognition
+            segments = []
+            for i, segment in enumerate(diarization_segments):
+                speaker = segment.get("speaker", f"SPEAKER_{i % 10}")  # Use speaker from diarization or fallback
+                start_time = segment.get("start_time", 0)
+                end_time = segment.get("end_time", 0)
+                speech_group_id = segment.get("speech_group_id", f"speech_group_{i}")
+                
+                # Create segment with required fields
+                whisper_segment = {
+                    "id": f"{start_time}-{end_time}",
+                    "seek": start_time,
+                    "start": start_time,
+                    "end": end_time,
+                    "text": segment.get("text", ""),  # Empty placeholder, will be filled by transcript matcher
+                    "tokens": [],
+                    "temperature": 0.0,
+                    "avg_logprob": -0.5,
+                    "compression_ratio": 1.0,
+                    "no_speech_prob": 0.1,
+                    "speaker": speaker,
+                    "start_time": start_time,  # Add explicit start_time for transcript matcher
+                    "end_time": end_time,      # Add explicit end_time for transcript matcher
+                    "diarization_segment": True,  # Flag to indicate this is a diarization segment
+                    "speech_group_marker": speech_group_id  # Preserve speech group ID for consistent grouping
+                }
+                segments.append(whisper_segment)
+            
+            logger.info(f"Converted {len(segments)} diarization segments to multimodal recognition format")
+            return segments
+        
+        # If no diarization data, fall back to extracting segments from chunks
+        # This approach uses speaker turn detection based on transcript content
         segments = []
         chunk_results = chunked_result.get("chunks", [])
         
@@ -237,14 +278,15 @@ class VoiceRecognitionService:
                     "avg_logprob": -0.5,
                     "compression_ratio": 1.0,
                     "no_speech_prob": 0.1,
-                    "speaker": "SPEAKER_0",  # Add a default speaker
-                    "speech_group_marker": "speech_group_0"  # Add a speech group marker
+                    "speaker": "SPEAKER_0",
+                    "speech_group_marker": "speech_group_0"
                 })
+            logger.warning("No chunks or diarization data available, created single segment")
             return segments
         
-        # Process each chunk to create segments and identify potential speaker turns
-        # We'll use a simple heuristic to split by sentences and identify potential speaker changes
-        current_speaker = "SPEAKER_0"
+        # Process each chunk to extract speaker turns
+        # This is a fallback when diarization data is not available
+        logger.info(f"Using fallback approach: extracting speaker turns from {len(chunk_results)} chunks")
         speech_group_counter = 0
         
         for i, chunk in enumerate(chunk_results):
@@ -257,88 +299,108 @@ class VoiceRecognitionService:
             if not transcript.strip():
                 continue
             
-            # Split transcript into sentences to better identify speaker turns
-            # This is a simple approximation - in a real system, we'd use a more sophisticated approach
+            # Extract speaker turns from the transcript
+            # This uses a more sophisticated approach to detect speaker changes
             import re
-            sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
             
-            # Group sentences into potential speaker turns
-            # Look for speaker indicators like "Speaker:" or "MP:" or dialog markers
-            current_turn_text = ""
-            current_turn_start = start_time
+            # First, check if the transcript has explicit speaker annotations
+            speaker_segments = []
+            speaker_pattern = re.compile(r'^([A-Z][a-z]+):\s*(.*?)(?=\s*[A-Z][a-z]+:|$)', re.DOTALL | re.MULTILINE)
+            speaker_matches = list(speaker_pattern.finditer(transcript))
             
-            for j, sentence in enumerate(sentences):
-                # Skip empty sentences
-                if not sentence.strip():
-                    continue
+            if speaker_matches:
+                # Transcript has explicit speaker annotations
+                for match in speaker_matches:
+                    speaker_name = match.group(1)
+                    speaker_text = match.group(2).strip()
                     
-                # Calculate approximate time for this sentence
-                sentence_duration = (end_time - start_time) * (len(sentence) / len(transcript))
-                sentence_start = start_time + (end_time - start_time) * (sum(len(s) for s in sentences[:j]) / len(transcript))
-                sentence_end = sentence_start + sentence_duration
+                    # Calculate approximate time for this speaker segment
+                    segment_length = len(speaker_text) / len(transcript)
+                    segment_start = start_time + (end_time - start_time) * (match.start() / len(transcript))
+                    segment_end = segment_start + (end_time - start_time) * segment_length
+                    
+                    speaker_segments.append({
+                        "speaker": f"SPEAKER_{speaker_name}",
+                        "text": speaker_text,
+                        "start": segment_start,
+                        "end": segment_end
+                    })
+            else:
+                # No explicit speaker annotations, use sentence boundaries as potential speaker changes
+                sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
                 
-                # Check for potential speaker change indicators
-                speaker_change = False
+                # Group sentences into potential speaker turns
+                # Look for dialog markers or significant pauses
+                current_turn_text = ""
+                current_turn_start = start_time
+                current_speaker = f"SPEAKER_{speech_group_counter}"
                 
-                # Look for dialog markers or speaker prefixes
-                if re.search(r'^[A-Z][a-z]+:', sentence) or sentence.startswith("-") or sentence.startswith("—"):
-                    speaker_change = True
-                    # Extract potential speaker name
-                    speaker_match = re.match(r'^([A-Z][a-z]+):', sentence)
-                    if speaker_match:
-                        current_speaker = f"SPEAKER_{speaker_match.group(1)}"
-                    else:
-                        # Increment speaker counter for dialog markers
+                for j, sentence in enumerate(sentences):
+                    # Skip empty sentences
+                    if not sentence.strip():
+                        continue
+                    
+                    # Calculate approximate time for this sentence
+                    sentence_duration = (end_time - start_time) * (len(sentence) / len(transcript))
+                    sentence_start = start_time + (end_time - start_time) * (sum(len(s) for s in sentences[:j]) / len(transcript))
+                    sentence_end = sentence_start + sentence_duration
+                    
+                    # Check for potential speaker change indicators
+                    speaker_change = False
+                    
+                    # Look for dialog markers or significant pauses
+                    if sentence.startswith("-") or sentence.startswith("—") or j > 0 and len(sentence) > 20:
+                        speaker_change = True
                         current_speaker = f"SPEAKER_{speech_group_counter}"
-                
-                # If we detect a speaker change or this is the first sentence, start a new turn
-                if speaker_change or not current_turn_text:
-                    # If we have accumulated text, create a segment for the previous turn
-                    if current_turn_text:
-                        segment_id = f"{current_turn_start}-{sentence_start}"
-                        segment = {
-                            "id": segment_id,
-                            "seek": current_turn_start,
-                            "start": current_turn_start,
-                            "end": sentence_start,
-                            "text": current_turn_text,
-                            "tokens": [],
-                            "temperature": 0.0,
-                            "avg_logprob": -0.5,
-                            "compression_ratio": 1.0,
-                            "no_speech_prob": 0.1,
-                            "speaker": current_speaker,
-                            "speech_group_marker": f"speech_group_{speech_group_counter}"
-                        }
-                        segments.append(segment)
-                        speech_group_counter += 1
                     
-                    # Start a new turn
-                    current_turn_text = sentence
-                    current_turn_start = sentence_start
-                else:
-                    # Continue current turn
-                    current_turn_text += " " + sentence
+                    # If we detect a speaker change or this is the first sentence, start a new turn
+                    if speaker_change or not current_turn_text:
+                        # If we have accumulated text, create a segment for the previous turn
+                        if current_turn_text:
+                            speaker_segments.append({
+                                "speaker": current_speaker,
+                                "text": current_turn_text,
+                                "start": current_turn_start,
+                                "end": sentence_start
+                            })
+                            speech_group_counter += 1
+                            current_speaker = f"SPEAKER_{speech_group_counter}"
+                        
+                        # Start a new turn
+                        current_turn_text = sentence
+                        current_turn_start = sentence_start
+                    else:
+                        # Continue current turn
+                        current_turn_text += " " + sentence
+                
+                # Add the last turn if there's any text
+                if current_turn_text:
+                    speaker_segments.append({
+                        "speaker": current_speaker,
+                        "text": current_turn_text,
+                        "start": current_turn_start,
+                        "end": end_time
+                    })
+                    speech_group_counter += 1
             
-            # Add the last turn if there's any text
-            if current_turn_text:
-                segment_id = f"{current_turn_start}-{end_time}"
-                segment = {
+            # Convert speaker segments to the format expected by multimodal recognition
+            for segment in speaker_segments:
+                segment_id = f"{segment['start']}-{segment['end']}"
+                whisper_segment = {
                     "id": segment_id,
-                    "seek": current_turn_start,
-                    "start": current_turn_start,
-                    "end": end_time,
-                    "text": current_turn_text,
+                    "seek": segment["start"],
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": segment["text"],
                     "tokens": [],
                     "temperature": 0.0,
                     "avg_logprob": -0.5,
                     "compression_ratio": 1.0,
                     "no_speech_prob": 0.1,
-                    "speaker": current_speaker,
-                    "speech_group_marker": f"speech_group_{speech_group_counter}"
+                    "speaker": segment["speaker"],
+                    "speech_group_marker": f"speech_group_{speech_group_counter - 1}"
                 }
-                segments.append(segment)
-                speech_group_counter += 1
+                segments.append(whisper_segment)
         
         logger.info(f"Converted chunked transcript to {len(segments)} segments with speech group markers")
         return segments
