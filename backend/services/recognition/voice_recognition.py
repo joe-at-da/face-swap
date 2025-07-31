@@ -81,19 +81,19 @@ class VoiceRecognitionService:
                 "transcript": "Audio file cannot be processed."
             }
         
-        # Get threshold for long audio from centralized config or environment variable
-        long_audio_threshold = int(os.environ.get('LONG_AUDIO_THRESHOLD_SECONDS', AudioConfig.MAX_NON_CHUNKED_DURATION))
+        # Get threshold for long audio directly from centralized config
+        long_audio_threshold = AudioConfig.MAX_NON_CHUNKED_DURATION
         logger.info(f"Long audio threshold: {long_audio_threshold} seconds")
         
-        # Check if we should force chunked transcription
-        force_chunked = os.environ.get('FORCE_CHUNKED_TRANSCRIPTION', '').lower() in ('true', '1', 'yes')
+        # Only force chunked transcription in debug/test mode
+        force_chunked = False
         
         # Also force chunked transcription in debug/test mode to ensure consistent behavior
-        debug_mode = os.environ.get('DEBUG_MODE', '').lower() in ('true', '1', 'yes')
-        test_mode = os.environ.get('TEST_MODE', '').lower() in ('true', '1', 'yes')
+        # Use the centralized config values instead of reading environment variables directly
+        from backend.core.recognition_config import DEBUG_MODE, TEST_MODE
         
-        if debug_mode or test_mode:
-            logger.info(f"Debug/test mode detected: DEBUG_MODE={debug_mode}, TEST_MODE={test_mode}")
+        if DEBUG_MODE or TEST_MODE:
+            logger.info(f"Debug/test mode detected: DEBUG_MODE={DEBUG_MODE}, TEST_MODE={TEST_MODE}")
             force_chunked = True
 
         if force_chunked:
@@ -137,27 +137,21 @@ class VoiceRecognitionService:
         model_size = os.environ.get('LONG_AUDIO_MODEL_SIZE', 'base')  # Default to 'base' instead of 'tiny'
         logger.info(f"Using model size '{model_size}' for long audio transcription")
         
-        # Get chunk size from centralized config or environment variable
-        # Explicitly check for debug/test mode to ensure correct chunk size
-        debug_mode = os.environ.get('DEBUG_MODE', '').lower() in ('true', '1', 'yes')
-        test_mode = os.environ.get('TEST_MODE', '').lower() in ('true', '1', 'yes')
+        # Use chunk size directly from centralized config
+        # This ensures we always respect the global DEBUG_MODE/TEST_MODE settings
+        chunk_size = AudioConfig.DEFAULT_CHUNK_SIZE
         
-        # Override chunk size based on mode
-        if test_mode:
-            chunk_size = 30  # Test mode: 30 seconds
+        if AudioConfig.DEFAULT_CHUNK_SIZE == 30:
             logger.info("TEST_MODE active: Using 30-second chunks")
-        elif debug_mode:
-            chunk_size = 60  # Debug mode: 60 seconds
+        elif AudioConfig.DEFAULT_CHUNK_SIZE == 60:
             logger.info("DEBUG_MODE active: Using 60-second chunks")
         else:
-            # Production mode: use config or env var
-            chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', AudioConfig.DEFAULT_CHUNK_SIZE))
-            logger.info("Production mode: Using config/env chunk size")
+            logger.info("Production mode: Using 60-minute chunks")
             
         logger.info(f"Using audio chunk size of {chunk_size} seconds")
         
-        # Check if we should include chunk markers in the transcript
-        include_markers = os.environ.get('INCLUDE_CHUNK_MARKERS', '').lower() in ('true', '1', 'yes')
+        # Only include chunk markers in debug/test mode
+        include_markers = DEBUG_MODE or TEST_MODE
         logger.info(f"Including chunk markers in transcript: {include_markers}")
         
         # Try transcription with retries
