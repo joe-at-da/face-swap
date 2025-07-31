@@ -83,7 +83,6 @@ class VoiceRecognitionService:
         
         # Get threshold for long audio directly from centralized config
         long_audio_threshold = AudioConfig.MAX_NON_CHUNKED_DURATION
-        logger.info(f"Long audio threshold: {long_audio_threshold} seconds")
         
         # Only force chunked transcription in debug/test mode
         force_chunked = False
@@ -99,6 +98,9 @@ class VoiceRecognitionService:
         if force_chunked:
             logger.info("Forcing chunked transcription approach regardless of duration")
             return self._transcribe_long_audio(audio_path, output_file, duration)
+        
+        # Log the threshold only after checking debug mode
+        logger.info(f"Long audio threshold: {long_audio_threshold} seconds")
         
         # Choose transcription method based on duration
         if duration > long_audio_threshold:
