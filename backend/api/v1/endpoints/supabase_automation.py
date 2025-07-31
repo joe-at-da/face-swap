@@ -72,12 +72,16 @@ async def process_parliament_tv_to_supabase(
             detail="Supabase integration is not enabled"
         )
     
-    # Set TEST_MODE environment variable based on debug parameter
+    # Set DEBUG_MODE environment variable based on debug parameter
     if debug:
-        os.environ["TEST_MODE"] = "true"
+        os.environ["DEBUG_MODE"] = "true"
         logger.info("Debug mode enabled: Using shorter durations for testing")
     else:
-        os.environ["TEST_MODE"] = "false"
+        os.environ["DEBUG_MODE"] = "false"
+        
+    # Keep TEST_MODE separate from debug parameter
+    # TEST_MODE should only be set explicitly, not via the debug parameter
+    os.environ["TEST_MODE"] = "false"
     
     logger.info(f"Starting unified Parliament TV processing for URL: {url}")
     

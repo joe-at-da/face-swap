@@ -14,6 +14,7 @@ import math
 import json
 import logging
 import numpy as np
+import face_recognition
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 

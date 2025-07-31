@@ -87,8 +87,14 @@ class VoiceRecognitionService:
         
         # Check if we should force chunked transcription
         force_chunked = os.environ.get('FORCE_CHUNKED_TRANSCRIPTION', '').lower() in ('true', '1', 'yes')
-
-        force_chunked = True
+        
+        # Also force chunked transcription in debug/test mode to ensure consistent behavior
+        debug_mode = os.environ.get('DEBUG_MODE', '').lower() in ('true', '1', 'yes')
+        test_mode = os.environ.get('TEST_MODE', '').lower() in ('true', '1', 'yes')
+        
+        if debug_mode or test_mode:
+            logger.info(f"Debug/test mode detected: DEBUG_MODE={debug_mode}, TEST_MODE={test_mode}")
+            force_chunked = True
 
         if force_chunked:
             logger.info("Forcing chunked transcription approach regardless of duration")
@@ -132,7 +138,22 @@ class VoiceRecognitionService:
         logger.info(f"Using model size '{model_size}' for long audio transcription")
         
         # Get chunk size from centralized config or environment variable
-        chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', AudioConfig.DEFAULT_CHUNK_SIZE))
+        # Explicitly check for debug/test mode to ensure correct chunk size
+        debug_mode = os.environ.get('DEBUG_MODE', '').lower() in ('true', '1', 'yes')
+        test_mode = os.environ.get('TEST_MODE', '').lower() in ('true', '1', 'yes')
+        
+        # Override chunk size based on mode
+        if test_mode:
+            chunk_size = 30  # Test mode: 30 seconds
+            logger.info("TEST_MODE active: Using 30-second chunks")
+        elif debug_mode:
+            chunk_size = 60  # Debug mode: 60 seconds
+            logger.info("DEBUG_MODE active: Using 60-second chunks")
+        else:
+            # Production mode: use config or env var
+            chunk_size = int(os.environ.get('AUDIO_CHUNK_SIZE_SECONDS', AudioConfig.DEFAULT_CHUNK_SIZE))
+            logger.info("Production mode: Using config/env chunk size")
+            
         logger.info(f"Using audio chunk size of {chunk_size} seconds")
         
         # Check if we should include chunk markers in the transcript
