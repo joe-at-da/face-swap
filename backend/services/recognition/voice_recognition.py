@@ -226,6 +226,44 @@ class VoiceRecognitionService:
             "transcript": f"[Transcription could not be completed after {max_retries + 1} attempts. Last error: {last_error}]"
         }
     
+    def _process_diarization_segments(self, diarization_segments: List[Dict]) -> List[Dict]:
+        """
+        Process diarization segments to ensure consistent speech group IDs.
+        This is critical to ensure one clip per speaker turn, not per chunk.
+        
+        Args:
+            diarization_segments: List of diarization segments from chunked result
+            
+        Returns:
+            Processed diarization segments with consistent speech group IDs
+        """
+        if not diarization_segments:
+            return []
+            
+        # Sort segments by start time to ensure proper sequencing
+        sorted_segments = sorted(diarization_segments, key=lambda x: x.get('start_time', 0))
+        
+        # Assign speech group IDs based on speaker changes, not chunk boundaries
+        processed_segments = []
+        current_speaker = None
+        speech_group_counter = 0
+        
+        for segment in sorted_segments:
+            speaker = segment.get('speaker', 'UNKNOWN')
+            
+            # If speaker changes, increment speech group counter
+            if speaker != current_speaker:
+                speech_group_counter += 1
+                current_speaker = speaker
+            
+            # Create a new segment with consistent speech group ID
+            new_segment = segment.copy()
+            new_segment['speech_group_id'] = f"speech_group_{speech_group_counter}"
+            processed_segments.append(new_segment)
+        
+        logger.info(f"Processed {len(processed_segments)} diarization segments into {speech_group_counter} speech groups")
+        return processed_segments
+        
     def _convert_chunked_transcript_to_segments(self, chunked_result: Dict) -> List[Dict]:
         """
         Convert a chunked transcript into segments format that multimodal recognition expects.
@@ -245,9 +283,13 @@ class VoiceRecognitionService:
             logger.info(f"Using {len(chunked_result['diarization']['segments'])} diarization segments from chunked result")
             diarization_segments = chunked_result["diarization"]["segments"]
             
+            # Process diarization segments to ensure consistent speech group IDs
+            # This is critical to ensure one clip per speaker turn, not per chunk
+            processed_segments = self._process_diarization_segments(diarization_segments)
+            
             # Convert diarization segments to the format expected by multimodal recognition
             segments = []
-            for i, segment in enumerate(diarization_segments):
+            for i, segment in enumerate(processed_segments):
                 speaker = segment.get("speaker", f"SPEAKER_{i % 10}")  # Use speaker from diarization or fallback
                 start_time = segment.get("start_time", 0)
                 end_time = segment.get("end_time", 0)
@@ -332,93 +374,72 @@ class VoiceRecognitionService:
                     speaker_name = match.group(1)
                     speaker_text = match.group(2).strip()
                     
-                    # Calculate approximate time for this speaker segment
-                    segment_length = len(speaker_text) / len(transcript)
-                    segment_start = start_time + (end_time - start_time) * (match.start() / len(transcript))
-                    segment_end = segment_start + (end_time - start_time) * segment_length
+                    # Calculate approximate timing based on text length and chunk duration
+                    text = text.strip()
+                    if not text:
+                        continue
+                        
+                    # If we already have segments, append to the end of the last one
+                    if speaker_segments:
+                        last_end = speaker_segments[-1]["end"]
+                        chunk_duration = chunk_end - last_end
+                    else:
+                        last_end = chunk_start
+                        chunk_duration = chunk_end - chunk_start
+                    
+                    # Estimate duration based on text length (very approximate)
+                    text_fraction = len(text) / (len(chunk_transcript) or 1)
+                    duration = max(1.0, chunk_duration * text_fraction)
+                    
+                    start_time = last_end
+                    end_time = min(chunk_end, start_time + duration)
                     
                     speaker_segments.append({
-                        "speaker": f"SPEAKER_{speaker_name}",
-                        "text": speaker_text,
-                        "start": segment_start,
-                        "end": segment_end
+                        "speaker": speaker,
+                        "text": text,
+                        "start": start_time,
+                        "end": end_time,
+                        "start_time": start_time,  # Add explicit start_time
+                        "end_time": end_time      # Add explicit end_time
                     })
             else:
-                # No explicit speaker annotations, use sentence boundaries as potential speaker changes
-                sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
-                
-                # Group sentences into potential speaker turns
-                # Look for dialog markers or significant pauses
-                current_turn_text = ""
-                current_turn_start = start_time
-                current_speaker = f"SPEAKER_{speech_group_counter}"
-                
-                for j, sentence in enumerate(sentences):
-                    # Skip empty sentences
-                    if not sentence.strip():
-                        continue
-                    
-                    # Calculate approximate time for this sentence
-                    sentence_duration = (end_time - start_time) * (len(sentence) / len(transcript))
-                    sentence_start = start_time + (end_time - start_time) * (sum(len(s) for s in sentences[:j]) / len(transcript))
-                    sentence_end = sentence_start + sentence_duration
-                    
-                    # Check for potential speaker change indicators
-                    speaker_change = False
-                    
-                    # Look for dialog markers or significant pauses
-                    if sentence.startswith("-") or sentence.startswith("—") or j > 0 and len(sentence) > 20:
-                        speaker_change = True
-                        current_speaker = f"SPEAKER_{speech_group_counter}"
-                    
-                    # If we detect a speaker change or this is the first sentence, start a new turn
-                    if speaker_change or not current_turn_text:
-                        # If we have accumulated text, create a segment for the previous turn
-                        if current_turn_text:
-                            speaker_segments.append({
-                                "speaker": current_speaker,
-                                "text": current_turn_text,
-                                "start": current_turn_start,
-                                "end": sentence_start
-                            })
-                            speech_group_counter += 1
-                            current_speaker = f"SPEAKER_{speech_group_counter}"
-                        
-                        # Start a new turn
-                        current_turn_text = sentence
-                        current_turn_start = sentence_start
-                    else:
-                        # Continue current turn
-                        current_turn_text += " " + sentence
-                
-                # Add the last turn if there's any text
-                if current_turn_text:
-                    speaker_segments.append({
-                        "speaker": current_speaker,
-                        "text": current_turn_text,
-                        "start": current_turn_start,
-                        "end": end_time
-                    })
-                    speech_group_counter += 1
+                # If no speaker markers, treat the entire chunk as one segment
+                speaker_segments.append({
+                    "speaker": f"SPEAKER_{chunk_idx % 10}",
+                    "text": chunk_transcript,
+                    "start": chunk_start,
+                    "end": chunk_end,
+                    "start_time": chunk_start,  # Add explicit start_time
+                    "end_time": chunk_end      # Add explicit end_time
+                })
+        
+        # Process speaker segments to ensure consistent speech group IDs
+        # This is critical to ensure one clip per speaker turn, not per chunk
+        processed_segments = self._process_diarization_segments(speaker_segments)
+        
+        # Convert speaker segments to the format expected by multimodal recognition
+        for segment in processed_segments:
+            segment_id = f"{segment['start']}-{segment['end']}"
+            speech_group_id = segment.get('speech_group_id', 'speech_group_0')
             
-            # Convert speaker segments to the format expected by multimodal recognition
-            for segment in speaker_segments:
-                segment_id = f"{segment['start']}-{segment['end']}"
-                whisper_segment = {
-                    "id": segment_id,
-                    "seek": segment["start"],
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "text": segment["text"],
-                    "tokens": [],
-                    "temperature": 0.0,
-                    "avg_logprob": -0.5,
-                    "compression_ratio": 1.0,
-                    "no_speech_prob": 0.1,
-                    "speaker": segment["speaker"],
-                    "speech_group_marker": f"speech_group_{speech_group_counter - 1}"
-                }
-                segments.append(whisper_segment)
+            whisper_segment = {
+                "id": segment_id,
+                "seek": segment["start"],
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"],
+                "tokens": [],
+                "temperature": 0.0,
+                "avg_logprob": -0.5,
+                "compression_ratio": 1.0,
+                "no_speech_prob": 0.1,
+                "speaker": segment["speaker"],
+                "start_time": segment["start_time"],  # Add explicit start_time for transcript matcher
+                "end_time": segment["end_time"],      # Add explicit end_time for transcript matcher
+                "diarization_segment": True,  # Flag to indicate this is a diarization segment
+                "speech_group_marker": speech_group_id  # Use processed speech group ID
+            }
+            segments.append(whisper_segment)
         
         logger.info(f"Converted chunked transcript to {len(segments)} segments with speech group markers")
         return segments
