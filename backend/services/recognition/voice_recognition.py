@@ -378,14 +378,87 @@ class VoiceRecognitionService:
         diarization_file = None
         video_path = chunked_result.get("video_path")
         audio_path = chunked_result.get("audio_path")
+        video_id = None
         
-        # Try to find diarization file based on audio or video path
-        if audio_path and os.path.exists(audio_path.replace(".mp3", ".diarization.json")):
-            diarization_file = audio_path.replace(".mp3", ".diarization.json")
-            logger.info(f"Found diarization file from audio path: {diarization_file}")
-        elif video_path and os.path.exists(video_path.replace(".mp4", ".diarization.json")):
-            diarization_file = video_path.replace(".mp4", ".diarization.json")
-            logger.info(f"Found diarization file from video path: {diarization_file}")
+        # Try to extract video_id from paths
+        if video_path:
+            # Try to extract video ID from the path
+            import re
+            video_id_match = re.search(r'/([0-9]+)\.mp4$', video_path)
+            if video_id_match:
+                video_id = video_id_match.group(1)
+                logger.info(f"Extracted video_id {video_id} from video_path: {video_path}")
+        
+        # If we couldn't extract from video_path, try audio_path
+        if not video_id and audio_path:
+            video_id_match = re.search(r'/([0-9]+)\.mp3$', audio_path)
+            if video_id_match:
+                video_id = video_id_match.group(1)
+                logger.info(f"Extracted video_id {video_id} from audio_path: {audio_path}")
+        
+        # Log paths for debugging
+        logger.info(f"Searching for diarization file with video_path: {video_path}, audio_path: {audio_path}, video_id: {video_id}")
+        
+        # Try to find diarization file using multiple patterns
+        potential_diarization_paths = []
+        
+        # Pattern 1: Direct replacement of extension
+        if audio_path:
+            potential_diarization_paths.append(audio_path.replace(".mp3", ".diarization.json"))
+        if video_path:
+            potential_diarization_paths.append(video_path.replace(".mp4", ".diarization.json"))
+        
+        # Pattern 2: Using video_id in standard locations
+        if video_id:
+            potential_diarization_paths.append(f"/app/data/temp/diarization/{video_id}.diarization.json")
+            potential_diarization_paths.append(f"/app/data/temp/audio_extracts/{video_id}.diarization.json")
+            potential_diarization_paths.append(f"/app/data/temp/{video_id}.diarization.json")
+            potential_diarization_paths.append(f"/app/data/media/{video_id}.diarization.json")
+            
+            # Also check for diarization files with the video ID in the filename
+            if audio_path:
+                audio_dir = os.path.dirname(audio_path)
+                potential_diarization_paths.append(os.path.join(audio_dir, f"{video_id}.diarization.json"))
+            if video_path:
+                video_dir = os.path.dirname(video_path)
+                potential_diarization_paths.append(os.path.join(video_dir, f"{video_id}.diarization.json"))
+        
+        # Pattern 3: Check common directories
+        common_dirs = [
+            "/app/data/temp/diarization",
+            "/app/data/temp/audio_extracts",
+            "/app/data/temp",
+            "/app/data/media"
+        ]
+        
+        # If we have paths, add their directories to the search
+        if audio_path:
+            common_dirs.append(os.path.dirname(audio_path))
+        if video_path:
+            common_dirs.append(os.path.dirname(video_path))
+        
+        # Look for any .diarization.json files in common directories
+        for directory in common_dirs:
+            if os.path.exists(directory):
+                for file in os.listdir(directory):
+                    if file.endswith(".diarization.json"):
+                        potential_diarization_paths.append(os.path.join(directory, file))
+        
+        # Remove duplicates
+        potential_diarization_paths = list(set(potential_diarization_paths))
+        
+        # Log all potential paths for debugging
+        logger.info(f"Checking {len(potential_diarization_paths)} potential diarization file paths")
+        
+        # Check each potential path
+        for path in potential_diarization_paths:
+            if os.path.exists(path):
+                diarization_file = path
+                logger.info(f"Found diarization file: {diarization_file}")
+                break
+        
+        if not diarization_file:
+            logger.warning(f"No diarization file found after checking {len(potential_diarization_paths)} potential paths")
         
         # Load diarization data if available
         diarization_segments = []
@@ -396,8 +469,28 @@ class VoiceRecognitionService:
                     if "segments" in diarization_data:
                         diarization_segments = diarization_data["segments"]
                         logger.info(f"Loaded {len(diarization_segments)} segments from diarization file: {diarization_file}")
+                        
+                        # Log a few segments for debugging
+                        for i, segment in enumerate(diarization_segments[:3]):
+                            logger.info(f"Diarization segment {i}: speaker={segment.get('speaker')}, "
+                                      f"start={segment.get('start_time', segment.get('start', 0))}, "
+                                      f"end={segment.get('end_time', segment.get('end', 0))}")
                     else:
                         logger.warning(f"No segments found in diarization file: {diarization_file}")
+                        
+                        # Log the structure of the diarization data for debugging
+                        logger.warning(f"Diarization data keys: {list(diarization_data.keys())}")
+                        
+                        # Try to find segments under a different key
+                        for key in diarization_data.keys():
+                            if isinstance(diarization_data[key], list) and len(diarization_data[key]) > 0:
+                                logger.info(f"Found potential segments under key '{key}': {len(diarization_data[key])} items")
+                                # Check if these items look like diarization segments
+                                sample_item = diarization_data[key][0]
+                                if isinstance(sample_item, dict) and ('speaker' in sample_item or 'start' in sample_item or 'end' in sample_item):
+                                    logger.info(f"Using segments from key '{key}' as they appear to be diarization segments")
+                                    diarization_segments = diarization_data[key]
+                                    break
             except Exception as e:
                 logger.error(f"Error loading diarization file: {str(e)}")
         
@@ -407,11 +500,13 @@ class VoiceRecognitionService:
         # Check if we have diarization data in the chunked result or from file
         if ("diarization" in chunked_result and chunked_result["diarization"].get("segments")) or diarization_segments:
             # Use the diarization segments directly - this is the preferred approach
-            if not diarization_segments:  # If we didn't load from file, use from chunked result
+            if not diarization_segments and "diarization" in chunked_result and chunked_result["diarization"].get("segments"):
                 diarization_segments = chunked_result["diarization"]["segments"]
                 logger.info(f"Using {len(diarization_segments)} diarization segments from chunked result")
-            else:
+            elif diarization_segments:
                 logger.info(f"Using {len(diarization_segments)} diarization segments from external file")
+            else:
+                logger.warning("No diarization segments found in chunked result or external file")
             
             # Ensure all diarization segments have start_time and end_time fields
             for segment in diarization_segments:
@@ -444,53 +539,69 @@ class VoiceRecognitionService:
             
             # Find transcript directory
             transcript_dir = find_transcript_directory(video_path)
-            logger.info(f"Using transcript directory: {transcript_dir}")
             
-            # Use the transcript matcher to match transcripts to segments
+            if transcript_dir:
+                logger.info(f"Found transcript directory: {transcript_dir}")
+            else:
+                logger.warning(f"No transcript directory found for video path: {video_path}")
+                # Try to find transcript files in default locations
+                possible_dirs = [
+                    os.path.join(os.path.dirname(os.path.dirname(video_path)), "temp", "audio_extracts"),
+                    os.path.join("/app/data/temp/audio_extracts"),
+                    os.path.join(os.path.dirname(video_path), "audio_extracts")
+                ]
+                
+                for possible_dir in possible_dirs:
+                    if os.path.exists(possible_dir):
+                        transcript_files = [f for f in os.listdir(possible_dir) if f.startswith("transcript_chunk_") and f.endswith(".txt")]
+                        if transcript_files:
+                            transcript_dir = possible_dir
+                            logger.info(f"Found alternative transcript directory: {transcript_dir} with {len(transcript_files)} transcript files")
+                            break
+            
             from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-            logger.info(f"Using transcript matcher with directory: {transcript_dir}")
             processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
             
             # Log transcript matching results
-            placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
-            match_count = len(processed_segments) - placeholder_count
-            match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
-            logger.info(f"Transcript matching results: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
+            placeholder_count = sum(1 for seg in processed_segments if seg.get("text", "").startswith("Speech segment from"))
+            if placeholder_count > 0:
+                logger.warning(f"{placeholder_count} of {len(processed_segments)} segments still have placeholder text after transcript matching")
             
-            # Convert diarization segments to the format expected by multimodal recognition
+            # Convert to whisper segments and return
             segments = []
-            for i, segment in enumerate(processed_segments):
-                speaker = segment.get("speaker", f"SPEAKER_{i % 10}")  # Use speaker from diarization or fallback
+            for segment in processed_segments:
+                speaker = segment.get("speaker", "UNKNOWN")
                 start_time = segment.get("start_time", 0)
                 end_time = segment.get("end_time", 0)
-                speech_group_id = segment.get("speech_group_id", f"speech_group_{i}")
+                speech_group_id = segment.get("speech_group_id", f"speech_group_0")
                 
-                # Create segment with required fields
                 whisper_segment = {
                     "id": f"{start_time}-{end_time}",
                     "seek": start_time,
                     "start": start_time,
                     "end": end_time,
-                    "text": segment.get("text", ""),  # Use existing text if available
+                    "text": segment.get("text", ""),
                     "tokens": [],
                     "temperature": 0.0,
                     "avg_logprob": -0.5,
                     "compression_ratio": 1.0,
                     "no_speech_prob": 0.1,
                     "speaker": speaker,
-                    "start_time": start_time,  # Add explicit start_time for transcript matcher
-                    "end_time": end_time,      # Add explicit end_time for transcript matcher
-                    "diarization_segment": True,  # Flag to indicate this is a diarization segment
-                    "speech_group_marker": speech_group_id,  # Preserve speech group ID for consistent grouping
-                    "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "diarization_segment": True,
+                    "speech_group_marker": speech_group_id,
+                    "recognition_method": "diarization",
+                    "chunk_index": segment.get("chunk_index", 0)  # Preserve chunk index for debugging
                 }
                 segments.append(whisper_segment)
             
-            logger.info(f"Converted {len(segments)} diarization segments to multimodal recognition format")
+            logger.info(f"Returning {len(segments)} segments from diarization data")
             return segments
         
         # If no diarization data in main result, check each chunk for diarization data
-        if not all_diarization_segments and "chunks" in chunked_result:
+        if not diarization_segments and "chunks" in chunked_result:
+            all_diarization_segments = []
             logger.info("Checking individual chunks for diarization data")
             for i, chunk in enumerate(chunked_result["chunks"]):
                 if "diarization" in chunk and chunk["diarization"].get("segments"):
@@ -511,57 +622,55 @@ class VoiceRecognitionService:
                         segment["end_time"] += chunk_start
                         segment["start"] = segment["start_time"]
                         segment["end"] = segment["end_time"]
+                        
+                        # Add chunk index for debugging
+                        segment["chunk_index"] = i
                     
                     all_diarization_segments.extend(chunk_diarization)
             
+            # If we found diarization segments in chunks, process them
             if all_diarization_segments:
-                logger.info(f"Collected {len(all_diarization_segments)} diarization segments from all chunks")
-                # Process these segments as if they came from the main diarization data
-                processed_segments = self._process_diarization_segments(all_diarization_segments)
+                # Use these segments as our diarization data
+                diarization_segments = all_diarization_segments
                 
-                # Get the transcript directory and match transcripts
-                from backend.services.recognition.transcript_finder import find_transcript_directory
-                video_path = chunked_result.get("video_path")
-                transcript_dir = find_transcript_directory(video_path)
+                # Log a few segments for debugging
+                for i, segment in enumerate(diarization_segments[:3]):
+                    logger.info(f"Combined chunk segment {i}: speaker={segment.get('speaker')}, "
+                              f"chunk={segment.get('chunk_index')}, "
+                              f"start={segment.get('start_time')}, end={segment.get('end_time')}")
                 
-                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
-                
-                # Convert to whisper segments and return
-                segments = []
-                for segment in processed_segments:
-                    speaker = segment.get("speaker", "UNKNOWN")
-                    start_time = segment.get("start_time", 0)
-                    end_time = segment.get("end_time", 0)
-                    speech_group_id = segment.get("speech_group_id", f"speech_group_0")
-                    
-                    whisper_segment = {
-                        "id": f"{start_time}-{end_time}",
-                        "seek": start_time,
-                        "start": start_time,
-                        "end": end_time,
-                        "text": segment.get("text", ""),
-                        "tokens": [],
-                        "temperature": 0.0,
-                        "avg_logprob": -0.5,
-                        "compression_ratio": 1.0,
-                        "no_speech_prob": 0.1,
-                        "speaker": speaker,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "diarization_segment": True,
-                        "speech_group_marker": speech_group_id,
-                        "recognition_method": "diarization"
-                    }
-                    segments.append(whisper_segment)
-                
-                logger.info(f"Returning {len(segments)} segments from per-chunk diarization data")
-                return segments
+                # Continue with normal diarization segment processing below
+                # The code will now flow to the next section that processes diarization_segments
         
         # If still no diarization data, fall back to extracting segments from chunks
         # This approach uses speaker turn detection based on transcript content
-        logger.info("No diarization data found, using fallback approach to extract speaker segments from chunks")
+        logger.warning("No diarization data found, attempting additional fallback approaches")
         
+        # Try one more time to find diarization file
+        video_path = chunked_result.get("video_path", "")
+        if video_path:
+            # Try to find diarization file in common locations
+            possible_diarization_files = [
+                os.path.join(os.path.dirname(video_path), f"{os.path.basename(video_path).split('.')[0]}_diarization.json"),
+                os.path.join(os.path.dirname(video_path), "diarization.json"),
+                os.path.join(os.path.dirname(os.path.dirname(video_path)), "temp", f"{os.path.basename(video_path).split('.')[0]}_diarization.json"),
+                os.path.join("/app/data/temp", f"{os.path.basename(video_path).split('.')[0]}_diarization.json")
+            ]
+            
+            for potential_file in possible_diarization_files:
+                if os.path.exists(potential_file):
+                    logger.info(f"Found diarization file in fallback search: {potential_file}")
+                    try:
+                        with open(potential_file, 'r') as f:
+                            diarization_data = json.load(f)
+                            if "segments" in diarization_data and diarization_data["segments"]:
+                                logger.info(f"Using diarization file found in fallback search with {len(diarization_data['segments'])} segments")
+                                # Process these segments and return
+                                return self._convert_chunked_transcript_to_segments(chunked_result, diarization_file=potential_file)
+                    except Exception as e:
+                        logger.error(f"Error processing fallback diarization file: {str(e)}")
+        
+        logger.info("Final fallback: extracting speaker segments from chunks")
         all_speaker_segments = []  # Initialize list to collect all speaker segments across chunks
         chunk_results = chunked_result.get("chunks", [])
         
