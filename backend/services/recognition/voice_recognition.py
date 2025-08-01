@@ -400,6 +400,43 @@ class VoiceRecognitionService:
             logger.info(f"Processed segments after speech group assignment: {len(processed_segments)} segments")
             for i, segment in enumerate(processed_segments[:5]):  # Log first 5 segments
                 logger.info(f"Processed segment {i}: speaker={segment.get('speaker')}, speech_group={segment.get('speech_group_id')}")
+                
+            # Get the transcript directory from the chunked result or use a default
+            transcript_dir = None
+            if "transcript_dir" in chunked_result:
+                transcript_dir = chunked_result["transcript_dir"]
+            elif "output_dir" in chunked_result:
+                transcript_dir = chunked_result["output_dir"]
+            elif "output_file" in chunked_result:
+                transcript_dir = os.path.dirname(chunked_result["output_file"])
+            
+            # If we have a transcript directory, use the transcript matcher to match transcripts to segments
+            if transcript_dir and os.path.exists(transcript_dir):
+                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                logger.info(f"Using transcript matcher with directory: {transcript_dir}")
+                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+                
+                # Log transcript matching results
+                placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
+                match_count = len(processed_segments) - placeholder_count
+                match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
+                logger.info(f"Transcript matching results: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
+            else:
+                logger.warning(f"No transcript directory found for matching transcripts to segments")
+                # Try to find transcript files in common locations
+                possible_dirs = [
+                    os.path.join(os.path.dirname(chunked_result.get("output_file", "")), "transcripts"),
+                    os.path.join(os.path.dirname(chunked_result.get("output_file", "")), "transcript"),
+                    os.path.join(self.base_dir, "temp", "audio_extracts"),
+                    os.path.join(self.base_dir, "temp", "transcripts"),
+                ]
+                
+                for possible_dir in possible_dirs:
+                    if os.path.exists(possible_dir):
+                        logger.info(f"Found alternative transcript directory: {possible_dir}")
+                        from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                        processed_segments = match_transcripts_to_diarization_segments(processed_segments, possible_dir)
+                        break
             
             # Convert diarization segments to the format expected by multimodal recognition
             segments = []
@@ -415,7 +452,7 @@ class VoiceRecognitionService:
                     "seek": start_time,
                     "start": start_time,
                     "end": end_time,
-                    "text": segment.get("text", ""),  # Empty placeholder, will be filled by transcript matcher
+                    "text": segment.get("text", ""),  # Use existing text if available
                     "tokens": [],
                     "temperature": 0.0,
                     "avg_logprob": -0.5,
@@ -435,153 +472,157 @@ class VoiceRecognitionService:
         
         # If no diarization data, fall back to extracting segments from chunks
         # This approach uses speaker turn detection based on transcript content
-        segments = []
+        logger.info("No diarization data found, using fallback approach to extract speaker segments from chunks")
+        
+        all_speaker_segments = []  # Initialize list to collect all speaker segments across chunks
         chunk_results = chunked_result.get("chunks", [])
         
         if not chunk_results:
             # If no chunks are available, create a single segment from the transcript
             transcript = chunked_result.get("transcript", "")
             if transcript:
-                segments.append({
-                    "id": "0",
-                    "seek": 0,
+                all_speaker_segments.append({
+                    "speaker": "SPEAKER_0",
+                    "text": transcript,
                     "start": 0,
                     "end": chunked_result.get("duration", 0),
-                    "text": transcript,
-                    "tokens": [],
-                    "temperature": 0.0,
-                    "avg_logprob": -0.5,
-                    "compression_ratio": 1.0,
-                    "no_speech_prob": 0.1,
-                    "speaker": "SPEAKER_0",
-                    "speech_group_marker": "speech_group_0"
+                    "start_time": 0,
+                    "end_time": chunked_result.get("duration", 0)
                 })
-            logger.warning("No chunks or diarization data available, created single segment")
-            return segments
-        
-        # Process each chunk to extract speaker turns
-        # This is a fallback when diarization data is not available
-        logger.info(f"Using fallback approach: extracting speaker turns from {len(chunk_results)} chunks")
-        
-        # Extract speaker segments from all chunks first
-        all_speaker_segments = []
-        
-        for i, chunk in enumerate(chunk_results):
-            # Extract start and end times
-            start_time = chunk.get("start_time", i * 30)
-            end_time = chunk.get("end_time", (i + 1) * 30)
-            transcript = chunk.get("transcript", "")
+            logger.warning("No chunks available, created single segment from transcript")
+        else:
+            # Process each chunk to extract speaker segments
+            logger.info(f"Processing {len(chunk_results)} chunks to extract speaker segments")
             
-            # Skip empty transcripts
-            if not transcript.strip():
-                continue
-            
-            # Extract speaker turns from the transcript using multiple approaches
-            import re
-            
-            # Try to find speaker turns in the transcript
-            # First, check for explicit speaker annotations (e.g., "Speaker: text")
-            speaker_segments = []
-            speaker_pattern = re.compile(r'([A-Z][a-z]+):\s*(.*?)(?=\s*[A-Z][a-z]+:|$)', re.DOTALL | re.MULTILINE)
-            speaker_matches = list(speaker_pattern.finditer(transcript))
-            
-            if speaker_matches:
-                # Transcript has explicit speaker annotations
-                logger.info(f"Found {len(speaker_matches)} explicit speaker annotations in chunk {i}")
+            for i, chunk in enumerate(chunk_results):
+                # Extract chunk data
+                transcript = chunk.get("text", "")
+                start_time = chunk.get("start", 0)
+                end_time = chunk.get("end", 0)
                 
-                for match in speaker_matches:
-                    speaker_name = match.group(1)
-                    speaker_text = match.group(2).strip()
-                    
-                    # Skip empty text
-                    if not speaker_text:
-                        continue
-                    
-                    # Calculate approximate timing based on position in text
-                    match_start = match.start()
-                    match_end = match.end()
-                    text_fraction_start = match_start / len(transcript)
-                    text_fraction_end = match_end / len(transcript)
-                    
-                    segment_start = start_time + (end_time - start_time) * text_fraction_start
-                    segment_end = start_time + (end_time - start_time) * text_fraction_end
-                    
-                    speaker_segments.append({
-                        "speaker": f"SPEAKER_{speaker_name}",
-                        "text": speaker_text,
-                        "start": segment_start,
-                        "end": segment_end,
-                        "start_time": segment_start,
-                        "end_time": segment_end
-                    })
-            else:
-                # If no explicit speaker markers, try to detect speaker changes based on pauses
-                # Look for long pauses that might indicate speaker changes
-                pause_pattern = re.compile(r'\.\.\.|\.|\?|!|\n\n+')
+                logger.info(f"Processing chunk {i}: start={start_time}, end={end_time}, text_length={len(transcript)}")
+                
+                # Initialize speaker segments for this chunk
+                speaker_segments = []
+                
+                # Try to detect natural speaker turns within the chunk
+                # Look for patterns like "Speaker: " or long pauses
+                import re
+                
+                # Try to find speaker patterns like "Speaker: " or "[Speaker]:"
+                speaker_pattern = re.compile(r'([A-Za-z\s]+):\s')
+                speaker_matches = list(speaker_pattern.finditer(transcript))
+                
+                # Try to find pause patterns like "..." or "[pause]" or "[silence]"
+                pause_pattern = re.compile(r'\.\.\.|\[pause\]|\[silence\]')
                 pause_matches = list(pause_pattern.finditer(transcript))
                 
-                if pause_matches and len(pause_matches) > 1:
-                    logger.info(f"No explicit speakers found, using {len(pause_matches)} pauses to segment chunk {i}")
+                # If we found speaker patterns, use them to segment
+                if speaker_matches:
+                    logger.info(f"Found {len(speaker_matches)} speaker patterns in chunk {i}")
                     
-                    # Use pauses to split into potential speaker turns
+                    # Process each speaker segment
                     last_end = 0
-                    last_speaker = None
-                    
-                    for j, match in enumerate(pause_matches):
-                        pause_pos = match.end()
-                        if pause_pos - last_end < 10:  # Skip very short segments
+                    for j, match in enumerate(speaker_matches):
+                        # Extract the speaker name
+                        speaker_name = match.group(1).strip()
+                        speaker = f"SPEAKER_{speaker_name}"
+                        
+                        # Calculate segment start and end positions
+                        segment_start = match.start()
+                        segment_end = speaker_matches[j+1].start() if j < len(speaker_matches) - 1 else len(transcript)
+                        
+                        # Extract the text for this segment
+                        segment_text = transcript[segment_start:segment_end].strip()
+                        
+                        # Skip empty segments
+                        if not segment_text:
                             continue
                             
-                        segment_text = transcript[last_end:pause_pos].strip()
-                        if not segment_text:
-                            last_end = pause_pos
-                            continue
-                        
-                        # Alternate speakers for consecutive segments
-                        speaker = f"SPEAKER_{(i + j) % 5}"
-                        
                         # Calculate timing based on position in text
-                        text_fraction_start = last_end / len(transcript)
-                        text_fraction_end = pause_pos / len(transcript)
+                        text_fraction_start = segment_start / len(transcript)
+                        text_fraction_end = segment_end / len(transcript)
                         
-                        segment_start = start_time + (end_time - start_time) * text_fraction_start
-                        segment_end = start_time + (end_time - start_time) * text_fraction_end
+                        segment_start_time = start_time + (end_time - start_time) * text_fraction_start
+                        segment_end_time = start_time + (end_time - start_time) * text_fraction_end
                         
+                        # Create the segment
                         speaker_segments.append({
                             "speaker": speaker,
                             "text": segment_text,
-                            "start": segment_start,
-                            "end": segment_end,
-                            "start_time": segment_start,
-                            "end_time": segment_end
+                            "start": segment_start_time,
+                            "end": segment_end_time,
+                            "start_time": segment_start_time,
+                            "end_time": segment_end_time
                         })
                         
-                        last_end = pause_pos
-                        last_speaker = speaker
+                        last_end = segment_end
+                
+                # If we found pause patterns, use them as fallback segmentation
+                elif pause_matches:
+                    logger.info(f"Found {len(pause_matches)} pause patterns in chunk {i}")
                     
-                    # Add final segment if needed
+                    # Process each pause-separated segment
+                    last_end = 0
+                    for j, match in enumerate(pause_matches):
+                        # Calculate segment end position
+                        segment_end = match.start()
+                        
+                        # Skip if this would create an empty segment
+                        if segment_end <= last_end:
+                            continue
+                            
+                        # Extract the text for this segment
+                        segment_text = transcript[last_end:segment_end].strip()
+                        
+                        # Skip empty segments
+                        if not segment_text:
+                            continue
+                            
+                        # Calculate timing based on position in text
+                        text_fraction_start = last_end / len(transcript)
+                        text_fraction_end = segment_end / len(transcript)
+                        
+                        segment_start_time = start_time + (end_time - start_time) * text_fraction_start
+                        segment_end_time = start_time + (end_time - start_time) * text_fraction_end
+                        
+                        # Create the segment with a unique speaker ID
+                        speaker_segments.append({
+                            "speaker": f"SPEAKER_{(i + j) % 10}",
+                            "text": segment_text,
+                            "start": segment_start_time,
+                            "end": segment_end_time,
+                            "start_time": segment_start_time,
+                            "end_time": segment_end_time
+                        })
+                        
+                        last_end = segment_end + match.end() - match.start()  # Skip the pause marker
+                    
+                    # Add the final segment after the last pause
                     if last_end < len(transcript):
                         segment_text = transcript[last_end:].strip()
                         if segment_text:
-                            speaker = f"SPEAKER_{(i + len(pause_matches)) % 5}"
-                            
+                            # Calculate timing based on position in text
                             text_fraction_start = last_end / len(transcript)
-                            segment_start = start_time + (end_time - start_time) * text_fraction_start
+                            text_fraction_end = 1.0
+                            
+                            segment_start_time = start_time + (end_time - start_time) * text_fraction_start
+                            segment_end_time = end_time
                             
                             speaker_segments.append({
-                                "speaker": speaker,
+                                "speaker": f"SPEAKER_{(i + len(pause_matches)) % 10}",
                                 "text": segment_text,
-                                "start": segment_start,
-                                "end": end_time,
-                                "start_time": segment_start,
-                                "end_time": end_time
+                                "start": segment_start_time,
+                                "end": segment_end_time,
+                                "start_time": segment_start_time,
+                                "end_time": segment_end_time
                             })
                 else:
-                    # If no good segmentation found, create at least 2-3 segments within the chunk
+                    # If no natural segmentation found, create at least 2-3 segments within the chunk
                     # to ensure we don't have just one segment per chunk
                     logger.info(f"No natural segmentation found, creating artificial segments for chunk {i}")
                     
-                    # Try to split into 2-3 segments
+                    # Try to split into 2-3 segments based on transcript length
                     num_segments = min(3, max(2, len(transcript) // 100))
                     segment_length = len(transcript) / num_segments
                     
@@ -594,17 +635,196 @@ class VoiceRecognitionService:
                             continue
                             
                         # Calculate timing based on position
-                        segment_start = start_time + (end_time - start_time) * (start_idx / len(transcript))
-                        segment_end = start_time + (end_time - start_time) * (end_idx / len(transcript))
+                        segment_start_time = start_time + (end_time - start_time) * (start_idx / len(transcript))
+                        segment_end_time = start_time + (end_time - start_time) * (end_idx / len(transcript))
                         
                         speaker_segments.append({
                             "speaker": f"SPEAKER_{(i + j) % 10}",
                             "text": segment_text,
-                            "start": segment_start,
-                            "end": segment_end,
-                            "start_time": segment_start,
-                            "end_time": segment_end
+                            "start": segment_start_time,
+                            "end": segment_end_time,
+                            "start_time": segment_start_time,
+                            "end_time": segment_end_time
                         })
+                
+                # If we still have no segments, fall back to one segment for the chunk
+                if not speaker_segments:
+                    logger.warning(f"Failed to extract speaker turns from chunk {i}, falling back to one segment")
+                    speaker_segments.append({
+                        "speaker": f"SPEAKER_{i % 10}",
+                        "text": transcript,
+                        "start": start_time,
+                        "end": end_time,
+                        "start_time": start_time,
+                        "end_time": end_time
+                    })
+                
+                # Add all speaker segments from this chunk to the overall list
+                all_speaker_segments.extend(speaker_segments)
+        
+        # Log the extracted segments
+        logger.info(f"Extracted {len(all_speaker_segments)} speaker segments from {len(chunk_results)} chunks")
+        for i, segment in enumerate(all_speaker_segments[:5]):  # Log first 5 segments
+            logger.info(f"Extracted segment {i}: speaker={segment['speaker']}, start={segment['start_time']:.2f}, end={segment['end_time']:.2f}, text={segment['text'][:50]}...")
+        
+        # Process speaker segments to ensure consistent speech group IDs
+        # This is critical to ensure one clip per speaker turn, not per chunk
+        processed_segments = self._process_diarization_segments(all_speaker_segments)
+        
+        # If we have a transcript directory, use the transcript matcher to match transcripts to segments
+        try:
+            transcript_dir = chunked_result.get("transcript_dir") or os.path.join(os.path.dirname(chunked_result.get("output_file", "")), "transcripts")
+            if transcript_dir and os.path.exists(transcript_dir):
+                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                logger.info(f"Using transcript matcher with directory: {transcript_dir} for fallback segments")
+                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+                
+                # Log transcript matching results
+                placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
+                match_count = len(processed_segments) - placeholder_count
+                match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
+                logger.info(f"Transcript matching results for fallback segments: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
+            else:
+                logger.warning(f"No valid transcript directory found for transcript matching. Using original segments.")
+        except Exception as e:
+            logger.error(f"Error in transcript matching: {str(e)}")
+            logger.warning("Continuing with original segments due to transcript matching error")
+        
+        # Convert speaker segments to the format expected by multimodal recognition
+        segments = []  # Initialize segments list to collect all processed segments
+        for segment in processed_segments:
+            segment_id = f"{segment['start']}-{segment['end']}"
+            speech_group_id = segment.get('speech_group_id', 'speech_group_0')
+            
+            whisper_segment = {
+                "id": segment_id,
+                "seek": segment["start"],
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"],
+                "tokens": [],
+                "temperature": 0.0,
+                "avg_logprob": -0.5,
+                "compression_ratio": 1.0,
+                "no_speech_prob": 0.1,
+                "speaker": segment["speaker"],
+                "start_time": segment["start_time"],  # Add explicit start_time for transcript matcher
+                "end_time": segment["end_time"],      # Add explicit end_time for transcript matcher
+                "diarization_segment": True,  # Flag to indicate this is a diarization segment
+                "speech_group_marker": speech_group_id,  # Use processed speech group ID
+                "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
+            }
+            segments.append(whisper_segment)  # Add each segment to the segments list
+            transcript_dir = None
+            if "transcript_dir" in chunked_result:
+                transcript_dir = chunked_result["transcript_dir"]
+            elif "output_dir" in chunked_result:
+                transcript_dir = chunked_result["output_dir"]
+            elif "output_file" in chunked_result:
+                transcript_dir = os.path.dirname(chunked_result["output_file"])
+                
+            # If no transcript directory found, try common locations
+            if not transcript_dir or not os.path.exists(transcript_dir):
+                possible_dirs = [
+                    os.path.join("/app/data/temp", "audio_extracts"),
+                    os.path.join("/app/data/temp", "transcripts"),
+                    "/app/data/temp/audio_extracts",
+                    "/app/data/temp/transcripts",
+                ]
+                for possible_dir in possible_dirs:
+                    if os.path.exists(possible_dir):
+                        transcript_dir = possible_dir
+                        logger.info(f"Found alternative transcript directory: {transcript_dir}")
+                        break
+                        
+            logger.info(f"Using transcript directory for single segment: {transcript_dir}")
+                
+            try:
+                if transcript_dir and os.path.exists(transcript_dir):
+                    from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                    logger.info(f"Using transcript matcher with directory: {transcript_dir} for single segment")
+                    segments = match_transcripts_to_diarization_segments(segments, transcript_dir)
+                else:
+                    logger.warning(f"No valid transcript directory found for single segment transcript matching")
+            except Exception as e:
+                logger.error(f"Error in single segment transcript matching: {str(e)}")
+                logger.warning("Continuing with original segment due to transcript matching error")
+            
+            return segments
+        
+        # Process each chunk to extract speaker turns
+        # This is a fallback when diarization data is not available
+        logger.info(f"Using fallback approach: extracting speaker turns from {len(chunk_results)} chunks")
+        
+        # Extract speaker segments from all chunks first
+        all_speaker_segments = []
+        
+        # Get the transcript directory for later use with transcript matcher
+        transcript_dir = None
+        if "transcript_dir" in chunked_result:
+            transcript_dir = chunked_result["transcript_dir"]
+        elif "output_dir" in chunked_result:
+            transcript_dir = chunked_result["output_dir"]
+        elif "output_file" in chunked_result:
+            transcript_dir = os.path.dirname(chunked_result["output_file"])
+        
+        # If no transcript directory found, try common locations
+        if not transcript_dir or not os.path.exists(transcript_dir):
+            possible_dirs = [
+                os.path.join("/app/data/temp", "audio_extracts"),
+                os.path.join("/app/data/temp", "transcripts"),
+                "/app/data/temp/audio_extracts",
+                "/app/data/temp/transcripts",
+            ]
+            for possible_dir in possible_dirs:
+                if os.path.exists(possible_dir):
+                    transcript_dir = possible_dir
+        for i, chunk in enumerate(chunk_results):
+            chunk_start = chunk.get("start", 0)
+            chunk_end = chunk.get("end", 0)
+            chunk_transcript = chunk.get("text", "")
+            
+            # Try to extract speaker turns from the transcript
+            # Look for patterns like "Speaker X: text" or "[Speaker X] text"
+            speaker_segments = []
+            
+            # Check if the chunk has its own diarization data
+            if "diarization" in chunk and chunk["diarization"].get("segments"):
+                # Use the chunk's diarization segments
+                chunk_diarization_segments = chunk["diarization"]["segments"]
+                logger.info(f"Found {len(chunk_diarization_segments)} diarization segments in chunk {i}")
+                
+                for j, segment in enumerate(chunk_diarization_segments):
+                    speaker = segment.get("speaker", f"SPEAKER_{j % 10}")
+                    start_time = segment.get("start_time", segment.get("start", chunk_start))
+                    end_time = segment.get("end_time", segment.get("end", chunk_end))
+                    
+                    # Adjust times to be relative to the entire audio, not just the chunk
+                    if start_time < chunk_start:
+                        start_time += chunk_start
+                    if end_time < chunk_end:
+                        end_time += chunk_start
+                    
+                    speaker_segments.append({
+                        "speaker": speaker,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "text": segment.get("text", ""),  # May be empty, will be filled by transcript matcher
+                        "chunk_index": i
+                    })
+            else:
+                # No diarization data in the chunk, treat the entire chunk as one segment
+                speaker_segments.append({
+                    "speaker": f"SPEAKER_{i % 10}",
+                    "start_time": chunk_start,
+                    "end_time": chunk_end,
+                    "text": chunk_transcript,
+                    "chunk_index": i
+                })
+                
+            # Add all speaker segments from this chunk to the overall list
+            all_speaker_segments.extend(speaker_segments)
+
             
             # If we still have no segments, fall back to one segment for the chunk
             if not speaker_segments:
@@ -618,7 +838,7 @@ class VoiceRecognitionService:
                     "end_time": end_time
                 })
             
-            # Add segments from this chunk to the overall list
+            # Add all speaker segments from this chunk to the overall list
             all_speaker_segments.extend(speaker_segments)
         
         # Log the extracted segments
@@ -629,6 +849,24 @@ class VoiceRecognitionService:
         # Process speaker segments to ensure consistent speech group IDs
         # This is critical to ensure one clip per speaker turn, not per chunk
         processed_segments = self._process_diarization_segments(all_speaker_segments)
+        
+        # If we have a transcript directory, use the transcript matcher to match transcripts to segments
+        try:
+            if transcript_dir and os.path.exists(transcript_dir):
+                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                logger.info(f"Using transcript matcher with directory: {transcript_dir} for fallback segments")
+                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+                
+                # Log transcript matching results
+                placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
+                match_count = len(processed_segments) - placeholder_count
+                match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
+                logger.info(f"Transcript matching results for fallback segments: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
+            else:
+                logger.warning(f"No valid transcript directory found for transcript matching. Using original segments.")
+        except Exception as e:
+            logger.error(f"Error in transcript matching: {str(e)}")
+            logger.warning("Continuing with original segments due to transcript matching error")
         
         # Convert speaker segments to the format expected by multimodal recognition
         segments = []  # Initialize segments list to collect all processed segments
