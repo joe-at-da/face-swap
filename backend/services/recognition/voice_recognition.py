@@ -149,6 +149,9 @@ class VoiceRecognitionService:
             
         logger.info(f"Using audio chunk size of {chunk_size} seconds")
         
+        # Import debug/test mode flags
+        from backend.core.recognition_config import DEBUG_MODE, TEST_MODE
+        
         # Only include chunk markers in debug/test mode
         include_markers = DEBUG_MODE or TEST_MODE
         logger.info(f"Including chunk markers in transcript: {include_markers}")
