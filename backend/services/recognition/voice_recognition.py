@@ -443,27 +443,27 @@ class VoiceRecognitionService:
                     speaker_text = match.group(2).strip()
                     
                     # Calculate approximate timing based on text length and chunk duration
-                    text = text.strip()
+                    text = speaker_text.strip()
                     if not text:
                         continue
                         
                     # If we already have segments, append to the end of the last one
                     if speaker_segments:
                         last_end = speaker_segments[-1]["end"]
-                        chunk_duration = chunk_end - last_end
+                        chunk_duration = end_time - last_end
                     else:
-                        last_end = chunk_start
-                        chunk_duration = chunk_end - chunk_start
+                        last_end = start_time
+                        chunk_duration = end_time - start_time
                     
                     # Estimate duration based on text length (very approximate)
-                    text_fraction = len(text) / (len(chunk_transcript) or 1)
+                    text_fraction = len(text) / (len(transcript) or 1)
                     duration = max(1.0, chunk_duration * text_fraction)
                     
                     start_time = last_end
                     end_time = min(chunk_end, start_time + duration)
                     
                     speaker_segments.append({
-                        "speaker": speaker,
+                        "speaker": f"SPEAKER_{speaker_name}",
                         "text": text,
                         "start": start_time,
                         "end": end_time,
@@ -473,12 +473,12 @@ class VoiceRecognitionService:
             else:
                 # If no speaker markers, treat the entire chunk as one segment
                 speaker_segments.append({
-                    "speaker": f"SPEAKER_{chunk_idx % 10}",
-                    "text": chunk_transcript,
-                    "start": chunk_start,
-                    "end": chunk_end,
-                    "start_time": chunk_start,  # Add explicit start_time
-                    "end_time": chunk_end      # Add explicit end_time
+                    "speaker": f"SPEAKER_{i % 10}",  # Use loop index i instead of undefined chunk_idx
+                    "text": transcript,
+                    "start": start_time,
+                    "end": end_time,
+                    "start_time": start_time,  # Add explicit start_time
+                    "end_time": end_time      # Add explicit end_time
                 })
         
         # Process speaker segments to ensure consistent speech group IDs
@@ -950,7 +950,7 @@ class VoiceRecognitionService:
             "transcript_files": transcript_files
         }
     
-    def identify_speakers_in_audio(self, audio_path: str, output_file: Optional[str] = None, model_size: str = "base") -> Dict:
+    def identify_speakers_in_audio(self, audio_path: str, output_file: Optional[str] = None, model_size: str = "tiny") -> Dict:
         """
         Identify speakers in an audio file using voice recognition and diarization.
         
