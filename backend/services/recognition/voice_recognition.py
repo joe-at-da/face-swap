@@ -374,11 +374,41 @@ class VoiceRecognitionService:
         """
         logger.info("Converting chunked transcript to diarization-driven segments")
         
-        # Check if we have diarization data in the chunked result
-        if "diarization" in chunked_result and chunked_result["diarization"].get("segments"):
+        # First check if we have a diarization file for this audio
+        diarization_file = None
+        video_path = chunked_result.get("video_path")
+        audio_path = chunked_result.get("audio_path")
+        
+        # Try to find diarization file based on audio or video path
+        if audio_path and os.path.exists(audio_path.replace(".mp3", ".diarization.json")):
+            diarization_file = audio_path.replace(".mp3", ".diarization.json")
+            logger.info(f"Found diarization file from audio path: {diarization_file}")
+        elif video_path and os.path.exists(video_path.replace(".mp4", ".diarization.json")):
+            diarization_file = video_path.replace(".mp4", ".diarization.json")
+            logger.info(f"Found diarization file from video path: {diarization_file}")
+        
+        # Load diarization data if available
+        diarization_segments = []
+        if diarization_file and os.path.exists(diarization_file):
+            try:
+                with open(diarization_file, 'r') as f:
+                    diarization_data = json.load(f)
+                    if "segments" in diarization_data:
+                        diarization_segments = diarization_data["segments"]
+                        logger.info(f"Loaded {len(diarization_segments)} segments from diarization file: {diarization_file}")
+                    else:
+                        logger.warning(f"No segments found in diarization file: {diarization_file}")
+            except Exception as e:
+                logger.error(f"Error loading diarization file: {str(e)}")
+        
+        # Check if we have diarization data in the chunked result or from file
+        if ("diarization" in chunked_result and chunked_result["diarization"].get("segments")) or diarization_segments:
             # Use the diarization segments directly - this is the preferred approach
-            logger.info(f"Using {len(chunked_result['diarization']['segments'])} diarization segments from chunked result")
-            diarization_segments = chunked_result["diarization"]["segments"]
+            if not diarization_segments:  # If we didn't load from file, use from chunked result
+                diarization_segments = chunked_result["diarization"]["segments"]
+                logger.info(f"Using {len(diarization_segments)} diarization segments from chunked result")
+            else:
+                logger.info(f"Using {len(diarization_segments)} diarization segments from external file")
             
             # Ensure all diarization segments have start_time and end_time fields
             for segment in diarization_segments:
