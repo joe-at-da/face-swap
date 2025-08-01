@@ -247,8 +247,11 @@ class ParliamentClipsIntegrationService:
             else:
                 speaker_turn_indices[speaker_id] += 1
                 
-            # Use diarization-based speech group ID if available, otherwise use temporary ID
-            if event.get("recognition_method") == "diarization" and "speech_group_id" in event:
+            # Use speech_group_id from the event if available, otherwise use diarization-based or temporary ID
+            if "speech_group_id" in event and event.get("speech_group_id"):
+                # Use the speech_group_id directly from the event
+                speech_group_id = f"diarization_group_{video_id}_{event.get('speech_group_id')}"
+            elif event.get("recognition_method") == "diarization" and "speech_group_id" in event:
                 # Use the speech_group_id from diarization data
                 speech_group_id = f"diarization_group_{video_id}_{event.get('speech_group_id')}"
             else:

@@ -1318,7 +1318,7 @@ class MultimodalRecognitionService:
                                 "confidence": face_data.get("confidence", 0.0),
                                 "face_image_url": face_path,
                                 "text": matching_segment.get("text", ""),
-                                "recognition_method": "facial_center_frame",  # Updated method to indicate center-frame prioritization
+                                "recognition_method": matching_segment.get("recognition_method", "facial_center_frame"),  # Preserve original recognition method
                                 "matched_by": face_data.get("matched_by", "unknown"),
                                 "profile_id": face_data.get("profile_id"),
                                 "segment_speaker": speaker,
@@ -1326,7 +1326,8 @@ class MultimodalRecognitionService:
                                 "quality_score": best_face.get("quality_score", 0),  # Use the quality score from best face
                                 "center_frame_priority": True,  # Flag to indicate this was selected with center-frame prioritization
                                 "segment_id": segment_id,  # Add segment_id for deduplication
-                                "diarization_segment": matching_segment.get("diarization_segment", False)  # Preserve diarization segment flag
+                                "diarization_segment": matching_segment.get("diarization_segment", False),  # Preserve diarization segment flag
+                                "speech_group_id": matching_segment.get("speech_group_id", "")  # Preserve speech group ID from diarization
                             }
                             
                             # Check if we already have a recognition event for this segment

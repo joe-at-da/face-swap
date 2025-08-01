@@ -462,7 +462,9 @@ class VoiceRecognitionService:
         # Process each chunk to extract speaker turns
         # This is a fallback when diarization data is not available
         logger.info(f"Using fallback approach: extracting speaker turns from {len(chunk_results)} chunks")
-        speech_group_counter = 0
+        
+        # Extract speaker segments from all chunks first
+        all_speaker_segments = []
         
         for i, chunk in enumerate(chunk_results):
             # Extract start and end times
@@ -474,65 +476,162 @@ class VoiceRecognitionService:
             if not transcript.strip():
                 continue
             
-            # Extract speaker turns from the transcript
-            # This uses a more sophisticated approach to detect speaker changes
+            # Extract speaker turns from the transcript using multiple approaches
             import re
             
-            # First, check if the transcript has explicit speaker annotations
+            # Try to find speaker turns in the transcript
+            # First, check for explicit speaker annotations (e.g., "Speaker: text")
             speaker_segments = []
-            speaker_pattern = re.compile(r'^([A-Z][a-z]+):\s*(.*?)(?=\s*[A-Z][a-z]+:|$)', re.DOTALL | re.MULTILINE)
+            speaker_pattern = re.compile(r'([A-Z][a-z]+):\s*(.*?)(?=\s*[A-Z][a-z]+:|$)', re.DOTALL | re.MULTILINE)
             speaker_matches = list(speaker_pattern.finditer(transcript))
             
             if speaker_matches:
                 # Transcript has explicit speaker annotations
+                logger.info(f"Found {len(speaker_matches)} explicit speaker annotations in chunk {i}")
+                
                 for match in speaker_matches:
                     speaker_name = match.group(1)
                     speaker_text = match.group(2).strip()
                     
-                    # Calculate approximate timing based on text length and chunk duration
-                    text = speaker_text.strip()
-                    if not text:
+                    # Skip empty text
+                    if not speaker_text:
                         continue
-                        
-                    # If we already have segments, append to the end of the last one
-                    if speaker_segments:
-                        last_end = speaker_segments[-1]["end"]
-                        chunk_duration = end_time - last_end
-                    else:
-                        last_end = start_time
-                        chunk_duration = end_time - start_time
                     
-                    # Estimate duration based on text length (very approximate)
-                    text_fraction = len(text) / (len(transcript) or 1)
-                    duration = max(1.0, chunk_duration * text_fraction)
+                    # Calculate approximate timing based on position in text
+                    match_start = match.start()
+                    match_end = match.end()
+                    text_fraction_start = match_start / len(transcript)
+                    text_fraction_end = match_end / len(transcript)
                     
-                    start_time = last_end
-                    end_time = min(chunk_end, start_time + duration)
+                    segment_start = start_time + (end_time - start_time) * text_fraction_start
+                    segment_end = start_time + (end_time - start_time) * text_fraction_end
                     
                     speaker_segments.append({
                         "speaker": f"SPEAKER_{speaker_name}",
-                        "text": text,
-                        "start": start_time,
-                        "end": end_time,
-                        "start_time": start_time,  # Add explicit start_time
-                        "end_time": end_time      # Add explicit end_time
+                        "text": speaker_text,
+                        "start": segment_start,
+                        "end": segment_end,
+                        "start_time": segment_start,
+                        "end_time": segment_end
                     })
             else:
-                # If no speaker markers, treat the entire chunk as one segment
+                # If no explicit speaker markers, try to detect speaker changes based on pauses
+                # Look for long pauses that might indicate speaker changes
+                pause_pattern = re.compile(r'\.\.\.|\.|\?|!|\n\n+')
+                pause_matches = list(pause_pattern.finditer(transcript))
+                
+                if pause_matches and len(pause_matches) > 1:
+                    logger.info(f"No explicit speakers found, using {len(pause_matches)} pauses to segment chunk {i}")
+                    
+                    # Use pauses to split into potential speaker turns
+                    last_end = 0
+                    last_speaker = None
+                    
+                    for j, match in enumerate(pause_matches):
+                        pause_pos = match.end()
+                        if pause_pos - last_end < 10:  # Skip very short segments
+                            continue
+                            
+                        segment_text = transcript[last_end:pause_pos].strip()
+                        if not segment_text:
+                            last_end = pause_pos
+                            continue
+                        
+                        # Alternate speakers for consecutive segments
+                        speaker = f"SPEAKER_{(i + j) % 5}"
+                        
+                        # Calculate timing based on position in text
+                        text_fraction_start = last_end / len(transcript)
+                        text_fraction_end = pause_pos / len(transcript)
+                        
+                        segment_start = start_time + (end_time - start_time) * text_fraction_start
+                        segment_end = start_time + (end_time - start_time) * text_fraction_end
+                        
+                        speaker_segments.append({
+                            "speaker": speaker,
+                            "text": segment_text,
+                            "start": segment_start,
+                            "end": segment_end,
+                            "start_time": segment_start,
+                            "end_time": segment_end
+                        })
+                        
+                        last_end = pause_pos
+                        last_speaker = speaker
+                    
+                    # Add final segment if needed
+                    if last_end < len(transcript):
+                        segment_text = transcript[last_end:].strip()
+                        if segment_text:
+                            speaker = f"SPEAKER_{(i + len(pause_matches)) % 5}"
+                            
+                            text_fraction_start = last_end / len(transcript)
+                            segment_start = start_time + (end_time - start_time) * text_fraction_start
+                            
+                            speaker_segments.append({
+                                "speaker": speaker,
+                                "text": segment_text,
+                                "start": segment_start,
+                                "end": end_time,
+                                "start_time": segment_start,
+                                "end_time": end_time
+                            })
+                else:
+                    # If no good segmentation found, create at least 2-3 segments within the chunk
+                    # to ensure we don't have just one segment per chunk
+                    logger.info(f"No natural segmentation found, creating artificial segments for chunk {i}")
+                    
+                    # Try to split into 2-3 segments
+                    num_segments = min(3, max(2, len(transcript) // 100))
+                    segment_length = len(transcript) / num_segments
+                    
+                    for j in range(num_segments):
+                        start_idx = int(j * segment_length)
+                        end_idx = int((j + 1) * segment_length) if j < num_segments - 1 else len(transcript)
+                        
+                        segment_text = transcript[start_idx:end_idx].strip()
+                        if not segment_text:
+                            continue
+                            
+                        # Calculate timing based on position
+                        segment_start = start_time + (end_time - start_time) * (start_idx / len(transcript))
+                        segment_end = start_time + (end_time - start_time) * (end_idx / len(transcript))
+                        
+                        speaker_segments.append({
+                            "speaker": f"SPEAKER_{(i + j) % 10}",
+                            "text": segment_text,
+                            "start": segment_start,
+                            "end": segment_end,
+                            "start_time": segment_start,
+                            "end_time": segment_end
+                        })
+            
+            # If we still have no segments, fall back to one segment for the chunk
+            if not speaker_segments:
+                logger.warning(f"Failed to extract speaker turns from chunk {i}, falling back to one segment")
                 speaker_segments.append({
-                    "speaker": f"SPEAKER_{i % 10}",  # Use loop index i instead of undefined chunk_idx
+                    "speaker": f"SPEAKER_{i % 10}",
                     "text": transcript,
                     "start": start_time,
                     "end": end_time,
-                    "start_time": start_time,  # Add explicit start_time
-                    "end_time": end_time      # Add explicit end_time
+                    "start_time": start_time,
+                    "end_time": end_time
                 })
+            
+            # Add segments from this chunk to the overall list
+            all_speaker_segments.extend(speaker_segments)
+        
+        # Log the extracted segments
+        logger.info(f"Extracted {len(all_speaker_segments)} speaker segments from {len(chunk_results)} chunks")
+        for i, segment in enumerate(all_speaker_segments[:5]):  # Log first 5 segments
+            logger.info(f"Extracted segment {i}: speaker={segment['speaker']}, start={segment['start_time']:.2f}, end={segment['end_time']:.2f}, text={segment['text'][:50]}...")
         
         # Process speaker segments to ensure consistent speech group IDs
         # This is critical to ensure one clip per speaker turn, not per chunk
-        processed_segments = self._process_diarization_segments(speaker_segments)
+        processed_segments = self._process_diarization_segments(all_speaker_segments)
         
         # Convert speaker segments to the format expected by multimodal recognition
+        segments = []  # Initialize segments list to collect all processed segments
         for segment in processed_segments:
             segment_id = f"{segment['start']}-{segment['end']}"
             speech_group_id = segment.get('speech_group_id', 'speech_group_0')
@@ -552,11 +651,33 @@ class VoiceRecognitionService:
                 "start_time": segment["start_time"],  # Add explicit start_time for transcript matcher
                 "end_time": segment["end_time"],      # Add explicit end_time for transcript matcher
                 "diarization_segment": True,  # Flag to indicate this is a diarization segment
-                "speech_group_marker": speech_group_id  # Use processed speech group ID
+                "speech_group_marker": speech_group_id,  # Use processed speech group ID
+                "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
             }
-            segments.append(whisper_segment)
+            segments.append(whisper_segment)  # Add each segment to the segments list
         
+        # Log detailed information about the segments for debugging
         logger.info(f"Converted chunked transcript to {len(segments)} segments with speech group markers")
+        
+        # Log distribution of speakers and speech groups
+        speaker_counts = {}
+        speech_group_counts = {}
+        for segment in segments:
+            speaker = segment.get('speaker', 'unknown')
+            speech_group = segment.get('speech_group_marker', 'unknown')
+            speaker_counts[speaker] = speaker_counts.get(speaker, 0) + 1
+            speech_group_counts[speech_group] = speech_group_counts.get(speech_group, 0) + 1
+        
+        logger.info(f"Speaker distribution in segments: {speaker_counts}")
+        logger.info(f"Speech group distribution in segments: {speech_group_counts}")
+        
+        # Log the first few segments for debugging
+        for i, segment in enumerate(segments[:5]):
+            logger.info(f"Final segment {i}: speaker={segment.get('speaker')}, "
+                       f"speech_group={segment.get('speech_group_marker')}, "
+                       f"start={segment.get('start_time'):.2f}, end={segment.get('end_time'):.2f}, "
+                       f"text={segment.get('text')[:50]}...")
+        
         return segments
     
     def _get_audio_duration(self, audio_path: str) -> float:
