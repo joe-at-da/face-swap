@@ -730,11 +730,19 @@ class MultimodalRecognitionService:
                         # Try to match transcripts with diarization segments
                         if segments:
                             try:
-                                # Define the transcript directory
-                                transcript_dir = os.path.join("/app/data/temp/audio_extracts")
+                                # Use our simple transcript finder to get a valid directory
+                                from backend.services.recognition.transcript_finder import find_transcript_directory
                                 
-                                # Check if transcript directory exists
-                                if os.path.exists(transcript_dir):
+                                # Get video path for context if available
+                                video_path = None
+                                if hasattr(self, 'video_path') and self.video_path:
+                                    video_path = self.video_path
+                                
+                                # Find transcript directory
+                                transcript_dir = find_transcript_directory(video_path)
+                                
+                                # Check if transcript directory exists and has files
+                                if transcript_dir and os.path.exists(transcript_dir):
                                     logger.info(f"Attempting to match transcripts from {transcript_dir} with {len(segments)} diarization segments")
                                     
                                     # Match transcripts to diarization segments

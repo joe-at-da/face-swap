@@ -13,7 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-def match_transcripts_to_diarization_segments(segments: List[Dict[str, Any]], transcript_dir: str) -> List[Dict[str, Any]]:
+def match_transcripts_to_diarization_segments(segments: List[Dict[str, Any]], transcript_dir: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Match transcript text to diarization segments based on timestamp overlap.
     
@@ -32,8 +32,16 @@ def match_transcripts_to_diarization_segments(segments: List[Dict[str, Any]], tr
         logger.warning("No segments provided for transcript matching")
         return []
     
-    if not os.path.exists(transcript_dir):
-        logger.warning(f"Transcript directory not found: {transcript_dir}")
+    # Use the simple transcript finder to get a valid directory
+    from backend.services.recognition.transcript_finder import find_transcript_directory
+    
+    # If transcript_dir is not provided or invalid, find a valid one
+    if not transcript_dir or not os.path.exists(transcript_dir):
+        transcript_dir = find_transcript_directory()
+        
+    # If still no valid directory, return original segments
+    if not transcript_dir or not os.path.exists(transcript_dir):
+        logger.warning("No valid transcript directory found. Returning original segments.")
         return segments
     
     logger.info(f"Matching transcripts from {transcript_dir} to {len(segments)} diarization segments")

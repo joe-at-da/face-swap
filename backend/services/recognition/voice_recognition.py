@@ -401,42 +401,28 @@ class VoiceRecognitionService:
             for i, segment in enumerate(processed_segments[:5]):  # Log first 5 segments
                 logger.info(f"Processed segment {i}: speaker={segment.get('speaker')}, speech_group={segment.get('speech_group_id')}")
                 
-            # Get the transcript directory from the chunked result or use a default
-            transcript_dir = None
-            if "transcript_dir" in chunked_result:
-                transcript_dir = chunked_result["transcript_dir"]
-            elif "output_dir" in chunked_result:
-                transcript_dir = chunked_result["output_dir"]
-            elif "output_file" in chunked_result:
-                transcript_dir = os.path.dirname(chunked_result["output_file"])
+            # Get the transcript directory using our simple transcript finder
+            from backend.services.recognition.transcript_finder import find_transcript_directory
             
-            # If we have a transcript directory, use the transcript matcher to match transcripts to segments
-            if transcript_dir and os.path.exists(transcript_dir):
-                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                logger.info(f"Using transcript matcher with directory: {transcript_dir}")
-                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
-                
-                # Log transcript matching results
-                placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
-                match_count = len(processed_segments) - placeholder_count
-                match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
-                logger.info(f"Transcript matching results: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
-            else:
-                logger.warning(f"No transcript directory found for matching transcripts to segments")
-                # Try to find transcript files in common locations
-                possible_dirs = [
-                    os.path.join(os.path.dirname(chunked_result.get("output_file", "")), "transcripts"),
-                    os.path.join(os.path.dirname(chunked_result.get("output_file", "")), "transcript"),
-                    os.path.join(self.base_dir, "temp", "audio_extracts"),
-                    os.path.join(self.base_dir, "temp", "transcripts"),
-                ]
-                
-                for possible_dir in possible_dirs:
-                    if os.path.exists(possible_dir):
-                        logger.info(f"Found alternative transcript directory: {possible_dir}")
-                        from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                        processed_segments = match_transcripts_to_diarization_segments(processed_segments, possible_dir)
-                        break
+            # Get video path for context if available
+            video_path = None
+            if "video_path" in chunked_result:
+                video_path = chunked_result["video_path"]
+            
+            # Find transcript directory
+            transcript_dir = find_transcript_directory(video_path)
+            logger.info(f"Using transcript directory: {transcript_dir}")
+            
+            # Use the transcript matcher to match transcripts to segments
+            from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+            logger.info(f"Using transcript matcher with directory: {transcript_dir}")
+            processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+            
+            # Log transcript matching results
+            placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
+            match_count = len(processed_segments) - placeholder_count
+            match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
+            logger.info(f"Transcript matching results: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
             
             # Convert diarization segments to the format expected by multimodal recognition
             segments = []
@@ -671,21 +657,29 @@ class VoiceRecognitionService:
         # This is critical to ensure one clip per speaker turn, not per chunk
         processed_segments = self._process_diarization_segments(all_speaker_segments)
         
-        # If we have a transcript directory, use the transcript matcher to match transcripts to segments
+        # Get the transcript directory using our simple transcript finder
         try:
-            transcript_dir = chunked_result.get("transcript_dir") or os.path.join(os.path.dirname(chunked_result.get("output_file", "")), "transcripts")
-            if transcript_dir and os.path.exists(transcript_dir):
-                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                logger.info(f"Using transcript matcher with directory: {transcript_dir} for fallback segments")
-                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
-                
-                # Log transcript matching results
-                placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
-                match_count = len(processed_segments) - placeholder_count
-                match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
-                logger.info(f"Transcript matching results for fallback segments: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
-            else:
-                logger.warning(f"No valid transcript directory found for transcript matching. Using original segments.")
+            from backend.services.recognition.transcript_finder import find_transcript_directory
+            
+            # Get video path for context if available
+            video_path = None
+            if "video_path" in chunked_result:
+                video_path = chunked_result["video_path"]
+            
+            # Find transcript directory
+            transcript_dir = find_transcript_directory(video_path)
+            logger.info(f"Using transcript directory: {transcript_dir}")
+            
+            # Use the transcript matcher to match transcripts to segments
+            from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+            logger.info(f"Using transcript matcher with directory: {transcript_dir} for fallback segments")
+            processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+            
+            # Log transcript matching results
+            placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
+            match_count = len(processed_segments) - placeholder_count
+            match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
+            logger.info(f"Transcript matching results for fallback segments: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
         except Exception as e:
             logger.error(f"Error in transcript matching: {str(e)}")
             logger.warning("Continuing with original segments due to transcript matching error")
@@ -715,37 +709,22 @@ class VoiceRecognitionService:
                 "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
             }
             segments.append(whisper_segment)  # Add each segment to the segments list
-            transcript_dir = None
-            if "transcript_dir" in chunked_result:
-                transcript_dir = chunked_result["transcript_dir"]
-            elif "output_dir" in chunked_result:
-                transcript_dir = chunked_result["output_dir"]
-            elif "output_file" in chunked_result:
-                transcript_dir = os.path.dirname(chunked_result["output_file"])
-                
-            # If no transcript directory found, try common locations
-            if not transcript_dir or not os.path.exists(transcript_dir):
-                possible_dirs = [
-                    os.path.join("/app/data/temp", "audio_extracts"),
-                    os.path.join("/app/data/temp", "transcripts"),
-                    "/app/data/temp/audio_extracts",
-                    "/app/data/temp/transcripts",
-                ]
-                for possible_dir in possible_dirs:
-                    if os.path.exists(possible_dir):
-                        transcript_dir = possible_dir
-                        logger.info(f"Found alternative transcript directory: {transcript_dir}")
-                        break
-                        
+            # Get the transcript directory using our simple transcript finder
+            from backend.services.recognition.transcript_finder import find_transcript_directory
+            
+            # Get video path for context if available
+            video_path = None
+            if "video_path" in chunked_result:
+                video_path = chunked_result["video_path"]
+            
+            # Find transcript directory
+            transcript_dir = find_transcript_directory(video_path)
             logger.info(f"Using transcript directory for single segment: {transcript_dir}")
                 
             try:
-                if transcript_dir and os.path.exists(transcript_dir):
-                    from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                    logger.info(f"Using transcript matcher with directory: {transcript_dir} for single segment")
-                    segments = match_transcripts_to_diarization_segments(segments, transcript_dir)
-                else:
-                    logger.warning(f"No valid transcript directory found for single segment transcript matching")
+                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                logger.info(f"Using transcript matcher with directory: {transcript_dir} for single segment")
+                segments = match_transcripts_to_diarization_segments(segments, transcript_dir)
             except Exception as e:
                 logger.error(f"Error in single segment transcript matching: {str(e)}")
                 logger.warning("Continuing with original segment due to transcript matching error")
@@ -759,26 +738,17 @@ class VoiceRecognitionService:
         # Extract speaker segments from all chunks first
         all_speaker_segments = []
         
-        # Get the transcript directory for later use with transcript matcher
-        transcript_dir = None
-        if "transcript_dir" in chunked_result:
-            transcript_dir = chunked_result["transcript_dir"]
-        elif "output_dir" in chunked_result:
-            transcript_dir = chunked_result["output_dir"]
-        elif "output_file" in chunked_result:
-            transcript_dir = os.path.dirname(chunked_result["output_file"])
+        # Get the transcript directory using our simple transcript finder
+        from backend.services.recognition.transcript_finder import find_transcript_directory
         
-        # If no transcript directory found, try common locations
-        if not transcript_dir or not os.path.exists(transcript_dir):
-            possible_dirs = [
-                os.path.join("/app/data/temp", "audio_extracts"),
-                os.path.join("/app/data/temp", "transcripts"),
-                "/app/data/temp/audio_extracts",
-                "/app/data/temp/transcripts",
-            ]
-            for possible_dir in possible_dirs:
-                if os.path.exists(possible_dir):
-                    transcript_dir = possible_dir
+        # Get video path for context if available
+        video_path = None
+        if "video_path" in chunked_result:
+            video_path = chunked_result["video_path"]
+        
+        # Find transcript directory
+        transcript_dir = find_transcript_directory(video_path)
+        logger.info(f"Using transcript directory: {transcript_dir}")
         for i, chunk in enumerate(chunk_results):
             chunk_start = chunk.get("start", 0)
             chunk_end = chunk.get("end", 0)
@@ -852,18 +822,19 @@ class VoiceRecognitionService:
         
         # If we have a transcript directory, use the transcript matcher to match transcripts to segments
         try:
-            if transcript_dir and os.path.exists(transcript_dir):
-                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                logger.info(f"Using transcript matcher with directory: {transcript_dir} for fallback segments")
-                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
-                
-                # Log transcript matching results
-                placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
-                match_count = len(processed_segments) - placeholder_count
-                match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
-                logger.info(f"Transcript matching results for fallback segments: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
-            else:
-                logger.warning(f"No valid transcript directory found for transcript matching. Using original segments.")
+            # Always import the transcript matcher
+            from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+            
+            # The transcript matcher now has built-in fallback directory handling
+            # so we can safely pass the transcript_dir even if it might be None or empty
+            logger.info(f"Using transcript matcher with directory: {transcript_dir} for fallback segments")
+            processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+            
+            # Log transcript matching results
+            placeholder_count = sum(1 for s in processed_segments if s.get('text', '').startswith("Speech segment from"))
+            match_count = len(processed_segments) - placeholder_count
+            match_percentage = (match_count / len(processed_segments) * 100) if processed_segments else 0
+            logger.info(f"Transcript matching results for fallback segments: {match_count}/{len(processed_segments)} segments matched ({match_percentage:.1f}%)")
         except Exception as e:
             logger.error(f"Error in transcript matching: {str(e)}")
             logger.warning("Continuing with original segments due to transcript matching error")
