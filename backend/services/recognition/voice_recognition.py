@@ -8,8 +8,10 @@ integrating with the existing scripts for speaker identification based on voice.
 import os
 import sys
 import json
+import time
 import logging
 import subprocess
+import psutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -32,6 +34,44 @@ class VoiceRecognitionService:
         
         # Create directories if they don't exist
         self.voice_profiles_dir.mkdir(parents=True, exist_ok=True)
+        
+    def _transcribe_audio_file(self, audio_file_path: str, timeout_seconds: int = 600) -> Dict[str, Any]:
+        """Transcribe an audio file using the enhanced_parliament_transcription.py script."""
+        logger.info(f"Transcribing audio file: {audio_file_path}")
+        
+        # Prepare the command - use the enhanced version of the script for better memory management
+        script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts", "enhanced_parliament_transcription.py")
+        
+        cmd = [
+            sys.executable,
+            script_path,
+            audio_file_path,
+            "--format", "json",
+            "--max-memory", "70"  # Set maximum memory usage to 70% to prevent OOM issues
+        ]
+        
+        # Run the command with timeout
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+            if result.returncode == 0:
+                # Parse the JSON output
+                output = json.loads(result.stdout)
+                return {
+                    "success": True,
+                    "output": output
+                }
+            else:
+                logger.error(f"Transcription failed with return code {result.returncode}: {result.stderr}")
+                return {
+                    "success": False,
+                    "error": f"Transcription failed with return code {result.returncode}"
+                }
+        except subprocess.TimeoutExpired:
+            logger.error("Transcription timed out")
+            return {
+                "success": False,
+                "error": "Transcription timed out"
+            }
         
     def transcribe_audio(self, audio_path: str, output_file: Optional[str] = None) -> Dict:
         """
@@ -123,18 +163,30 @@ class VoiceRecognitionService:
         
         # Import the chunked transcriber here to avoid circular imports
         sys.path.append(str(Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))))  # Add project root
-        from scripts.chunked_transcription import ChunkedTranscriber
+        
+        # Try to use the custom chunked transcription first (with better resource management)
+        try:
+            from scripts.custom_chunked_transcription import ChunkedTranscriber
+            logger.info("Using enhanced custom chunked transcription with improved resource management")
+        except ImportError:
+            # Fall back to standard chunked transcription if custom one is not available
+            from scripts.chunked_transcription import ChunkedTranscriber
+            logger.warning("Enhanced custom chunked transcription not found, using standard implementation")
         
         # Maximum number of retries
-        max_retries = 2
+        max_retries = 3  # Increased from 2 to 3 for more resilience
         retry_count = 0
         last_error = None
         
         # Get model size from environment variable or use default
         # For hour-long videos, we want to balance quality and memory usage
         # Options: tiny, base, small, medium, large
-        model_size = os.environ.get('LONG_AUDIO_MODEL_SIZE', 'base')  # Default to 'base' instead of 'tiny'
+        model_size = os.environ.get('LONG_AUDIO_MODEL_SIZE', 'tiny')  # Default to 'tiny' for faster processing
         logger.info(f"Using model size '{model_size}' for long audio transcription")
+        
+        # Set up environment variables to limit memory usage
+        os.environ['OMP_NUM_THREADS'] = '1'  # Limit OpenMP threads
+        os.environ['MKL_NUM_THREADS'] = '1'  # Limit MKL threads
         
         # Use chunk size directly from centralized config
         # This ensures we always respect the global DEBUG_MODE/TEST_MODE settings
@@ -160,7 +212,12 @@ class VoiceRecognitionService:
         while retry_count <= max_retries:
             try:
                 # Initialize the chunked transcriber with appropriate settings
-                transcriber = ChunkedTranscriber(model_size=model_size, chunk_size=chunk_size)
+                try:
+                    transcriber = ChunkedTranscriber(model_size=model_size, chunk_size=chunk_size)
+                    logger.info(f"Successfully initialized chunked transcriber with model_size={model_size}, chunk_size={chunk_size}")
+                except Exception as e:
+                    logger.error(f"Error initializing chunked transcriber: {str(e)}")
+                    raise
                 
                 # Transcribe the audio file
                 result = transcriber.transcribe(audio_path, output_file, include_markers=include_markers)
@@ -209,6 +266,15 @@ class VoiceRecognitionService:
                 elif retry_count == 1 and model_size != "base":
                     model_size = "base"  # Try with base model on second retry
                     logger.info(f"Retrying with model size '{model_size}'")
+                elif retry_count == 2 and model_size != "tiny":
+                    model_size = "tiny"  # Try with tiny model on third retry as last resort
+                    logger.info(f"Retrying with tiny model as last resort")
+                    
+                # Force garbage collection between retries
+                import gc
+                logger.info("Forcing garbage collection between retry attempts")
+                for _ in range(3):
+                    gc.collect()
                 
             except Exception as e:
                 logger.error(f"Error in chunked transcription attempt {retry_count + 1}: {str(e)}")
@@ -523,12 +589,25 @@ class VoiceRecognitionService:
         logger.info(f"Running transcription command: {' '.join(cmd)}")
         
         try:
-            # Execute the command with a timeout
+            # Create a unique environment for this process to avoid resource contention
+            env = os.environ.copy()
+            env["OMP_NUM_THREADS"] = "1"  # Limit OpenMP threads
+            env["MKL_NUM_THREADS"] = "1"  # Limit MKL threads
+            
+            # Force garbage collection before starting a new process
+            import gc
+            logger.info("Forcing garbage collection before starting transcription process")
+            for _ in range(3):
+                gc.collect()
+            
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=env,
+                # Use a new process group to ensure complete cleanup
+                start_new_session=True
             )
             
             try:
@@ -539,11 +618,34 @@ class VoiceRecognitionService:
                 if stderr:
                     logger.warning(f"Transcription process stderr: {stderr}")
             except subprocess.TimeoutExpired:
-                process.kill()
+                # Ensure we kill the entire process group, not just the main process
+                try:
+                    # On Unix, negative pid kills process group
+                    import signal
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    time.sleep(1)  # Give it a second to terminate gracefully
+                    if psutil.pid_exists(process.pid):
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)  # Force kill if still running
+                except (AttributeError, ProcessLookupError, NameError):
+                    # Fallback for non-Unix or if process already terminated
+                    try:
+                        process.terminate()
+                        time.sleep(1)
+                        if process.poll() is None:
+                            process.kill()
+                    except:
+                        pass
+                
                 stdout, stderr = process.communicate()
                 timeout_minutes = timeout_seconds // 60
                 error_msg = f"Transcription process timed out after {timeout_minutes} minutes"
                 logger.error(error_msg)
+                
+                # Force cleanup after timeout
+                import gc
+                logger.info("Forcing garbage collection after timeout")
+                for _ in range(3):
+                    gc.collect()
                 return {
                     "success": False,
                     "error": error_msg,
@@ -654,12 +756,199 @@ class VoiceRecognitionService:
                 "output_file": None,
                 "transcript": "[Transcription failed due to an unexpected error]"
             }
+    
+    def _transcribe_audio_chunked(self, audio_file_path: str, chunk_duration_seconds: int = 300, timeout_seconds: int = 600) -> Dict[str, Any]:
+        """Transcribe an audio file in chunks to avoid memory issues."""
+        logger.info(f"Transcribing audio file in chunks: {audio_file_path}")
+        
+        # Create a directory for chunks
+        audio_dir = os.path.dirname(audio_file_path)
+        chunks_dir = os.path.join(audio_dir, "chunks")
+        os.makedirs(chunks_dir, exist_ok=True)
+        
+        # Split the audio file into chunks
+        chunk_files = self._split_audio_into_chunks(audio_file_path, chunks_dir, chunk_duration_seconds)
+        if not chunk_files:
+            return {"success": False, "error": "Failed to split audio into chunks"}
+        
+        # Transcribe each chunk with improved memory management
+        transcripts = []
+        
+        for i, chunk_file in enumerate(chunk_files):
+            logger.info(f"Transcribing chunk {i+1}/{len(chunk_files)}: {chunk_file}")
+            
+            # Force garbage collection before starting a new chunk
+            import gc
+            logger.info("Forcing garbage collection before starting new chunk")
+            for _ in range(3):
+                gc.collect()
+            
+            # Check memory usage before transcribing
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_percent = process.memory_percent()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            logger.info(f"Memory usage before chunk {i+1}: {memory_mb:.2f} MB ({memory_percent:.2f}%)")
+            
+            # If memory usage is high, wait a bit and force cleanup again
+            if memory_percent > 70:
+                logger.warning(f"High memory usage detected ({memory_percent:.2f}%). Waiting for cleanup...")
+                time.sleep(5)  # Wait for 5 seconds
+                for _ in range(5):  # More aggressive cleanup
+                    gc.collect()
+            
+            # Transcribe the chunk with enhanced script
+            result = self._transcribe_audio_file(chunk_file, timeout_seconds)
+            
+            if not result["success"]:
+                logger.error(f"Failed to transcribe chunk {i+1}/{len(chunk_files)}: {result.get('error', 'Unknown error')}")
+                continue
+            
+            # Extract transcript data
+            if "output" in result and isinstance(result["output"], dict):
+                transcript_data = result["output"]
+                transcripts.append({
+                    "chunk_index": i,
+                    "chunk_file": chunk_file,
+                    "transcript_file": transcript_data.get("output_file", ""),
+                    "data": transcript_data
+                })
+            else:
+                logger.error(f"Invalid transcript data format for chunk {i+1}/{len(chunk_files)}")
+            
+            # Force cleanup after processing each chunk
+            logger.info("Forcing cleanup after chunk processing")
+            for _ in range(3):
+                gc.collect()
+            
+            # Add a small delay between chunks to allow system to stabilize
+            time.sleep(2)
+        
+        # Check if we have any transcripts
+        if not transcripts:
+            return {"success": False, "error": "No chunks were successfully transcribed"}
+        
+        # Combine the transcripts
+        combined_transcript = self._combine_chunked_transcripts(transcripts)
+        
+        # Final cleanup
+        logger.info("Final cleanup after all chunks processed")
+        for _ in range(5):
+            gc.collect()
+        
+        return {
+            "success": True,
+            "output": combined_transcript
+        }
+    
+    def _split_audio_into_chunks(self, audio_file_path: str, chunks_dir: str, chunk_duration_seconds: int = 300) -> List[str]:
+        """Split an audio file into chunks of specified duration."""
+        try:
+            # Get audio file information
+            audio_info = AudioSegment.from_file(audio_file_path)
+            total_duration_ms = len(audio_info)
+            chunk_duration_ms = chunk_duration_seconds * 1000
+            
+            # Calculate number of chunks
+            num_chunks = math.ceil(total_duration_ms / chunk_duration_ms)
+            logger.info(f"Splitting audio file into {num_chunks} chunks of {chunk_duration_seconds} seconds each")
+            
+            chunk_files = []
+            
+            for i in range(num_chunks):
+                # Calculate chunk start and end times
+                start_ms = i * chunk_duration_ms
+                end_ms = min((i + 1) * chunk_duration_ms, total_duration_ms)
+                
+                # Extract chunk
+                chunk = audio_info[start_ms:end_ms]
+                
+                # Generate chunk filename
+                chunk_filename = os.path.join(
+                    chunks_dir, 
+                    f"chunk_{i+1:03d}_{start_ms//1000:06d}_{end_ms//1000:06d}.wav"
+                )
+                
+                # Export chunk
+                chunk.export(chunk_filename, format="wav")
+                chunk_files.append(chunk_filename)
+                
+                logger.info(f"Created chunk {i+1}/{num_chunks}: {chunk_filename} ({(end_ms-start_ms)/1000:.2f} seconds)")
+                
+                # Clear memory after each chunk export
+                del chunk
+                gc.collect()
+            
+            return chunk_files
             
         except Exception as e:
-            logger.error(f"Error in transcription: {str(e)}")
-            return {
-                "output_file": None
-            }
+            logger.error(f"Error splitting audio into chunks: {str(e)}")
+            return []
+    
+    def _combine_chunked_transcripts(self, transcripts: List[Dict]) -> Dict:
+        """Combine transcripts from multiple chunks into a single result."""
+        # Sort transcripts by chunk index
+        transcripts.sort(key=lambda x: x["chunk_index"])
+        
+        combined_segments = []
+        combined_text = ""
+        transcript_files = []
+        
+        # Track the cumulative time offset for adjusting timestamps
+        time_offset = 0
+        
+        for transcript in transcripts:
+            chunk_data = transcript.get("data", {})
+            chunk_segments = chunk_data.get("segments", [])
+            
+            # Add transcript file to the list if available
+            if transcript.get("transcript_file"):
+                transcript_files.append(transcript["transcript_file"])
+            
+            # Adjust timestamps and add segments
+            for segment in chunk_segments:
+                # Create a copy of the segment to avoid modifying the original
+                adjusted_segment = segment.copy()
+                
+                # Adjust timestamps
+                if "start" in adjusted_segment:
+                    adjusted_segment["start"] += time_offset
+                if "end" in adjusted_segment:
+                    adjusted_segment["end"] += time_offset
+                
+                combined_segments.append(adjusted_segment)
+            
+            # Update time offset for the next chunk
+            # Use the last segment's end time if available, otherwise estimate from chunk duration
+            if chunk_segments and "end" in chunk_segments[-1]:
+                chunk_duration = chunk_segments[-1]["end"]
+            else:
+                # Estimate from audio file duration if available
+                audio_file = transcript.get("chunk_file", "")
+                if audio_file and os.path.exists(audio_file):
+                    try:
+                        audio_info = AudioSegment.from_file(audio_file)
+                        chunk_duration = len(audio_info) / 1000  # Convert ms to seconds
+                    except Exception:
+                        # Default to 5 minutes if we can't determine
+                        chunk_duration = 300
+                else:
+                    # Default to 5 minutes if we can't determine
+                    chunk_duration = 300
+            
+            time_offset += chunk_duration
+            
+            # Append text
+            if "text" in chunk_data:
+                if combined_text:
+                    combined_text += " "
+                combined_text += chunk_data["text"]
+        
+        return {
+            "segments": combined_segments,
+            "text": combined_text,
+            "transcript_files": transcript_files
+        }
     
     def identify_speakers_in_audio(self, audio_path: str, output_file: Optional[str] = None, model_size: str = "base") -> Dict:
         """

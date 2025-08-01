@@ -35,10 +35,10 @@ class AudioConfig:
     """Audio processing configuration parameters."""
     
     # Default chunk size in seconds
-    # - Production: 3600 seconds (1 hour)
+    # - Production: 1200 seconds (20 minutes)
     # - Debug: 60 seconds (1 minute)
     # - Test: 30 seconds (for rapid testing of chunking behavior)
-    DEFAULT_CHUNK_SIZE = 30 if TEST_MODE else (60 if DEBUG_MODE else 3600)
+    DEFAULT_CHUNK_SIZE = 30 if TEST_MODE else (60 if DEBUG_MODE else 1200)
     
     # Default audio duration fallback when unable to determine actual duration
     # - Production: 3600 seconds (1 hour)
