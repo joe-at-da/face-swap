@@ -722,7 +722,8 @@ class MultimodalRecognitionService:
                                 "diarization_segment": True,  # Flag to indicate this is a diarization segment
                                 "start_time": start_time,  # Add start_time for transcript matcher
                                 "end_time": end_time,  # Add end_time for transcript matcher
-                                "speech_group_id": diarization_segment.get("speech_group_id", "")  # Preserve speech group ID if available
+                                "speech_group_id": seg.get("speech_group_id", ""),  # Preserve speech group ID if available
+                                "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
                             }
                             segments.append(segment)
                         

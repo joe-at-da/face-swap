@@ -309,7 +309,14 @@ class VoiceRecognitionService:
             return []
             
         # Sort segments by start time to ensure proper sequencing
-        sorted_segments = sorted(diarization_segments, key=lambda x: x.get('start_time', 0))
+        sorted_segments = sorted(diarization_segments, key=lambda x: x.get('start_time', x.get('start', 0)))
+        
+        # Log the first few segments for debugging
+        logger.info(f"Processing {len(sorted_segments)} diarization segments")
+        for i, segment in enumerate(sorted_segments[:3]):  # Log first 3 segments
+            logger.info(f"Segment {i} before processing: speaker={segment.get('speaker')}, "
+                       f"start={segment.get('start_time', segment.get('start', 0))}, "
+                       f"end={segment.get('end_time', segment.get('end', 0))}")
         
         # Assign speech group IDs based on speaker changes, not chunk boundaries
         processed_segments = []
@@ -317,19 +324,41 @@ class VoiceRecognitionService:
         speech_group_counter = 0
         
         for segment in sorted_segments:
+            # Ensure we have start_time and end_time fields
+            if 'start_time' not in segment and 'start' in segment:
+                segment['start_time'] = segment['start']
+            if 'end_time' not in segment and 'end' in segment:
+                segment['end_time'] = segment['end']
+                
             speaker = segment.get('speaker', 'UNKNOWN')
             
             # If speaker changes, increment speech group counter
             if speaker != current_speaker:
                 speech_group_counter += 1
                 current_speaker = speaker
+                logger.debug(f"Speaker change detected: {speaker}, new speech group: {speech_group_counter}")
             
             # Create a new segment with consistent speech group ID
             new_segment = segment.copy()
             new_segment['speech_group_id'] = f"speech_group_{speech_group_counter}"
+            
+            # Ensure all required fields are present
+            if 'start' not in new_segment and 'start_time' in new_segment:
+                new_segment['start'] = new_segment['start_time']
+            if 'end' not in new_segment and 'end_time' in new_segment:
+                new_segment['end'] = new_segment['end_time']
+                
             processed_segments.append(new_segment)
         
         logger.info(f"Processed {len(processed_segments)} diarization segments into {speech_group_counter} speech groups")
+        
+        # Log a few processed segments for debugging
+        for i, segment in enumerate(processed_segments[:3]):  # Log first 3 segments
+            logger.info(f"Segment {i} after processing: speaker={segment.get('speaker')}, "
+                       f"speech_group={segment.get('speech_group_id')}, "
+                       f"start={segment.get('start_time', segment.get('start', 0))}, "
+                       f"end={segment.get('end_time', segment.get('end', 0))}")
+                       
         return processed_segments
         
     def _convert_chunked_transcript_to_segments(self, chunked_result: Dict) -> List[Dict]:
@@ -351,9 +380,26 @@ class VoiceRecognitionService:
             logger.info(f"Using {len(chunked_result['diarization']['segments'])} diarization segments from chunked result")
             diarization_segments = chunked_result["diarization"]["segments"]
             
+            # Ensure all diarization segments have start_time and end_time fields
+            for segment in diarization_segments:
+                if "start_time" not in segment and "start" in segment:
+                    segment["start_time"] = segment["start"]
+                if "end_time" not in segment and "end" in segment:
+                    segment["end_time"] = segment["end"]
+            
+            # Log the diarization segments for debugging
+            logger.info(f"Diarization segments before processing: {len(diarization_segments)} segments")
+            for i, segment in enumerate(diarization_segments[:5]):  # Log first 5 segments
+                logger.info(f"Segment {i}: speaker={segment.get('speaker')}, start={segment.get('start_time')}, end={segment.get('end_time')}")
+            
             # Process diarization segments to ensure consistent speech group IDs
             # This is critical to ensure one clip per speaker turn, not per chunk
             processed_segments = self._process_diarization_segments(diarization_segments)
+            
+            # Log the processed segments for debugging
+            logger.info(f"Processed segments after speech group assignment: {len(processed_segments)} segments")
+            for i, segment in enumerate(processed_segments[:5]):  # Log first 5 segments
+                logger.info(f"Processed segment {i}: speaker={segment.get('speaker')}, speech_group={segment.get('speech_group_id')}")
             
             # Convert diarization segments to the format expected by multimodal recognition
             segments = []
@@ -379,7 +425,8 @@ class VoiceRecognitionService:
                     "start_time": start_time,  # Add explicit start_time for transcript matcher
                     "end_time": end_time,      # Add explicit end_time for transcript matcher
                     "diarization_segment": True,  # Flag to indicate this is a diarization segment
-                    "speech_group_marker": speech_group_id  # Preserve speech group ID for consistent grouping
+                    "speech_group_marker": speech_group_id,  # Preserve speech group ID for consistent grouping
+                    "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
                 }
                 segments.append(whisper_segment)
             
