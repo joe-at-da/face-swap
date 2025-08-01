@@ -401,6 +401,9 @@ class VoiceRecognitionService:
             except Exception as e:
                 logger.error(f"Error loading diarization file: {str(e)}")
         
+        # First, check for diarization data in each chunk
+        all_diarization_segments = []
+        
         # Check if we have diarization data in the chunked result or from file
         if ("diarization" in chunked_result and chunked_result["diarization"].get("segments")) or diarization_segments:
             # Use the diarization segments directly - this is the preferred approach
@@ -486,7 +489,76 @@ class VoiceRecognitionService:
             logger.info(f"Converted {len(segments)} diarization segments to multimodal recognition format")
             return segments
         
-        # If no diarization data, fall back to extracting segments from chunks
+        # If no diarization data in main result, check each chunk for diarization data
+        if not all_diarization_segments and "chunks" in chunked_result:
+            logger.info("Checking individual chunks for diarization data")
+            for i, chunk in enumerate(chunked_result["chunks"]):
+                if "diarization" in chunk and chunk["diarization"].get("segments"):
+                    chunk_diarization = chunk["diarization"].get("segments", [])
+                    logger.info(f"Found {len(chunk_diarization)} diarization segments in chunk {i}")
+                    
+                    # Adjust timestamps to be relative to the entire audio, not just the chunk
+                    chunk_start = chunk.get("start", 0)
+                    for segment in chunk_diarization:
+                        # Ensure start_time and end_time fields exist
+                        if "start_time" not in segment and "start" in segment:
+                            segment["start_time"] = segment["start"]
+                        if "end_time" not in segment and "end" in segment:
+                            segment["end_time"] = segment["end"]
+                        
+                        # Adjust timestamps to be relative to the entire audio
+                        segment["start_time"] += chunk_start
+                        segment["end_time"] += chunk_start
+                        segment["start"] = segment["start_time"]
+                        segment["end"] = segment["end_time"]
+                    
+                    all_diarization_segments.extend(chunk_diarization)
+            
+            if all_diarization_segments:
+                logger.info(f"Collected {len(all_diarization_segments)} diarization segments from all chunks")
+                # Process these segments as if they came from the main diarization data
+                processed_segments = self._process_diarization_segments(all_diarization_segments)
+                
+                # Get the transcript directory and match transcripts
+                from backend.services.recognition.transcript_finder import find_transcript_directory
+                video_path = chunked_result.get("video_path")
+                transcript_dir = find_transcript_directory(video_path)
+                
+                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
+                processed_segments = match_transcripts_to_diarization_segments(processed_segments, transcript_dir)
+                
+                # Convert to whisper segments and return
+                segments = []
+                for segment in processed_segments:
+                    speaker = segment.get("speaker", "UNKNOWN")
+                    start_time = segment.get("start_time", 0)
+                    end_time = segment.get("end_time", 0)
+                    speech_group_id = segment.get("speech_group_id", f"speech_group_0")
+                    
+                    whisper_segment = {
+                        "id": f"{start_time}-{end_time}",
+                        "seek": start_time,
+                        "start": start_time,
+                        "end": end_time,
+                        "text": segment.get("text", ""),
+                        "tokens": [],
+                        "temperature": 0.0,
+                        "avg_logprob": -0.5,
+                        "compression_ratio": 1.0,
+                        "no_speech_prob": 0.1,
+                        "speaker": speaker,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "diarization_segment": True,
+                        "speech_group_marker": speech_group_id,
+                        "recognition_method": "diarization"
+                    }
+                    segments.append(whisper_segment)
+                
+                logger.info(f"Returning {len(segments)} segments from per-chunk diarization data")
+                return segments
+        
+        # If still no diarization data, fall back to extracting segments from chunks
         # This approach uses speaker turn detection based on transcript content
         logger.info("No diarization data found, using fallback approach to extract speaker segments from chunks")
         
@@ -739,46 +811,15 @@ class VoiceRecognitionService:
                 "recognition_method": "diarization"  # Mark as diarization-based for parliament_clips_integration
             }
             segments.append(whisper_segment)  # Add each segment to the segments list
-            # Get the transcript directory using our simple transcript finder
-            from backend.services.recognition.transcript_finder import find_transcript_directory
-            
-            # Get video path for context if available
-            video_path = None
-            if "video_path" in chunked_result:
-                video_path = chunked_result["video_path"]
-            
-            # Find transcript directory
-            transcript_dir = find_transcript_directory(video_path)
-            logger.info(f"Using transcript directory for single segment: {transcript_dir}")
-                
-            try:
-                from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
-                logger.info(f"Using transcript matcher with directory: {transcript_dir} for single segment")
-                segments = match_transcripts_to_diarization_segments(segments, transcript_dir)
-            except Exception as e:
-                logger.error(f"Error in single segment transcript matching: {str(e)}")
-                logger.warning("Continuing with original segment due to transcript matching error")
-            
-            return segments
         
-        # Process each chunk to extract speaker turns
-        # This is a fallback when diarization data is not available
-        logger.info(f"Using fallback approach: extracting speaker turns from {len(chunk_results)} chunks")
+        # Return the processed segments
+        logger.info(f"Returning {len(segments)} processed segments from fallback approach")
+        return segments
         
-        # Extract speaker segments from all chunks first
-        all_speaker_segments = []
-        
-        # Get the transcript directory using our simple transcript finder
-        from backend.services.recognition.transcript_finder import find_transcript_directory
-        
-        # Get video path for context if available
-        video_path = None
-        if "video_path" in chunked_result:
-            video_path = chunked_result["video_path"]
-        
-        # Find transcript directory
-        transcript_dir = find_transcript_directory(video_path)
-        logger.info(f"Using transcript directory: {transcript_dir}")
+        # The code below is unreachable due to the return statement above
+        # This section is kept for reference but will never execute
+        # If you need this functionality, remove the return statement above
+        logger.warning("Unreachable code detected in _convert_chunked_transcript_to_segments")
         for i, chunk in enumerate(chunk_results):
             chunk_start = chunk.get("start", 0)
             chunk_end = chunk.get("end", 0)
