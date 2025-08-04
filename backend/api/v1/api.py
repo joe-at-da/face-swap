@@ -5,7 +5,8 @@ from backend.api.v1.endpoints import (auth, video, capture, transcription, stora
                                        recognition_list, voice_profiles, face_profiles, multimodal_recognition, 
                                        facial_recognition, mp_profiles, files, recognition_timeline, media, system, 
                                        metrics, recognition_processor, transcription_recognition, audio_transcription,
-                                       integration, supabase_integration, supabase_webhooks, supabase_automation)
+                                       integration, supabase_integration, supabase_webhooks, supabase_automation,
+                                       parliament_tv_sequential_endpoint)
 
 api_router = APIRouter()
 
@@ -40,6 +41,7 @@ api_router.include_router(integration.router, prefix='/integration', tags=['inte
 api_router.include_router(supabase_integration.router, prefix='/supabase', tags=['supabase'])
 api_router.include_router(supabase_webhooks.router, prefix='/supabase/webhooks', tags=['supabase', 'webhooks'])
 api_router.include_router(supabase_automation.router, prefix='/supabase-automation', tags=['supabase', 'automation'])
+api_router.include_router(parliament_tv_sequential_endpoint.router, prefix='/parliament-tv-sequential', tags=['parliament-tv', 'sequential'])
 
 # Create a profiles router for compatibility with frontend paths
 profiles_router = APIRouter(prefix='/profiles', tags=['profiles'])

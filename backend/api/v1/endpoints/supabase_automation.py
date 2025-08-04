@@ -28,6 +28,7 @@ from backend.services.recognition.multimodal_recognition import MultimodalRecogn
 from sqlalchemy import desc
 from backend.db.models import CaptureSession, RecognitionProcess, ParliamentTranscription
 from backend.services.utils import make_json_serializable
+from backend.api.v1.endpoints.parliament_tv_sequential_endpoint import process_parliament_tv_sequentially
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,12 @@ parliament_tv_service = ParliamentTVCapture()
 @router.post("/process-parliament-tv", response_model=Dict[str, Any], dependencies=[Security(get_api_key)])
 async def process_parliament_tv_to_supabase(
     background_tasks: BackgroundTasks,
-    url: str = Body(..., description="Parliament TV URL to process"),
-    title: str = Body(..., description="Title for the capture session"),
-    description: str = Body(None, description="Description for the capture session"),
-    duration: int = Body(7200, description="Duration to capture in seconds (default: 2 hours)"),
+    url: str = Body(None, description="Parliament TV URL to process (optional)"),
+    title: str = Body(None, description="Title for the capture session (optional)"),
+    description: str = Body(None, description="Description for the capture session (optional)"),
+    duration: int = Body(None, description="Duration to capture in seconds (optional)"),
     debug: bool = Body(False, description="Enable debug/test mode with shorter durations for testing"),
+    segment_info: Dict[str, Any] = Body(None, description="Information about the segment being processed"),
     db: Session = Depends(get_db)
 ):
     """
@@ -83,7 +85,38 @@ async def process_parliament_tv_to_supabase(
     # TEST_MODE should only be set explicitly, not via the debug parameter
     os.environ["TEST_MODE"] = "false"
     
-    logger.info(f"Starting unified Parliament TV processing for URL: {url}")
+    # Import the sequential processor
+    from backend.services.parliament_tv_sequential import ParliamentTVSequentialProcessor
+    sequential_processor = ParliamentTVSequentialProcessor()
+    
+    # Check if we need to use the sequential processor
+    if url is None:
+        # No URL provided, use sequential processor to scrape and process
+        logger.info("No URL provided, redirecting to sequential processor for auto-detection")
+        return await process_parliament_tv_sequentially(
+            background_tasks=background_tasks,
+            url=None,
+            title=title or "Auto-detected Parliament TV",
+            description=description or "Automatically detected from Parliament TV Commons",
+            duration=duration,
+            debug=debug,
+            db=db
+        )
+    elif duration is None:
+        # URL provided but no duration, use sequential processor without scraping
+        logger.info(f"URL provided but no duration, using sequential processor for URL: {url}")
+        return await process_parliament_tv_sequentially(
+            background_tasks=background_tasks,
+            url=url,
+            title=title or "Parliament TV Sequential Processing",
+            description=description or "Processed sequentially in 30-minute segments",
+            duration=None,
+            debug=debug,
+            db=db
+        )
+    
+    # If we get here, both URL and duration are provided, use the original logic
+    logger.info(f"Starting unified Parliament TV processing for URL: {url} with duration: {duration}")
     
     # Step 1: Extract stream URLs from Parliament TV
     try:

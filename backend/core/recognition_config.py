@@ -41,16 +41,16 @@ class AudioConfig:
     DEFAULT_CHUNK_SIZE = 30 if TEST_MODE else (60 if DEBUG_MODE else 1200)
     
     # Default audio duration fallback when unable to determine actual duration
-    # - Production: 3600 seconds (1 hour)
+    # - Production: 90000 seconds (2.5 hour) - changed from 3600 seconds (1 hour)
     # - Debug: 30 seconds
     # - Test: 30 seconds (for rapid testing of chunking behavior)
-    DEFAULT_AUDIO_DURATION = 30 if TEST_MODE or DEBUG_MODE else 3600
+    DEFAULT_AUDIO_DURATION = 30 if TEST_MODE or DEBUG_MODE else 90000
     
     # Maximum duration for non-chunked transcription in seconds
-    # - Production: 600 seconds (10 minutes)
+    # - Production: 90000 seconds (2.5 hour) - changed from 600 seconds (10 minutes)
     # - Debug: 30 seconds
     # - Test: 15 seconds (to force chunking for most test files)
-    MAX_NON_CHUNKED_DURATION = 15 if TEST_MODE else (30 if DEBUG_MODE else 600)
+    MAX_NON_CHUNKED_DURATION = 15 if TEST_MODE else (30 if DEBUG_MODE else 90000)
     
     # Minimum segment duration in seconds
     MIN_SEGMENT_DURATION = 0.5
@@ -105,25 +105,25 @@ class TimeoutConfig:
     # - Production: 600 seconds (10 minutes)
     # - Debug: 60 seconds (1 minute)
     # - Test: 30 seconds (for rapid testing)
-    MAX_RECOGNITION_PROCESSING_TIME = 30 if TEST_MODE else (60 if DEBUG_MODE else 600)
+    MAX_RECOGNITION_PROCESSING_TIME = 30 if TEST_MODE else (60 if DEBUG_MODE else 9000)
     
     # Maximum processing time for transcription tasks (in seconds)
     # - Production: 600 seconds (10 minutes)
     # - Debug: 60 seconds (1 minute)
     # - Test: 30 seconds (for rapid testing)
-    MAX_TRANSCRIPTION_PROCESSING_TIME = 30 if TEST_MODE else (60 if DEBUG_MODE else 600)
+    MAX_TRANSCRIPTION_PROCESSING_TIME = 30 if TEST_MODE else (60 if DEBUG_MODE else 9000)
     
     # Upload timeout for large files (in seconds)
     # - Production: 1800 seconds (30 minutes)
     # - Debug: 300 seconds (5 minutes)
     # - Test: 60 seconds (for rapid testing)
-    UPLOAD_TIMEOUT = 60 if TEST_MODE else (300 if DEBUG_MODE else 1800)
+    UPLOAD_TIMEOUT = 60 if TEST_MODE else (300 if DEBUG_MODE else 9000)
     
     # HTTP request timeout (in seconds)
     # - Production: 30 seconds
     # - Debug: 10 seconds
     # - Test: 5 seconds (for rapid testing)
-    REQUEST_TIMEOUT = 5 if TEST_MODE else (10 if DEBUG_MODE else 30)
+    REQUEST_TIMEOUT = 5 if TEST_MODE else (10 if DEBUG_MODE else 900)
 
 # Get all configuration as a dictionary
 def get_config() -> Dict[str, Any]:
