@@ -1,5 +1,7 @@
 # Supabase Integration Guide
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 ## Overview
 
 This document outlines the hybrid approach used in the Parliament TV application, which leverages both a local PostgreSQL database (managed by Alembic) and Supabase as a remote data store. This architecture provides the benefits of local development and testing while enabling cloud-based data sharing and access.

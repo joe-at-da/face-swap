@@ -1,8 +1,8 @@
 # Parliament TV Integration
 
-This document provides a comprehensive guide to the Parliament TV capture feature, which allows users to capture Parliament TV streams with facial recognition to automatically stop when the speaker is no longer present.
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
 
-**Last Updated:** May 3, 2025
+This document provides a comprehensive guide to the Parliament TV capture feature, which allows users to capture Parliament TV streams with facial recognition to automatically stop when the speaker is no longer present.
 
 ## Overview
 

@@ -1,5 +1,7 @@
 # Speaker Attribution Consistency
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 ## Overview
 
 This document describes the implementation of speaker attribution consistency in the Parliament TV transcription system. The feature ensures that continuous speech segments from the same speaker are consistently attributed to the speaker with the highest confidence score, even if facial recognition initially identified different speakers for some segments.

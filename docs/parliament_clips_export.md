@@ -1,5 +1,7 @@
 # Parliament Clips Export Documentation
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 This document explains the process of exporting Parliament Clips from the local SQLite database to Supabase PostgreSQL database.
 
 ## Overview

@@ -606,7 +606,10 @@ class ParliamentTVSequentialProcessor:
                                  title: str,
                                  description: str,
                                  duration: int = None,
-                                 segment_duration: int = 1800) -> Dict[str, Any]:
+                                 total_duration: int = None,
+                                 segment_duration: int = 1800,
+                                 is_live: bool = False,
+                                 session_id: str = None) -> Dict[str, Any]:
         """
         Process a video sequentially in segments of specified duration.
         
@@ -627,22 +630,26 @@ class ParliamentTVSequentialProcessor:
             from sqlalchemy.orm import Session
             from backend.db.session import get_db
             
-            # Create a new capture session
-            db = next(get_db())
-            session = CaptureSession(
-                title=title,
-                description=description,
-                metadata={
-                    "video_url": video_url,
-                    "audio_url": audio_url,
-                    "original_url": original_url
-                }
-            )
-            db.add(session)
-            db.commit()
-            db.refresh(session)
-            session_id = session.id
-            logger.info(f"Created capture session with ID: {session_id}")
+            # Create a new capture session if session_id is not provided
+            if session_id is None:
+                db = next(get_db())
+                session = CaptureSession(
+                    title=title,
+                    description=description,
+                    metadata={
+                        "video_url": video_url,
+                        "audio_url": audio_url,
+                        "original_url": original_url,
+                        "is_live": is_live
+                    }
+                )
+                db.add(session)
+                db.commit()
+                db.refresh(session)
+                session_id = session.id
+                logger.info(f"Created capture session with ID: {session_id}")
+            else:
+                logger.info(f"Using provided capture session ID: {session_id}")
             
             # Set up output directory
             output_dir = os.path.join(settings.MEDIA_DIR)
@@ -675,15 +682,21 @@ class ParliamentTVSequentialProcessor:
             
             start_time = 0
             segment_results = []
-            total_duration = duration
-            is_live = False
             
             # Log successful downloads
             logger.info(f"Successfully downloaded full video to {video_path} ({os.path.getsize(video_path)} bytes)")
             logger.info(f"Successfully downloaded full audio to {audio_path} ({os.path.getsize(audio_path)} bytes)")
             
-            # Determine if we need to get the duration
-            if duration is None:
+            # Determine the duration to use
+            # First check if total_duration was provided directly
+            if total_duration is not None:
+                logger.info(f"Using provided total_duration: {total_duration} seconds")
+            # Then check if duration was provided
+            elif duration is not None:
+                total_duration = duration
+                logger.info(f"Using provided duration: {total_duration} seconds")
+            # Otherwise try to determine from the video file
+            else:
                 # Try to get duration from the local video file
                 try:
                     import json
@@ -708,8 +721,6 @@ class ParliamentTVSequentialProcessor:
                 except Exception as e:
                     logger.error(f"Error determining video duration: {str(e)}")
                     total_duration = 3600  # Default to 1 hour if we can't determine
-            else:
-                total_duration = duration
             
             # Process the video in segments
             logger.info(f"Processing video in {segment_duration}s segments, total duration: {total_duration}s")

@@ -1,5 +1,7 @@
 # Parliament Video Clip Manager - Setup Guide
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 ## Prerequisites
 
 - Python 3.11+

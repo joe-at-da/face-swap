@@ -1,5 +1,7 @@
 # Parliament Video Clip Manager
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 A powerful application for UK Members of Parliament to capture, edit, and share video clips from Parliament TV feeds. Features automated transcription, branding, and multi-platform sharing capabilities.
 
 ![Project Status](https://img.shields.io/badge/status-beta-blue) ![Version](https://img.shields.io/badge/version-0.9.0-green)

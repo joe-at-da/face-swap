@@ -1,5 +1,7 @@
 # Parliament TV Supabase Automation
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 This document describes the automated Parliament TV processing pipeline that handles the entire workflow from URL extraction to Supabase integration, including saving individual member clips with detailed metadata.
 
 ## Overview
@@ -136,6 +138,110 @@ This table stores individual clips for each identified member with detailed meta
 | original_url | string | Original Parliament TV URL |
 | created_at | string | Timestamp when the clip was created (ISO format) |
 | status | string | Processing status |
+
+## Usage Guide
+
+The Supabase automation API is the primary entry point for Parliament TV processing. This section provides comprehensive examples of how to use the API in various scenarios.
+
+### Basic Usage
+
+The simplest way to call the API is using curl:
+
+```bash
+curl --location 'http://localhost:8000/api/v1/supabase-automation/process-parliament-tv' \
+  --header 'X-API-Key: 8448700525' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "url": "https://parliamentlive.tv/Event/Index/2b0b9b50-ee08-42b3-b6b9-655175fbe6d7", 
+    "title": "Test Capture", 
+    "description": "Test description", 
+    "duration": 60
+  }'
+```
+
+### Common Usage Scenarios
+
+#### 1. Capture a Specific Parliament TV Event
+
+Provide the URL of the specific Parliament TV event:
+
+```json
+{
+  "url": "https://parliamentlive.tv/Event/Index/2b0b9b50-ee08-42b3-b6b9-655175fbe6d7",
+  "title": "Test Capture",
+  "description": "Test description"
+}
+```
+
+#### 2. Capture with Time Limit
+
+Limit the capture to a specific duration (in seconds):
+
+```json
+{
+  "url": "https://parliamentlive.tv/Event/Index/2b0b9b50-ee08-42b3-b6b9-655175fbe6d7",
+  "title": "Test Capture",
+  "description": "Test description",
+  "duration": 90
+}
+```
+
+#### 3. Capture Most Recent Event (Automated Mode)
+
+Omit the URL to automatically capture the most recent or live event:
+
+```json
+{
+  "title": "Test Capture",
+  "description": "Test description"
+}
+```
+
+#### 4. Capture with Specific MP Focus
+
+Specify an MP to focus on during facial recognition:
+
+```json
+{
+  "url": "https://parliamentlive.tv/Event/Index/2b0b9b50-ee08-42b3-b6b9-655175fbe6d7",
+  "title": "Test Capture",
+  "description": "Test description",
+  "target_member_id": 123
+}
+```
+
+#### 5. Scheduled Capture (for Cron Jobs)
+
+This format is ideal for scheduled cron jobs:
+
+```json
+{
+  "title": "Daily Parliament Capture",
+  "description": "Automated daily capture",
+  "duration": 3600,
+  "prevent_duplicates": true
+}
+```
+
+### Advanced Options
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| url | string | Parliament TV event URL (optional) |
+| title | string | Capture title (required) |
+| description | string | Capture description (optional) |
+| duration | integer | Maximum capture duration in seconds (optional) |
+| target_member_id | integer | Specific MP to focus on (optional) |
+| prevent_duplicates | boolean | Skip if event was already captured (optional) |
+| start_offset | integer | Start capture from specific offset in seconds (optional) |
+| enable_facial_recognition | boolean | Enable/disable facial recognition (default: true) |
+
+### Integration Notes
+
+- The API is designed to be called from scripts, cron jobs, or other automated systems
+- Authentication is handled via the X-API-Key header
+- The process runs asynchronously; the API returns immediately with a job ID
+- Results can be monitored via the status endpoint
 
 ## Implementation Details
 
