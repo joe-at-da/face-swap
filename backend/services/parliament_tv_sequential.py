@@ -178,25 +178,26 @@ class ParliamentTVSequentialProcessor:
                 video_path           # Output file
             ])
             
-            # AUDIO COMMAND - Optimized for faster processing
+            # AUDIO COMMAND - Using direct stream copy for maximum speed
+            # First download the raw stream without re-encoding
+            raw_audio_path = audio_path.replace('.mp3', '_raw.ts')
             audio_cmd = [
                 "ffmpeg", "-y",
                 "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
                 "-http_persistent", "1",
                 "-allowed_extensions", "ALL",
                 "-i", audio_url,
-                "-c:a", "libmp3lame",
-                "-q:a", "4",  # Lower quality for faster encoding (4 instead of 2)
+                "-c:a", "copy",  # Direct stream copy - much faster than encoding
                 "-vn",
-                "-threads", "auto",  # Use all available CPU cores
                 "-hide_banner",
                 "-progress", audio_log,
                 audio_path
             ]
             
-            # Log commands
-            logger.info(f"Video download command: {' '.join(video_cmd)}")
             logger.info(f"Audio download command: {' '.join(audio_cmd)}")
+            
+            # Log video command
+            logger.info(f"Video download command: {' '.join(video_cmd)}")
             
             # Start both processes
             video_process = subprocess.Popen(video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -274,11 +275,44 @@ class ParliamentTVSequentialProcessor:
                 logger.error(f"Video download failed with code {video_process.returncode}")
                 logger.error(f"Video stderr: {video_stderr.decode()}")
             
-            if audio_success:
-                logger.info(f"Audio download completed successfully: {audio_path} ({os.path.getsize(audio_path) if os.path.exists(audio_path) else 0} bytes)")
+            raw_audio_path = audio_path.replace('.mp3', '_raw.ts')
+            if audio_success and os.path.exists(raw_audio_path) and os.path.getsize(raw_audio_path) > 0:
+                logger.info(f"Raw audio download completed successfully: {raw_audio_path} ({os.path.getsize(raw_audio_path)} bytes)")
+                
+                # Now convert the raw audio to MP3 in a separate step
+                logger.info(f"Converting raw audio to MP3 format: {raw_audio_path} -> {audio_path}")
+                convert_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", raw_audio_path,
+                    "-c:a", "libmp3lame",
+                    "-q:a", "4",  # Lower quality for faster encoding
+                    "-threads", "auto",
+                    audio_path
+                ]
+                
+                try:
+                    # Run the conversion as a separate process
+                    logger.info(f"Running audio conversion command: {' '.join(convert_cmd)}")
+                    convert_process = subprocess.run(convert_cmd, check=True, capture_output=True)
+                    
+                    if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                        logger.info(f"Audio conversion completed successfully: {audio_path} ({os.path.getsize(audio_path)} bytes)")
+                        # Try to remove the raw file to save space
+                        try:
+                            os.remove(raw_audio_path)
+                            logger.info(f"Removed temporary raw audio file: {raw_audio_path}")
+                        except Exception as e:
+                            logger.warning(f"Could not remove temporary raw audio file: {str(e)}")
+                    else:
+                        logger.error(f"Audio conversion failed: output file missing or empty")
+                        audio_success = False
+                except Exception as e:
+                    logger.error(f"Error during audio conversion: {str(e)}")
+                    audio_success = False
             else:
                 logger.error(f"Audio download failed with code {audio_process.returncode}")
                 logger.error(f"Audio stderr: {audio_stderr.decode()}")
+                audio_success = False
             
             # Verify files exist and have content
             if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
@@ -289,9 +323,38 @@ class ParliamentTVSequentialProcessor:
             
             if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 audio_success = True
+                logger.info(f"Final audio file verified: {audio_path} ({os.path.getsize(audio_path)} bytes)")
             else:
                 audio_success = False
                 logger.error(f"Audio file does not exist or is empty: {audio_path}")
+                
+                # If MP3 conversion failed but we have the raw audio, try a different approach
+                raw_audio_path = audio_path.replace('.mp3', '_raw.ts')
+                if os.path.exists(raw_audio_path) and os.path.getsize(raw_audio_path) > 0:
+                    logger.info(f"Attempting alternative audio conversion with raw file: {raw_audio_path}")
+                    alt_convert_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", raw_audio_path,
+                        "-acodec", "copy",  # Try direct copy first
+                        audio_path
+                    ]
+                    
+                    try:
+                        subprocess.run(alt_convert_cmd, check=True, capture_output=True)
+                        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                            logger.info(f"Alternative audio conversion succeeded: {audio_path} ({os.path.getsize(audio_path)} bytes)")
+                            audio_success = True
+                    except Exception as e:
+                        logger.error(f"Alternative audio conversion failed: {str(e)}")
+                        # Last resort - just rename/copy the raw file
+                        try:
+                            shutil.copy(raw_audio_path, audio_path)
+                            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                                logger.info(f"Copied raw audio as fallback: {audio_path} ({os.path.getsize(audio_path)} bytes)")
+                                audio_success = True
+                        except Exception as e2:
+                            logger.error(f"Final audio fallback failed: {str(e2)}")
+                            audio_success = False
             
             # Clean up progress log files
             try:
