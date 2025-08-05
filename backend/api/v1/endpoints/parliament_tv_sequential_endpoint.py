@@ -141,26 +141,9 @@ async def process_parliament_tv_sequentially(
             
             # Step 3: Start sequential processing
             try:
-                # Get media directory from settings
-                media_dir = settings.MEDIA_STORAGE_PATH
+                logger.info(f"Starting sequential processing for session {capture_id}")
                 
-                # Start downloading full video and audio
-                download_result = sequential_processor.download_full_video(
-                    video_url=video_url,
-                    audio_url=audio_url,
-                    output_dir=media_dir,
-                    session_id=str(capture_id)
-                )
-                
-                # Update capture session with file paths
-                capture.file_path = download_result.get("video_path")
-                capture.capture_metadata["audio_path"] = download_result.get("audio_path")
-                capture.capture_metadata["download_started_at"] = str(datetime.now())
-                db.commit()
-                
-                logger.info(f"Started downloading full video and audio for session {capture_id}")
-                
-                # Start sequential processing
+                # Start sequential processing (includes download)
                 processing_result = sequential_processor.process_video_sequentially(
                     original_url=url,
                     video_url=video_url,
