@@ -74,7 +74,8 @@ def format_video_for_supabase(
 def format_clips_for_supabase(
     video_id: str,
     recognition_results: Dict[str, Any],
-    combined_av_url: Optional[str] = None
+    combined_av_url: Optional[str] = None,
+    group_by_speech_group: bool = True
 ) -> List[Dict[str, Any]]:
     """
     Format recognition results for Supabase clip_creation queue
@@ -83,6 +84,7 @@ def format_clips_for_supabase(
         video_id: Reference to the parent video
         recognition_results: Recognition results from facial recognition
         combined_av_url: URL to the combined audio-video file
+        group_by_speech_group: Whether to group clips by speech_group_id (default: True)
         
     Returns:
         List of clips formatted for Supabase clip_creation queue
@@ -326,6 +328,86 @@ def format_clips_for_supabase(
             logger.warning(f"Clip still missing required fields after formatting: {missing_fields}")
         else:
             valid_clips.append(clip)
+    
+    # If group_by_speech_group is enabled, group clips by speech_group_id
+    if group_by_speech_group and valid_clips:
+        logger.info("Grouping clips by speech_group_id")
+        
+        # Check if clips have speech_group_id in metadata
+        speech_group_clips = {}
+        ungrouped_clips = []
+        
+        for clip in valid_clips:
+            # Check if clip has speech_group_id in metadata
+            speech_group_id = None
+            if 'metadata' in clip and isinstance(clip['metadata'], dict):
+                speech_group_id = clip['metadata'].get('speech_group_id')
+            
+            if not speech_group_id:
+                # If no speech_group_id found, add to ungrouped clips
+                ungrouped_clips.append(clip)
+                continue
+            
+            # Add to speech group dictionary
+            if speech_group_id not in speech_group_clips:
+                speech_group_clips[speech_group_id] = []
+            speech_group_clips[speech_group_id].append(clip)
+        
+        # Process each speech group to merge clips
+        grouped_clips = []
+        for speech_group_id, clips in speech_group_clips.items():
+            if not clips:
+                continue
+                
+            # Sort clips by start timestamp to ensure correct order for transcript concatenation
+            clips.sort(key=lambda x: float(x['start_timestamp']) if isinstance(x['start_timestamp'], (int, float, str)) else 0)
+            
+            # Get the member_id from the clips (should be the same for all clips in a group)
+            member_id = clips[0]['member_id']
+            
+            # Find min start and max end timestamps
+            min_start = min([float(clip['start_timestamp']) if isinstance(clip['start_timestamp'], (int, float, str)) else 0 for clip in clips])
+            max_end = max([float(clip['end_timestamp']) if isinstance(clip['end_timestamp'], (int, float, str)) else 0 for clip in clips])
+            
+            # Concatenate transcripts, removing any placeholder text
+            transcripts = []
+            for clip in clips:
+                transcript = clip.get('transcript', '')
+                # Skip placeholder text like "EXPORT TEXT" or empty strings
+                if transcript and transcript.strip() and not transcript.strip().upper() == "EXPORT TEXT":
+                    transcripts.append(transcript.strip())
+            
+            concatenated_transcript = " ".join(transcripts)
+            
+            # Create a new merged clip
+            merged_clip = {
+                "video_id": video_id,
+                "start_timestamp": str(min_start),
+                "end_timestamp": str(max_end),
+                "member_id": member_id,
+                "speaker_name": clips[0].get('speaker_name', 'Unknown'),
+                "confidence": max([clip.get('confidence', 0.0) for clip in clips]),
+                "transcript": concatenated_transcript,
+                "face_image_url": clips[0].get('face_image_url', ''),
+                "full_video_path": combined_av_url or clips[0].get('full_video_path', 'unknown_path'),
+                "metadata": {
+                    **clips[0].get('metadata', {}),
+                    "speech_group_id": speech_group_id,
+                    "merged_clip_count": len(clips),
+                    "original_timestamps": [
+                        {"start": clip['start_timestamp'], "end": clip['end_timestamp']} 
+                        for clip in clips
+                    ]
+                }
+            }
+            
+            grouped_clips.append(merged_clip)
+        
+        # Combine grouped clips with ungrouped clips
+        final_clips = grouped_clips + ungrouped_clips
+        logger.info(f"Grouped {len(valid_clips) - len(ungrouped_clips)} clips into {len(grouped_clips)} speech groups")
+        logger.info(f"Returning {len(final_clips)} clips after grouping")
+        return final_clips
     
     logger.info(f"Returning {len(valid_clips)} valid clips after final validation")
     return valid_clips

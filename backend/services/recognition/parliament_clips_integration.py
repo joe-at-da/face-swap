@@ -467,15 +467,8 @@ class ParliamentClipsIntegrationService:
         
         if success:
             logger.info(f"✅ Successfully saved {clips_saved} clips to parliament_clips database")
-            
-            # Now export clips to Supabase
-            try:
-                logger.info(f"Exporting {clips_saved} clips to Supabase")
-                self._export_clips_to_supabase(video_id, recognition_events, video_path)
-            except Exception as e:
-                logger.error(f"Error exporting clips to Supabase: {str(e)}")
-                logger.error(traceback.format_exc())
-                result["supabase_export_error"] = str(e)
+            # Note: We no longer export clips to Supabase here to prevent duplicate exports
+            # The export will happen later in the process after member_id normalization
         else:
             logger.warning(f"❌ Failed to save any clips to parliament_clips database. Errors: {errors}")
             
@@ -1409,8 +1402,16 @@ class ParliamentClipsIntegrationService:
         Returns:
             Dict with export status and results
         """
-        # First, normalize member IDs within speech groups to ensure consistent speaker attribution
-        self._normalize_speech_group_member_ids_in_sqlite(video_id)
+        # CRITICAL: First, normalize member IDs within speech groups to ensure consistent speaker attribution
+        # This ensures that all clips in a speech group have the correct member_id before export
+        logger.info("Running member_id normalization before export")
+        normalization_result = self._normalize_speech_group_member_ids_in_sqlite(video_id)
+        
+        if normalization_result and not normalization_result.get("success", False):
+            logger.warning(f"Member ID normalization had issues: {normalization_result.get('errors', [])}")
+            logger.warning("Continuing with export anyway, but some member IDs may not be properly normalized")
+        else:
+            logger.info(f"Member ID normalization completed successfully: {normalization_result.get('clips_updated', 0)} clips updated")
         
         # Initialize cache for temporary Speaker objects
         temp_members_cache = {}
@@ -1600,7 +1601,8 @@ class ParliamentClipsIntegrationService:
                     "start_time": clip['start_timestamp'],
                     "end_time": clip['end_timestamp'],
                     "confidence": clip['confidence_score'],
-                    "matched_by": clip['metadata'].get('matched_by', 'unknown')
+                    "matched_by": clip['metadata'].get('matched_by', 'unknown'),
+                    "speech_group_id": clip.get('speech_group_id', None)  # Include speech_group_id in logging
                 }
                 logger.info(f"Clip details: {json.dumps(clip_details)}")
                 
@@ -1836,6 +1838,13 @@ class ParliamentClipsIntegrationService:
                 # Log the timestamps for debugging
                 logger.info(f"Final clip timestamps: start={start_timestamp} (type: {type(start_timestamp).__name__}), end={end_timestamp} (type: {type(end_timestamp).__name__})")
                 
+                # Get speech_group_id from the clip if available
+                speech_group_id = None
+                if hasattr(clip, 'speech_group_id'):
+                    speech_group_id = clip.speech_group_id
+                elif isinstance(clip, dict):
+                    speech_group_id = clip.get('speech_group_id')
+                
                 export_clip = {
                     "video_id": str(video_id),
                     "start_timestamp": start_timestamp,
@@ -1853,7 +1862,8 @@ class ParliamentClipsIntegrationService:
                         "clip_id": clip.get('id'),
                         "combined_av_url": video_path,  # Combined audio+video file
                         "video_export_path": video_path,  # IMPORTANT: Always use full_video_path (combined AV) for all paths
-                        "original_id": str(clip.get('member_id'))  # Store the original ID for reference
+                        "original_id": str(clip.get('member_id')),  # Store the original ID for reference
+                        "speech_group_id": speech_group_id  # Include speech_group_id in metadata for grouping
                     }
                 }
                 
@@ -1889,9 +1899,27 @@ class ParliamentClipsIntegrationService:
                         "video_export_path": video_export_path, 
                         "clips_export_path": clips_export_path}
             
-            # Use the SupabaseService's add_to_clip_creation_queue method to insert clips
-            logger.info(f"Calling Supabase to insert {len(clips_to_export)} clips")
-            result = self.supabase_service.add_to_clip_creation_queue(clips_to_export)
+            # Format clips for Supabase, grouping by speech_group_id
+            from backend.services.integration.supabase_export import format_clips_for_supabase
+            
+            # Create a recognition results structure with speaker appearances
+            formatted_recognition_results = {
+                "speaker_appearances": clips_to_export
+            }
+            
+            # Format clips for Supabase, enabling grouping by speech_group_id
+            grouped_clips = format_clips_for_supabase(
+                video_id=str(video_id),
+                recognition_results=formatted_recognition_results,
+                combined_av_url=video_path,
+                group_by_speech_group=True  # Enable grouping by speech_group_id
+            )
+            
+            logger.info(f"Formatted {len(clips_to_export)} clips into {len(grouped_clips)} grouped clips for Supabase")
+            
+            # Use the SupabaseService's add_to_clip_creation_queue method to insert the grouped clips
+            logger.info(f"Calling Supabase to insert {len(grouped_clips)} grouped clips")
+            result = self.supabase_service.add_to_clip_creation_queue(grouped_clips)
             
             # Log detailed information about the result for debugging
             logger.info(f"Supabase export result: {result}")
