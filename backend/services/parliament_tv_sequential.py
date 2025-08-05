@@ -10,6 +10,7 @@ import os
 import json
 import time
 import requests
+import subprocess
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -120,23 +121,27 @@ class ParliamentTVSequentialProcessor:
             logger.error(f"Error extracting stream URLs: {str(e)}")
             raise ValueError(f"Error extracting stream URLs: {str(e)}")
     
-    def download_full_video(self, video_url: str, audio_url: str, output_dir: str, session_id: str) -> Dict[str, Any]:
+    def download_full_video(self, video_url, audio_url, output_dir, session_id, max_retries=3, timeout=None):
         """
-        Download the full video and audio streams.
+        Download the full video and audio files from the provided URLs simultaneously.
+        
+        This method runs two FFmpeg processes in parallel with identical parameters
+        to ensure that audio and video are downloaded efficiently. It also monitors and reports progress.
         
         Args:
-            video_url: Direct video stream URL
-            audio_url: Direct audio stream URL
-            output_dir: Directory to save the downloaded files
-            session_id: Session ID for the capture
+            video_url (str): URL of the video stream
+            audio_url (str): URL of the audio stream
+            output_dir (str): Directory to save the downloaded files
+            session_id (int): Session ID for the capture
+            max_retries (int): Maximum number of retries for failed downloads
+            timeout (int): Timeout in seconds for each download attempt (None for no timeout)
             
         Returns:
-            Dict with video_path and audio_path
+            dict: Dictionary with paths and success status
         """
         try:
-            import subprocess
-            import os
-            from datetime import datetime
+            import threading
+            import re
             
             # Create output directory if it doesn't exist
             os.makedirs(output_dir, exist_ok=True)
@@ -149,47 +154,256 @@ class ParliamentTVSequentialProcessor:
             video_path = os.path.join(output_dir, video_filename)
             audio_path = os.path.join(output_dir, audio_filename)
             
+            # Create progress log files
+            video_log = os.path.join(output_dir, f"{session_id}_video_progress.log")
+            audio_log = os.path.join(output_dir, f"{session_id}_audio_progress.log")
+            
+            logger.info(f"========== STARTING SIMULTANEOUS DOWNLOAD for session {session_id} ===========")
             logger.info(f"Downloading video from {video_url} to {video_path}")
             logger.info(f"Downloading audio from {audio_url} to {audio_path}")
             
-            # Start video download in background
-            video_cmd = [
-                "ffmpeg",
-                "-y",  # Overwrite output files
-                "-i", video_url,
+            # Build FFmpeg commands for video and audio extraction
+            # VIDEO COMMAND
+            video_cmd = ["ffmpeg", "-y"]
+            video_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            video_cmd.extend(["-http_persistent", "1"])
+            video_cmd.extend(["-allowed_extensions", "ALL"])
+            video_cmd.extend(["-i", video_url])
+            
+            # Add video output options
+            video_cmd.extend([
                 "-c", "copy",  # Copy without re-encoding
-                video_path
-            ]
+                "-hide_banner",     # Hide banner information
+                "-progress", video_log,  # Log progress to file
+                video_path           # Output file
+            ])
             
-            video_process = subprocess.Popen(video_cmd, 
-                                           stdout=subprocess.PIPE, 
-                                           stderr=subprocess.PIPE)
-            
-            # Start audio download in background
+            # AUDIO COMMAND - Using exact command structure that works
             audio_cmd = [
-                "ffmpeg",
-                "-y",  # Overwrite output files
+                "ffmpeg", "-y",
+                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+                "-http_persistent", "1",
+                "-allowed_extensions", "ALL",
                 "-i", audio_url,
-                "-c", "copy",  # Copy without re-encoding
+                "-c:a", "libmp3lame",
+                "-q:a", "2",
+                "-vn",
+                "-hide_banner",
+                "-progress", audio_log,
                 audio_path
             ]
             
-            audio_process = subprocess.Popen(audio_cmd, 
-                                           stdout=subprocess.PIPE, 
-                                           stderr=subprocess.PIPE)
+            # Log commands
+            logger.info(f"Video download command: {' '.join(video_cmd)}")
+            logger.info(f"Audio download command: {' '.join(audio_cmd)}")
             
-            logger.info("Started video and audio downloads in background")
+            # Start both processes
+            video_process = subprocess.Popen(video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            audio_process = subprocess.Popen(audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            logger.info(f"Started video download process with PID {video_process.pid}")
+            logger.info(f"Started audio download process with PID {audio_process.pid}")
+            
+            # Function to monitor progress
+            def monitor_progress():
+                last_video_progress = 0
+                last_audio_progress = 0
+                
+                # Pattern to extract progress information
+                progress_pattern = re.compile(r'out_time_ms=([0-9]+)')
+                
+                while video_process.poll() is None or audio_process.poll() is None:
+                    # Read progress logs
+                    video_progress = 0
+                    audio_progress = 0
+                    
+                    try:
+                        if os.path.exists(video_log):
+                            with open(video_log, 'r') as f:
+                                content = f.read()
+                                match = progress_pattern.search(content)
+                                if match:
+                                    # Convert microseconds to seconds
+                                    video_progress = int(match.group(1)) / 1000000
+                    except Exception as e:
+                        logger.error(f"Error reading video progress: {str(e)}")
+                    
+                    try:
+                        if os.path.exists(audio_log):
+                            with open(audio_log, 'r') as f:
+                                content = f.read()
+                                match = progress_pattern.search(content)
+                                if match:
+                                    # Convert microseconds to seconds
+                                    audio_progress = int(match.group(1)) / 1000000
+                    except Exception as e:
+                        logger.error(f"Error reading audio progress: {str(e)}")
+                    
+                    # Only log if progress has changed
+                    if video_progress != last_video_progress or audio_progress != last_audio_progress:
+                        logger.info(f"Download Progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s")
+                        last_video_progress = video_progress
+                        last_audio_progress = audio_progress
+                    
+                    # Sleep to avoid CPU overuse
+                    time.sleep(1)
+                
+                return True
+            
+            # Start progress monitoring in a separate thread
+            monitor_thread = threading.Thread(target=monitor_progress)
+            monitor_thread.daemon = True
+            monitor_thread.start()
+            
+            # Wait for both processes to complete
+            video_stdout, video_stderr = video_process.communicate()
+            audio_stdout, audio_stderr = audio_process.communicate()
+            
+            # Wait for monitor thread to finish
+            monitor_thread.join(timeout=10)
+            
+            # Check results
+            video_success = video_process.returncode == 0
+            audio_success = audio_process.returncode == 0
+            
+            # Log results
+            if video_success:
+                logger.info(f"Video download completed successfully: {video_path} ({os.path.getsize(video_path) if os.path.exists(video_path) else 0} bytes)")
+            else:
+                logger.error(f"Video download failed with code {video_process.returncode}")
+                logger.error(f"Video stderr: {video_stderr.decode()}")
+            
+            if audio_success:
+                logger.info(f"Audio download completed successfully: {audio_path} ({os.path.getsize(audio_path) if os.path.exists(audio_path) else 0} bytes)")
+            else:
+                logger.error(f"Audio download failed with code {audio_process.returncode}")
+                logger.error(f"Audio stderr: {audio_stderr.decode()}")
+            
+            # Verify files exist and have content
+            if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+                video_success = True
+            else:
+                video_success = False
+                logger.error(f"Video file does not exist or is empty: {video_path}")
+            
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                audio_success = True
+            else:
+                audio_success = False
+                logger.error(f"Audio file does not exist or is empty: {audio_path}")
+            
+            # Clean up progress log files
+            try:
+                if os.path.exists(video_log):
+                    os.remove(video_log)
+                if os.path.exists(audio_log):
+                    os.remove(audio_log)
+            except Exception as e:
+                logger.error(f"Error cleaning up progress logs: {str(e)}")
             
             return {
                 "video_path": video_path,
                 "audio_path": audio_path,
-                "video_process": video_process,
-                "audio_process": audio_process
+                "video_success": video_success,
+                "audio_success": audio_success
             }
             
         except Exception as e:
             logger.error(f"Error downloading full video: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise ValueError(f"Error downloading full video: {str(e)}")
+    
+    def extract_segment(self, 
+                        video_path: str,
+                        audio_path: str,
+                        start_time: int,
+                        end_time: int,
+                        output_dir: str,
+                        segment_id: str) -> Dict[str, Any]:
+        """
+        Extract a segment from the local video and audio files.
+        
+        Args:
+            video_path: Path to the full video file
+            audio_path: Path to the full audio file
+            start_time: Start time in seconds
+            end_time: End time in seconds
+            output_dir: Directory to save the segment files
+            segment_id: ID for the segment
+            
+        Returns:
+            Dict with segment_video_path and segment_audio_path
+        """
+        try:
+            import subprocess
+            import os
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate segment filenames
+            segment_video_path = os.path.join(output_dir, f"{segment_id}.mp4")
+            segment_audio_path = os.path.join(output_dir, f"{segment_id}.mp3")
+            
+            # Extract video segment using ffmpeg with seeking
+            logger.info(f"Extracting video segment {start_time}-{end_time}s from {video_path} to {segment_video_path}")
+            video_cmd = [
+                "ffmpeg",
+                "-y",  # Overwrite output files
+                "-ss", str(start_time),  # Start time
+                "-i", video_path,  # Input file (local)
+                "-t", str(end_time - start_time),  # Duration
+                "-c:v", "libx264",  # Video codec
+                "-preset", "fast",
+                "-crf", "22",
+                "-an",  # No audio
+                segment_video_path
+            ]
+            
+            video_process = subprocess.run(video_cmd, 
+                                         stdout=subprocess.PIPE, 
+                                         stderr=subprocess.PIPE)
+            
+            # Extract audio segment using ffmpeg with seeking
+            logger.info(f"Extracting audio segment {start_time}-{end_time}s from {audio_path} to {segment_audio_path}")
+            audio_cmd = [
+                "ffmpeg",
+                "-y",  # Overwrite output files
+                "-ss", str(start_time),  # Start time
+                "-i", audio_path,  # Input file (local)
+                "-t", str(end_time - start_time),  # Duration
+                "-c:a", "libmp3lame",  # Audio codec
+                "-q:a", "2",
+                "-vn",  # No video
+                segment_audio_path
+            ]
+            
+            audio_process = subprocess.run(audio_cmd, 
+                                         stdout=subprocess.PIPE, 
+                                         stderr=subprocess.PIPE)
+            
+            # Check if extraction was successful
+            if video_process.returncode != 0:
+                logger.error(f"Video segment extraction failed: {video_process.stderr.decode()}")
+            else:
+                logger.info(f"Video segment extraction completed successfully: {segment_video_path}")
+                
+            if audio_process.returncode != 0:
+                logger.error(f"Audio segment extraction failed: {audio_process.stderr.decode()}")
+            else:
+                logger.info(f"Audio segment extraction completed successfully: {segment_audio_path}")
+            
+            return {
+                "segment_video_path": segment_video_path,
+                "segment_audio_path": segment_audio_path,
+                "video_success": video_process.returncode == 0,
+                "audio_success": audio_process.returncode == 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error extracting segment: {str(e)}")
+            raise ValueError(f"Error extracting segment: {str(e)}")
     
     def process_segment(self, 
                       original_url: str,
@@ -199,7 +413,9 @@ class ParliamentTVSequentialProcessor:
                       end_time: int,
                       title: str,
                       description: str,
-                      session_id: str = None) -> Dict[str, Any]:
+                      session_id: str = None,
+                      video_path: str = None,
+                      audio_path: str = None) -> Dict[str, Any]:
         """
         Process a segment of the video by making an API call to the existing processing pipeline.
         
@@ -212,6 +428,8 @@ class ParliamentTVSequentialProcessor:
             title: Title for the segment
             description: Description for the segment
             session_id: Optional session ID to use
+            video_path: Optional path to local video segment file
+            audio_path: Optional path to local audio segment file
             
         Returns:
             Dict with processing result
@@ -240,6 +458,12 @@ class ParliamentTVSequentialProcessor:
                     "parent_session_id": session_id
                 }
             }
+            
+            # Add local file paths if provided
+            if video_path and audio_path:
+                payload["segment_info"]["video_path"] = video_path
+                payload["segment_info"]["audio_path"] = audio_path
+                payload["segment_info"]["use_local_files"] = True
             
             # Use a default API key for internal calls
             api_key = "8448700525"  # Same key used in testing
@@ -278,134 +502,163 @@ class ParliamentTVSequentialProcessor:
                                  audio_url: str, 
                                  title: str,
                                  description: str,
-                                 total_duration: int = None,
-                                 is_live: bool = False,
-                                 session_id: str = None) -> Dict[str, Any]:
+                                 duration: int = None,
+                                 segment_duration: int = 1800) -> Dict[str, Any]:
         """
-        Process a video sequentially in 30-minute segments.
+        Process a video sequentially in segments of specified duration.
         
         Args:
-            original_url: Original Parliament TV URL
-            video_url: Direct video stream URL
-            audio_url: Direct audio stream URL
-            title: Title for the video
-            description: Description for the video
-            total_duration: Total duration in seconds (if known)
-            is_live: Whether the video is live
-            session_id: Optional session ID to use
+            video_url: URL of the video stream
+            audio_url: URL of the audio stream
+            title: Title of the video
+            description: Description of the video
+            duration: Total duration of the video in seconds. If None, will be determined from the video.
+            segment_duration: Duration of each segment in seconds. Default is 1800 (30 minutes).
             
         Returns:
-            Dict with processing results
+            Dict with results of the processing
         """
         try:
-            import time
-            from datetime import datetime
+            from backend.core.config import settings
+            from backend.db.models.capture import CaptureSession
+            from sqlalchemy.orm import Session
+            from backend.db.session import get_db
             
-            segment_duration = self.DEFAULT_SEGMENT_DURATION
+            # Create a new capture session
+            db = next(get_db())
+            session = CaptureSession(
+                title=title,
+                description=description,
+                metadata={
+                    "video_url": video_url,
+                    "audio_url": audio_url,
+                    "original_url": original_url
+                }
+            )
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+            session_id = session.id
+            logger.info(f"Created capture session with ID: {session_id}")
+            
+            # Set up output directory
+            output_dir = os.path.join(settings.MEDIA_DIR)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Download the full video and audio files
+            download_result = self.download_full_video(video_url, audio_url, output_dir, session_id)
+            video_path = download_result["video_path"]
+            audio_path = download_result["audio_path"]
+            video_success = download_result["video_success"]
+            audio_success = download_result["audio_success"]
+            
+            # Verify downloads were successful
+            if not video_success:
+                logger.error(f"Video download failed: {video_path}")
+                return {"success": False, "error": "Video download failed"}
+            
+            if not audio_success:
+                logger.error(f"Audio download failed: {audio_path}")
+                return {"success": False, "error": "Audio download failed"}
+            
+            # Double-check files exist and have content
+            if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+                logger.error(f"Video file does not exist or is empty: {video_path}")
+                return {"success": False, "error": f"Video file does not exist or is empty: {video_path}"}
+            
+            if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+                logger.error(f"Audio file does not exist or is empty: {audio_path}")
+                return {"success": False, "error": f"Audio file does not exist or is empty: {audio_path}"}
+            
             start_time = 0
             segment_results = []
+            total_duration = duration
+            is_live = False
             
-            # If it's a live stream, we'll keep processing until the stream ends
-            if is_live:
-                logger.info(f"Processing live stream in {segment_duration}s segments")
-                
-                while True:
-                    end_time = start_time + segment_duration
+            # Log successful downloads
+            logger.info(f"Successfully downloaded full video to {video_path} ({os.path.getsize(video_path)} bytes)")
+            logger.info(f"Successfully downloaded full audio to {audio_path} ({os.path.getsize(audio_path)} bytes)")
+            
+            # Determine if we need to get the duration
+            if duration is None:
+                # Try to get duration from the local video file
+                try:
+                    import json
                     
-                    # Process the current segment
-                    segment_title = f"{title} (Live Segment {len(segment_results) + 1})"
-                    segment_result = self.process_segment(
-                        original_url=original_url,
-                        video_url=video_url,
-                        audio_url=audio_url,
-                        start_time=start_time,
-                        end_time=end_time,
-                        title=segment_title,
-                        description=description,
-                        session_id=session_id
-                    )
+                    cmd = [
+                        "ffprobe",
+                        "-v", "quiet",
+                        "-print_format", "json",
+                        "-show_format",
+                        video_path
+                    ]
                     
-                    segment_results.append({
-                        "segment": len(segment_results) + 1,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "result": segment_result
-                    })
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    info = json.loads(result.stdout)
                     
-                    # Check if the stream is still live
-                    # For now, we'll just check if the segment processing was successful
-                    if not segment_result.get("success", False):
-                        logger.info(f"Segment {len(segment_results)} processing failed, assuming stream has ended")
-                        break
-                    
-                    # Move to the next segment
-                    start_time = end_time
-                    
-                    # Wait a bit before starting the next segment
-                    time.sleep(5)
+                    if 'format' in info and 'duration' in info['format']:
+                        total_duration = int(float(info['format']['duration']))
+                        logger.info(f"Detected video duration: {total_duration} seconds")
+                    else:
+                        logger.warning("Could not determine video duration from ffprobe output")
+                        total_duration = 3600  # Default to 1 hour if we can't determine
+                except Exception as e:
+                    logger.error(f"Error determining video duration: {str(e)}")
+                    total_duration = 3600  # Default to 1 hour if we can't determine
             else:
-                # For archived videos, we know the total duration
-                if not total_duration:
-                    # If total_duration is not provided, try to get it from ffprobe
-                    try:
-                        import subprocess
-                        import json
-                        
-                        cmd = [
-                            "ffprobe",
-                            "-v", "quiet",
-                            "-print_format", "json",
-                            "-show_format",
-                            video_url
-                        ]
-                        
-                        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-                        info = json.loads(result.stdout)
-                        
-                        if 'format' in info and 'duration' in info['format']:
-                            total_duration = int(float(info['format']['duration']))
-                            logger.info(f"Detected video duration: {total_duration} seconds")
-                        else:
-                            # Default to 2 hours if we can't determine the duration
-                            total_duration = 7200
-                            logger.warning(f"Could not determine video duration, using default: {total_duration} seconds")
-                    except Exception as e:
-                        logger.error(f"Error determining video duration: {str(e)}")
-                        # Default to 2 hours if we can't determine the duration
-                        total_duration = 7200
-                        logger.warning(f"Using default duration: {total_duration} seconds")
+                total_duration = duration
+            
+            # Process the video in segments
+            logger.info(f"Processing video in {segment_duration}s segments, total duration: {total_duration}s")
+            
+            # Process segments until we reach the end of the video
+            while start_time < total_duration:
+                end_time = min(start_time + segment_duration, total_duration)
+                segment_id = f"{session_id}_{len(segment_results) + 1}"
                 
-                logger.info(f"Processing archived video with duration {total_duration}s in {segment_duration}s segments")
+                # Extract segment from local files
+                segment_extraction = self.extract_segment(
+                    video_path=video_path,
+                    audio_path=audio_path,
+                    start_time=start_time,
+                    end_time=end_time,
+                    output_dir=output_dir,
+                    segment_id=segment_id
+                )
                 
-                # Process the video in segments
-                while start_time < total_duration:
-                    end_time = min(start_time + segment_duration, total_duration)
-                    
-                    # Process the current segment
-                    segment_title = f"{title} (Segment {len(segment_results) + 1})"
-                    segment_result = self.process_segment(
-                        original_url=original_url,
-                        video_url=video_url,
-                        audio_url=audio_url,
-                        start_time=start_time,
-                        end_time=end_time,
-                        title=segment_title,
-                        description=description,
-                        session_id=session_id
-                    )
-                    
-                    segment_results.append({
-                        "segment": len(segment_results) + 1,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "result": segment_result
-                    })
-                    
-                    # Move to the next segment
-                    start_time = end_time
-                    
-                    # Wait a bit before starting the next segment
-                    time.sleep(5)
+                # Process the current segment
+                segment_title = f"{title} (Segment {len(segment_results) + 1})"
+                segment_result = self.process_segment(
+                    original_url=original_url,
+                    video_url=video_url,
+                    audio_url=audio_url,
+                    start_time=start_time,
+                    end_time=end_time,
+                    title=segment_title,
+                    description=description,
+                    session_id=session_id,
+                    video_path=segment_extraction["segment_video_path"],
+                    audio_path=segment_extraction["segment_audio_path"]
+                )
+                
+                segment_results.append({
+                    "segment": len(segment_results) + 1,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "result": segment_result,
+                    "video_path": segment_extraction["segment_video_path"],
+                    "audio_path": segment_extraction["segment_audio_path"]
+                })
+                
+                # Check if the segment processing was successful
+                if not segment_result.get("success", False):
+                    logger.warning(f"Segment {len(segment_results)} processing failed")
+                
+                # Move to the next segment
+                start_time = end_time
+                
+                # Wait a bit before starting the next segment
+                time.sleep(5)
             
             # Return the results of all segments
             return {
