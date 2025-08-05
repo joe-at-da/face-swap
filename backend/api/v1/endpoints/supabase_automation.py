@@ -529,11 +529,17 @@ async def process_parliament_tv_to_supabase(
                         
                         # Export clips to Supabase with proper grouping by speech_group_id using the standardized export function
                         logger.info(f"Using normalize_and_export_clips for Supabase export with video_id={capture_id}")
-                        save_result = normalize_and_export_clips(
-                            db=db,
-                            video_id=capture_id,
-                            supabase_service=None  # Will create a new instance internally
-                        )
+                        
+                        # Get an active database session from the session generator
+                        from backend.db.session import SessionLocal
+                        
+                        # Create a new database session for this specific operation
+                        with SessionLocal() as active_db:
+                            save_result = normalize_and_export_clips(
+                                db=active_db,
+                                video_id=capture_id,
+                                supabase_service=None  # Will create a new instance internally
+                            )
                         
                         logger.info(f"Export result: {save_result}")
                     except Exception as e:

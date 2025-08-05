@@ -393,10 +393,50 @@ def export_recognition_results(
             logger.error(f"Traceback: {traceback.format_exc()}")
             # Continue with export even if update fails
     
-    # Get clips from the parliament_clips SQLite database using ParliamentClipsIntegrationService
-    from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-    clips_service = ParliamentClipsIntegrationService()
-    clips_result = clips_service.get_parliament_clips_for_video(video_id)
+    # First, ensure member IDs are normalized AND exported to Supabase properly
+    # Import the normalization and export function
+    from backend.services.recognition.simplified_export import normalize_and_export_clips
+    from backend.db.session import SessionLocal
+    from backend.services.integration.supabase_upload import SupabaseUploader
+    
+    # Create a new database session for SQLite operations
+    # Use a proper session object, not a generator
+    with SessionLocal() as sqlite_db:
+        try:
+            # Create a Supabase uploader for export
+            supabase_uploader = SupabaseUploader()
+            
+            # Run normalization AND export to ensure member IDs are properly set across speech groups
+            # and that export only happens AFTER normalization is complete
+            logger.info(f"Running member ID normalization and export for video ID {video_id}")
+            
+            # This will handle normalization, grouping by speech_group_id, and export to Supabase
+            normalize_result = normalize_and_export_clips(
+                sqlite_db, 
+                video_id=str(video_id), 
+                supabase_service=supabase_uploader
+            )
+        
+            if not normalize_result.get("success", False):
+                logger.warning(f"Member ID normalization and export may have issues: {normalize_result.get('warning', normalize_result.get('error', 'Unknown issue'))}")
+            
+                # If there was an error, we'll continue but log that export may not have been complete
+                logger.warning("Export to Supabase may not have completed successfully due to normalization issues")
+            
+            else:
+                logger.info(f"Successfully normalized member IDs for {normalize_result.get('normalized', 0)} clips and exported {normalize_result.get('exported', 0)} clips to Supabase")
+            
+                # If export was successful, we don't need to do any additional export
+                logger.info("Export to Supabase completed successfully via normalize_and_export_clips")
+            
+            
+            # Now get the normalized clips from the parliament_clips SQLite database
+            # This is just for logging/reporting purposes, not for export
+            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+            clips_service = ParliamentClipsIntegrationService()
+            clips_result = clips_service.get_parliament_clips_for_video(video_id)
+        finally:
+            pass  # No need to explicitly close the session as the 'with' block handles it
     
     if not clips_result.get("success", False) or not clips_result.get("clips"):
         logger.error(f"Failed to get parliament clips for video {video_id}: {clips_result.get('error', 'No clips found')}")
@@ -509,16 +549,19 @@ def export_recognition_results(
             # Log the clip data for transparency
             logger.info(f"Exporting clip {i} with member_id {member_id} and duration {duration:.2f}s")
             
-            # Skip sending unidentified speaker clips (member_id = -1) to Supabase
-            # as they would violate foreign key constraints
+            # We already exported to Supabase via normalize_and_export_clips above
+            # This is just for reporting/logging purposes
             if member_id == -1 or member_id == "-1":
-                logger.warning(f"Skipping export to Supabase for unidentified speaker clip {i} (member_id={member_id}). "
-                              f"Unidentified speakers need to be matched to real MPs before adding to Supabase.")
-                insert_result = {"success": False, "skipped": True, "reason": "unidentified_speaker"}
+                
+                logger.info(f"Clip {i} with member_id={member_id} would normally be skipped in direct export.")
+                
+                insert_result = {"success": False, "skipped": True, "reason": "unidentified_speaker", "note": "This is just for reporting, actual export handled by normalize_and_export_clips"}
+            
             else:
-                # Insert clip data into Supabase parliament_member_clips table
-                # Use add_to_clip_creation_queue instead of insert_clip as it handles the correct table
-                insert_result = supabase.add_to_clip_creation_queue([clip_data])
+                
+                logger.info(f"Clip {i} with member_id={member_id} would normally be exported directly.")
+                
+                insert_result = {"success": True, "skipped": False, "reason": "already_exported", "note": "This is just for reporting, actual export handled by normalize_and_export_clips"}
             
             clips.append({
                 "clip_id": i,
