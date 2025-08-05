@@ -178,7 +178,7 @@ class ParliamentTVSequentialProcessor:
                 video_path           # Output file
             ])
             
-            # AUDIO COMMAND - Using exact command structure that works
+            # AUDIO COMMAND - Optimized for faster processing
             audio_cmd = [
                 "ffmpeg", "-y",
                 "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
@@ -186,8 +186,9 @@ class ParliamentTVSequentialProcessor:
                 "-allowed_extensions", "ALL",
                 "-i", audio_url,
                 "-c:a", "libmp3lame",
-                "-q:a", "2",
+                "-q:a", "4",  # Lower quality for faster encoding (4 instead of 2)
                 "-vn",
+                "-threads", "auto",  # Use all available CPU cores
                 "-hide_banner",
                 "-progress", audio_log,
                 audio_path
@@ -424,19 +425,20 @@ class ParliamentTVSequentialProcessor:
             # Extract audio segment using ffmpeg with seeking
             logger.info(f"Extracting audio segment {start_time}-{end_time}s from {audio_path} to {segment_audio_path}")
             
-            # Use the exact command structure from the dev branch that works
+            # Optimized command structure for faster audio segment extraction
             audio_cmd = [
                 "ffmpeg",
                 "-y",  # Overwrite output files
                 "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
                 "-allowed_extensions", "ALL",
-                "-ss", str(start_time),  # Start time
+                "-ss", str(start_time),  # Start time (before input for faster seeking)
                 "-i", audio_path,  # Input file (local)
                 "-t", str(end_time - start_time),  # Duration
-                "-c:a", "libmp3lame",  # Audio codec
-                "-q:a", "2",
+                "-c:a", "copy",  # Try stream copying first (much faster)
+                "-avoid_negative_ts", "1",
                 "-vn",  # No video
                 "-ignore_unknown",  # Ignore unknown HLS tags
+                "-threads", "auto",  # Use all available CPU cores
                 segment_audio_path
             ]
             
@@ -475,14 +477,17 @@ class ParliamentTVSequentialProcessor:
             if video_process.returncode == 0 and audio_process.returncode != 0:
                 logger.info("Attempting alternative audio extraction method...")
                 
-                # Try a simpler ffmpeg command for audio extraction
+                # Fallback to encoding if stream copy failed
                 alt_audio_cmd = [
                     "ffmpeg",
                     "-y",
+                    "-ss", str(start_time),  # Start time before input for faster seeking
                     "-i", audio_path,
-                    "-ss", str(start_time),
                     "-t", str(end_time - start_time),
-                    "-acodec", "copy",
+                    "-c:a", "libmp3lame",  # Fallback to encoding
+                    "-q:a", "4",  # Lower quality for faster encoding
+                    "-vn",
+                    "-threads", "auto",  # Use all available CPU cores
                     segment_audio_path
                 ]
                 
