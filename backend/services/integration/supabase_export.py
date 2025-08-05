@@ -318,14 +318,24 @@ def format_clips_for_supabase(
     
     # Verify all clips have the required fields before returning
     valid_clips = []
+    invalid_clips = []
     for clip in unique_clips.values():
         missing_fields = []
         for field in ['member_id', 'start_timestamp', 'end_timestamp', 'transcript', 'full_video_path']:
             if field not in clip or clip[field] is None:
                 missing_fields.append(field)
         
+        if missing_fields:
+            logger.warning(f"Clip {clip.get('id', 'unknown')} missing required fields: {missing_fields}")
+            invalid_clips.append(clip)
+        else:
+            valid_clips.append(clip)
+    
+    logger.info(f"Found {len(valid_clips)} valid clips and {len(invalid_clips)} invalid clips after validation")
+        
     # If group_by_speech_group is enabled, group clips by speech_group_id
     if group_by_speech_group and valid_clips:
+        logger.info(f"Starting grouping process for {len(valid_clips)} valid clips")
         logger.info(f"Grouping {len(valid_clips)} clips by speech_group_id")
         
         # Separate clips with and without speech_group_id
@@ -334,6 +344,8 @@ def format_clips_for_supabase(
         
         # Log all speech_group_ids found in clips for debugging
         all_speech_group_ids = set()
+        speech_group_id_locations = {"metadata": 0, "direct": 0}
+        
         for clip in valid_clips:
             metadata = clip.get('metadata', {})
             speech_group_id_meta = metadata.get('speech_group_id', None)
@@ -341,10 +353,13 @@ def format_clips_for_supabase(
             
             if speech_group_id_meta:
                 all_speech_group_ids.add(speech_group_id_meta)
+                speech_group_id_locations["metadata"] += 1
             if speech_group_id_direct:
                 all_speech_group_ids.add(speech_group_id_direct)
+                speech_group_id_locations["direct"] += 1
         
         logger.info(f"Found {len(all_speech_group_ids)} unique speech_group_ids in clips: {all_speech_group_ids}")
+        logger.info(f"Speech group ID locations: {speech_group_id_locations}")
         
         for clip in valid_clips:
             # Check if this clip has a speech_group_id in metadata
@@ -355,18 +370,21 @@ def format_clips_for_supabase(
             if not speech_group_id:
                 speech_group_id = clip.get('speech_group_id', None)
             
+            # Ensure speech_group_id is a string for consistent handling
+            if speech_group_id is not None and not isinstance(speech_group_id, str):
+                speech_group_id = str(speech_group_id)
+            
             # Log the speech_group_id found (or not found)
             if speech_group_id:
                 logger.info(f"Found speech_group_id: {speech_group_id} for clip {clip.get('id', 'unknown')}")
+                
+                # Add to speech group dictionary
+                if speech_group_id not in speech_group_clips:
+                    speech_group_clips[speech_group_id] = []
+                speech_group_clips[speech_group_id].append(clip)
             else:
                 logger.warning(f"No speech_group_id found for clip {clip.get('id', 'unknown')}, adding to ungrouped clips")
                 ungrouped_clips.append(clip)
-                continue
-            
-            # Add to speech group dictionary
-            if speech_group_id not in speech_group_clips:
-                speech_group_clips[speech_group_id] = []
-            speech_group_clips[speech_group_id].append(clip)
         
         # Process each speech group to merge clips
         grouped_clips = []
@@ -376,6 +394,11 @@ def format_clips_for_supabase(
                 
             # Sort clips by start timestamp to ensure correct order for transcript concatenation
             clips.sort(key=lambda x: float(x['start_timestamp']) if isinstance(x['start_timestamp'], (int, float, str)) else 0)
+            
+            # Verify all clips in the group have the same member_id (they should after normalization)
+            member_ids = set(clip['member_id'] for clip in clips if 'member_id' in clip)
+            if len(member_ids) > 1:
+                logger.warning(f"Speech group {speech_group_id} has multiple member_ids: {member_ids}. Using the one from the first clip.")
             
             # Get the member_id from the clips (should be the same for all clips in a group)
             member_id = clips[0]['member_id']
@@ -422,6 +445,17 @@ def format_clips_for_supabase(
         final_clips = grouped_clips + ungrouped_clips
         logger.info(f"Grouped {len(valid_clips) - len(ungrouped_clips)} clips into {len(grouped_clips)} speech groups")
         logger.info(f"Returning {len(final_clips)} clips after grouping")
+        
+        # Log detailed information about the grouped clips for debugging
+        if grouped_clips:
+            logger.info("Sample of grouped clips:")
+            for i, clip in enumerate(grouped_clips[:3]):  # Log up to 3 samples
+                merged_count = clip.get('metadata', {}).get('merged_clip_count', 1)
+                logger.info(f"Grouped clip {i+1}: member_id={clip.get('member_id')}, "
+                           f"speech_group_id={clip.get('metadata', {}).get('speech_group_id')}, "
+                           f"merged_count={merged_count}, "
+                           f"transcript_length={len(clip.get('transcript', ''))}")
+        
         return final_clips
     
     logger.info(f"Returning {len(valid_clips)} valid clips after final validation")

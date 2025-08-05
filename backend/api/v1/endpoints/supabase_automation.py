@@ -25,6 +25,7 @@ from backend.services.integration.supabase_upload import SupabaseUploader
 from backend.services.integration.supabase_client import SupabaseService  # Keep for backward compatibility
 from backend.services.parliament_tv import ParliamentTVCapture
 from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
+from backend.services.recognition.simplified_export import normalize_and_export_clips
 from sqlalchemy import desc
 from backend.db.models import CaptureSession, RecognitionProcess, ParliamentTranscription
 from backend.services.utils import make_json_serializable
@@ -526,11 +527,12 @@ async def process_parliament_tv_to_supabase(
                         export_video_path = full_video_url if full_video_url else video_file_path
                         logger.info(f"Using video path for export: {export_video_path}")
                         
-                        # Export clips to Supabase with proper grouping by speech_group_id
-                        save_result = parliament_clips_service._export_clips_to_supabase(
+                        # Export clips to Supabase with proper grouping by speech_group_id using the standardized export function
+                        logger.info(f"Using normalize_and_export_clips for Supabase export with video_id={capture_id}")
+                        save_result = normalize_and_export_clips(
+                            db=db,
                             video_id=capture_id,
-                            recognition_events=serializable_recognition_data.get('recognition_events', []),
-                            video_path=export_video_path
+                            supabase_service=None  # Will create a new instance internally
                         )
                         
                         logger.info(f"Export result: {save_result}")
