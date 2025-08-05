@@ -16,6 +16,7 @@ This document provides a comprehensive guide to the Parliament Video Clip Manage
 10. [Dashboard](#dashboard)
 11. [Admin](#admin)
 12. [Integration API](#integration-api)
+13. [Parliament TV Debug](#parliament-tv-debug)
 
 ## Base URL
 
@@ -1006,6 +1007,47 @@ All API endpoints follow a consistent error handling pattern:
 - **500 Internal Server Error**: Server-side error
 
 Error responses have the following format:
+
+## Parliament TV Debug
+
+### Process Specific Segment
+
+Process a specific segment from already-downloaded Parliament TV files without re-downloading the entire video.
+
+**Endpoint:** `POST /parliament-tv/process-segment`
+
+**Authentication:** API Key required
+
+**Headers:**
+```
+X-API-Key: {api_key}
+```
+
+**Request:**
+```json
+{
+  "session_id": 1150,                   // ID of the existing capture session with downloaded files
+  "start_time": 5400,                   // Start time of the segment in seconds (e.g., 5400 = 90 minutes)
+  "end_time": 7200,                     // End time of the segment in seconds (e.g., 7200 = 120 minutes)
+  "segment_label": "MP identification debug"  // Optional label for the segment
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Started processing segment 5400-7200s from session 1150",
+  "session_id": 1150,
+  "segment_info": {
+    "start_time": 5400,
+    "end_time": 7200,
+    "label": "MP identification debug"
+  }
+}
+```
+
+For more detailed information, see the [Parliament TV Debug documentation](parliament_tv_debug.md).
 
 ```json
 {

@@ -338,9 +338,60 @@ class ParliamentTVSequentialProcessor:
         try:
             import subprocess
             import os
+            import shutil
+            
+            # Verify input files exist and are accessible
+            if not os.path.exists(video_path):
+                logger.error(f"Video file does not exist: {video_path}")
+                return {
+                    "segment_video_path": None,
+                    "segment_audio_path": None,
+                    "video_success": False,
+                    "audio_success": False,
+                    "error": f"Video file does not exist: {video_path}"
+                }
+            
+            if not os.path.exists(audio_path):
+                logger.error(f"Audio file does not exist: {audio_path}")
+                return {
+                    "segment_video_path": None,
+                    "segment_audio_path": None,
+                    "video_success": False,
+                    "audio_success": False,
+                    "error": f"Audio file does not exist: {audio_path}"
+                }
+            
+            # Check file sizes
+            video_size = os.path.getsize(video_path)
+            audio_size = os.path.getsize(audio_path)
+            logger.info(f"Input file sizes - Video: {video_size} bytes, Audio: {audio_size} bytes")
+            
+            if video_size == 0:
+                logger.error(f"Video file is empty (0 bytes): {video_path}")
+            
+            if audio_size == 0:
+                logger.error(f"Audio file is empty (0 bytes): {audio_path}")
+                return {
+                    "segment_video_path": None,
+                    "segment_audio_path": None,
+                    "video_success": False,
+                    "audio_success": False,
+                    "error": f"Audio file is empty (0 bytes): {audio_path}"
+                }
             
             # Create output directory if it doesn't exist
-            os.makedirs(output_dir, exist_ok=True)
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                logger.info(f"Created or verified output directory: {output_dir}")
+            except Exception as e:
+                logger.error(f"Failed to create output directory {output_dir}: {str(e)}")
+                return {
+                    "segment_video_path": None,
+                    "segment_audio_path": None,
+                    "video_success": False,
+                    "audio_success": False,
+                    "error": f"Failed to create output directory: {str(e)}"
+                }
             
             # Generate segment filenames
             segment_video_path = os.path.join(output_dir, f"{segment_id}.mp4")
@@ -358,45 +409,97 @@ class ParliamentTVSequentialProcessor:
                 "-preset", "fast",
                 "-crf", "22",
                 "-an",  # No audio
+                "-ignore_unknown",  # Ignore unknown HLS tags
                 segment_video_path
             ]
             
+            logger.info(f"Running video command: {' '.join(video_cmd)}")
             video_process = subprocess.run(video_cmd, 
                                          stdout=subprocess.PIPE, 
                                          stderr=subprocess.PIPE)
             
+            video_stdout = video_process.stdout.decode()
+            video_stderr = video_process.stderr.decode()
+            
             # Extract audio segment using ffmpeg with seeking
             logger.info(f"Extracting audio segment {start_time}-{end_time}s from {audio_path} to {segment_audio_path}")
+            
+            # Use the exact command structure from the dev branch that works
             audio_cmd = [
                 "ffmpeg",
                 "-y",  # Overwrite output files
+                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+                "-allowed_extensions", "ALL",
                 "-ss", str(start_time),  # Start time
                 "-i", audio_path,  # Input file (local)
                 "-t", str(end_time - start_time),  # Duration
                 "-c:a", "libmp3lame",  # Audio codec
                 "-q:a", "2",
                 "-vn",  # No video
+                "-ignore_unknown",  # Ignore unknown HLS tags
                 segment_audio_path
             ]
             
+            logger.info(f"Running audio command: {' '.join(audio_cmd)}")
             audio_process = subprocess.run(audio_cmd, 
                                          stdout=subprocess.PIPE, 
                                          stderr=subprocess.PIPE)
             
+            audio_stdout = audio_process.stdout.decode()
+            audio_stderr = audio_process.stderr.decode()
+            
             # Check if extraction was successful
             if video_process.returncode != 0:
-                logger.error(f"Video segment extraction failed: {video_process.stderr.decode()}")
+                logger.error(f"Video segment extraction failed with code {video_process.returncode}")
+                logger.error(f"Video stderr: {video_stderr}")
             else:
-                logger.info(f"Video segment extraction completed successfully: {segment_video_path}")
+                # Verify the output file exists and has content
+                if os.path.exists(segment_video_path) and os.path.getsize(segment_video_path) > 0:
+                    logger.info(f"Video segment extraction completed successfully: {segment_video_path} ({os.path.getsize(segment_video_path)} bytes)")
+                else:
+                    logger.error(f"Video segment file missing or empty: {segment_video_path}")
+                    video_process.returncode = 1  # Mark as failed
                 
             if audio_process.returncode != 0:
-                logger.error(f"Audio segment extraction failed: {audio_process.stderr.decode()}")
+                logger.error(f"Audio segment extraction failed with code {audio_process.returncode}")
+                logger.error(f"Audio stderr: {audio_stderr}")
             else:
-                logger.info(f"Audio segment extraction completed successfully: {segment_audio_path}")
+                # Verify the output file exists and has content
+                if os.path.exists(segment_audio_path) and os.path.getsize(segment_audio_path) > 0:
+                    logger.info(f"Audio segment extraction completed successfully: {segment_audio_path} ({os.path.getsize(segment_audio_path)} bytes)")
+                else:
+                    logger.error(f"Audio segment file missing or empty: {segment_audio_path}")
+                    audio_process.returncode = 1  # Mark as failed
+            
+            # If audio extraction failed but video succeeded, try a different approach for audio
+            if video_process.returncode == 0 and audio_process.returncode != 0:
+                logger.info("Attempting alternative audio extraction method...")
+                
+                # Try a simpler ffmpeg command for audio extraction
+                alt_audio_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i", audio_path,
+                    "-ss", str(start_time),
+                    "-t", str(end_time - start_time),
+                    "-acodec", "copy",
+                    segment_audio_path
+                ]
+                
+                logger.info(f"Running alternative audio command: {' '.join(alt_audio_cmd)}")
+                alt_audio_process = subprocess.run(alt_audio_cmd,
+                                                stdout=subprocess.PIPE,
+                                                stderr=subprocess.PIPE)
+                
+                if alt_audio_process.returncode == 0 and os.path.exists(segment_audio_path) and os.path.getsize(segment_audio_path) > 0:
+                    logger.info(f"Alternative audio extraction succeeded: {segment_audio_path} ({os.path.getsize(segment_audio_path)} bytes)")
+                    audio_process.returncode = 0  # Mark as successful
+                else:
+                    logger.error(f"Alternative audio extraction failed: {alt_audio_process.stderr.decode()}")
             
             return {
-                "segment_video_path": segment_video_path,
-                "segment_audio_path": segment_audio_path,
+                "segment_video_path": segment_video_path if video_process.returncode == 0 else None,
+                "segment_audio_path": segment_audio_path if audio_process.returncode == 0 else None,
                 "video_success": video_process.returncode == 0,
                 "audio_success": audio_process.returncode == 0
             }

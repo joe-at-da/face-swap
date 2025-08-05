@@ -104,6 +104,48 @@
                         ]
                 },
                 {
+                        "name": "Parliament TV Debug",
+                        "item": [
+                                {
+                                        "name": "Process Segment",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "X-API-Key",
+                                                                "value": "{{integration_api_key}}"
+                                                        },
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n    \"session_id\": {{session_id}},\n    \"start_time\": 5400,\n    \"end_time\": 7200,\n    \"segment_label\": \"Test segment 1:30-2:00\"\n}",
+                                                        "options": {
+                                                                "raw": {
+                                                                        "language": "json"
+                                                                }
+                                                        }
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/parliament-tv/process-segment",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "parliament-tv",
+                                                                "process-segment"
+                                                        ]
+                                                },
+                                                "description": "Process a specific segment from already-downloaded Parliament TV files without re-downloading the entire audio/video files. Useful for debugging and reprocessing specific segments. Requires API key authentication."
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
                         "name": "Supabase Webhooks",
                         "item": [
                                 {
