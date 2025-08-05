@@ -556,11 +556,15 @@ class ParliamentTVSequentialProcessor:
                     "is_segment": True,
                     "start_time": start_time,
                     "end_time": end_time,
-                    "video_url": video_url,
-                    "audio_url": audio_url,
                     "parent_session_id": session_id
                 }
             }
+            
+            # Only include video_url and audio_url if we don't have local files
+            # This prevents redundant downloads when we already have the files locally
+            if not (video_path and audio_path):
+                payload["segment_info"]["video_url"] = video_url
+                payload["segment_info"]["audio_url"] = audio_url
             
             # Add local file paths if provided
             if video_path and audio_path:
