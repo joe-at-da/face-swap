@@ -178,7 +178,8 @@ class ParliamentTVSequentialProcessor:
                 video_path           # Output file
             ])
             
-            # AUDIO COMMAND - Conservative optimization (revert from broken changes)
+            # AUDIO COMMAND - Direct MP3 encoding (stream copy doesn't work with AAC->MP3)
+            # The Parliament TV audio stream is AAC, so we need to encode to MP3
             audio_cmd = [
                 "ffmpeg", "-y",
                 "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
@@ -186,7 +187,7 @@ class ParliamentTVSequentialProcessor:
                 "-allowed_extensions", "ALL",
                 "-i", audio_url,
                 "-c:a", "libmp3lame",
-                "-q:a", "3",  # Slightly better quality than 4, but still faster than 2
+                "-q:a", "3",  # Optimized quality setting
                 "-vn",
                 "-threads", "auto",  # Use all available CPU cores
                 "-hide_banner",
@@ -209,6 +210,8 @@ class ParliamentTVSequentialProcessor:
             def monitor_progress():
                 last_video_progress = 0
                 last_audio_progress = 0
+                last_progress_update = time.time()
+                stall_warning_logged = False
                 
                 # Pattern to extract progress information
                 progress_pattern = re.compile(r'out_time_ms=([0-9]+)')
@@ -240,14 +243,28 @@ class ParliamentTVSequentialProcessor:
                     except Exception as e:
                         logger.error(f"Error reading audio progress: {str(e)}")
                     
-                    # Only log if progress has changed
-                    if video_progress != last_video_progress or audio_progress != last_audio_progress:
+                    # Check if progress has changed
+                    progress_changed = (video_progress != last_video_progress or audio_progress != last_audio_progress)
+                    
+                    if progress_changed:
                         logger.info(f"Download Progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s")
                         last_video_progress = video_progress
                         last_audio_progress = audio_progress
+                        last_progress_update = time.time()
+                        stall_warning_logged = False
+                    else:
+                        # Check if processes are still running but not reporting progress
+                        time_since_update = time.time() - last_progress_update
+                        if time_since_update > 60 and not stall_warning_logged:  # 1 minute without progress
+                            video_running = video_process.poll() is None
+                            audio_running = audio_process.poll() is None
+                            if video_running or audio_running:
+                                logger.warning(f"Progress reporting may have stalled (no updates for {time_since_update:.0f}s) but processes still running - Video: {video_running}, Audio: {audio_running}")
+                                logger.info(f"Last reported progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s")
+                                stall_warning_logged = True
                     
                     # Sleep to avoid CPU overuse
-                    time.sleep(1)
+                    time.sleep(5)  # Increased to 5 seconds to reduce log spam during stalls
                 
                 return True
             
@@ -289,6 +306,7 @@ class ParliamentTVSequentialProcessor:
             
             if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 audio_success = True
+                logger.info(f"Audio file verified: {audio_path} ({os.path.getsize(audio_path)} bytes)")
             else:
                 audio_success = False
                 logger.error(f"Audio file does not exist or is empty: {audio_path}")
@@ -485,7 +503,7 @@ class ParliamentTVSequentialProcessor:
                     "-i", audio_path,
                     "-t", str(end_time - start_time),
                     "-c:a", "libmp3lame",  # Fallback to encoding
-                    "-q:a", "4",  # Lower quality for faster encoding
+                    "-q:a", "3",  # Optimized quality for faster encoding
                     "-vn",
                     "-threads", "auto",  # Use all available CPU cores
                     segment_audio_path

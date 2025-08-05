@@ -1691,7 +1691,8 @@ class ParliamentTVCapture:
             # Add audio output options
             audio_cmd.extend([
                 "-c:a", "libmp3lame",  # Use MP3 codec
-                "-q:a", "2",          # Quality setting for audio
+                "-q:a", "3",          # Optimized quality setting for audio
+                "-threads", "auto",    # Use all available CPU cores
                 "-vn",                 # No video
                 "-hide_banner",        # Hide banner information
                 "-progress", audio_log,  # Log progress to file
@@ -2390,7 +2391,8 @@ class ParliamentTVCapture:
         # Now add output options
         cmd.extend([
             "-c:a", "libmp3lame",  # Use MP3 codec
-            "-q:a", "2",  # Quality setting for audio
+            "-q:a", "3",  # Optimized quality setting for audio
+            "-threads", "auto",  # Use all available CPU cores
             "-vn",  # No video
             "-hide_banner",  # Hide banner information
             "-stats",  # Show progress stats
