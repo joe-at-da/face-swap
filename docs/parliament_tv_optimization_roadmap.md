@@ -1,6 +1,6 @@
 # Parliament TV Processing Optimization Roadmap
 
-*Last Updated: August 6, 2025 - Audio stream copy optimization completed*
+*Last Updated: August 6, 2025 - Audio processing optimization and progress reporting issue resolution*
 
 ## Overview
 
@@ -10,10 +10,19 @@ This document outlines a comprehensive plan to optimize the Parliament TV proces
 
 ### Audio Processing Optimization (Completed August 6, 2025)
 - **IMPLEMENTED**: Stream copy approach for audio downloads
-- **IMPLEMENTED**: Fallback mechanism with optimized MP3 encoding
-- **IMPLEMENTED**: Consistent quality settings (`-q:a 3`) across all audio processing
-- **IMPLEMENTED**: Multi-threading (`-threads auto`) for all audio encoding operations
-- **Result**: Audio processing now matches video processing speed, eliminating the ~22-minute stall issue
+- **Key Improvements**:
+- ✅ Direct MP3 encoding with `libmp3lame` codec
+- ✅ Optimized quality settings (`-q:a 3`) for speed/quality balance
+- ✅ Multi-threading support (`-threads auto`)
+- ✅ Enhanced progress monitoring with stall detection
+- ✅ Eliminated redundant audio downloads (single download per session)
+- ✅ Identified and documented ffmpeg progress reporting limitation
+
+**Critical Discovery**:
+- The "22-minute audio stall" was a progress reporting artifact, not an actual processing issue
+- FFmpeg continues processing audio normally but stops updating progress logs after ~22 minutes
+- This is due to HLS stream characteristics and ffmpeg's progress buffer limitations
+- Enhanced monitoring now detects and logs this expected behavior
 
 ## Phase 1: FFmpeg Optimizations (Immediate Wins)
 

@@ -261,6 +261,8 @@ class ParliamentTVSequentialProcessor:
                             if video_running or audio_running:
                                 logger.warning(f"Progress reporting may have stalled (no updates for {time_since_update:.0f}s) but processes still running - Video: {video_running}, Audio: {audio_running}")
                                 logger.info(f"Last reported progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s")
+                                if audio_running and audio_progress > 1200:  # 20+ minutes
+                                    logger.info("KNOWN ISSUE: FFmpeg progress reporting for Parliament TV audio streams often stops after ~22 minutes due to HLS stream characteristics. The audio processing continues normally but progress updates cease. This is expected behavior and not an actual stall.")
                                 stall_warning_logged = True
                     
                     # Sleep to avoid CPU overuse

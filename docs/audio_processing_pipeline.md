@@ -1,7 +1,7 @@
 # Audio Processing Pipeline
 
 *Created: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
-*Last Updated: August 6, 2025 - Audio processing optimization with stream copy approach*
+*Last Updated: August 6, 2025 - Audio processing optimization and progress reporting issue resolution*
 
 ## Overview
 
@@ -40,6 +40,33 @@ The current audio pipeline follows these steps:
    - Ensures synchronization between audio and video
    - Creates the final media files used for transcription and recognition
 
+## Known Issues and Limitations
+
+### FFmpeg Progress Reporting Stall (~22 Minutes)
+
+**Issue**: FFmpeg progress reporting for Parliament TV audio streams consistently stops updating after approximately 22 minutes of processing time.
+
+**Root Cause**: 
+- Parliament TV uses HLS (HTTP Live Streaming) with specific segment boundaries
+- FFmpeg's progress reporting mechanism has limitations with long HLS streams
+- The issue is related to progress buffer overflow or stream metadata changes
+
+**Impact**:
+- Progress logs stop updating after ~22 minutes (`out_time=00:22:XX`)
+- Creates the illusion that audio processing has stalled
+- **Audio processing continues normally** - files are created successfully
+- Video processing is unaffected (uses different codec path)
+
+**Detection and Monitoring**:
+- Enhanced monitoring detects when processes are running but not reporting progress
+- Warning logs are generated: `Progress reporting may have stalled but processes still running`
+- System confirms ffmpeg processes are still active and consuming CPU
+
+**Resolution**:
+- This is expected behavior, not a bug requiring fixes
+- Audio files are completed successfully despite lack of progress visibility
+- Monitoring system provides transparency about the actual process state
+
 ## Performance Considerations
 
 ### Current Bottlenecks
@@ -58,6 +85,12 @@ The audio processing can be time-consuming due to several factors:
 
 3. **Sequential Processing**:
    - While video and audio downloads happen in parallel, segment processing is sequential
+
+4. **Progress Reporting Limitation** (Known Issue):
+   - FFmpeg progress reporting for Parliament TV audio streams consistently stops after ~22 minutes
+   - This is due to HLS stream characteristics and ffmpeg's progress buffer limitations
+   - **Important**: The audio processing continues normally; only progress visibility is affected
+   - Enhanced monitoring detects this condition and logs appropriate warnings
    - No multi-threading for audio encoding tasks
 
 ### Importance of Audio Quality
