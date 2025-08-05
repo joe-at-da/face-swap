@@ -1,5 +1,7 @@
 # Parliament TV Sequential Processing
 
+*Updated: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+
 ## Overview
 
 The Parliament TV Sequential Processing system is designed to handle long videos from Parliament TV by processing them in 30-minute segments. This approach solves memory issues that occur when processing very long videos in a single pass, while maintaining the integrity of the recognition results.
