@@ -304,11 +304,13 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
             # Skip Supabase validation - we'll just use the normalized member IDs from SQLite
             logger.info("Skipping member ID validation against Supabase - using normalized IDs from SQLite directly")
             
-            # Prepare clips for Supabase export
-            supabase_clips = []
+            # Group clips by speech_group_id for export
+            logger.info("Grouping normalized clips by speech_group_id before export")
+            grouped_clips_by_speech_id = {}
             skipped_clips = 0
             invalid_member_ids = set()
             
+            # First pass: group clips by speech_group_id
             for clip in normalized_clips:
                 # Get member_id and validate it
                 member_id = clip["member_id"]
@@ -329,28 +331,89 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
                         invalid_member_ids.add(member_id)
                         continue
                 
-                # No validation against Supabase - we trust the normalized member IDs from SQLite
-                # Just log the member ID for transparency
-                logger.info(f"Exporting clip with member_id {member_id} and duration {clip['duration_seconds']}s")
+                # Get speech_group_id - this is the key for grouping
+                speech_group_id = clip.get("speech_group_id")
+                if not speech_group_id:
+                    logger.warning(f"Clip {clip['id']} has no speech_group_id, using clip ID as group")
+                    speech_group_id = f"single_{clip['id']}"
                 
-                # Create a clip record for Supabase
-                metadata = clip.get("metadata", {})
-                supabase_clip = {
+                # Add to the appropriate group
+                if speech_group_id not in grouped_clips_by_speech_id:
+                    grouped_clips_by_speech_id[speech_group_id] = []
+                
+                # Add the clip to its speech group with the validated member_id
+                clip_with_valid_member_id = clip.copy()
+                clip_with_valid_member_id["member_id"] = member_id  # Use the validated integer member_id
+                grouped_clips_by_speech_id[speech_group_id].append(clip_with_valid_member_id)
+            
+            logger.info(f"Grouped {len(normalized_clips)} clips into {len(grouped_clips_by_speech_id)} speech groups")
+            
+            # Second pass: merge clips within each speech group
+            supabase_clips = []
+            for speech_group_id, group_clips in grouped_clips_by_speech_id.items():
+                if not group_clips:
+                    continue
+                
+                # Sort clips by start time
+                group_clips.sort(key=lambda x: float(x["start_time"]) if isinstance(x["start_time"], (int, float, str)) else 0)
+                
+                # Get the member_id (should be the same for all clips in the group after normalization)
+                member_id = group_clips[0]["member_id"]
+                
+                # Find min start and max end timestamps
+                min_start = min([float(clip["start_time"]) if isinstance(clip["start_time"], (int, float, str)) else 0 for clip in group_clips])
+                max_end = max([float(clip["end_time"]) if isinstance(clip["end_time"], (int, float, str)) else 0 for clip in group_clips])
+                
+                # Concatenate transcripts, removing any placeholder text
+                transcripts = []
+                for clip in group_clips:
+                    transcript = clip.get("transcript", "")
+                    # Skip placeholder text like "EXPORT TEXT" or empty strings
+                    if transcript and transcript.strip() and not transcript.strip().upper() == "EXPORT TEXT":
+                        transcripts.append(transcript.strip())
+                
+                concatenated_transcript = " ".join(transcripts)
+                
+                # Get the highest confidence score
+                max_confidence = max([clip.get("confidence_score", 0.0) for clip in group_clips])
+                
+                # Calculate total duration
+                duration = max_end - min_start
+                
+                # Create a merged clip for Supabase
+                metadata = group_clips[0].get("metadata", {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except:
+                        metadata = {}
+                
+                # Add merged clip metadata
+                metadata.update({
+                    "speech_group_id": speech_group_id,
+                    "merged_clip_count": len(group_clips),
+                    "original_clip_ids": [clip.get("id") for clip in group_clips],
+                    "merged_at": datetime.now().isoformat()
+                })
+                
+                # Create the merged clip for Supabase
+                merged_clip = {
                     "id": str(uuid.uuid4()),  # Generate a new UUID for Supabase
                     "member_id": member_id,
-                    "transcript": clip["transcript"],
-                    "full_video_path": clip.get("full_video_path", ""),  # Get directly from clip, not metadata
-                    "start_timestamp": clip["start_time"],
-                    "end_timestamp": clip["end_time"],
-                    "confidence_score": clip["confidence_score"],
-                    "duration_seconds": clip["duration_seconds"],
-                    "speech_group_id": clip["speech_group_id"],
+                    "transcript": concatenated_transcript,
+                    "full_video_path": group_clips[0].get("full_video_path", ""),
+                    "start_timestamp": str(min_start),
+                    "end_timestamp": str(max_end),
+                    "confidence_score": max_confidence,
+                    "duration_seconds": duration,
+                    "speech_group_id": speech_group_id,
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat(),
                     "metadata": json.dumps(metadata)
                 }
                 
-                supabase_clips.append(supabase_clip)
+                logger.info(f"Created merged clip for speech_group_id {speech_group_id} with {len(group_clips)} original clips")
+                supabase_clips.append(merged_clip)
             
             if not supabase_clips:
                 logger.warning("No valid clips to export to Supabase after filtering")
