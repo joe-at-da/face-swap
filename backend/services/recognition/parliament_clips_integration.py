@@ -1418,6 +1418,23 @@ class ParliamentClipsIntegrationService:
         logger.info(f"===== EXPORTING CLIPS TO SUPABASE =====")
         logger.info(f"Video ID: {video_id}, Video Path: {video_path}")
         
+        # Convert local file path to Supabase bucket URL or just the filename
+        supabase_video_path = video_path
+        if video_path:
+            # Extract just the filename from the path
+            filename = os.path.basename(video_path)
+            
+            # If it's a combined AV file (which it should be), use the Supabase bucket URL format
+            if filename.startswith('combined_av_'):
+                # Format: http://127.0.0.1:54321/storage/v1/object/public/full_videos//filename
+                # For production, this would be the actual Supabase URL
+                supabase_video_path = f"http://127.0.0.1:54321/storage/v1/object/public/full_videos/{filename}"
+                logger.info(f"Converted local path to Supabase URL: {supabase_video_path}")
+            else:
+                # Just use the filename if it's not a combined AV file
+                supabase_video_path = filename
+                logger.info(f"Using filename for video path: {supabase_video_path}")
+        
         # Import necessary modules
         import os
         import json
@@ -1911,7 +1928,7 @@ class ParliamentClipsIntegrationService:
             grouped_clips = format_clips_for_supabase(
                 video_id=str(video_id),
                 recognition_results=formatted_recognition_results,
-                combined_av_url=video_path,
+                combined_av_url=supabase_video_path,  # Use the Supabase bucket URL or filename
                 group_by_speech_group=True  # Enable grouping by speech_group_id
             )
             

@@ -1306,12 +1306,7 @@ class SupabaseIntegration:
                             if not isinstance(clip, dict):
                                 logger.error(f"Skipping non-dictionary clip at index {i}: {type(clip)}, value: {clip}")
                                 continue
-                                
-                            # Add a unique timestamp to each clip's transcript to ensure it's treated as new
-                            timestamp = datetime_module.now().timestamp() + i
-                            if 'transcript' in clip and clip['transcript']:
-                                clip['transcript'] = f"{clip['transcript']} [Export {timestamp}]"
-                            
+                                                            
                             # Ensure each clip has a unique ID
                             clip['id'] = str(uuid.uuid4())
                             

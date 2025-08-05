@@ -929,11 +929,7 @@ class SupabaseUploader:
                     else:
                         logger.error("Clip missing required member_id field")
                         continue  # Skip this clip if member_id is missing
-                    
-                    # Add a timestamp to the transcript to ensure uniqueness
-                    if 'transcript' in clip and clip['transcript']:
-                        clip['transcript'] = f"{clip['transcript']} [Export {datetime.now().timestamp()}]"
-                    
+                                        
                     # Check if this clip already exists (using path and timestamps only)
                     # We're not including transcript in signature to allow updated transcripts
                     signature = f"{clip.get('full_video_path', '')}-{clip.get('start_timestamp', '')}-{clip.get('end_timestamp', '')}" 

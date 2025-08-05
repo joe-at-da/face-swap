@@ -505,37 +505,39 @@ async def process_parliament_tv_to_supabase(
                         logger.error(f"Synchronization traceback: {traceback.format_exc()}")
                         # Continue with the export, but log the error
                     
-                    # Process and save member clips using the simplified export process
-                    logger.warning(f"🚀 CALLING normalize_and_export_clips for video_id={capture_id}")
+                    # Process and save member clips using the parliament_clips_service for proper normalization and grouping
+                    logger.warning(f"🚀 Starting member ID normalization and export process for video_id={capture_id}")
                     
-                    # Import the simplified export function
-                    from backend.services.recognition.simplified_export import normalize_and_export_clips
+                    # Create an instance of MultimodalRecognitionService to access parliament_clips_service
+                    multimodal_service = MultimodalRecognitionService()
+                    parliament_clips_service = multimodal_service.parliament_clips_service
                     
-                    # Connect to SQLite database
-                    from sqlalchemy import create_engine
-                    from sqlalchemy.orm import sessionmaker
-                    
-                    # SQLite database path in Docker container
-                    sqlite_path = "/app/backend/parliament_clips.db"
-                    sqlite_engine = create_engine(f"sqlite:///{sqlite_path}")
-                    SQLiteSession = sessionmaker(bind=sqlite_engine)
-                    sqlite_session = SQLiteSession()
-                    
+                    # First, ensure member IDs are normalized within speech groups
+                    logger.info(f"Normalizing member IDs within speech groups for video_id={capture_id}")
                     try:
-                        # Call the simplified export function
-                        save_result = normalize_and_export_clips(
-                            db=sqlite_session,
-                            video_id=str(capture_id),
-                            supabase_service=supabase_service
+                        # Normalize member IDs within speech groups
+                        parliament_clips_service._normalize_speech_group_member_ids_in_sqlite(video_id=capture_id)
+                        logger.info(f"Successfully normalized member IDs for video_id={capture_id}")
+                        
+                        # Now export clips to Supabase using the combined AV URL
+                        logger.info(f"Exporting normalized clips to Supabase for video_id={capture_id}")
+                        
+                        # Use the full_video_url if available, otherwise use the video file path
+                        export_video_path = full_video_url if full_video_url else video_file_path
+                        logger.info(f"Using video path for export: {export_video_path}")
+                        
+                        # Export clips to Supabase with proper grouping by speech_group_id
+                        save_result = parliament_clips_service._export_clips_to_supabase(
+                            video_id=capture_id,
+                            recognition_events=serializable_recognition_data.get('recognition_events', []),
+                            video_path=export_video_path
                         )
                         
-                        # Close SQLite session
-                        sqlite_session.close()
+                        logger.info(f"Export result: {save_result}")
                     except Exception as e:
-                        logger.error(f"Error in normalize_and_export_clips: {str(e)}")
+                        logger.error(f"Error in parliament clips export process: {str(e)}")
                         import traceback
                         logger.error(f"Traceback: {traceback.format_exc()}")
-                        sqlite_session.close()
                         save_result = {"error": str(e), "success": False}
                     
                     logger.info(f"Normalized {save_result.get('normalized', 0)} clips and exported {save_result.get('inserted', 0)} clips to Supabase for session {capture_id}")
