@@ -652,7 +652,7 @@ class ParliamentTVSequentialProcessor:
                 logger.info(f"Using provided capture session ID: {session_id}")
             
             # Set up output directory
-            output_dir = os.path.join(settings.MEDIA_DIR)
+            output_dir = os.path.join(settings.MEDIA_STORAGE_PATH)
             os.makedirs(output_dir, exist_ok=True)
             
             # Download the full video and audio files
