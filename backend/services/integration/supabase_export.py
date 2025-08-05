@@ -324,27 +324,42 @@ def format_clips_for_supabase(
             if field not in clip or clip[field] is None:
                 missing_fields.append(field)
         
-        if missing_fields:
-            logger.warning(f"Clip still missing required fields after formatting: {missing_fields}")
-        else:
-            valid_clips.append(clip)
-    
     # If group_by_speech_group is enabled, group clips by speech_group_id
     if group_by_speech_group and valid_clips:
-        logger.info("Grouping clips by speech_group_id")
+        logger.info(f"Grouping {len(valid_clips)} clips by speech_group_id")
         
-        # Check if clips have speech_group_id in metadata
+        # Separate clips with and without speech_group_id
         speech_group_clips = {}
         ungrouped_clips = []
         
+        # Log all speech_group_ids found in clips for debugging
+        all_speech_group_ids = set()
         for clip in valid_clips:
-            # Check if clip has speech_group_id in metadata
-            speech_group_id = None
-            if 'metadata' in clip and isinstance(clip['metadata'], dict):
-                speech_group_id = clip['metadata'].get('speech_group_id')
+            metadata = clip.get('metadata', {})
+            speech_group_id_meta = metadata.get('speech_group_id', None)
+            speech_group_id_direct = clip.get('speech_group_id', None)
             
+            if speech_group_id_meta:
+                all_speech_group_ids.add(speech_group_id_meta)
+            if speech_group_id_direct:
+                all_speech_group_ids.add(speech_group_id_direct)
+        
+        logger.info(f"Found {len(all_speech_group_ids)} unique speech_group_ids in clips: {all_speech_group_ids}")
+        
+        for clip in valid_clips:
+            # Check if this clip has a speech_group_id in metadata
+            metadata = clip.get('metadata', {})
+            speech_group_id = metadata.get('speech_group_id', None)
+            
+            # If no speech_group_id in metadata, check if it's a direct property
             if not speech_group_id:
-                # If no speech_group_id found, add to ungrouped clips
+                speech_group_id = clip.get('speech_group_id', None)
+            
+            # Log the speech_group_id found (or not found)
+            if speech_group_id:
+                logger.info(f"Found speech_group_id: {speech_group_id} for clip {clip.get('id', 'unknown')}")
+            else:
+                logger.warning(f"No speech_group_id found for clip {clip.get('id', 'unknown')}, adding to ungrouped clips")
                 ungrouped_clips.append(clip)
                 continue
             

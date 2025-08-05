@@ -894,15 +894,15 @@ class ParliamentClipsIntegrationService:
                         logger.debug(f"Speech group {speech_group_id} already has consistent member IDs or only contains one clip")
                         continue
                     
-                    # Only update clips that don't have a valid member_id
-                    # This preserves member IDs from facial recognition
+                    # Update ALL clips in the speech group to have the same member_id
+                    # This ensures consistency across the entire speech group
                     cursor.execute(
                         "UPDATE parliament_clips SET member_id = ? "
-                        "WHERE speech_group_id = ? AND (member_id IS NULL OR member_id = '')",
+                        "WHERE speech_group_id = ?",
                         (best_member_id, speech_group_id)
                     )
                     
-                    logger.info(f"Preserving existing member IDs in speech group {speech_group_id} - only updating clips without a valid member_id")
+                    logger.info(f"Normalizing all clips in speech group {speech_group_id} to use member_id {best_member_id}")
                     
                     updated_clips = cursor.rowcount
                     if updated_clips > 0:
@@ -1424,16 +1424,33 @@ class ParliamentClipsIntegrationService:
             # Extract just the filename from the path
             filename = os.path.basename(video_path)
             
-            # If it's a combined AV file (which it should be), use the Supabase bucket URL format
-            if filename.startswith('combined_av_'):
-                # Format: http://127.0.0.1:54321/storage/v1/object/public/full_videos//filename
+            # Check if the path is already a Supabase URL
+            if video_path.startswith('http'):
+                supabase_video_path = video_path
+                logger.info(f"Using provided Supabase URL: {supabase_video_path}")
+            # If it's a local file path, convert to Supabase bucket URL format
+            else:
+                # Format: http://127.0.0.1:54321/storage/v1/object/public/full_videos/filename
                 # For production, this would be the actual Supabase URL
                 supabase_video_path = f"http://127.0.0.1:54321/storage/v1/object/public/full_videos/{filename}"
                 logger.info(f"Converted local path to Supabase URL: {supabase_video_path}")
-            else:
-                # Just use the filename if it's not a combined AV file
+            
+            # Log the final path being used
+            logger.info(f"Final video path for export: {supabase_video_path}")
+            
+            # Ensure we're not using a local file path
+            if supabase_video_path.startswith('/app/') or supabase_video_path.startswith('/'):
+                logger.warning(f"WARNING: Using local file path for export: {supabase_video_path}")
+                # Just use the filename instead
                 supabase_video_path = filename
-                logger.info(f"Using filename for video path: {supabase_video_path}")
+                logger.info(f"Corrected to use just filename: {supabase_video_path}")
+                
+            # Double check we're not using a local path
+            if os.path.sep in supabase_video_path and not supabase_video_path.startswith('http'):
+                logger.warning(f"Still using path with separators: {supabase_video_path}")
+                # Extract just the filename as a last resort
+                supabase_video_path = os.path.basename(supabase_video_path)
+                logger.info(f"Final correction to filename only: {supabase_video_path}")
         
         # Import necessary modules
         import os
@@ -1564,6 +1581,14 @@ class ParliamentClipsIntegrationService:
                         logger.warning(f"Non-integer member_id found: {member_id}, skipping clip")
                         continue
                         
+                    # Generate a speech_group_id if not present
+                    speech_group_id = event.get("speech_group_id", None)
+                    if not speech_group_id:
+                        # Create a speech group ID based on video_id, member_id, and timestamp
+                        # This ensures clips from the same speaker close in time are grouped together
+                        speech_group_id = f"speech_group_{video_id}_{member_id}_{int(start_time/60)}"
+                        logger.info(f"Generated speech_group_id: {speech_group_id} for clip at time {start_time}")
+                    
                     clip = {
                         'id': str(int(time.time() * 1000)),  # Use timestamp instead of UUID
                         'member_id': member_id,  # Use integer member_id
@@ -1576,10 +1601,12 @@ class ParliamentClipsIntegrationService:
                         'session_date': datetime.now().strftime("%Y-%m-%d"),
                         'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'updated_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'speech_group_id': speech_group_id,  # Add speech_group_id to the clip
                         'metadata': {
                             'video_id': str(video_id),
                             'matched_by': event.get("matched_by", "unknown"),
-                            'face_image_url': event.get("face_image_url", "")
+                            'face_image_url': event.get("face_image_url", ""),
+                            'speech_group_id': speech_group_id  # Also add to metadata for consistency
                         }
                     }
                     clips.append(clip)
@@ -1934,9 +1961,13 @@ class ParliamentClipsIntegrationService:
             
             logger.info(f"Formatted {len(clips_to_export)} clips into {len(grouped_clips)} grouped clips for Supabase")
             
-            # Use the SupabaseService's add_to_clip_creation_queue method to insert the grouped clips
-            logger.info(f"Calling Supabase to insert {len(grouped_clips)} grouped clips")
-            result = self.supabase_service.add_to_clip_creation_queue(grouped_clips)
+            # Use the SupabaseUploader's add_to_clip_creation_queue method to insert the grouped clips
+            # This is the recommended method instead of the deprecated SupabaseService.add_to_clip_creation_queue
+            from backend.services.integration.supabase_upload import SupabaseUploader
+            
+            logger.info(f"Calling Supabase to insert {len(grouped_clips)} grouped clips using SupabaseUploader")
+            supabase_uploader = SupabaseUploader()
+            result = supabase_uploader.add_to_clip_creation_queue(grouped_clips)
             
             # Log detailed information about the result for debugging
             logger.info(f"Supabase export result: {result}")
