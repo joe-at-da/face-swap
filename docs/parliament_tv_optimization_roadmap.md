@@ -1,8 +1,19 @@
 # Parliament TV Processing Optimization Roadmap
 
+*Last Updated: August 6, 2025 - Audio stream copy optimization completed*
+
 ## Overview
 
 This document outlines a comprehensive plan to optimize the Parliament TV processing pipeline, with a focus on reducing processing time while maintaining output quality. The optimizations are divided into phases, with each phase building on the previous one.
+
+## ✅ Completed Optimizations
+
+### Audio Processing Optimization (Completed August 6, 2025)
+- **IMPLEMENTED**: Stream copy approach for audio downloads
+- **IMPLEMENTED**: Fallback mechanism with optimized MP3 encoding
+- **IMPLEMENTED**: Consistent quality settings (`-q:a 3`) across all audio processing
+- **IMPLEMENTED**: Multi-threading (`-threads auto`) for all audio encoding operations
+- **Result**: Audio processing now matches video processing speed, eliminating the ~22-minute stall issue
 
 ## Phase 1: FFmpeg Optimizations (Immediate Wins)
 
@@ -12,9 +23,11 @@ This document outlines a comprehensive plan to optimize the Parliament TV proces
 - Add `-tune fastdecode` for faster decoding
 - Implement in: `ParliamentTVCapture.synchronized_extract()`
 
-### 1.2 Audio Encoding Optimizations
-- Replace MP3 encoding (`-c:a libmp3lame -q:a 2`) with AAC (`-c:a aac -b:a 128k`)
-- Implement in: `ParliamentTVCapture.synchronized_extract()`
+### 1.2 Audio Encoding Optimizations ✅ COMPLETED
+- ~~Replace MP3 encoding (`-c:a libmp3lame -q:a 2`) with AAC (`-c:a aac -b:a 128k`)~~
+- **IMPLEMENTED**: Stream copy approach (`-c:a copy`) as primary method
+- **IMPLEMENTED**: Optimized MP3 fallback (`-c:a libmp3lame -q:a 3 -threads auto`)
+- **Status**: Audio processing speed issue resolved
 
 ### 1.3 Hardware Acceleration
 - Add `-hwaccel auto` before input specification

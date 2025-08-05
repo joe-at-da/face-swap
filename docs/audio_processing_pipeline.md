@@ -1,6 +1,7 @@
 # Audio Processing Pipeline
 
 *Created: August 5, 2025 by Joe Bradley (joe@veedoo.io)*
+*Last Updated: August 6, 2025 - Audio processing optimization with stream copy approach*
 
 ## Overview
 
@@ -10,15 +11,22 @@ This document describes the audio processing pipeline used in the Parliament TV 
 
 The current audio pipeline follows these steps:
 
-1. **HLS Audio Stream Download**:
+1. **HLS Audio Stream Download** (Optimized):
    - Downloads audio from Parliament TV HLS stream
    - Uses FFmpeg with protocol whitelist for HTTP/HTTPS streaming
-   - Converts to MP3 using libmp3lame encoder at quality level 2
-   - Command structure:
+   - **NEW**: First attempts stream copy (no re-encoding) for maximum speed
+   - Falls back to MP3 encoding with optimized settings if stream copy fails
+   - Primary command structure (stream copy):
      ```
      ffmpeg -y -protocol_whitelist file,http,https,tcp,tls,crypto -http_persistent 1 
-            -allowed_extensions ALL -i [AUDIO_URL] -c:a libmp3lame -q:a 2 -vn 
+            -allowed_extensions ALL -i [AUDIO_URL] -c:a copy -vn 
             -hide_banner -progress [LOG_FILE] [OUTPUT_PATH]
+     ```
+   - Fallback command structure (MP3 encoding):
+     ```
+     ffmpeg -y -protocol_whitelist file,http,https,tcp,tls,crypto -http_persistent 1 
+            -allowed_extensions ALL -i [AUDIO_URL] -c:a libmp3lame -q:a 3 -vn 
+            -threads auto -hide_banner [OUTPUT_PATH]
      ```
 
 2. **Audio Extraction for Segments**:
@@ -42,9 +50,11 @@ The audio processing can be time-consuming due to several factors:
    - Downloading HLS streams is dependent on network conditions
    - Parliament TV streams can be large and high-quality
 
-2. **Encoding Process**:
-   - Using libmp3lame with quality level 2 prioritizes audio quality over speed
-   - Higher quality settings are more CPU-intensive
+2. **Encoding Process** (Optimized):
+   - **NEW**: Primary approach uses stream copy (no encoding) for maximum speed
+   - When encoding is necessary, uses libmp3lame with quality level 3 (optimized balance)
+   - Multi-threading enabled with `-threads auto` for better CPU utilization
+   - Quality level 3 provides good audio quality while being significantly faster than level 2
 
 3. **Sequential Processing**:
    - While video and audio downloads happen in parallel, segment processing is sequential
