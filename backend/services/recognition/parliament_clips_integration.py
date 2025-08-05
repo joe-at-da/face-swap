@@ -72,6 +72,31 @@ class ParliamentClipsIntegrationService:
             self._create_parliament_clips_table()
             logger.info(f"Created and using local database path: {self.db_path}")
             
+    def get_sqlite_connection(self):
+        """Get a direct SQLite connection to the parliament clips database."""
+        return sqlite3.connect(self.db_path)
+        
+    def get_sqlite_session(self):
+        """Get a SQLAlchemy session for the SQLite database.
+        
+        This method creates a SQLAlchemy engine and session for the SQLite database,
+        which can be used with the normalize_and_export_clips function.
+        
+        Returns:
+            A SQLAlchemy session object connected to the SQLite database.
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        
+        # Create a SQLAlchemy engine for the SQLite database
+        engine = create_engine(f"sqlite:///{self.db_path}")
+        
+        # Create a sessionmaker
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        
+        # Return a new session
+        return SessionLocal()
+            
     def _create_parliament_clips_table(self):
         """Create the parliament_clips table if it doesn't exist."""
         try:

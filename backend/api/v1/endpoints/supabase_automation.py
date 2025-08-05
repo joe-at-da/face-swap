@@ -530,13 +530,17 @@ async def process_parliament_tv_to_supabase(
                         # Export clips to Supabase with proper grouping by speech_group_id using the standardized export function
                         logger.info(f"Using normalize_and_export_clips for Supabase export with video_id={capture_id}")
                         
-                        # Get an active database session from the session generator
-                        from backend.db.session import SessionLocal
+                        # Import the ParliamentClipsIntegrationService to get a proper SQLite connection
+                        from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
                         
-                        # Create a new database session for this specific operation
-                        with SessionLocal() as active_db:
+                        # Create a new instance of the service to get access to the SQLite session
+                        clips_service = ParliamentClipsIntegrationService()
+                        
+                        # Use the SQLite session from the clips service
+                        with clips_service.get_sqlite_session() as sqlite_db:
+                            logger.info("Using SQLite session from ParliamentClipsIntegrationService for export")
                             save_result = normalize_and_export_clips(
-                                db=active_db,
+                                db=sqlite_db,
                                 video_id=capture_id,
                                 supabase_service=None  # Will create a new instance internally
                             )

@@ -411,8 +411,10 @@ def export_recognition_results(
             logger.info(f"Running member ID normalization and export for video ID {video_id}")
             
             # This will handle normalization, grouping by speech_group_id, and export to Supabase
+            # IMPORTANT: We need to pass the sqlite_db session directly, not as a parameter
+            # The normalize_and_export_clips function expects a SQLAlchemy session object
             normalize_result = normalize_and_export_clips(
-                sqlite_db, 
+                db=sqlite_db,  # Use the named parameter 'db' to ensure it's recognized correctly
                 video_id=str(video_id), 
                 supabase_service=supabase_uploader
             )

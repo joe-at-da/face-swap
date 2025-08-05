@@ -46,10 +46,26 @@ def normalize_and_export_clips(db, video_id: str = None, supabase_service=None):
         logger.info("Starting simplified normalization and export for ALL clips")
     
     try:
-        # Check if we're using SQLite
-        is_sqlite = hasattr(db.connection().connection, 'execute')
+        # Check if we're using SQLite - more robust check
+        try:
+            # First try the standard SQLAlchemy approach
+            is_sqlite = hasattr(db.connection().connection, 'execute')
+        except Exception as e:
+            logger.warning(f"First SQLite check failed: {str(e)}, trying alternative check")
+            try:
+                # Try alternative check - look at the engine URL
+                engine_url = str(db.get_bind().url)
+                is_sqlite = 'sqlite' in engine_url.lower()
+                logger.info(f"Using alternative SQLite check: {engine_url} -> is_sqlite={is_sqlite}")
+            except Exception as e2:
+                logger.warning(f"Alternative SQLite check failed: {str(e2)}, assuming not SQLite")
+                is_sqlite = False
+        
         if not is_sqlite:
+            logger.error("Database connection is not SQLite. This function requires an SQLite database connection.")
             return {"error": "This function requires an SQLite database connection"}
+        else:
+            logger.info("Confirmed SQLite database connection")
         
         # Step 1: Retrieve clips from SQLite (all or filtered by video_id)
         try:
