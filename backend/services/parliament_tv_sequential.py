@@ -533,93 +533,93 @@ class ParliamentTVSequentialProcessor:
             logger.error(f"Error extracting segment: {str(e)}")
             raise ValueError(f"Error extracting segment: {str(e)}")
     
-    def process_segment(self, 
-                      original_url: str,
-                      video_url: str, 
-                      audio_url: str, 
-                      start_time: int, 
-                      end_time: int,
-                      title: str,
-                      description: str,
-                      session_id: str = None,
-                      video_path: str = None,
-                      audio_path: str = None) -> Dict[str, Any]:
+    def process_segment(self, original_url: str, video_url: str, audio_url: str, 
+                       start_time: int, end_time: int, title: str, description: str,
+                       session_id: str, video_path: str = None, audio_path: str = None) -> Dict[str, Any]:
         """
-        Process a segment of the video by making an API call to the existing processing pipeline.
+        Process a single segment directly using the extracted files.
+        This avoids creating redundant sessions and uses only the segment files.
         
         Args:
             original_url: Original Parliament TV URL
-            video_url: Direct video stream URL
-            audio_url: Direct audio stream URL
-            start_time: Start time in seconds
-            end_time: End time in seconds
-            title: Title for the segment
-            description: Description for the segment
-            session_id: Optional session ID to use
-            video_path: Optional path to local video segment file
-            audio_path: Optional path to local audio segment file
+            video_url: URL of the video stream (not used when processing locally)
+            audio_url: URL of the audio stream (not used when processing locally)
+            start_time: Start time of the segment in seconds
+            end_time: End time of the segment in seconds
+            title: Title of the segment
+            description: Description of the segment
+            session_id: Parent session ID
+            video_path: Path to local video file (required)
+            audio_path: Path to local audio file (required)
             
         Returns:
-            Dict with processing result
+            Dict with results of the processing
         """
         try:
-            import requests
-            import json
-            from backend.core.config import settings
-            
-            # Construct the API URL with scheme and host for local API calls
-            api_url = f"http://localhost:8000/api/v1/supabase-automation/process-parliament-tv"
-            
-            # Prepare the request payload
-            payload = {
-                "url": original_url,
-                "title": f"{title} (Segment {start_time}-{end_time}s)",
-                "description": f"{description} - Processed segment from {start_time} to {end_time} seconds",
-                "duration": end_time - start_time,
-                "debug": False,
-                "segment_info": {
-                    "is_segment": True,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "parent_session_id": session_id
-                }
-            }
-            
-            # Only include video_url and audio_url if we don't have local files
-            # This prevents redundant downloads when we already have the files locally
+            # Ensure we have local files to work with
             if not (video_path and audio_path):
-                payload["segment_info"]["video_url"] = video_url
-                payload["segment_info"]["audio_url"] = audio_url
-            
-            # Add local file paths if provided
-            if video_path and audio_path:
-                payload["segment_info"]["video_path"] = video_path
-                payload["segment_info"]["audio_path"] = audio_path
-                payload["segment_info"]["use_local_files"] = True
-            
-            # Use a default API key for internal calls
-            api_key = "8448700525"  # Same key used in testing
-            
-            # Make the API call
-            headers = {
-                "Content-Type": "application/json",
-                "X-API-Key": api_key
-            }
-            
-            logger.info(f"Making API call to process segment {start_time}-{end_time}s")
-            response = requests.post(api_url, json=payload, headers=headers)
-            
-            # Check if the request was successful
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"Successfully started processing for segment {start_time}-{end_time}s: {result}")
-                return result
-            else:
-                logger.error(f"Error processing segment {start_time}-{end_time}s: {response.status_code} {response.text}")
+                logger.error(f"Local files required for segment processing: video_path={video_path}, audio_path={audio_path}")
                 return {
                     "success": False,
-                    "error": f"API call failed with status code {response.status_code}: {response.text}"
+                    "error": "Local video and audio files are required for segment processing"
                 }
+            
+            # Verify files exist
+            if not os.path.exists(video_path):
+                logger.error(f"Video file not found: {video_path}")
+                return {"success": False, "error": f"Video file not found: {video_path}"}
+                
+            if not os.path.exists(audio_path):
+                logger.error(f"Audio file not found: {audio_path}")
+                return {"success": False, "error": f"Audio file not found: {audio_path}"}
+            
+            logger.info(f"Processing segment {start_time}-{end_time}s using local files:")
+            logger.info(f"  Video: {video_path}")
+            logger.info(f"  Audio: {audio_path}")
+            
+            # Store segment metadata in the parent session
+            try:
+                from backend.db.session import get_db
+                from backend.db.models.capture import CaptureSession
+                
+                db = next(get_db())
+                session = db.query(CaptureSession).filter(CaptureSession.id == session_id).first()
+                if session:
+                    # Add segment info to metadata
+                    if not session.metadata:
+                        session.metadata = {}
+                    
+                    if "segments" not in session.metadata:
+                        session.metadata["segments"] = []
+                    
+                    segment_info = {
+                        "segment_number": len(session.metadata["segments"]) + 1,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "duration": end_time - start_time,
+                        "video_path": video_path,
+                        "audio_path": audio_path,
+                        "title": title,
+                        "description": description
+                    }
+                    
+                    session.metadata["segments"].append(segment_info)
+                    db.commit()
+                    logger.info(f"Added segment metadata to session {session_id}")
+                    
+            except Exception as e:
+                logger.warning(f"Could not update session metadata: {str(e)}")
+            
+            # For now, return success - the actual recognition processing will happen
+            # after all segments are extracted in the final export step
+            return {
+                "success": True,
+                "message": f"Segment {start_time}-{end_time}s processed using local files",
+                "video_path": video_path,
+                "audio_path": audio_path,
+                "start_time": start_time,
+                "end_time": end_time
+            }
                 
         except Exception as e:
             logger.error(f"Error processing segment: {str(e)}")
