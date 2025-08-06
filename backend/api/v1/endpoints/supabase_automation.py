@@ -165,20 +165,26 @@ async def process_parliament_tv_to_supabase(
                 "time_marker": stream_info.get("time_marker", {"seconds": 0})
             }
             
-            # Check if this is a segment processing call and use segment naming
+            # Check if this is a segment processing call and store segment info in metadata
             if segment_info and segment_info.get("is_segment") and segment_info.get("parent_session_id"):
-                # This is a segment - use parent session ID with segment suffix
+                # This is a segment - store segment information in metadata for tracking
                 parent_session_id = segment_info.get("parent_session_id")
                 start_time = segment_info.get("start_time", 0)
                 end_time = segment_info.get("end_time", 0)
-                
-                # Create segment identifier based on start time (e.g., 1188_1, 1188_2, etc.)
                 segment_number = (start_time // 1800) + 1  # 30-minute segments
-                capture_id = f"{parent_session_id}_{segment_number}"
                 
-                logger.info(f"Processing segment {segment_number} for session {parent_session_id}, using capture_id: {capture_id}")
+                logger.info(f"Processing segment {segment_number} for session {parent_session_id}, creating new session with segment metadata")
                 
-                # Create capture session with segment naming
+                # Add segment information to metadata
+                capture_metadata.update({
+                    "is_segment": True,
+                    "parent_session_id": parent_session_id,
+                    "segment_number": segment_number,
+                    "segment_start_time": start_time,
+                    "segment_end_time": end_time
+                })
+                
+                # Create capture session with segment metadata (normal integer ID)
                 capture = CaptureSession(
                     title=f"{title} (Segment {segment_number})",
                     description=f"{description} - Segment {start_time}-{end_time}s",
@@ -186,8 +192,6 @@ async def process_parliament_tv_to_supabase(
                     capture_metadata=capture_metadata,
                     duration=duration
                 )
-                # Set the ID manually for segment naming
-                capture.id = capture_id
             else:
                 # This is a complete session - create normally
                 capture = CaptureSession(
