@@ -165,14 +165,39 @@ async def process_parliament_tv_to_supabase(
                 "time_marker": stream_info.get("time_marker", {"seconds": 0})
             }
             
-            # Create capture session in database
-            capture = CaptureSession(
-                title=title,
-                description=description,
-                status="draft",
-                capture_metadata=capture_metadata,
-                duration=duration
-            )
+            # Check if this is a segment processing call and use segment naming
+            if segment_info and segment_info.get("is_segment") and segment_info.get("parent_session_id"):
+                # This is a segment - use parent session ID with segment suffix
+                parent_session_id = segment_info.get("parent_session_id")
+                start_time = segment_info.get("start_time", 0)
+                end_time = segment_info.get("end_time", 0)
+                
+                # Create segment identifier based on start time (e.g., 1188_1, 1188_2, etc.)
+                segment_number = (start_time // 1800) + 1  # 30-minute segments
+                capture_id = f"{parent_session_id}_{segment_number}"
+                
+                logger.info(f"Processing segment {segment_number} for session {parent_session_id}, using capture_id: {capture_id}")
+                
+                # Create capture session with segment naming
+                capture = CaptureSession(
+                    title=f"{title} (Segment {segment_number})",
+                    description=f"{description} - Segment {start_time}-{end_time}s",
+                    status="draft",
+                    capture_metadata=capture_metadata,
+                    duration=duration
+                )
+                # Set the ID manually for segment naming
+                capture.id = capture_id
+            else:
+                # This is a complete session - create normally
+                capture = CaptureSession(
+                    title=title,
+                    description=description,
+                    status="draft",
+                    capture_metadata=capture_metadata,
+                    duration=duration
+                )
+            
             db.add(capture)
             db.commit()
             db.refresh(capture)
@@ -520,32 +545,40 @@ async def process_parliament_tv_to_supabase(
                         parliament_clips_service._normalize_speech_group_member_ids_in_sqlite(video_id=capture_id)
                         logger.info(f"Successfully normalized member IDs for video_id={capture_id}")
                         
-                        # Now export clips to Supabase using the combined AV URL
-                        logger.info(f"Exporting normalized clips to Supabase for video_id={capture_id}")
+                        # Check if this is a segment processing call (from sequential processor)
+                        # Segments have duration and segment_info, complete sessions do not
+                        is_segment_processing = duration is not None and segment_info is not None
                         
-                        # Use the full_video_url if available, otherwise use the video file path
-                        export_video_path = full_video_url if full_video_url else video_file_path
-                        logger.info(f"Using video path for export: {export_video_path}")
-                        
-                        # Export clips to Supabase with proper grouping by speech_group_id using the standardized export function
-                        logger.info(f"Using normalize_and_export_clips for Supabase export with video_id={capture_id}")
-                        
-                        # Import the ParliamentClipsIntegrationService to get a proper SQLite connection
-                        from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-                        
-                        # Create a new instance of the service to get access to the SQLite session
-                        clips_service = ParliamentClipsIntegrationService()
-                        
-                        # Use the SQLite session from the clips service
-                        with clips_service.get_sqlite_session() as sqlite_db:
-                            logger.info("Using SQLite session from ParliamentClipsIntegrationService for export")
-                            save_result = normalize_and_export_clips(
-                                db=sqlite_db,
-                                video_id=capture_id,
-                                supabase_service=None  # Will create a new instance internally
-                            )
-                        
-                        logger.info(f"Export result: {save_result}")
+                        if is_segment_processing:
+                            logger.info(f"Segment processing detected for video_id={capture_id} - skipping export to Supabase (will export after all segments complete)")
+                            save_result = {"success": True, "skipped": True, "reason": "segment_processing", "normalized": 0, "inserted": 0}
+                        else:
+                            # This is a complete session (non-sequential or final export) - proceed with export
+                            logger.info(f"Complete session processing detected for video_id={capture_id} - proceeding with export to Supabase")
+                            
+                            # Use the full_video_url if available, otherwise use the video file path
+                            export_video_path = full_video_url if full_video_url else video_file_path
+                            logger.info(f"Using video path for export: {export_video_path}")
+                            
+                            # Export clips to Supabase with proper grouping by speech_group_id using the standardized export function
+                            logger.info(f"Using normalize_and_export_clips for Supabase export with video_id={capture_id}")
+                            
+                            # Import the ParliamentClipsIntegrationService to get a proper SQLite connection
+                            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                            
+                            # Create a new instance of the service to get access to the SQLite session
+                            clips_service = ParliamentClipsIntegrationService()
+                            
+                            # Use the SQLite session from the clips service
+                            with clips_service.get_sqlite_session() as sqlite_db:
+                                logger.info("Using SQLite session from ParliamentClipsIntegrationService for export")
+                                save_result = normalize_and_export_clips(
+                                    db=sqlite_db,
+                                    video_id=capture_id,
+                                    supabase_service=None  # Will create a new instance internally
+                                )
+                            
+                            logger.info(f"Export result: {save_result}")
                     except Exception as e:
                         logger.error(f"Error in parliament clips export process: {str(e)}")
                         import traceback

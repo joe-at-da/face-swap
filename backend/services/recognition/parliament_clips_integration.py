@@ -915,8 +915,8 @@ class ParliamentClipsIntegrationService:
                             logger.debug(f"  Clip {clip_id} ({start_time}-{end_time}): Member ID {member_id}, Confidence {confidence}")
                         logger.debug(f"  Selected best clip {best_clip_id} with member_id {best_member_id} (confidence: {best_confidence})")
                     
-                    if distinct_member_count <= 1 and clip_count == 1:
-                        logger.debug(f"Speech group {speech_group_id} already has consistent member IDs or only contains one clip")
+                    if distinct_member_count <= 1:
+                        logger.debug(f"Speech group {speech_group_id} already has consistent member IDs (distinct_member_count={distinct_member_count})")
                         continue
                     
                     # Update ALL clips in the speech group to have the same member_id
