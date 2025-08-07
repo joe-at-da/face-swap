@@ -167,8 +167,8 @@ async def process_parliament_tv_sequentially(
                     video_segment_paths = []
                     audio_segment_paths = []
                     
-                    # Process each segment individually (like the debug endpoint does)
-                    logger.info(f"Processing {len(segment_results)} segments individually...")
+                    # Process each segment individually and run recognition on each segment (efficient approach)
+                    logger.info(f"Processing {len(segment_results)} segments individually with recognition...")
                     processed_segments = []
                     
                     for i, segment in enumerate(segment_results):
@@ -176,14 +176,14 @@ async def process_parliament_tv_sequentially(
                             video_segment_paths.append(segment["video_path"])
                             audio_segment_paths.append(segment["audio_path"])
                             
-                            # Process this segment (this is the missing piece!)
+                            # Process this segment (metadata storage)
                             try:
                                 logger.info(f"Processing segment {i+1}/{len(segment_results)}: {segment.get('start_time')}-{segment.get('end_time')}s")
                                 
                                 segment_title = f"{title} (Segment {i+1})"
                                 segment_description = f"Segment {i+1} from {segment.get('start_time', 0)} to {segment.get('end_time', 0)} seconds"
                                 
-                                # Call process_segment for each segment (matching debug endpoint logic)
+                                # Call process_segment for each segment (metadata storage)
                                 process_result = sequential_processor.process_segment(
                                     original_url=url,
                                     video_url=video_url,
@@ -200,6 +200,68 @@ async def process_parliament_tv_sequentially(
                                 if process_result.get("success", False):
                                     processed_segments.append(process_result)
                                     logger.info(f"Successfully processed segment {i+1}")
+                                    
+                                    # Run recognition on each individual segment (efficient approach)
+                                    try:
+                                        logger.info(f"Starting recognition for segment {i+1}: {segment['video_path']}")
+                                        
+                                        # Import recognition function
+                                        from backend.api.v1.endpoints.recognition_processor import process_recognition_background
+                                        from backend.db.session import get_db
+                                        from backend.db.models.capture import CaptureSession
+                                        import asyncio
+                                        import threading
+                                        
+                                        def trigger_segment_recognition(segment_video_path, segment_audio_path, segment_num):
+                                            """Trigger recognition for individual segment"""
+                                            try:
+                                                logger.info(f"Recognition thread started for segment {segment_num}")
+                                                
+                                                # Temporarily update capture to use this segment for recognition
+                                                db_temp = next(get_db())
+                                                capture_temp = db_temp.query(CaptureSession).filter(CaptureSession.id == capture_id).first()
+                                                if capture_temp:
+                                                    # Store original paths
+                                                    original_video_path = getattr(capture_temp, 'video_path', None)
+                                                    original_file_path = capture_temp.file_path
+                                                    
+                                                    # Temporarily set to segment files
+                                                    capture_temp.video_path = segment_video_path
+                                                    capture_temp.file_path = segment_video_path
+                                                    db_temp.commit()
+                                                    
+                                                    try:
+                                                        # Run recognition on this segment
+                                                        loop = asyncio.new_event_loop()
+                                                        asyncio.set_event_loop(loop)
+                                                        loop.run_until_complete(process_recognition_background(capture_id, None))
+                                                        loop.close()
+                                                        logger.info(f"Recognition completed for segment {segment_num}")
+                                                        
+                                                    finally:
+                                                        # Restore original paths
+                                                        capture_temp.video_path = original_video_path
+                                                        capture_temp.file_path = original_file_path
+                                                        db_temp.commit()
+                                                        db_temp.close()
+                                                        
+                                            except Exception as e:
+                                                logger.error(f"Error in segment {segment_num} recognition: {str(e)}")
+                                        
+                                        # Start recognition for this segment in background
+                                        recognition_thread = threading.Thread(
+                                            target=trigger_segment_recognition,
+                                            args=(segment["video_path"], segment["audio_path"], i+1),
+                                            name=f"recognition-segment-{capture_id}-{i+1}",
+                                            daemon=True
+                                        )
+                                        recognition_thread.start()
+                                        
+                                        logger.info(f"Recognition triggered for segment {i+1}")
+                                        
+                                    except Exception as e:
+                                        logger.error(f"Error triggering recognition for segment {i+1}: {str(e)}")
+                                        
                                 else:
                                     logger.error(f"Failed to process segment {i+1}: {process_result.get('error')}")
                                     
@@ -208,7 +270,7 @@ async def process_parliament_tv_sequentially(
                                 import traceback
                                 logger.error(f"Segment processing error traceback: {traceback.format_exc()}")
                     
-                    logger.info(f"Completed processing {len(processed_segments)}/{len(segment_results)} segments")
+                    logger.info(f"Completed processing {len(processed_segments)}/{len(segment_results)} segments with individual recognition")
                     capture.capture_metadata["processed_segments"] = len(processed_segments)
                     
                     # Set video_path for recognition pipeline
@@ -263,64 +325,18 @@ async def process_parliament_tv_sequentially(
                     # Mark capture as completed
                     capture.status = "completed"
                     logger.info(f"Completed sequential processing for session {capture_id}")
+                    logger.info(f"Recognition has been triggered individually for each of the {len(processed_segments)} segments")
                     
-                    # Automatically trigger recognition pipeline after successful segment creation
-                    try:
-                        logger.info(f"Starting automatic recognition pipeline for session {capture_id}")
-                        
-                        # Import the recognition function
-                        from backend.api.v1.endpoints.recognition_processor import process_recognition_background
-                        import asyncio
-                        import threading
-                        
-                        def trigger_recognition_async():
-                            """Trigger recognition pipeline in a separate thread"""
-                            try:
-                                logger.info(f"Recognition thread started for session {capture_id}")
-                                
-                                # Create new event loop for this thread
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                
-                                # Run the recognition pipeline
-                                loop.run_until_complete(process_recognition_background(capture_id, None))
-                                
-                                # Clean up
-                                loop.close()
-                                logger.info(f"Recognition pipeline completed successfully for session {capture_id}")
-                                
-                            except Exception as e:
-                                logger.error(f"Error in automatic recognition pipeline for session {capture_id}: {str(e)}")
-                                import traceback
-                                logger.error(f"Recognition error traceback: {traceback.format_exc()}")
-                        
-                        # Start recognition in background thread (non-blocking)
-                        recognition_thread = threading.Thread(
-                            target=trigger_recognition_async,
-                            name=f"recognition-{capture_id}",
-                            daemon=True
-                        )
-                        recognition_thread.start()
-                        
-                        # Update capture metadata to track recognition trigger
-                        if not hasattr(capture, 'capture_metadata') or capture.capture_metadata is None:
-                            capture.capture_metadata = {}
-                        
-                        capture.capture_metadata["auto_recognition_triggered"] = True
-                        capture.capture_metadata["auto_recognition_started_at"] = datetime.now().isoformat()
-                        capture.capture_metadata["recognition_thread_name"] = f"recognition-{capture_id}"
-                        
-                        logger.info(f"Recognition pipeline triggered successfully for session {capture_id}")
-                        
-                    except Exception as e:
-                        logger.error(f"Error triggering automatic recognition pipeline for session {capture_id}: {str(e)}")
-                        import traceback
-                        logger.error(f"Recognition trigger error traceback: {traceback.format_exc()}")
-                        
-                        # Don't fail the whole process if recognition trigger fails
-                        if not hasattr(capture, 'capture_metadata') or capture.capture_metadata is None:
-                            capture.capture_metadata = {}
-                        capture.capture_metadata["auto_recognition_trigger_error"] = str(e)
+                    # Note: Recognition is now triggered individually for each segment above (much more efficient)
+                    # No need for a single recognition trigger on concatenated files
+                    
+                    # Update capture metadata to track that recognition was triggered for segments
+                    if not hasattr(capture, 'capture_metadata') or capture.capture_metadata is None:
+                        capture.capture_metadata = {}
+                    
+                    capture.capture_metadata["segment_recognition_triggered"] = True
+                    capture.capture_metadata["segment_recognition_started_at"] = datetime.now().isoformat()
+                    capture.capture_metadata["segments_with_recognition"] = len(processed_segments)
                 else:
                     # Mark capture as failed
                     capture.status = "failed"
