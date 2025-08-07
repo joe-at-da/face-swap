@@ -156,6 +156,52 @@ async def process_specific_segment(
             # Log the result
             if process_result.get("success", False):
                 logger.info(f"Successfully processed segment {start_time}-{end_time}s")
+                
+                # Trigger recognition pipeline for this segment (matching sequential endpoint logic)
+                try:
+                    logger.info(f"Starting recognition pipeline for debug segment {start_time}-{end_time}s")
+                    
+                    # Import the recognition function
+                    from backend.api.v1.endpoints.recognition_processor import process_recognition_background
+                    import asyncio
+                    import threading
+                    
+                    def trigger_recognition_async():
+                        """Trigger recognition pipeline for the debug segment"""
+                        try:
+                            logger.info(f"Recognition thread started for debug segment {start_time}-{end_time}s")
+                            
+                            # Create new event loop for this thread
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            
+                            # Run the recognition pipeline
+                            loop.run_until_complete(process_recognition_background(session_id, None))
+                            
+                            # Clean up
+                            loop.close()
+                            logger.info(f"Recognition pipeline completed successfully for debug segment")
+                            
+                        except Exception as e:
+                            logger.error(f"Error in debug recognition pipeline: {str(e)}")
+                            import traceback
+                            logger.error(f"Debug recognition error traceback: {traceback.format_exc()}")
+                    
+                    # Start recognition in background thread (non-blocking)
+                    recognition_thread = threading.Thread(
+                        target=trigger_recognition_async,
+                        name=f"debug-recognition-{session_id}-{start_time}",
+                        daemon=True
+                    )
+                    recognition_thread.start()
+                    
+                    logger.info(f"Recognition pipeline triggered for debug segment {start_time}-{end_time}s")
+                    
+                except Exception as e:
+                    logger.error(f"Error triggering recognition for debug segment: {str(e)}")
+                    import traceback
+                    logger.error(f"Debug recognition trigger error: {traceback.format_exc()}")
+                
             else:
                 logger.error(f"Failed to process segment {start_time}-{end_time}s: {process_result.get('error')}")
             

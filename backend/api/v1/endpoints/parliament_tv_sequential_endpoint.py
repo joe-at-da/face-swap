@@ -163,21 +163,60 @@ async def process_parliament_tv_sequentially(
                     # Get segment results for concatenation
                     segment_results = processing_result.get("segment_results", [])
                     
-                    if segment_results and len(segment_results) > 1:
-                        logger.info(f"Processing completed with {len(segment_results)} segments. Starting concatenation...")
-                        
-                        # Prepare paths for concatenation
-                        video_segment_paths = []
-                        audio_segment_paths = []
-                        
-                        for segment in segment_results:
-                            if segment.get("video_path"):
-                                video_segment_paths.append(segment["video_path"])
-                            if segment.get("audio_path"):
-                                audio_segment_paths.append(segment["audio_path"])
-                        
-                        # Concatenate video segments if there are multiple
+                    # Get segment results and set up video path for recognition
+                    video_segment_paths = []
+                    audio_segment_paths = []
+                    
+                    # Process each segment individually (like the debug endpoint does)
+                    logger.info(f"Processing {len(segment_results)} segments individually...")
+                    processed_segments = []
+                    
+                    for i, segment in enumerate(segment_results):
+                        if segment.get("video_path") and segment.get("audio_path"):
+                            video_segment_paths.append(segment["video_path"])
+                            audio_segment_paths.append(segment["audio_path"])
+                            
+                            # Process this segment (this is the missing piece!)
+                            try:
+                                logger.info(f"Processing segment {i+1}/{len(segment_results)}: {segment.get('start_time')}-{segment.get('end_time')}s")
+                                
+                                segment_title = f"{title} (Segment {i+1})"
+                                segment_description = f"Segment {i+1} from {segment.get('start_time', 0)} to {segment.get('end_time', 0)} seconds"
+                                
+                                # Call process_segment for each segment (matching debug endpoint logic)
+                                process_result = sequential_processor.process_segment(
+                                    original_url=url,
+                                    video_url=video_url,
+                                    audio_url=audio_url,
+                                    start_time=segment.get('start_time', 0),
+                                    end_time=segment.get('end_time', 0),
+                                    title=segment_title,
+                                    description=segment_description,
+                                    session_id=str(capture_id),
+                                    video_path=segment["video_path"],
+                                    audio_path=segment["audio_path"]
+                                )
+                                
+                                if process_result.get("success", False):
+                                    processed_segments.append(process_result)
+                                    logger.info(f"Successfully processed segment {i+1}")
+                                else:
+                                    logger.error(f"Failed to process segment {i+1}: {process_result.get('error')}")
+                                    
+                            except Exception as e:
+                                logger.error(f"Error processing segment {i+1}: {str(e)}")
+                                import traceback
+                                logger.error(f"Segment processing error traceback: {traceback.format_exc()}")
+                    
+                    logger.info(f"Completed processing {len(processed_segments)}/{len(segment_results)} segments")
+                    capture.capture_metadata["processed_segments"] = len(processed_segments)
+                    
+                    # Set video_path for recognition pipeline
+                    if video_segment_paths:
                         if len(video_segment_paths) > 1:
+                            logger.info(f"Processing completed with {len(segment_results)} segments. Starting concatenation...")
+                            
+                            # Concatenate video segments if there are multiple
                             try:
                                 concat_video_path = sequential_processor.concatenate_segments(
                                     segment_paths=video_segment_paths,
@@ -187,11 +226,23 @@ async def process_parliament_tv_sequentially(
                                 
                                 # Update capture with concatenated video path
                                 capture.file_path = concat_video_path
+                                capture.video_path = concat_video_path  # For recognition pipeline
                                 capture.capture_metadata["concatenated_video_path"] = concat_video_path
                                 logger.info(f"Successfully concatenated {len(video_segment_paths)} video segments")
                             except Exception as e:
                                 logger.error(f"Error concatenating video segments: {str(e)}")
                                 capture.capture_metadata["video_concatenation_error"] = str(e)
+                                # Fallback to first segment if concatenation fails
+                                capture.video_path = video_segment_paths[0]
+                                capture.file_path = video_segment_paths[0]
+                                logger.info(f"Using first segment as fallback: {video_segment_paths[0]}")
+                        else:
+                            # Single segment - use it directly
+                            capture.video_path = video_segment_paths[0]
+                            capture.file_path = video_segment_paths[0]
+                            logger.info(f"Single segment processing - using: {video_segment_paths[0]}")
+                    else:
+                        logger.error("No video segments found - recognition will not be possible")
                         
                         # Concatenate audio segments if there are multiple
                         if len(audio_segment_paths) > 1:
