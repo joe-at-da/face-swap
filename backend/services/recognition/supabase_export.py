@@ -10,6 +10,7 @@ import os
 import json
 import uuid
 import logging
+import shutil
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session

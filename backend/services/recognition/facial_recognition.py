@@ -444,7 +444,7 @@ class FacialRecognitionService:
                         "description": capture.description or "",
                         "capture_date": capture.start_time.isoformat() if capture.start_time else datetime.datetime.now().isoformat(),
                         "duration": capture.duration or 0,
-                        "source_url": capture.url or "",
+                        "source_url": capture.source_url or "",
                     }
                     
                     # Extract audio and video URLs from metadata if available
@@ -810,26 +810,44 @@ class FacialRecognitionService:
             )
             
             # Convert results to expected format
+            face_data = detection_results.get("face_data", [])
             speaker_results = {
-                "video_path": video_path,
-                "total_frames": detection_results.get("total_frames", 0),
-                "processed_frames": detection_results.get("processed_frames", 0),
-                "identified_speakers": {},
+                "success": True,
+                "faces": face_data,  # Use face_data from OptimizedFaceDetector
                 "speaker_segments": [],
+                "identified_speakers": {},
                 "unidentified_faces": detection_results.get("unidentified_faces", []),
                 "processing_time": detection_results.get("processing_time", 0)
             }
             
+            logger.info(f"Retrieved {len(face_data)} faces from OptimizedFaceDetector for matching")
+            
             # Process detected faces and match with known encodings
-            if detection_results.get("faces") and known_encodings:
+            faces_with_encodings = 0
+            faces_without_encodings = 0
+            
+            # Use the correct key from OptimizedFaceDetector output
+            if detection_results.get("face_data"):
+                for face_data in detection_results["face_data"]:
+                    if face_data.get("encoding") is not None:
+                        faces_with_encodings += 1
+                    else:
+                        faces_without_encodings += 1
+                        
+                logger.info(f"Face encoding status: {faces_with_encodings} faces with encodings, {faces_without_encodings} faces without encodings")
+            
+            if detection_results.get("face_data") and known_encodings and faces_with_encodings > 0:
                 import face_recognition
+                logger.info(f"Starting face matching: {len(detection_results['face_data'])} faces detected, {len(known_encodings)} known encodings")
                 
-                for face_data in detection_results["faces"]:
+                for i, face_data in enumerate(detection_results["face_data"]):
                     face_encoding = face_data.get("encoding")
                     if face_encoding is not None:
+                        logger.debug(f"Processing face {i+1}: encoding shape {np.array(face_encoding).shape}")
                         # Compare with known encodings
                         matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.6)
                         face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+                        logger.debug(f"Face {i+1}: {sum(matches)} matches found, best distance: {min(face_distances) if face_distances.size > 0 else 'N/A'}")
                         
                         if any(matches):
                             best_match_index = np.argmin(face_distances)

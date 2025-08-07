@@ -48,6 +48,9 @@ class ParliamentClipsIntegrationService:
             self.temp_dir = self.local_temp_dir
             os.makedirs(self.temp_dir, exist_ok=True)
             logger.info(f"Using local temp directory: {self.temp_dir}")
+        
+        # Set up SQLite database path
+        self.db_path = "/app/backend/parliament_clips.db"
     
     def integrate_recognition_results(
         self,

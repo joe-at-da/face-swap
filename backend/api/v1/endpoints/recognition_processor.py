@@ -304,11 +304,11 @@ async def process_recognition_background(capture_id: int, user_id: int):
                             # Get SQLite session for export
                             sqlite_db_path = integration_service.db_path
                             
-                            # Use the standardized export function
+                            # Use the standardized export function with SQLite database path
                             export_result = normalize_and_export_clips(
-                                db_path=sqlite_db_path,
+                                db=sqlite_db_path,
                                 video_id=capture_id,
-                                session_id=capture_id
+                                supabase_service=None
                             )
                             
                             if export_result.get("success", False):
