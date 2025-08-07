@@ -212,6 +212,64 @@ async def process_parliament_tv_sequentially(
                     # Mark capture as completed
                     capture.status = "completed"
                     logger.info(f"Completed sequential processing for session {capture_id}")
+                    
+                    # Automatically trigger recognition pipeline after successful segment creation
+                    try:
+                        logger.info(f"Starting automatic recognition pipeline for session {capture_id}")
+                        
+                        # Import the recognition function
+                        from backend.api.v1.endpoints.recognition_processor import process_recognition_background
+                        import asyncio
+                        import threading
+                        
+                        def trigger_recognition_async():
+                            """Trigger recognition pipeline in a separate thread"""
+                            try:
+                                logger.info(f"Recognition thread started for session {capture_id}")
+                                
+                                # Create new event loop for this thread
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                
+                                # Run the recognition pipeline
+                                loop.run_until_complete(process_recognition_background(capture_id, None))
+                                
+                                # Clean up
+                                loop.close()
+                                logger.info(f"Recognition pipeline completed successfully for session {capture_id}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error in automatic recognition pipeline for session {capture_id}: {str(e)}")
+                                import traceback
+                                logger.error(f"Recognition error traceback: {traceback.format_exc()}")
+                        
+                        # Start recognition in background thread (non-blocking)
+                        recognition_thread = threading.Thread(
+                            target=trigger_recognition_async,
+                            name=f"recognition-{capture_id}",
+                            daemon=True
+                        )
+                        recognition_thread.start()
+                        
+                        # Update capture metadata to track recognition trigger
+                        if not hasattr(capture, 'capture_metadata') or capture.capture_metadata is None:
+                            capture.capture_metadata = {}
+                        
+                        capture.capture_metadata["auto_recognition_triggered"] = True
+                        capture.capture_metadata["auto_recognition_started_at"] = datetime.now().isoformat()
+                        capture.capture_metadata["recognition_thread_name"] = f"recognition-{capture_id}"
+                        
+                        logger.info(f"Recognition pipeline triggered successfully for session {capture_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error triggering automatic recognition pipeline for session {capture_id}: {str(e)}")
+                        import traceback
+                        logger.error(f"Recognition trigger error traceback: {traceback.format_exc()}")
+                        
+                        # Don't fail the whole process if recognition trigger fails
+                        if not hasattr(capture, 'capture_metadata') or capture.capture_metadata is None:
+                            capture.capture_metadata = {}
+                        capture.capture_metadata["auto_recognition_trigger_error"] = str(e)
                 else:
                     # Mark capture as failed
                     capture.status = "failed"
