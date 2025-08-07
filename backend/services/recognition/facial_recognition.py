@@ -782,39 +782,86 @@ class FacialRecognitionService:
             known_names = []
             known_parliament_ids = []
             
-            # Use database-driven approach (same as non-sequential flow) instead of JSON file
-            # This ensures parliament_ids are available for member matching
+            # Use speakers table (has both face_encoding and parliament_id) instead of parliament_members
+            # This ensures both face encodings and parliament_ids are available for member matching
             try:
-                from backend.services.recognition.member_matching.database import load_members_from_supabase
-                from backend.services.integration.supabase_client import SupabaseService
+                from backend.db.models.speaker import Speaker
+                from backend.db.database import SessionLocal
                 
-                # Create Supabase service for member loading
-                supabase_service = SupabaseService(use_service_role=True)
-                members = load_members_from_supabase(supabase_service)
-                
-                if members:
-                    for member in members:
-                        # Extract face encoding if available
-                        if 'embedding' in member and member['embedding']:
-                            try:
-                                # Handle different embedding formats
-                                embedding = member['embedding']
-                                if isinstance(embedding, str):
-                                    embedding = json.loads(embedding)
-                                if isinstance(embedding, list):
-                                    embedding = np.array(embedding)
-                                
-                                known_encodings.append(embedding)
-                                known_names.append(member.get('name', member.get('display_name', 'Unknown')))
-                                known_parliament_ids.append(member.get('parliament_id', member.get('id', '')))
-                            except Exception as e:
-                                logger.warning(f"Failed to process embedding for {member.get('name', 'unknown')}: {str(e)}")
-                                continue
+                # Create database session to load speakers with face encodings
+                db = SessionLocal()
+                try:
+                    # Load speakers that have face encodings and parliament_ids
+                    speakers = db.query(Speaker).filter(
+                        Speaker.face_encoding.isnot(None),
+                        Speaker.parliament_id.isnot(None)
+                    ).all()
                     
-                    logger.info(f"Loaded {len(known_names)} known face encodings from database with parliament_ids")
+                    logger.info(f"Found {len(speakers)} speakers with face encodings and parliament_ids")
+                    
+                    for speaker in speakers:
+                        try:
+                            # Extract face encoding from JSON field
+                            if speaker.face_encoding:
+                                encoding_data = speaker.face_encoding
+                                if isinstance(encoding_data, str):
+                                    encoding_data = json.loads(encoding_data)
+                                if isinstance(encoding_data, list):
+                                    encoding_data = np.array(encoding_data)
+                                
+                                known_encodings.append(encoding_data)
+                                known_names.append(speaker.name)
+                                known_parliament_ids.append(speaker.parliament_id)
+                                
+                        except Exception as e:
+                            logger.warning(f"Failed to process face encoding for speaker {speaker.name}: {str(e)}")
+                            continue
+                    
+                    logger.info(f"Loaded {len(known_names)} known face encodings from speakers table")
                     logger.info(f"Parliament IDs sample: {known_parliament_ids[:5] if known_parliament_ids else 'None'}")
-                else:
-                    logger.warning("No members loaded from database")
+                    
+                finally:
+                    db.close()
+                    
+            except Exception as e:
+                logger.error(f"Failed to load speakers from database: {str(e)}")
+                logger.info("Falling back to Supabase approach")
+                
+                # Fallback to Supabase approach if direct database fails
+                try:
+                    from backend.services.recognition.member_matching.database import load_members_from_supabase
+                    from backend.services.integration.supabase_client import SupabaseService
+                    
+                    # Create Supabase service for member loading
+                    supabase_service = SupabaseService(use_service_role=True)
+                    members = load_members_from_supabase(supabase_service)
+                    
+                    if members:
+                        for member in members:
+                            # Extract face encoding if available
+                            if 'embedding' in member and member['embedding']:
+                                try:
+                                    # Handle different embedding formats
+                                    embedding = member['embedding']
+                                    if isinstance(embedding, str):
+                                        embedding = json.loads(embedding)
+                                    if isinstance(embedding, list):
+                                        embedding = np.array(embedding)
+                                    
+                                    known_encodings.append(embedding)
+                                    known_names.append(member.get('name', member.get('display_name', 'Unknown')))
+                                    known_parliament_ids.append(member.get('parliament_id', member.get('id', '')))
+                                except Exception as e:
+                                    logger.warning(f"Failed to process embedding for {member.get('name', 'unknown')}: {str(e)}")
+                                    continue
+                        
+                        logger.info(f"Loaded {len(known_names)} known face encodings from Supabase fallback")
+                        logger.info(f"Parliament IDs sample: {known_parliament_ids[:5] if known_parliament_ids else 'None'}")
+                    else:
+                        logger.warning("No members loaded from Supabase fallback")
+                        
+                except Exception as fallback_e:
+                    logger.error(f"Supabase fallback also failed: {str(fallback_e)}")
                     
             except Exception as e:
                 logger.error(f"Failed to load members from database: {str(e)}")
