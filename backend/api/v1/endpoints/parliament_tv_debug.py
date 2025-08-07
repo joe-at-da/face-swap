@@ -111,28 +111,56 @@ async def process_specific_segment(
             temp_dir = os.path.join(media_dir, f"debug_segments_{session_id}")
             os.makedirs(temp_dir, exist_ok=True)
             
-            logger.info(f"Extracting segment {start_time}-{end_time}s from session {session_id}")
+            # Check if we already have segment files for this time range (much more efficient!)
+            segment_duration = 1800  # 30 minutes = 1800 seconds
+            segment_number = (start_time // segment_duration) + 1
             
-            # Extract the segment from the local files
-            segment_result = sequential_processor.extract_segment(
-                video_path=video_path,
-                audio_path=audio_path,
-                start_time=start_time,
-                end_time=end_time,
-                output_dir=temp_dir,
-                segment_id=segment_id
-            )
+            existing_video_file = os.path.join(media_dir, f"{session_id}_{segment_number}.mp4")
+            existing_audio_file = os.path.join(media_dir, f"{session_id}_{segment_number}.mp3")
             
-            if not segment_result.get("video_success") or not segment_result.get("audio_success"):
-                logger.error(f"Failed to extract segment {start_time}-{end_time}s")
-                return {
-                    "success": False,
-                    "error": "Segment extraction failed"
+            if os.path.exists(existing_video_file) and os.path.exists(existing_audio_file):
+                # Use existing segment files (much faster and more efficient!)
+                logger.info(f"Using existing segment files for {start_time}-{end_time}s (segment {segment_number})")
+                logger.info(f"  Video: {existing_video_file} ({os.path.getsize(existing_video_file)/1024/1024:.1f} MB)")
+                logger.info(f"  Audio: {existing_audio_file} ({os.path.getsize(existing_audio_file)/1024/1024:.1f} MB)")
+                
+                segment_video_path = existing_video_file
+                segment_audio_path = existing_audio_file
+                
+                # Create a success result matching the extract_segment format
+                segment_result = {
+                    "video_success": True,
+                    "audio_success": True,
+                    "segment_video_path": segment_video_path,
+                    "segment_audio_path": segment_audio_path,
+                    "message": f"Using existing segment files for segment {segment_number}"
                 }
-            
-            # Get the segment file paths
-            segment_video_path = segment_result.get("segment_video_path")
-            segment_audio_path = segment_result.get("segment_audio_path")
+                
+            else:
+                # Fall back to extracting from full files (less efficient)
+                logger.info(f"Existing segment files not found, extracting from full files for {start_time}-{end_time}s")
+                logger.info(f"  Looking for: {existing_video_file}, {existing_audio_file}")
+                
+                # Extract the segment from the local files
+                segment_result = sequential_processor.extract_segment(
+                    video_path=video_path,
+                    audio_path=audio_path,
+                    start_time=start_time,
+                    end_time=end_time,
+                    output_dir=temp_dir,
+                    segment_id=segment_id
+                )
+                
+                if not segment_result.get("video_success") or not segment_result.get("audio_success"):
+                    logger.error(f"Failed to extract segment {start_time}-{end_time}s")
+                    return {
+                        "success": False,
+                        "error": "Segment extraction failed"
+                    }
+                
+                # Get the segment file paths
+                segment_video_path = segment_result.get("segment_video_path")
+                segment_audio_path = segment_result.get("segment_audio_path")
             
             # Create a title for the segment
             segment_title = segment_label if segment_label else f"{capture.title} (Segment {start_time}-{end_time}s)"
@@ -157,31 +185,60 @@ async def process_specific_segment(
             if process_result.get("success", False):
                 logger.info(f"Successfully processed segment {start_time}-{end_time}s")
                 
-                # Trigger recognition pipeline for this segment (matching sequential endpoint logic)
+                # Trigger recognition pipeline for this segment (using segment files, not full video)
                 try:
                     logger.info(f"Starting recognition pipeline for debug segment {start_time}-{end_time}s")
+                    logger.info(f"Using segment files: video={segment_video_path}, audio={segment_audio_path}")
                     
                     # Import the recognition function
                     from backend.api.v1.endpoints.recognition_processor import process_recognition_background
+                    from backend.db.session import get_db
+                    from backend.db.models.capture import CaptureSession
                     import asyncio
                     import threading
                     
                     def trigger_recognition_async():
-                        """Trigger recognition pipeline for the debug segment"""
+                        """Trigger recognition pipeline for the debug segment using segment files"""
                         try:
                             logger.info(f"Recognition thread started for debug segment {start_time}-{end_time}s")
                             
-                            # Create new event loop for this thread
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            
-                            # Run the recognition pipeline
-                            loop.run_until_complete(process_recognition_background(session_id, None))
-                            
-                            # Clean up
-                            loop.close()
-                            logger.info(f"Recognition pipeline completed successfully for debug segment")
-                            
+                            # Temporarily update the capture session to use segment files for recognition
+                            db = next(get_db())
+                            capture = db.query(CaptureSession).filter(CaptureSession.id == session_id).first()
+                            if capture:
+                                # Store original paths
+                                original_video_path = capture.video_path
+                                original_file_path = capture.file_path
+                                
+                                # Temporarily set to segment files
+                                capture.video_path = segment_video_path
+                                capture.file_path = segment_video_path
+                                db.commit()
+                                
+                                logger.info(f"Temporarily updated capture {session_id} to use segment files for recognition")
+                                
+                                try:
+                                    # Create new event loop for this thread
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    
+                                    # Run the recognition pipeline on the segment
+                                    loop.run_until_complete(process_recognition_background(session_id, None))
+                                    
+                                    # Clean up
+                                    loop.close()
+                                    logger.info(f"Recognition pipeline completed successfully for debug segment")
+                                    
+                                finally:
+                                    # Restore original paths
+                                    capture.video_path = original_video_path
+                                    capture.file_path = original_file_path
+                                    db.commit()
+                                    db.close()
+                                    logger.info(f"Restored original paths for capture {session_id}")
+                            else:
+                                logger.error(f"Could not find capture session {session_id}")
+                                
                         except Exception as e:
                             logger.error(f"Error in debug recognition pipeline: {str(e)}")
                             import traceback
@@ -195,7 +252,7 @@ async def process_specific_segment(
                     )
                     recognition_thread.start()
                     
-                    logger.info(f"Recognition pipeline triggered for debug segment {start_time}-{end_time}s")
+                    logger.info(f"Recognition pipeline triggered for debug segment {start_time}-{end_time}s using segment files")
                     
                 except Exception as e:
                     logger.error(f"Error triggering recognition for debug segment: {str(e)}")
