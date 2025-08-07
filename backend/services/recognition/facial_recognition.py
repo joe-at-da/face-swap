@@ -858,15 +858,20 @@ class FacialRecognitionService:
                                 parliament_id = known_parliament_ids[best_match_index] if best_match_index < len(known_parliament_ids) else None
                                 confidence = 1.0 - face_distances[best_match_index]
                                 
-                                # Add to speaker segments
-                                speaker_results["speaker_segments"].append({
-                                    "start_time": face_data.get("timestamp", 0),
-                                    "end_time": face_data.get("timestamp", 0) + 1.0,  # 1 second segment
-                                    "speaker_name": speaker_name,
-                                    "member_id": parliament_id,
-                                    "confidence": confidence,
-                                    "transcript": ""  # Will be filled by transcription
-                                })
+                                # Only create speaker segment if we have a valid parliament_id
+                                # This prevents NOT NULL constraint violations in the database
+                                if parliament_id is not None:
+                                    # Add to speaker segments
+                                    speaker_results["speaker_segments"].append({
+                                        "start_time": face_data.get("timestamp", 0),
+                                        "end_time": face_data.get("timestamp", 0) + 1.0,  # 1 second segment
+                                        "speaker_name": speaker_name,
+                                        "member_id": parliament_id,
+                                        "confidence": confidence,
+                                        "transcript": ""  # Will be filled by transcription
+                                    })
+                                else:
+                                    logger.warning(f"Face matched to {speaker_name} but no parliament_id available - skipping segment creation")
                                 
                                 # Track identified speakers
                                 if speaker_name not in speaker_results["identified_speakers"]:

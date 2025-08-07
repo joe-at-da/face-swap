@@ -397,49 +397,53 @@ def export_recognition_results(
     # First, ensure member IDs are normalized AND exported to Supabase properly
     # Import the normalization and export function
     from backend.services.recognition.simplified_export import normalize_and_export_clips
-    from backend.db.session import SessionLocal
+    from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
     from backend.services.integration.supabase_upload import SupabaseUploader
     
-    # Create a new database session for SQLite operations
-    # Use a proper session object, not a generator
-    with SessionLocal() as sqlite_db:
-        try:
-            # Create a Supabase uploader for export
-            supabase_uploader = SupabaseUploader()
-            
-            # Run normalization AND export to ensure member IDs are properly set across speech groups
-            # and that export only happens AFTER normalization is complete
-            logger.info(f"Running member ID normalization and export for video ID {video_id}")
-            
-            # This will handle normalization, grouping by speech_group_id, and export to Supabase
-            # IMPORTANT: We need to pass the sqlite_db session directly, not as a parameter
-            # The normalize_and_export_clips function expects a SQLAlchemy session object
-            normalize_result = normalize_and_export_clips(
-                db=sqlite_db,  # Use the named parameter 'db' to ensure it's recognized correctly
-                video_id=str(video_id), 
-                supabase_service=supabase_uploader
-            )
+    # Create a proper SQLite session using ParliamentClipsIntegrationService
+    # This ensures we get an actual SQLite connection, not a PostgreSQL one
+    parliament_service = ParliamentClipsIntegrationService()
+    sqlite_db = parliament_service.get_sqlite_session()
+    
+    try:
+        # Create a Supabase uploader for export
+        supabase_uploader = SupabaseUploader()
         
-            if not normalize_result.get("success", False):
-                logger.warning(f"Member ID normalization and export may have issues: {normalize_result.get('warning', normalize_result.get('error', 'Unknown issue'))}")
-            
-                # If there was an error, we'll continue but log that export may not have been complete
-                logger.warning("Export to Supabase may not have completed successfully due to normalization issues")
-            
-            else:
-                logger.info(f"Successfully normalized member IDs for {normalize_result.get('normalized', 0)} clips and exported {normalize_result.get('exported', 0)} clips to Supabase")
-            
-                # If export was successful, we don't need to do any additional export
-                logger.info("Export to Supabase completed successfully via normalize_and_export_clips")
-            
-            
-            # Now get the normalized clips from the parliament_clips SQLite database
-            # This is just for logging/reporting purposes, not for export
-            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-            clips_service = ParliamentClipsIntegrationService()
-            clips_result = clips_service.get_parliament_clips_for_video(video_id)
-        finally:
-            pass  # No need to explicitly close the session as the 'with' block handles it
+        # Run normalization AND export to ensure member IDs are properly set across speech groups
+        # and that export only happens AFTER normalization is complete
+        logger.info(f"Running member ID normalization and export for video ID {video_id}")
+        
+        # This will handle normalization, grouping by speech_group_id, and export to Supabase
+        # IMPORTANT: We need to pass the sqlite_db session directly, not as a parameter
+        # The normalize_and_export_clips function expects a SQLAlchemy session object
+        normalize_result = normalize_and_export_clips(
+            db=sqlite_db,  # Use the named parameter 'db' to ensure it's recognized correctly
+            video_id=str(video_id), 
+            supabase_service=supabase_uploader
+        )
+    
+        if not normalize_result.get("success", False):
+            logger.warning(f"Member ID normalization and export may have issues: {normalize_result.get('warning', normalize_result.get('error', 'Unknown issue'))}")
+        
+            # If there was an error, we'll continue but log that export may not have been complete
+            logger.warning("Export to Supabase may not have completed successfully due to normalization issues")
+        
+        else:
+            logger.info(f"Successfully normalized member IDs for {normalize_result.get('normalized', 0)} clips and exported {normalize_result.get('exported', 0)} clips to Supabase")
+        
+            # If export was successful, we don't need to do any additional export
+            logger.info("Export to Supabase completed successfully via normalize_and_export_clips")
+        
+        
+        # Now get the normalized clips from the parliament_clips SQLite database
+        # This is just for logging/reporting purposes, not for export
+        from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+        clips_service = ParliamentClipsIntegrationService()
+        clips_result = clips_service.get_parliament_clips_for_video(video_id)
+    finally:
+        # Close the SQLite session
+        if sqlite_db:
+            sqlite_db.close()
     
     if not clips_result.get("success", False) or not clips_result.get("clips"):
         logger.error(f"Failed to get parliament clips for video {video_id}: {clips_result.get('error', 'No clips found')}")
