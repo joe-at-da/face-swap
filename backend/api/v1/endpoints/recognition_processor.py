@@ -260,6 +260,75 @@ async def process_recognition_background(capture_id: int, user_id: int):
             logger.info(f"Updating timeline data for capture {capture_id}")
             timeline_service.update_timeline_data(db, capture_id)
             
+            # CRITICAL: Add missing integration step - populate parliament_clips.db and export to Supabase
+            try:
+                logger.info(f"Starting parliament clips integration for capture {capture_id}")
+                
+                # Import the integration services
+                from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                from backend.services.supabase.simplified_export import normalize_and_export_clips
+                
+                # Initialize integration service
+                integration_service = ParliamentClipsIntegrationService()
+                
+                # Check if face identification results JSON exists
+                video_path = capture.video_path or capture.file_path
+                if video_path:
+                    # Determine results file path based on video path
+                    video_name = os.path.splitext(os.path.basename(video_path))[0]
+                    results_file = os.path.join(os.path.dirname(video_path), f"{video_name}_speaker_identification_results.json")
+                    
+                    if os.path.exists(results_file):
+                        logger.info(f"Found face identification results: {results_file}")
+                        
+                        # Read the results JSON
+                        with open(results_file, 'r') as f:
+                            face_results = json.load(f)
+                        
+                        # Integrate results into parliament_clips.db
+                        logger.info(f"Integrating face identification results into parliament_clips.db")
+                        integration_result = integration_service.integrate_recognition_results(
+                            db_session=db,
+                            video_id=capture_id,
+                            recognition_results=face_results,
+                            video_path=video_path,
+                            audio_path=capture.audio_path
+                        )
+                        
+                        if integration_result.get("success", False):
+                            logger.info(f"Successfully integrated recognition results for capture {capture_id}")
+                            
+                            # Export to Supabase using the standardized export function
+                            logger.info(f"Exporting clips to Supabase for capture {capture_id}")
+                            
+                            # Get SQLite session for export
+                            sqlite_db_path = integration_service.db_path
+                            
+                            # Use the standardized export function
+                            export_result = normalize_and_export_clips(
+                                db_path=sqlite_db_path,
+                                video_id=capture_id,
+                                session_id=capture_id
+                            )
+                            
+                            if export_result.get("success", False):
+                                logger.info(f"Successfully exported clips to Supabase for capture {capture_id}")
+                                logger.info(f"Exported {export_result.get('exported_count', 0)} grouped clips")
+                            else:
+                                logger.error(f"Failed to export clips to Supabase: {export_result.get('error', 'Unknown error')}")
+                        else:
+                            logger.error(f"Failed to integrate recognition results: {integration_result.get('error', 'Unknown error')}")
+                    else:
+                        logger.warning(f"Face identification results file not found: {results_file}")
+                        logger.info("This may be normal if face identification is still in progress")
+                else:
+                    logger.warning(f"No video path found for capture {capture_id}")
+                    
+            except Exception as e:
+                logger.error(f"Error in parliament clips integration for capture {capture_id}: {str(e)}")
+                import traceback
+                logger.error(f"Integration error traceback: {traceback.format_exc()}")
+            
             logger.info(f"Recognition processing completed for capture {capture_id}")
         else:
             logger.error(f"Face recognition failed for capture {capture_id}: {face_result.get('error', 'Unknown error')}")

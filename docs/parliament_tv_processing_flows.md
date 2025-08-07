@@ -206,15 +206,33 @@ CREATE TABLE parliament_member_clips (
 3. **Database Conflicts**: Ensure proper SQLite to PostgreSQL export
 4. **Performance Issues**: Monitor segment processing times and adjust concurrency
 
-### Monitoring
+### Recognition Output Locations
 
-Check processing status:
+**Important**: The recognition pipeline does NOT use `/data/temp/recognition`. Instead, outputs are written to:
+
+1. **Segment-Specific Results**: `/data/media/{session_id}_{segment}_speaker_identification_results.json`
+2. **Unidentified Faces**: `/data/media/{session_id}_{segment}_unidentified_faces/`
+3. **Database**: Direct updates to `parliament_clips.db`
+4. **Integrated Results**: `/data/media/integrated_results/` (final processed data)
+
+### Monitoring Active Recognition
+
+Check what's currently being processed:
 ```bash
-# View processing logs
-docker-compose -f docker-compose.dev.yml logs --tail=50 app
+# Check which segment is being processed
+docker-compose -f docker-compose.dev.yml exec app ps aux | grep identify_and_store_faces
+
+# View current process details
+docker-compose -f docker-compose.dev.yml exec app ps -ef
+
+# Check for completed results files
+ls -la data/media/*results.json
+
+# Check for unidentified faces directories (indicates processing started)
+ls -la data/media/*_unidentified_faces/
 
 # Check database population
-docker exec the-mp-app-1 python -c "
+docker-compose -f docker-compose.dev.yml exec app python -c "
 import sqlite3
 conn = sqlite3.connect('/app/backend/parliament_clips.db')
 cursor = conn.cursor()
@@ -222,6 +240,64 @@ cursor.execute('SELECT COUNT(*) FROM parliament_clips')
 print(f'Total clips: {cursor.fetchone()[0]}')
 conn.close()
 "
+```
+
+### Recognition Process Indicators
+
+**Active Processing Signs**:
+- High CPU usage (50-105%) on face identification process
+- Creation of `{session_id}_{segment}_unidentified_faces/` directories
+- Process command line shows current segment: `--input /app/data/media/{session_id}_{segment}.mp4`
+
+**Completion Signs**:
+- Appearance of `{session_id}_{segment}_speaker_identification_results.json` files
+- Database entries in `parliament_clips` table
+- Process moves to next segment automatically
+
+**Expected Timeline**:
+- ~5-10 minutes per 30-minute segment
+- Face detection phase: High CPU usage
+- Transcription phase: Moderate CPU usage
+- Database population: Quick (seconds)
+
+### Troubleshooting Recognition
+
+**If no recognition output appears**:
+1. Check if face identification process is running: `ps aux | grep identify_and_store_faces`
+2. Verify segment files exist: `ls -la data/media/{session_id}_*.mp4`
+3. Check for error logs: `docker-compose logs --tail=100 app`
+4. Ensure MP encodings file exists: `ls -la data/mp_encodings.json`
+
+**If processing seems stuck**:
+1. High CPU usage (50-105%) is normal during face detection
+2. Processing time varies with video content complexity
+3. Each segment processes independently - one failure won't stop others
+4. Database population happens after each segment completes
+
+### Processing Status Check
+
+Quick status check script:
+```bash
+#!/bin/bash
+echo "=== Recognition Status ==="
+echo "Active processes:"
+docker-compose -f docker-compose.dev.yml exec app ps aux | grep -E "(identify_and_store_faces|python)" | grep -v grep
+
+echo -e "\nCompleted results:"
+ls -la data/media/*results.json 2>/dev/null | wc -l
+
+echo -e "\nDatabase entries:"
+docker-compose -f docker-compose.dev.yml exec app python -c "
+import sqlite3
+conn = sqlite3.connect('/app/backend/parliament_clips.db')
+cursor = conn.cursor()
+cursor.execute('SELECT COUNT(*) FROM parliament_clips')
+print(f'Total clips: {cursor.fetchone()[0]}')
+conn.close()
+"
+
+echo -e "\nUnidentified faces directories:"
+ls -d data/media/*_unidentified_faces/ 2>/dev/null | wc -l
 ```
 
 ## Future Enhancements

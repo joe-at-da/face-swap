@@ -48,6 +48,135 @@ class ParliamentClipsIntegrationService:
             self.temp_dir = self.local_temp_dir
             os.makedirs(self.temp_dir, exist_ok=True)
             logger.info(f"Using local temp directory: {self.temp_dir}")
+    
+    def integrate_recognition_results(
+        self,
+        db_session: Session,
+        video_id: int,
+        recognition_results: Dict[str, Any],
+        video_path: str,
+        audio_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Integrate face identification results into parliament_clips.db.
+        
+        This method reads the face identification results JSON and populates
+        the SQLite database with clip records for identified speakers.
+        
+        Args:
+            db_session: SQLAlchemy database session
+            video_id: ID of the video/capture session
+            recognition_results: Face identification results from JSON
+            video_path: Path to the video file
+            audio_path: Optional path to the audio file
+            
+        Returns:
+            Dict with integration results
+        """
+        logger.info(f"Starting integration of recognition results for video {video_id}")
+        
+        try:
+            # Extract speaker segments from recognition results
+            speaker_segments = recognition_results.get("speaker_segments", [])
+            identified_speakers = recognition_results.get("identified_speakers", {})
+            
+            logger.info(f"Found {len(speaker_segments)} speaker segments and {len(identified_speakers)} identified speakers")
+            
+            if not speaker_segments:
+                logger.warning("No speaker segments found in recognition results")
+                return {"success": False, "error": "No speaker segments found"}
+            
+            # Process each speaker segment and create clips
+            clips_created = 0
+            clips_skipped = 0
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            for segment in speaker_segments:
+                try:
+                    # Extract segment data
+                    start_time = float(segment.get("start_time", 0))
+                    end_time = float(segment.get("end_time", 0))
+                    duration = end_time - start_time
+                    
+                    if duration <= 0:
+                        logger.warning(f"Skipping segment with invalid duration: {start_time}-{end_time}")
+                        clips_skipped += 1
+                        continue
+                    
+                    # Get speaker information
+                    speaker_name = segment.get("speaker_name", "Unknown")
+                    member_id = segment.get("member_id")
+                    confidence = float(segment.get("confidence", 0.0))
+                    transcript = segment.get("transcript", "")
+                    
+                    # Generate speech group ID for this segment
+                    speech_group_id = f"{video_id}_{int(start_time)}_{int(end_time)}"
+                    
+                    # Create metadata for the clip
+                    metadata = {
+                        "video_id": video_id,
+                        "speaker_name": speaker_name,
+                        "confidence": confidence,
+                        "video_path": video_path,
+                        "audio_path": audio_path,
+                        "segment_type": "face_identification",
+                        "created_at": datetime.now().isoformat()
+                    }
+                    
+                    # Insert clip into parliament_clips table
+                    cursor.execute("""
+                        INSERT INTO parliament_clips (
+                            member_id, transcript, full_video_path, start_timestamp, end_timestamp,
+                            confidence_score, duration_seconds, session_date, created_at, updated_at,
+                            metadata, speech_group_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        member_id,
+                        transcript,
+                        video_path,
+                        start_time,
+                        end_time,
+                        confidence,
+                        duration,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        datetime.now().isoformat(),
+                        datetime.now().isoformat(),
+                        json.dumps(metadata),
+                        speech_group_id
+                    ))
+                    
+                    clips_created += 1
+                    logger.debug(f"Created clip for {speaker_name} ({start_time}-{end_time}s)")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing segment: {str(e)}")
+                    clips_skipped += 1
+                    continue
+            
+            # Commit all changes
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Integration completed: {clips_created} clips created, {clips_skipped} skipped")
+            
+            return {
+                "success": True,
+                "clips_created": clips_created,
+                "clips_skipped": clips_skipped,
+                "video_id": video_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error integrating recognition results: {str(e)}")
+            import traceback
+            logger.error(f"Integration error traceback: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e),
+                "video_id": video_id
+            }
         
         # Define database paths with correct location
         self.docker_db_path = "/app/backend/parliament_clips.db"  # Path in Docker container
