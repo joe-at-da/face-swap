@@ -829,7 +829,7 @@ class FacialRecognitionService:
             # Use the correct key from OptimizedFaceDetector output
             if detection_results.get("face_data"):
                 for face_data in detection_results["face_data"]:
-                    if face_data.get("encoding") is not None:
+                    if face_data.get("face_encoding") is not None:
                         faces_with_encodings += 1
                     else:
                         faces_without_encodings += 1
@@ -841,7 +841,7 @@ class FacialRecognitionService:
                 logger.info(f"Starting face matching: {len(detection_results['face_data'])} faces detected, {len(known_encodings)} known encodings")
                 
                 for i, face_data in enumerate(detection_results["face_data"]):
-                    face_encoding = face_data.get("encoding")
+                    face_encoding = face_data.get("face_encoding")
                     if face_encoding is not None:
                         logger.debug(f"Processing face {i+1}: encoding shape {np.array(face_encoding).shape}")
                         # Compare with known encodings

@@ -420,7 +420,17 @@ class OptimizedFaceDetector:
         # Get face encodings for validated faces
         face_encodings = []
         if validated_locations:
-            face_encodings = face_recognition.face_encodings(rgb_frame, validated_locations)
+            logger.info(f"🔍 ENCODING DEBUG: Extracting encodings for {len(validated_locations)} validated face locations")
+            try:
+                face_encodings = face_recognition.face_encodings(rgb_frame, validated_locations)
+                logger.info(f"🔍 ENCODING DEBUG: Successfully extracted {len(face_encodings)} face encodings")
+                if len(face_encodings) != len(validated_locations):
+                    logger.warning(f"🔍 ENCODING DEBUG: Encoding count mismatch: {len(validated_locations)} locations but {len(face_encodings)} encodings")
+            except Exception as e:
+                logger.error(f"🔍 ENCODING DEBUG: Failed to extract face encodings: {str(e)}")
+                face_encodings = []
+        else:
+            logger.info("🔍 ENCODING DEBUG: No validated face locations found for encoding extraction")
         
         if len(validated_locations) < len(adjusted_locations):
             logger.debug(f"Filtered out {len(adjusted_locations) - len(validated_locations)} false positive face detections")
@@ -789,6 +799,8 @@ class OptimizedFaceDetector:
                                 "segment_key": segment_key,
                                 **quality_metrics
                             }
+                            
+                            logger.info(f"🔍 FACE DATA DEBUG: Storing face {face_id} with encoding of length {len(face_encoding)} at timestamp {timestamp:.2f}")
                             
                             # Add to segment faces
                             if segment_key not in segment_faces:
