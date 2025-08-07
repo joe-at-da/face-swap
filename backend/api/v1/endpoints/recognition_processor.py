@@ -266,7 +266,7 @@ async def process_recognition_background(capture_id: int, user_id: int):
                 
                 # Import the integration services
                 from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-                from backend.services.supabase.simplified_export import normalize_and_export_clips
+                from backend.services.recognition.simplified_export import normalize_and_export_clips
                 
                 # Initialize integration service
                 integration_service = ParliamentClipsIntegrationService()

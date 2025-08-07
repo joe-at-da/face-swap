@@ -21,6 +21,7 @@ from backend.services.utils import make_json_serializable
 from backend.services.recognition.supabase_export import export_recognition_results
 from backend.db.session import SessionLocal
 from backend.db.models import Speaker, CaptureSession
+from sqlalchemy import or_
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -430,7 +431,10 @@ class FacialRecognitionService:
             try:
                 # Find the capture session for this video
                 capture = db.query(CaptureSession).filter(
-                    CaptureSession.output_file.like(f"%{video_name}%")
+                    or_(
+                        CaptureSession.video_path.like(f"%{video_name}%"),
+                        CaptureSession.file_path.like(f"%{video_name}%")
+                    )
                 ).first()
                 
                 if capture:
@@ -438,7 +442,7 @@ class FacialRecognitionService:
                     metadata = {
                         "title": f"Parliament TV - {capture.title}" if capture.title else f"Parliament TV Capture {capture.id}",
                         "description": capture.description or "",
-                        "capture_date": capture.start_time.isoformat() if capture.start_time else datetime.now().isoformat(),
+                        "capture_date": capture.start_time.isoformat() if capture.start_time else datetime.datetime.now().isoformat(),
                         "duration": capture.duration or 0,
                         "source_url": capture.url or "",
                     }
@@ -464,7 +468,7 @@ class FacialRecognitionService:
             return {
                 "title": f"Parliament TV Video - {os.path.basename(video_path)}",
                 "description": "Parliament TV video capture",
-                "capture_date": datetime.now().isoformat(),
+                "capture_date": datetime.datetime.now().isoformat(),
                 "duration": 0,
                 "source_url": "",
                 "audio_url": "",
@@ -475,7 +479,7 @@ class FacialRecognitionService:
             return {
                 "title": f"Parliament TV Video - {os.path.basename(video_path)}",
                 "description": "Parliament TV video capture",
-                "capture_date": datetime.now().isoformat(),
+                "capture_date": datetime.datetime.now().isoformat(),
                 "duration": 0,
                 "source_url": "",
                 "audio_url": "",
@@ -713,7 +717,7 @@ class FacialRecognitionService:
                     "names": [],
                     "encodings": [],
                     "parliament_ids": [],
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": datetime.datetime.now().isoformat()
                 }
                 os.makedirs(os.path.dirname(self.mp_encodings_file), exist_ok=True)
                 with open(self.mp_encodings_file, 'w') as f:
@@ -728,22 +732,18 @@ class FacialRecognitionService:
                     "results_file": None
                 }
         
-        # Prepare the script path - use the new script that can store unidentified faces
-        script_path = self.scripts_dir / "identify_and_store_faces.py"
-        
-        # If the new script doesn't exist, fall back to the old one
-        if not script_path.exists():
-            script_path = self.scripts_dir / "identify_speakers.py"
-            logger.warning(f"New script not found, falling back to: {script_path}")
-            store_unidentified = False  # Can't store unidentified faces with the old script
-            
-            if not script_path.exists():
-                return {
-                    "success": False,
-                    "error": f"Speaker identification script not found: {script_path}",
-                    "output_file": None,
-                    "results_file": None
-                }
+        # Use the optimized face detector instead of inefficient scripts
+        try:
+            from .optimized_face_detection import OptimizedFaceDetector
+            logger.info(f"Using OptimizedFaceDetector for efficient face identification: {video_path}")
+        except ImportError as e:
+            logger.error(f"Failed to import OptimizedFaceDetector: {str(e)}")
+            return {
+                "success": False,
+                "error": f"OptimizedFaceDetector not available: {str(e)}",
+                "output_file": None,
+                "results_file": None
+            }
         
         # Prepare the results file
         results_file = f"{os.path.splitext(video_path)[0]}_speaker_identification_results.json"
@@ -768,51 +768,110 @@ class FacialRecognitionService:
                 logger.warning(f"Failed to save problematic frames temp file: {str(e)}")
                 problematic_frames_temp_file = None
         
-        # Prepare the command
-        cmd = [
-            "python",
-            str(script_path),
-            "--input", video_path,
-            "--encodings", str(self.mp_encodings_file),
-            "--results", results_file
-        ]
-        
-        if output_file:
-            cmd.extend(["--output", output_file])
-        
-        if store_unidentified and unidentified_dir and "identify_and_store_faces.py" in str(script_path):
-            cmd.extend(["--unidentified-dir", unidentified_dir])
-        
-        # Add problematic frames file if available
-        if problematic_frames_temp_file:
-            cmd.extend(["--skip-frames", problematic_frames_temp_file])
-        
-        logger.info(f"Running command: {' '.join(cmd)}")
-        
-        # Execute the command
+        # Use OptimizedFaceDetector for efficient processing
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            # Initialize the optimized detector
+            detector = OptimizedFaceDetector(output_dir=unidentified_dir)
+            
+            # Load known face encodings
+            import json
+            import numpy as np
+            from datetime import datetime
+            
+            known_encodings = []
+            known_names = []
+            known_parliament_ids = []
+            
+            if os.path.exists(self.mp_encodings_file):
+                with open(self.mp_encodings_file, 'r') as f:
+                    encodings_data = json.load(f)
+                    
+                if encodings_data.get("names") and encodings_data.get("encodings"):
+                    known_names = encodings_data["names"]
+                    known_encodings = [np.array(enc) for enc in encodings_data["encodings"]]
+                    known_parliament_ids = encodings_data.get("parliament_ids", [])
+                    
+                    logger.info(f"Loaded {len(known_names)} known face encodings")
+                else:
+                    logger.warning("MP encodings file exists but contains no encodings")
+            else:
+                logger.warning(f"MP encodings file not found: {self.mp_encodings_file}")
+            
+            # Process video with optimized detector (much faster!)
+            # Use optimized frame sampling: 1 frame every 3-5 seconds instead of every 2nd frame
+            detection_results = detector.extract_faces_from_video(
+                video_path=video_path,
+                output_dir=unidentified_dir if store_unidentified else None,
+                interval=4.0,  # Process 1 frame every 4 seconds (vs every 0.08 seconds in old script!)
+                min_confidence=0.6,
+                prioritize_center=True,
+                select_best_frames=True,
+                roi_scale=0.7  # Focus on center 70% of frame
             )
             
-            stdout, stderr = process.communicate()
+            # Convert results to expected format
+            speaker_results = {
+                "video_path": video_path,
+                "total_frames": detection_results.get("total_frames", 0),
+                "processed_frames": detection_results.get("processed_frames", 0),
+                "identified_speakers": {},
+                "speaker_segments": [],
+                "unidentified_faces": detection_results.get("unidentified_faces", []),
+                "processing_time": detection_results.get("processing_time", 0)
+            }
             
-            if process.returncode != 0:
-                logger.error(f"Speaker identification failed: {stderr}")
-                return {
-                    "success": False,
-                    "error": f"Speaker identification failed: {stderr}",
-                    "output_file": None,
-                    "results_file": None
-                }
+            # Process detected faces and match with known encodings
+            if detection_results.get("faces") and known_encodings:
+                import face_recognition
+                
+                for face_data in detection_results["faces"]:
+                    face_encoding = face_data.get("encoding")
+                    if face_encoding is not None:
+                        # Compare with known encodings
+                        matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.6)
+                        face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+                        
+                        if any(matches):
+                            best_match_index = np.argmin(face_distances)
+                            if matches[best_match_index]:
+                                speaker_name = known_names[best_match_index]
+                                parliament_id = known_parliament_ids[best_match_index] if best_match_index < len(known_parliament_ids) else None
+                                confidence = 1.0 - face_distances[best_match_index]
+                                
+                                # Add to speaker segments
+                                speaker_results["speaker_segments"].append({
+                                    "start_time": face_data.get("timestamp", 0),
+                                    "end_time": face_data.get("timestamp", 0) + 1.0,  # 1 second segment
+                                    "speaker_name": speaker_name,
+                                    "member_id": parliament_id,
+                                    "confidence": confidence,
+                                    "transcript": ""  # Will be filled by transcription
+                                })
+                                
+                                # Track identified speakers
+                                if speaker_name not in speaker_results["identified_speakers"]:
+                                    speaker_results["identified_speakers"][speaker_name] = {
+                                        "parliament_id": parliament_id,
+                                        "appearances": 0,
+                                        "total_confidence": 0
+                                    }
+                                
+                                speaker_results["identified_speakers"][speaker_name]["appearances"] += 1
+                                speaker_results["identified_speakers"][speaker_name]["total_confidence"] += confidence
+            
+            # Save results to JSON file
+            with open(results_file, 'w') as f:
+                json.dump(speaker_results, f, indent=2, default=str)
+            
+            logger.info(f"OptimizedFaceDetector completed: {len(speaker_results['speaker_segments'])} segments identified")
+            
         except Exception as e:
-            logger.error(f"Error executing speaker identification command: {str(e)}")
+            logger.error(f"Error with OptimizedFaceDetector: {str(e)}")
+            import traceback
+            logger.error(f"OptimizedFaceDetector error traceback: {traceback.format_exc()}")
             return {
                 "success": False,
-                "error": f"Error executing speaker identification command: {str(e)}",
+                "error": f"OptimizedFaceDetector failed: {str(e)}",
                 "output_file": None,
                 "results_file": None
             }
@@ -1102,7 +1161,7 @@ class FacialRecognitionService:
                     "names": [],
                     "encodings": [],
                     "parliament_ids": [],
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": datetime.datetime.now().isoformat()
                 }
                 
                 for speaker in speakers:
