@@ -782,20 +782,59 @@ class FacialRecognitionService:
             known_names = []
             known_parliament_ids = []
             
-            if os.path.exists(self.mp_encodings_file):
-                with open(self.mp_encodings_file, 'r') as f:
-                    encodings_data = json.load(f)
+            # Use database-driven approach (same as non-sequential flow) instead of JSON file
+            # This ensures parliament_ids are available for member matching
+            try:
+                from backend.services.recognition.member_matching.database import load_members_from_supabase
+                from backend.services.integration.supabase_client import SupabaseService
+                
+                # Create Supabase service for member loading
+                supabase_service = SupabaseService(use_service_role=True)
+                members = load_members_from_supabase(supabase_service)
+                
+                if members:
+                    for member in members:
+                        # Extract face encoding if available
+                        if 'embedding' in member and member['embedding']:
+                            try:
+                                # Handle different embedding formats
+                                embedding = member['embedding']
+                                if isinstance(embedding, str):
+                                    embedding = json.loads(embedding)
+                                if isinstance(embedding, list):
+                                    embedding = np.array(embedding)
+                                
+                                known_encodings.append(embedding)
+                                known_names.append(member.get('name', member.get('display_name', 'Unknown')))
+                                known_parliament_ids.append(member.get('parliament_id', member.get('id', '')))
+                            except Exception as e:
+                                logger.warning(f"Failed to process embedding for {member.get('name', 'unknown')}: {str(e)}")
+                                continue
                     
-                if encodings_data.get("names") and encodings_data.get("encodings"):
-                    known_names = encodings_data["names"]
-                    known_encodings = [np.array(enc) for enc in encodings_data["encodings"]]
-                    known_parliament_ids = encodings_data.get("parliament_ids", [])
-                    
-                    logger.info(f"Loaded {len(known_names)} known face encodings")
+                    logger.info(f"Loaded {len(known_names)} known face encodings from database with parliament_ids")
+                    logger.info(f"Parliament IDs sample: {known_parliament_ids[:5] if known_parliament_ids else 'None'}")
                 else:
-                    logger.warning("MP encodings file exists but contains no encodings")
-            else:
-                logger.warning(f"MP encodings file not found: {self.mp_encodings_file}")
+                    logger.warning("No members loaded from database")
+                    
+            except Exception as e:
+                logger.error(f"Failed to load members from database: {str(e)}")
+                logger.info("Falling back to JSON file approach")
+                
+                # Fallback to JSON file approach if database fails
+                if os.path.exists(self.mp_encodings_file):
+                    with open(self.mp_encodings_file, 'r') as f:
+                        encodings_data = json.load(f)
+                        
+                    if encodings_data.get("names") and encodings_data.get("encodings"):
+                        known_names = encodings_data["names"]
+                        known_encodings = [np.array(enc) for enc in encodings_data["encodings"]]
+                        known_parliament_ids = encodings_data.get("parliament_ids", [])
+                        
+                        logger.info(f"Loaded {len(known_names)} known face encodings from JSON file")
+                    else:
+                        logger.warning("MP encodings file exists but contains no encodings")
+                else:
+                    logger.warning(f"MP encodings file not found: {self.mp_encodings_file}")
             
             # Process video with optimized detector (much faster!)
             # Use optimized frame sampling: 1 frame every 3-5 seconds instead of every 2nd frame
