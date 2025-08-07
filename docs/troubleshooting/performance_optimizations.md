@@ -24,6 +24,12 @@ This document outlines performance optimizations for the Parliament TV processin
    - Updating speech group IDs requires multiple database operations
    - No batch processing for updates
 
+6. **CPU-Only Processing (Major Performance Opportunity)**
+   - **Current State**: All AI inference runs on CPU only
+   - **Whisper Transcription**: CPU-only mode results in 1:1 or slower processing (30 minutes to transcribe 30-minute segment)
+   - **Face Recognition**: CPU-only face detection, encoding, and matching
+   - **No Hardware Acceleration**: No GPU utilization despite potential 5-10x speedup for transcription and 3-5x for face recognition
+
 ## Recommended Optimizations
 
 ### 1. Event-Based Capture Completion
@@ -46,6 +52,61 @@ def register_capture_completion_callback(capture_id, callback):
 ### 3. Parallel Processing
 - Implement a task queue system (e.g., Celery) to parallelize recognition tasks
 - Start transcription and face recognition as soon as partial media is available:
+
+### 4. GPU Hardware Acceleration (High Impact)
+
+**Current Limitation**: The entire recognition pipeline runs on CPU only, missing significant performance opportunities.
+
+#### Whisper Transcription GPU Acceleration
+**Impact**: 5-10x faster transcription (30-minute segment: 30 minutes → 3-6 minutes)
+
+```python
+# Current implementation (CPU only)
+model = whisper.load_model(self.model_size)
+
+# Optimized implementation (GPU when available)
+import torch
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = whisper.load_model(self.model_size, device=device)
+logger.info(f"Using device: {device} for Whisper transcription")
+```
+
+#### Face Recognition GPU Acceleration
+**Impact**: 3-5x faster face detection, encoding, and matching
+
+```python
+# Current: OpenCV DNN (CPU only)
+# Optimized: Could use GPU-accelerated face_recognition or CUDA-based OpenCV
+
+# Example GPU detection setup
+import torch
+if torch.cuda.is_available():
+    logger.info(f"GPU available: {torch.cuda.get_device_name(0)}")
+    logger.info(f"CUDA version: {torch.version.cuda}")
+else:
+    logger.info("No GPU available, using CPU for all operations")
+```
+
+#### Parallel CPU/GPU Processing
+**Impact**: Better resource utilization
+
+- **CPU**: Video processing, file I/O, database operations
+- **GPU**: AI inference (transcription, face recognition, encoding)
+- **Memory**: Efficient data transfer between CPU and GPU
+
+#### Implementation Considerations
+
+1. **Device Detection**: Auto-detect available hardware and fallback gracefully
+2. **Memory Management**: Monitor GPU memory usage for large video files
+3. **Batch Processing**: Process multiple faces or audio segments in GPU batches
+4. **Docker Support**: Ensure GPU support in Docker containers (nvidia-docker)
+
+#### Hardware Requirements
+
+- **Minimum**: NVIDIA GPU with CUDA support
+- **Recommended**: RTX 3060 or better for optimal performance
+- **Memory**: 8GB+ GPU memory for large video processing
+- **Docker**: nvidia-container-toolkit for GPU access in containers
 
 ```python
 def process_parliament_video(video_url):
