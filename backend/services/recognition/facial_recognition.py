@@ -843,10 +843,12 @@ class FacialRecognitionService:
                 for i, face_data in enumerate(detection_results["face_data"]):
                     face_encoding = face_data.get("face_encoding")
                     if face_encoding is not None:
-                        logger.debug(f"Processing face {i+1}: encoding shape {np.array(face_encoding).shape}")
+                        # Convert face encoding back to numpy array for face_recognition functions
+                        face_encoding_array = np.array(face_encoding)
+                        logger.debug(f"Processing face {i+1}: encoding shape {face_encoding_array.shape}")
                         # Compare with known encodings
-                        matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.6)
-                        face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+                        matches = face_recognition.compare_faces(known_encodings, face_encoding_array, tolerance=0.6)
+                        face_distances = face_recognition.face_distance(known_encodings, face_encoding_array)
                         logger.debug(f"Face {i+1}: {sum(matches)} matches found, best distance: {min(face_distances) if face_distances.size > 0 else 'N/A'}")
                         
                         if any(matches):
