@@ -645,7 +645,11 @@ def process_video_recognition(capture_id: str, db: Session = Depends(get_db), cu
             }
         
         # Process the video for face recognition
-        face_result = facial_recognition.identify_speakers(capture.video_path)
+        # Use the proven multimodal recognition system (same as non-sequential flow)
+        from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
+        multimodal_service = MultimodalRecognitionService()
+        
+        face_result = multimodal_service.start_combined_recognition(capture.id)
         
         if face_result.get("success", False):
             # Store the face detection results

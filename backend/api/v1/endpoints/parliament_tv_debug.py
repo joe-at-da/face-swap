@@ -209,10 +209,12 @@ async def process_specific_segment(
                                 # Store original paths
                                 original_video_path = capture.video_path
                                 original_file_path = capture.file_path
+                                original_audio_path = capture.audio_path
                                 
                                 # Temporarily set to segment files
                                 capture.video_path = segment_video_path
                                 capture.file_path = segment_video_path
+                                capture.audio_path = segment_audio_path  # Set audio path for multimodal service
                                 db.commit()
                                 
                                 logger.info(f"Temporarily updated capture {session_id} to use segment files for recognition")
@@ -233,6 +235,7 @@ async def process_specific_segment(
                                     # Restore original paths
                                     capture.video_path = original_video_path
                                     capture.file_path = original_file_path
+                                    capture.audio_path = original_audio_path
                                     db.commit()
                                     db.close()
                                     logger.info(f"Restored original paths for capture {session_id}")

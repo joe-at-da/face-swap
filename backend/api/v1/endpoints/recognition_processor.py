@@ -214,9 +214,14 @@ async def process_recognition_background(capture_id: int, user_id: int):
             logger.error(f"Capture not found: {capture_id}")
             return
         
-        # Process face recognition
-        logger.info(f"Processing face recognition for capture {capture_id}")
-        face_result = facial_recognition.identify_speakers(capture.video_path)
+        # Process recognition using the proven multimodal system (same as non-sequential flow)
+        logger.info(f"Processing recognition for capture {capture_id} using proven multimodal system")
+        
+        from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
+        multimodal_service = MultimodalRecognitionService()
+        
+        # Use the same proven recognition system that works in non-sequential flow
+        face_result = multimodal_service.start_combined_recognition(capture.id)
         
         if face_result.get("success", False):
             # Store the face detection results
