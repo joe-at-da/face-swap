@@ -143,8 +143,18 @@ class ParliamentMemberMatcher:
             # Extract embeddings from members
             self.member_embeddings = {}
             
-            # Load embeddings exclusively from numeric member ID files in /app/data/mp_embeddings
-            embeddings_dir = "/app/data/mp_embeddings"
+            # Load embeddings exclusively from numeric member ID files
+            # Use different paths for Docker vs local environments
+            docker_path = "/app/data/mp_embeddings"
+            local_path = "/Users/joebradley/Veedoo/Development/the-mp/data/mp_embeddings"
+            
+            if os.path.exists(docker_path):
+                embeddings_dir = docker_path
+            elif os.path.exists(local_path):
+                embeddings_dir = local_path
+            else:
+                # Fallback to relative path
+                embeddings_dir = os.path.join(os.path.dirname(__file__), "../../../../data/mp_embeddings")
             embeddings_loaded = 0
             embeddings_filtered = 0
             
@@ -174,17 +184,27 @@ class ParliamentMemberMatcher:
                             with open(embedding_file, 'r') as f:
                                 embedding_data = json.load(f)
                             
-                            # JSON files contain embeddings directly as arrays
+                            # Handle both direct array format and object with "embedding" key
+                            embedding_array = None
                             if isinstance(embedding_data, list) and embedding_data:
+                                # Direct array format
+                                embedding_array = embedding_data
+                            elif isinstance(embedding_data, dict) and "embedding" in embedding_data:
+                                # Object format with "embedding" key
+                                embedding_array = embedding_data["embedding"]
+                                if not isinstance(embedding_array, list) or not embedding_array:
+                                    embedding_array = None
+                            
+                            if embedding_array:
                                 # Store embedding with both UUID and numeric keys for compatibility
-                                self.member_embeddings[str(member_uuid)] = embedding_data
-                                self.member_embeddings[member_uuid] = embedding_data
-                                self.member_embeddings[str(numeric_member_id)] = embedding_data
-                                self.member_embeddings[numeric_member_id] = embedding_data
+                                self.member_embeddings[str(member_uuid)] = embedding_array
+                                self.member_embeddings[member_uuid] = embedding_array
+                                self.member_embeddings[str(numeric_member_id)] = embedding_array
+                                self.member_embeddings[numeric_member_id] = embedding_array
                                 embeddings_loaded += 1
                                 logger.debug(f"✅ Loaded embedding for member UUID {member_uuid} with numeric ID {numeric_member_id}")
                             else:
-                                logger.warning(f"Invalid embedding format in {embedding_file}")
+                                logger.warning(f"Invalid embedding format in {embedding_file}: expected array or object with 'embedding' key")
                         except Exception as e:
                             logger.error(f"Error loading embedding file {embedding_file}: {str(e)}")
                     else:
@@ -200,7 +220,6 @@ class ParliamentMemberMatcher:
             
             # Final validation and logging
             logger.info(f"✅ Embeddings loading complete: {len(self.member_embeddings)} total embeddings loaded from numeric files")
-            logger.info(f"📊 Embedding statistics: {embeddings_loaded} loaded, {embeddings_filtered} filtered by house")
             
             # Check if we have enough valid embeddings
             if len(self.member_embeddings) == 0:
@@ -222,26 +241,18 @@ class ParliamentMemberMatcher:
             # Initialize empty embeddings to prevent crashes
             self.member_embeddings = {}
             
-            # Return True if we have at least some valid embeddings
-            return valid_embeddings > 0
+            return len(self.member_embeddings) > 0
+            
         except Exception as e:
             logger.error(f"Error loading parliament members: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             
-            # Ensure we always have at least some members
-            if not self.members:
-                logger.warning("Exception occurred, using minimal fallback member list")
-                self.members = [
-                    {"id": "1", "name": "Fallback Member 1", "embedding": [0.0] * 128},
-                    {"id": "2", "name": "Fallback Member 2", "embedding": [0.0] * 128}
-                ]
-                self.member_embeddings = {
-                    "1": {"embedding": [0.0] * 128, "member_id": "1", "name": "Fallback Member 1", "house": "1", "source": "fallback"},
-                    "2": {"embedding": [0.0] * 128, "member_id": "2", "name": "Fallback Member 2", "house": "1", "source": "fallback"}
-                }
+            # Initialize empty collections on error
+            self.members = []
+            self.member_embeddings = {}
             
-            return len(self.members) > 0
+            return False
     
     def _normalize_embedding(self, embedding: List[float]) -> np.ndarray:
         """

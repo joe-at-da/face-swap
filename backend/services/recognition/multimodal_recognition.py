@@ -1241,7 +1241,15 @@ class MultimodalRecognitionService:
                             video_id=str(video_id)  # Convert to string as expected by the matcher
                         )
                         
-                        if face_result["success"]:
+                        # Handle case where face_result might be a list instead of dict
+                        if isinstance(face_result, list):
+                            logger.warning(f"face_result is unexpectedly a list: {face_result}")
+                            continue
+                        elif not isinstance(face_result, dict):
+                            logger.warning(f"face_result is unexpected type {type(face_result)}: {face_result}")
+                            continue
+                        
+                        if face_result.get("success", False):
                             face_data = face_result.get("data", {})
                             face_data["frame_path"] = face_path
                             face_data["frame_time"] = face_time
