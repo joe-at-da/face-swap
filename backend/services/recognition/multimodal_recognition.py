@@ -1739,6 +1739,7 @@ class MultimodalRecognitionService:
                             logger.warning(f"No default member found for house: {house}")
             else:
                 logger.error(f"❌ No face embedding found in detection")
+                return {"success": False, "error": "No face embedding found", "supabase_export": {"enabled": export_to_supabase}}
             
             # Log the final detection result
             logger.info(f"Final detection result: member_id={best_detection.get('member_id')}, name={best_detection.get('name', 'Unknown')}, matched_by={best_detection.get('matched_by', 'unknown')}")
