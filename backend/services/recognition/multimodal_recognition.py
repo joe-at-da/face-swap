@@ -27,6 +27,7 @@ from backend.services.recognition.facial_recognition import FacialRecognitionSer
 from backend.services.recognition.face_profile_service import FaceProfileService
 from backend.services.recognition.member_matcher import ParliamentMemberMatcher
 from backend.services.recognition.timeline_service import TimelineService
+from backend.services.recognition.timeline_face_selector import TimelineFaceSelector
 from backend.services.recognition.timeline_combiner import combine_recognition_and_transcription
 from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
 from backend.services.recognition.sentence_segmentation import merge_incomplete_sentences
@@ -49,6 +50,7 @@ class MultimodalRecognitionService:
         self.face_profile_service = FaceProfileService()
         self.timeline_service = TimelineService()
         self.parliament_clips_service = ParliamentClipsIntegrationService()
+        self.timeline_face_selector = TimelineFaceSelector()
         self.member_matcher = None  # Will be initialized when needed with DB session
         
         # Set up directories using Docker container paths as per user preference
@@ -1064,213 +1066,105 @@ class MultimodalRecognitionService:
                 face_data = extraction_result.get("face_data", [])
                 logger.info(f"Successfully extracted {extracted_faces} high-quality faces from video")
                 
-                # Map extracted faces to segments based on timestamp
+                # TIMELINE-BASED FACE SELECTION OPTIMIZATION
+                # Instead of traditional face borrowing, select the best face within each speech group timeline range
+                logger.info("🎯 Starting timeline-based face selection to reduce face borrowing")
+                
+                # Group segments by speech_group_id to create timeline ranges
+                speech_groups = {}
+                for segment in segments:
+                    speech_group_id = segment.get('speech_group_id', f"group_{segment.get('id', 'unknown')}")
+                    if speech_group_id not in speech_groups:
+                        speech_groups[speech_group_id] = {
+                            'speech_group_id': speech_group_id,
+                            'start_time': segment.get('start', 0),
+                            'end_time': segment.get('end', 0),
+                            'segments': []
+                        }
+                    else:
+                        # Extend timeline range to include this segment
+                        speech_groups[speech_group_id]['start_time'] = min(
+                            speech_groups[speech_group_id]['start_time'], 
+                            segment.get('start', 0)
+                        )
+                        speech_groups[speech_group_id]['end_time'] = max(
+                            speech_groups[speech_group_id]['end_time'], 
+                            segment.get('end', 0)
+                        )
+                    
+                    speech_groups[speech_group_id]['segments'].append(segment)
+                
+                logger.info(f"Created {len(speech_groups)} speech group timeline ranges from {len(segments)} segments")
+                
+                # Use timeline face selector to select best faces for each speech group
+                speech_groups_list = list(speech_groups.values())
+                selected_faces = self.timeline_face_selector.select_best_faces_for_timeline(
+                    speech_groups_list, face_data, video_path
+                )
+                
+                # Map selected faces to all segments within their speech groups
+                segment_face_mapping = self.timeline_face_selector.map_faces_to_speech_groups(
+                    selected_faces, speech_groups_list
+                )
+                
+                logger.info(f"Timeline face selection completed: {len(selected_faces)} faces selected for {len(segment_face_mapping)} segments")
+                
+                # Convert to the expected segment_faces format for compatibility with existing code
+                segment_faces = {}
                 matched_faces = 0
                 processed_faces = set()  # Track processed faces to avoid duplicates
                 
-                # Group faces by segment for better speaker attribution
-                segment_faces = {}  # Dictionary to store faces by segment
-                
-                # First pass: Group faces by segment and collect quality scores
-                logger.info("First pass: Grouping faces by segment and collecting quality scores")
-                
-                # Pre-process segments for easier access
-                segment_time_ranges = []
-                for segment in segments:
-                    start_time = segment.get("start", 0)
-                    end_time = segment.get("end", 0)
-                    segment_id = segment.get("id", f"{start_time}-{end_time}")
-                    segment_time_ranges.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "id": segment_id,
-                        "segment": segment
-                    })
-                
-                # Sort segments by start time for more efficient matching
-                segment_time_ranges.sort(key=lambda x: x["start"])
-                
-                # Initialize segment_faces dictionary for all segments
+                # Convert timeline-based face selection to segment_faces format
+                # This maintains compatibility with existing downstream processing
                 for segment in segments:
                     segment_id = segment.get("id", f"{segment.get('start', 0)}-{segment.get('end', 0)}")
-                    if segment_id not in segment_faces:
-                        segment_faces[segment_id] = []
-                
-                # Track faces that couldn't be matched to any segment
-                unmatched_faces = []
-                
-                for face_info in face_data:
-                    face_time = face_info.get("timestamp", 0)
-                    # Get face path - check both possible key names
-                    face_path = face_info.get("face_image_path", face_info.get("path", ""))
-                    quality_score = face_info.get("quality_score", 0)
+                    segment_faces[segment_id] = []
                     
-                    # Skip if we've already processed this face (deduplication)
-                    if face_path in processed_faces:
-                        logger.debug(f"Skipping duplicate face at {face_time:.2f}s with path {face_path}")
-                        continue
-                    
-                    # Find the segment that contains this timestamp
-                    matching_segment = None
-                    matched = False
-                    
-                    # First try exact timestamp matching
-                    for segment_info in segment_time_ranges:
-                        if segment_info["start"] <= face_time <= segment_info["end"]:
-                            matching_segment = segment_info["segment"]
-                            segment_id = segment_info["id"]
-                            
-                            # Store face info with segment
+                    # Check if this segment has a selected face from timeline selection
+                    if segment_id in segment_face_mapping:
+                        face_mapping = segment_face_mapping[segment_id]
+                        face_data_item = face_mapping['face_data']
+                        
+                        # Convert to expected format
+                        face_path = face_data_item.get("face_path", face_data_item.get("face_image_path", ""))
+                        face_time = face_data_item.get("timestamp", face_data_item.get("face_time", 0))
+                        quality_score = face_data_item.get("enhanced_quality_score", face_data_item.get("quality_score", 0))
+                        
+                        if face_path and face_path not in processed_faces:
                             segment_faces[segment_id].append({
-                                "face_info": face_info,
+                                "face_info": face_data_item,
                                 "face_time": face_time,
                                 "face_path": face_path,
                                 "quality_score": quality_score,
-                                "segment": matching_segment,
-                                "match_type": "exact"
+                                "segment": segment,
+                                "match_type": "timeline_selected",
+                                "speech_group_id": face_mapping.get('speech_group_id'),
+                                "selection_reason": face_data_item.get('selection_reason', 'timeline_optimization')
                             })
-                            matched = True
-                            break
-                    
-                    # If not matched, collect for potential proximity matching
-                    if not matched:
-                        unmatched_faces.append({
-                            "face_info": face_info,
-                            "face_time": face_time,
-                            "face_path": face_path,
-                            "quality_score": quality_score
-                        })
-                
-                # Second matching pass: try to match unmatched faces to nearby segments
-                # This helps with faces that might be slightly outside segment boundaries
-                if unmatched_faces:
-                    logger.info(f"Found {len(unmatched_faces)} faces not directly matching any segment. Trying proximity matching.")
-                    max_time_gap = DiarizationConfig.PROXIMITY_MATCHING_TIME_GAP  # Maximum time gap in seconds for proximity matching
-                    
-                    for face in unmatched_faces:
-                        face_time = face["face_time"]
-                        closest_segment = None
-                        min_distance = float('inf')
-                        
-                        # Find the closest segment by time
-                        for segment_info in segment_time_ranges:
-                            # Calculate distance to segment start and end
-                            if face_time < segment_info["start"]:
-                                distance = segment_info["start"] - face_time
-                            elif face_time > segment_info["end"]:
-                                distance = face_time - segment_info["end"]
-                            else:
-                                distance = 0  # Should not happen as these would have been matched in first pass
+                            processed_faces.add(face_path)
+                            matched_faces += 1
                             
-                            if distance < min_distance and distance <= max_time_gap:
-                                min_distance = distance
-                                closest_segment = segment_info
-                        
-                        # If we found a close segment, add the face
-                        if closest_segment:
-                            segment_id = closest_segment["id"]
-                            segment_faces[segment_id].append({
-                                "face_info": face["face_info"],
-                                "face_time": face_time,
-                                "face_path": face["face_path"],
-                                "quality_score": face["quality_score"],
-                                "segment": closest_segment["segment"],
-                                "match_type": "proximity",
-                                "time_gap": min_distance
-                            })
-                            logger.info(f"Proximity matched face at {face_time:.2f}s to segment {segment_id} with gap of {min_distance:.2f}s")
+                            logger.info(f"✅ Timeline-selected face for segment {segment_id}: {face_path} "
+                                      f"(quality: {quality_score:.3f}, reason: {face_data_item.get('selection_reason', 'timeline')})")
                 
-                # Check for segments with no faces and try to assign faces from temporally adjacent segments
-                # This is especially important for the optimized face detection which may group faces differently
+                logger.info(f"🎯 Timeline-based face selection complete: {matched_faces} faces mapped to segments")
+                
+                # Skip the old face matching logic since we're using timeline-based selection
+                # The rest of the processing continues with the timeline-selected faces
+                
+                # Check for segments with no faces and log them
                 empty_segments = [segment_id for segment_id, faces in segment_faces.items() if not faces]
                 if empty_segments:
-                    logger.info(f"Found {len(empty_segments)} segments with no faces. Attempting to assign faces from adjacent segments.")
-                    
-                    # Sort segment IDs by start time for temporal analysis
-                    all_segment_ids = list(segment_faces.keys())
-                    
-                    # Convert all segment IDs to strings and extract start time for sorting
-                    def get_segment_start_time(segment_id):
-                        # Convert to string if it's not already
-                        segment_id_str = str(segment_id)
-                        # Try to extract start time from format like "123.45-678.90"
-                        if '-' in segment_id_str:
-                            try:
-                                return float(segment_id_str.split('-')[0])
-                            except (ValueError, IndexError):
-                                pass
-                        # If that fails, try to convert the whole ID to a float
-                        try:
-                            return float(segment_id_str)
-                        except ValueError:
-                            return 0.0
-                    
-                    # Sort using the helper function
-                    all_segment_ids.sort(key=get_segment_start_time)
-                    
-                    for empty_id in empty_segments:
-                        # Find this segment's position in the timeline
-                        if empty_id not in all_segment_ids:
-                            continue
-                            
-                        idx = all_segment_ids.index(empty_id)
-                        
-                        # Convert to string and safely extract start/end times
-                        empty_id_str = str(empty_id)
-                        try:
-                            if '-' in empty_id_str:
-                                parts = empty_id_str.split('-')
-                                empty_start = float(parts[0])
-                                empty_end = float(parts[1])
-                            else:
-                                # If no hyphen, use the ID as both start and end
-                                empty_start = float(empty_id_str)
-                                empty_end = empty_start
-                        except (ValueError, IndexError):
-                            # Fallback if parsing fails
-                            empty_start = 0
-                            empty_end = 0
-                        
-                        # Try to get faces from adjacent segments (previous then next)
-                        borrowed_face = None
-                        
-                        # Check previous segment if it exists
-                        if idx > 0:
-                            prev_id = all_segment_ids[idx-1]
-                            prev_faces = segment_faces.get(prev_id, [])
-                            if prev_faces:
-                                # Sort by quality and take the best face
-                                prev_faces.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
-                                borrowed_face = prev_faces[0]
-                                logger.info(f"Borrowing face from previous segment {prev_id} for empty segment {empty_id}")
-                        
-                        # If no face from previous, try next segment
-                        if not borrowed_face and idx < len(all_segment_ids) - 1:
-                            next_id = all_segment_ids[idx+1]
-                            next_faces = segment_faces.get(next_id, [])
-                            if next_faces:
-                                # Sort by quality and take the best face
-                                next_faces.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
-                                borrowed_face = next_faces[0]
-                                logger.info(f"Borrowing face from next segment {next_id} for empty segment {empty_id}")
-                        
-                        # If we found a face to borrow, add it to this segment
-                        if borrowed_face:
-                            # Create a copy of the face info to avoid modifying the original
-                            borrowed_copy = copy.deepcopy(borrowed_face)
-                            borrowed_copy["match_type"] = "borrowed"
-                            borrowed_copy["borrowed_from"] = "previous" if idx > 0 else "next"
-                            
-                            # Find the segment object for this empty segment
-                            for segment_info in segment_time_ranges:
-                                if segment_info["id"] == empty_id:
-                                    borrowed_copy["segment"] = segment_info["segment"]
-                                    break
-                            
-                            segment_faces[empty_id].append(borrowed_copy)
+                    logger.info(f"Found {len(empty_segments)} segments with no timeline-selected faces. "
+                               f"This is expected with timeline-based selection as faces are selected per speech group.")
+                else:
+                    logger.info("All segments have timeline-selected faces assigned.")
                 
-                # Second pass: Process each segment and select the best face based on quality score
-                logger.info("Second pass: Processing segments and selecting best faces based on quality scores")
+                # Continue with the existing face processing logic
+                # The timeline-selected faces are now ready for speaker identification
+                
+                # Process each segment with its timeline-selected face for speaker identification
+                logger.info("Processing segments with timeline-selected faces for speaker identification")
                 for segment_id, faces in segment_faces.items():
                     # Skip if no faces for this segment
                     if not faces:  # This ensures we don't process empty face lists
