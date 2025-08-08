@@ -31,11 +31,11 @@ class TimelineFaceSelector:
     def __init__(self):
         """Initialize the timeline face selector."""
         self.quality_weights = {
-            'mouth_open': 0.3,      # Prioritize faces with mouth open (speaking)
+            'mouth_open': 0.35,     # Higher priority for speaking indicator
             'center_frame': 0.25,   # Prioritize faces in center of frame
             'face_size': 0.2,       # Prioritize larger faces
-            'sharpness': 0.15,      # Prioritize sharp faces
-            'frequency': 0.1        # Prioritize faces that appear frequently
+            'sharpness': 0.12,      # Slightly reduced for speaking priority
+            'frequency': 0.08       # Slightly reduced for speaking priority
         }
     
     def select_best_faces_for_timeline(self, 
@@ -105,7 +105,7 @@ class TimelineFaceSelector:
                                    all_faces: List[Dict], 
                                    start_time: float, 
                                    end_time: float,
-                                   tolerance: float = 1.0) -> List[Dict]:
+                                   tolerance: float = None) -> List[Dict]:
         """
         Get all faces within a specific timeline range.
         
@@ -118,12 +118,18 @@ class TimelineFaceSelector:
         Returns:
             List of faces within the timeline range
         """
+        # Adaptive tolerance based on speech group duration
+        if tolerance is None:
+            duration = end_time - start_time
+            # Shorter segments get smaller tolerance, longer segments get more
+            tolerance = min(max(duration * 0.1, 0.5), 2.0)  # 10% of duration, min 0.5s, max 2s
+        
         faces_in_range = []
         
         for face in all_faces:
             face_time = face.get('timestamp', face.get('face_time', 0))
             
-            # Check if face is within the timeline range (with tolerance)
+            # Check if face is within the timeline range (with adaptive tolerance)
             if (start_time - tolerance) <= face_time <= (end_time + tolerance):
                 faces_in_range.append(face)
         
@@ -253,16 +259,28 @@ class TimelineFaceSelector:
                     
                     # Check if face has sufficient resolution for mouth analysis
                     if height >= 100 and width >= 100:
-                        # Analyze lower third of face for mouth region
-                        mouth_region = face_img[int(height * 0.6):, :]
+                        # Analyze lower third of face for mouth region (more precise)
+                        mouth_region = face_img[int(height * 0.65):int(height * 0.85), 
+                                              int(width * 0.3):int(width * 0.7)]
                         
-                        # Simple heuristic: darker regions in mouth area might indicate open mouth
+                        # Enhanced mouth open detection
                         gray_mouth = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
-                        dark_pixels = np.sum(gray_mouth < 80)  # Count dark pixels
-                        total_pixels = gray_mouth.size
                         
-                        # Normalize to 0-1 range
-                        mouth_open_ratio = min(dark_pixels / total_pixels * 3, 1.0)
+                        # Apply Gaussian blur to reduce noise
+                        blurred = cv2.GaussianBlur(gray_mouth, (5, 5), 0)
+                        
+                        # Use adaptive threshold for better dark region detection
+                        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        dark_pixels = np.sum(thresh == 0)  # Count dark pixels (mouth cavity)
+                        total_pixels = thresh.size
+                        
+                        # Enhanced scoring with better normalization
+                        mouth_open_ratio = min(dark_pixels / total_pixels * 4, 1.0)
+                        
+                        # Bonus for significant dark regions (likely open mouth)
+                        if mouth_open_ratio > 0.15:
+                            mouth_open_ratio = min(mouth_open_ratio * 1.2, 1.0)
+                        
                         return mouth_open_ratio
                         
             except Exception as e:
@@ -332,9 +350,23 @@ class TimelineFaceSelector:
         face_height = bottom - top
         face_area = face_width * face_height
         
-        # Normalize based on typical good face size (e.g., 200x200 pixels)
-        optimal_face_area = 200 * 200
-        size_score = min(face_area / optimal_face_area, 1.0)
+        # Get frame dimensions for relative sizing
+        frame_width = face.get('frame_width', 1920)
+        frame_height = face.get('frame_height', 1080)
+        frame_area = frame_width * frame_height
+        
+        # Calculate relative face size (percentage of frame)
+        relative_size = face_area / frame_area
+        
+        # Optimal face size is 3-8% of frame area for good visibility
+        if 0.03 <= relative_size <= 0.08:
+            size_score = 1.0  # Perfect size range
+        elif relative_size < 0.03:
+            # Too small - scale linearly from 0 to 1
+            size_score = relative_size / 0.03
+        else:
+            # Too large - diminishing returns but not penalized heavily
+            size_score = min(0.08 / relative_size, 1.0)
         
         return size_score
     
@@ -387,13 +419,23 @@ class TimelineFaceSelector:
         if len(all_faces_in_range) <= 1:
             return 1.0  # Single face gets max frequency score
         
-        # Simple frequency calculation based on face position similarity
+        # Enhanced frequency calculation with adaptive tolerance
         face_location = face.get('face_location', face.get('location', []))
         if not face_location or len(face_location) < 4:
             return 0.5
         
+        # Get frame dimensions for relative tolerance
+        frame_width = face.get('frame_width', 1920)
+        frame_height = face.get('frame_height', 1080)
+        
+        # Adaptive tolerance based on frame size (2% of frame dimensions)
+        tolerance_x = frame_width * 0.02
+        tolerance_y = frame_height * 0.02
+        
         similar_faces = 0
-        tolerance = 50  # Pixel tolerance for similar positions
+        face_top, face_right, face_bottom, face_left = face_location
+        face_center_x = (face_left + face_right) / 2
+        face_center_y = (face_top + face_bottom) / 2
         
         for other_face in all_faces_in_range:
             if other_face == face:
@@ -403,13 +445,24 @@ class TimelineFaceSelector:
             if not other_location or len(other_location) < 4:
                 continue
             
-            # Check if faces are in similar positions
-            position_diff = sum(abs(a - b) for a, b in zip(face_location, other_location))
-            if position_diff < tolerance * 4:  # 4 coordinates
+            # Calculate center-to-center distance for better similarity detection
+            other_top, other_right, other_bottom, other_left = other_location
+            other_center_x = (other_left + other_right) / 2
+            other_center_y = (other_top + other_bottom) / 2
+            
+            # Check if face centers are within tolerance
+            distance_x = abs(face_center_x - other_center_x)
+            distance_y = abs(face_center_y - other_center_y)
+            
+            if distance_x < tolerance_x and distance_y < tolerance_y:
                 similar_faces += 1
         
-        # Normalize frequency score
-        frequency_score = min(similar_faces / len(all_faces_in_range), 1.0)
+        # Enhanced frequency score with better normalization
+        if similar_faces > 0:
+            frequency_score = min((similar_faces + 1) / len(all_faces_in_range), 1.0)
+        else:
+            frequency_score = 0.3  # Penalty for isolated faces
+        
         return frequency_score
     
     def _get_selection_reason(self, best_face: Dict, all_faces: List[Dict]) -> str:
