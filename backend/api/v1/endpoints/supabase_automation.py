@@ -835,10 +835,30 @@ async def process_parliament_tv_to_supabase(
                         if total_faces == 0 and total_events > 0:
                             total_faces = total_events
                     
+                    # Extract original capture information for context
+                    capture_url = url if url else "Unknown URL"
+                    capture_title = "Unknown Title"
+                    capture_description = "No description available"
+                    capture_duration = "Unknown duration"
+                    
+                    # Try to get additional metadata from the capture record
+                    if hasattr(capture, 'metadata') and capture.metadata:
+                        try:
+                            import json
+                            metadata = json.loads(capture.metadata) if isinstance(capture.metadata, str) else capture.metadata
+                            capture_duration = metadata.get('duration', capture_duration)
+                        except:
+                            pass
+                    
                     # Log comprehensive workflow summary
                     logger.info("\n" + "="*80)
                     logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
                     logger.info("="*80)
+                    logger.info(f"📺 Original Capture:")
+                    logger.info(f"   • URL: {capture_url}")
+                    logger.info(f"   • Title: {capture_title}")
+                    logger.info(f"   • Description: {capture_description}")
+                    logger.info(f"   • Duration: {capture_duration}")
                     logger.info(f"📹 Video ID: {capture_id}")
                     logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
                     logger.info(f"🎯 Recognition Results:")
