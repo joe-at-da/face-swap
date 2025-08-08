@@ -130,7 +130,7 @@ def export_recognition_results(
     metadata: Optional[Dict[str, Any]] = None,
     db_session: Optional[Session] = None
 ) -> Dict[str, Any]:
-    logger.warning(f"🔍 DEBUG: export_recognition_results called for video_id={video_id} - COMBINED AV FILE CREATION ENTRY POINT")
+    logger.info(f"Exporting recognition results for video ID {video_id} to Supabase format")
     """
     Export recognition results for Supabase integration.
     
@@ -295,8 +295,8 @@ def export_recognition_results(
                 # No fallback to original video - we only want combined AV files in Supabase
                 supabase_url = None
             else:
-                logger.info(f"Successfully uploaded combined video to Supabase: {upload_result.get('public_url')}")
-                supabase_url = upload_result.get('public_url')
+                supabase_url = upload_result.get('url') or upload_result.get('public_url')
+                logger.info(f"Successfully uploaded combined video to Supabase: {supabase_url}")
                 
                 # Verify the URL is accessible
                 logger.info(f"Verifying Supabase URL is accessible: {supabase_url}")
@@ -478,8 +478,8 @@ def export_recognition_results(
                 logger.error(f"Error parsing timestamps for clip {i}: {str(e)}")
                 continue
                 
-            # Skip clips shorter than 3 seconds
-            if duration < 3:
+            # Skip clips shorter than 0.5 seconds (very short clips are likely errors)
+            if duration < 0.5:
                 logger.info(f"Skipping clip {i} with duration {duration} seconds (too short)")
                 continue
                 

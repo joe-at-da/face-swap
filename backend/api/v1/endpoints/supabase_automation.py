@@ -314,7 +314,8 @@ async def process_parliament_tv_to_supabase(
                 # Log comprehensive workflow summary (moved here for adjacency with completion)
                 try:
                     # Calculate total processing time
-                    end_time = datetime.now()
+                    from datetime import datetime as dt
+                    end_time = dt.now()
                     if hasattr(capture, 'created_at') and capture.created_at:
                         total_duration = (end_time - capture.created_at).total_seconds()
                     else:
@@ -523,7 +524,7 @@ async def process_parliament_tv_to_supabase(
                     if export_result and "supabase_urls" in export_result:
                         if isinstance(export_result["supabase_urls"], dict):
                             full_video_url = export_result["supabase_urls"].get("combined_av_url")
-                            logger.warning(f"🔍 Found full_video_url in export_result[supabase_urls][combined_av_url]: {full_video_url}")
+                            logger.debug(f"Found full_video_url in export_result[supabase_urls][combined_av_url]: {full_video_url}")
                     
                     # If full_video_url is still None, check if it's available in the capture session metadata
                     if not full_video_url:
@@ -533,14 +534,14 @@ async def process_parliament_tv_to_supabase(
                             metadata = capture.capture_metadata
                             if isinstance(metadata, dict) and "supabase_url" in metadata:
                                 full_video_url = metadata["supabase_url"]
-                                logger.warning(f"🔍 Found full_video_url in capture_metadata: {full_video_url}")
+                                logger.debug(f"Found full_video_url in capture_metadata: {full_video_url}")
                             # Check recognition_results for URL information
                             elif capture.recognition_results:
                                 try:
                                     rec_results = json.loads(capture.recognition_results) if isinstance(capture.recognition_results, str) else capture.recognition_results
                                     if isinstance(rec_results, dict) and "supabase_urls" in rec_results:
                                         full_video_url = rec_results["supabase_urls"].get("combined_av_url")
-                                        logger.warning(f"🔍 Found full_video_url in recognition_results: {full_video_url}")
+                                        logger.debug(f"Found full_video_url in recognition_results: {full_video_url}")
                                 except (json.JSONDecodeError, AttributeError) as e:
                                     logger.warning(f"Could not parse recognition_results: {str(e)}")
                         logger.info(f"No supabase_url found in CaptureSession for ID {capture_id}")
@@ -555,7 +556,7 @@ async def process_parliament_tv_to_supabase(
                             # Use the most recent file if multiple exist
                             combined_files.sort(key=os.path.getmtime, reverse=True)
                             combined_url = combined_files[0]
-                            logger.warning(f"🔍 Found combined AV file in media directory: {combined_url}")
+                            logger.debug(f"Found combined AV file in media directory: {combined_url}")
                             
                             # Try to upload it to Supabase
                             try:

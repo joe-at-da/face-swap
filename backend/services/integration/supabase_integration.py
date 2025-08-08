@@ -290,7 +290,7 @@ class SupabaseIntegration:
                     audio_path = audio_file
                     break
         
-        logger.warning(f"🔍 DEBUG: Calling export_recognition_results with video_id={video_id}, audio_path={audio_path}")
+        logger.info(f"Calling export_recognition_results with video_id={video_id}, audio_path={audio_path}")
         if audio_path and os.path.exists(audio_path):
             logger.info(f"Audio file exists at {audio_path}, size: {os.path.getsize(audio_path)} bytes")
         else:
@@ -357,7 +357,7 @@ class SupabaseIntegration:
         
         # Upload ONLY the combined AV file if requested
         if upload_media:
-            logger.warning(f"🔍 DEBUG: Looking for combined AV file in export_result keys: {list(export_result.keys())}")
+            logger.debug(f"Looking for combined AV file in export_result keys: {list(export_result.keys())}")
 
         
             # Check all possible keys where the combined AV file path might be stored
