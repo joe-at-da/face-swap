@@ -130,6 +130,16 @@ class ParliamentMemberMatcher:
             self.members = loaded_members
             logger.info(f"Loaded {len(self.members)} parliament members")
             
+            # Create a set of valid member IDs for house filtering
+            valid_member_ids = set()
+            for member in self.members:
+                member_id = member.get('id') or member.get('member_id')
+                if member_id:
+                    valid_member_ids.add(str(member_id))
+                    valid_member_ids.add(member_id)  # Also add the original type (int/str)
+            
+            logger.info(f"Created valid_member_ids set with {len(valid_member_ids)} entries for house filtering")
+            
             # Extract embeddings from members
             self.member_embeddings = {}
             valid_embeddings = 0
