@@ -318,23 +318,7 @@ class MultimodalRecognitionService:
             identified_speakers = len([event for event in recognition_events if isinstance(event, dict) and event.get("member_id") and event.get("name") != "Unknown"])
             total_segments = len(segments)
             
-            # Log comprehensive workflow summary
-            logger.info("\n" + "="*80)
-            logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
-            logger.info("="*80)
-            logger.info(f"📹 Video ID: {video_id}")
-            logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
-            logger.info(f"🎯 Recognition Results:")
-            logger.info(f"   • Total Faces Detected: {total_faces}")
-            logger.info(f"   • Total Recognition Events: {total_events}")
-            logger.info(f"   • Identified Speakers: {identified_speakers}")
-            logger.info(f"   • Total Segments Processed: {total_segments}")
-            if total_events > 0:
-                identification_rate = (identified_speakers / total_events) * 100
-                logger.info(f"   • Speaker Identification Rate: {identification_rate:.1f}%")
-            logger.info(f"✅ Status: COMPLETED SUCCESSFULLY")
-            logger.info(f"📊 Results saved to recognition_process ID: {recognition_process.id}")
-            logger.info("="*80)
+            # Workflow summary will be logged in the endpoint for adjacency with completion message
             
             logger.info(f"Combined recognition completed for video {video_id}")
             return {"success": True, "recognition_id": recognition_process.id, "results": multimodal_result}
@@ -1639,7 +1623,6 @@ class MultimodalRecognitionService:
                         capture = db.query(CaptureSession).filter(CaptureSession.id == video_id).first()
                         if capture and capture.metadata:
                             if isinstance(capture.metadata, str):
-                                import json
                                 try:
                                     video_metadata = json.loads(capture.metadata)
                                 except json.JSONDecodeError:
