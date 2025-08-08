@@ -192,6 +192,7 @@ def clean_database():
 def clean_files():
     """Clean capture-related files from the filesystem while preserving important data."""
     logger.info("Starting cleanup of capture-related files")
+    logger.info("This will delete MP4 video files, MP3 audio files, WAV audio files, and other capture-related data")
     
     # Paths to clean
     paths_to_clean = [
@@ -243,8 +244,16 @@ def clean_files():
                     
                     try:
                         if os.path.isfile(item_path):
+                            # Log specific file types for clarity
+                            if item_path.endswith(('.mp4', '.avi', '.mov')):
+                                logger.info(f"Removed video file: {item_path}")
+                            elif item_path.endswith('.mp3'):
+                                logger.info(f"Removed MP3 audio file: {item_path}")
+                            elif item_path.endswith('.wav'):
+                                logger.info(f"Removed WAV audio file: {item_path}")
+                            else:
+                                logger.info(f"Removed file: {item_path}")
                             os.unlink(item_path)
-                            logger.info(f"Removed file: {item_path}")
                         elif os.path.isdir(item_path):
                             # For directories, recursively check if they contain anything to preserve
                             contains_preserved = False
