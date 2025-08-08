@@ -235,18 +235,13 @@ class ParliamentMemberMatcher:
             else:
                 logger.info(f"✅ Successfully loaded embeddings for {embeddings_loaded}/{len(self.members)} members ({embeddings_loaded/len(self.members)*100:.1f}%)")
         
-        except Exception as e:
-            logger.error(f"❌ Error during embeddings loading: {str(e)}")
-            logger.error("Face recognition will not work properly")
-            # Initialize empty embeddings to prevent crashes
-            self.member_embeddings = {}
-            
             return len(self.member_embeddings) > 0
             
         except Exception as e:
-            logger.error(f"Error loading parliament members: {str(e)}")
+            logger.error(f"❌ Error loading parliament members: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
+            logger.error("Face recognition will not work properly")
             
             # Initialize empty collections on error
             self.members = []

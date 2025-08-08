@@ -1737,9 +1737,25 @@ class MultimodalRecognitionService:
                             logger.info(f"Using default unidentified member ID: {default_member_id}")
                         else:
                             logger.warning(f"No default member found for house: {house}")
+                            # CRITICAL FIX: Ensure member_id is never None - use fallback
+                            fallback_member_id = "1" if house == "1" else "2"  # Use house-specific fallback
+                            best_detection["member_id"] = fallback_member_id
+                            best_detection["name"] = "Unidentified Speaker"
+                            best_detection["matched_by"] = "fallback_unidentified"
+                            logger.warning(f"Using fallback member ID: {fallback_member_id} for house {house}")
             else:
                 logger.error(f"❌ No face embedding found in detection")
                 return {"success": False, "error": "No face embedding found", "supabase_export": {"enabled": export_to_supabase}}
+            
+            # CRITICAL VALIDATION: Ensure member_id is never None before returning
+            if best_detection.get('member_id') is None:
+                logger.error("❌ CRITICAL: member_id is None after all matching attempts!")
+                # Emergency fallback to prevent None member_id
+                emergency_fallback_id = "1" if house == "1" else "2"
+                best_detection["member_id"] = emergency_fallback_id
+                best_detection["name"] = "Emergency Fallback Speaker"
+                best_detection["matched_by"] = "emergency_fallback"
+                logger.error(f"Applied emergency fallback member_id: {emergency_fallback_id}")
             
             # Log the final detection result
             logger.info(f"Final detection result: member_id={best_detection.get('member_id')}, name={best_detection.get('name', 'Unknown')}, matched_by={best_detection.get('matched_by', 'unknown')}")
