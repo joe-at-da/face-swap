@@ -175,51 +175,53 @@ class ParliamentMemberMatcher:
             except Exception as e:
                 logger.error(f"Error loading UUID to member ID mapping: {str(e)}")
             
-            # Load embeddings from UUID-based JSON files in mp_photos
-            photos_dir = os.path.join(self.data_dir, 'mp_photos')
-            if os.path.exists(photos_dir):
-                logger.info(f"Loading embeddings from UUID files in {photos_dir}")
-                
-                for filename in os.listdir(photos_dir):
-                    if filename.endswith('.json'):
-                        uuid = filename[:-5]  # Remove .json extension
+            # Load embeddings from numeric JSON files in mp_embeddings directory
+            embeddings_dir = "/app/data/mp_embeddings"
+            if uuid_to_member_id:
+                if os.path.exists(embeddings_dir):
+                    logger.info(f"Loading embeddings from numeric JSON files in {embeddings_dir}")
+                    
+                    # Iterate through the UUID-to-member-ID mapping to find corresponding files
+                    for uuid_key, mapping_info in uuid_to_member_id.items():
+                        if isinstance(mapping_info, dict) and 'member_id' in mapping_info:
+                            member_id = mapping_info['member_id']
                         
-                        # Check if this UUID maps to a member ID
-                        if uuid in uuid_to_member_id:
-                            member_id = uuid_to_member_id[uuid]
-                            
-                            # Apply house filtering if enabled
-                            if self.house_id and (str(member_id) not in valid_member_ids and member_id not in valid_member_ids):
-                                embeddings_filtered += 1
-                                logger.debug(f"Filtered out embedding for UUID {uuid} -> member ID {member_id} (wrong house)")
-                                continue
-                            
-                            # Load the embedding
+                        # Apply house filtering if enabled
+                        if self.house_id and (str(member_id) not in valid_member_ids and member_id not in valid_member_ids):
+                            embeddings_filtered += 1
+                            logger.debug(f"Filtered out embedding for UUID key {uuid_key} -> member ID {member_id} (wrong house)")
+                            continue
+                        
+                        # Try to find the corresponding JSON file (uuid_key should match filename)
+                        embedding_file = os.path.join(embeddings_dir, f"{uuid_key}.json")
+                        if os.path.exists(embedding_file):
                             try:
-                                embedding_file = os.path.join(photos_dir, filename)
                                 with open(embedding_file, 'r') as f:
                                     embedding_data = json.load(f)
                                 
-                                # UUID files contain embeddings directly as arrays
+                                # JSON files contain embeddings directly as arrays
                                 if isinstance(embedding_data, list) and embedding_data:
                                     mp_encodings_map[str(member_id)] = embedding_data
                                     mp_encodings_map[member_id] = embedding_data  # Also store original type
                                     embeddings_loaded += 1
-                                    logger.debug(f"Loaded embedding for UUID {uuid} -> member ID {member_id}")
+                                    logger.debug(f"Loaded embedding for UUID key {uuid_key} -> member ID {member_id}")
                                 else:
                                     logger.warning(f"Invalid embedding format in {embedding_file}")
                             except Exception as e:
                                 logger.error(f"Error loading embedding file {embedding_file}: {str(e)}")
                         else:
-                            logger.debug(f"UUID {uuid} not found in mapping, skipping")
+                            logger.debug(f"No JSON file found for UUID key {uuid_key} at {embedding_file}")
                 
-                mp_encodings_loaded = embeddings_loaded
-                if self.house_id:
-                    logger.info(f"🏛️ House filtering: Loaded {embeddings_loaded} embeddings for house {self.house_id}, filtered out {embeddings_filtered} from wrong house")
+                    mp_encodings_loaded = embeddings_loaded
+                    if self.house_id:
+                        logger.info(f"🏛️ House filtering: Loaded {embeddings_loaded} embeddings for house {self.house_id}, filtered out {embeddings_filtered} from wrong house")
+                    else:
+                        logger.info(f"🏛️ No house filtering: Loaded {embeddings_loaded} total embeddings")
                 else:
-                    logger.info(f"🏛️ No house filtering: Loaded {embeddings_loaded} total embeddings")
-            else:
-                logger.error(f"Photos directory not found: {photos_dir}")
+                    logger.error(f"Embeddings directory not found: {embeddings_dir}")
+            
+            # Fallback to old method if embeddings directory doesn't exist or no UUID mapping
+            if mp_encodings_loaded == 0:
                 logger.warning("Falling back to mp_encodings.json if available")
                 
                 # Fallback to old method if photos directory doesn't exist
@@ -356,42 +358,28 @@ class ParliamentMemberMatcher:
                         logger.warning(f"Invalid embedding from mp_encodings.json (no-dash UUID) for member {name} (ID: {member_id})")
                         invalid_embeddings += 1
                 
-                # Try name-based matching as a last resort
+                # No UUID mapping found - try PhotoManager as fallback
                 else:
-                    # Try to match by name
-                    found_match = False
-                    if names and len(names) == len(ids):
-                        for i, mp_name in enumerate(names):
-                            if i < len(ids) and self._name_similarity(name, mp_name) > 0.8:
-                                uuid_or_id = ids[i]
-                                if uuid_or_id in mp_encodings_map:
-                                    embedding = mp_encodings_map[uuid_or_id]
-                                    if self._is_valid_embedding(embedding):
-                                        self.member_embeddings[member_id] = embedding
-                                        valid_embeddings += 1
-                                        found_match = True
-                                        logger.info(f"Matched member {name} to encoding for {mp_name} by name similarity")
-                                        break
-                    
-                    if not found_match:
-                        # Try to load from local file using PhotoManager
-                        embedding = self.photo_manager.load_embedding(member_id)
-                        if embedding is not None and self._is_valid_embedding(embedding):
-                            self.member_embeddings[member_id] = embedding
-                            valid_embeddings += 1
-                            logger.info(f"Loaded embedding for member {name} (ID: {member_id}) from local file")
-                        else:
-                            # Try to load using photo_uuid as a last resort
-                            if photo_uuid:
-                                embedding = self.photo_manager.load_embedding(photo_uuid)
-                                if embedding is not None and self._is_valid_embedding(embedding):
-                                    self.member_embeddings[member_id] = embedding
-                                    valid_embeddings += 1
-                                    logger.info(f"Loaded embedding for member {name} (ID: {member_id}) using photo_uuid {photo_uuid}")
-                                else:
-                                    logger.debug(f"No embedding found for member {name} (ID: {member_id})")
+                    # Try to load from local file using PhotoManager
+                    embedding = self.photo_manager.load_embedding(member_id)
+                    if embedding is not None and self._is_valid_embedding(embedding):
+                        self.member_embeddings[member_id] = embedding
+                        valid_embeddings += 1
+                        logger.info(f"Loaded embedding for member {name} (ID: {member_id}) from local file")
+                    else:
+                        # Try to load using photo_uuid as a last resort
+                        if photo_uuid:
+                            embedding = self.photo_manager.load_embedding(photo_uuid)
+                            if embedding is not None and self._is_valid_embedding(embedding):
+                                self.member_embeddings[member_id] = embedding
+                                valid_embeddings += 1
+                                logger.info(f"Loaded embedding for member {name} (ID: {member_id}) using photo_uuid {photo_uuid}")
                             else:
                                 logger.debug(f"No embedding found for member {name} (ID: {member_id})")
+                                invalid_embeddings += 1
+                        else:
+                            logger.debug(f"No embedding found for member {name} (ID: {member_id})")
+                            invalid_embeddings += 1
             
             # Log summary
             # We're storing numpy arrays directly in member_embeddings, not dictionaries with source info
