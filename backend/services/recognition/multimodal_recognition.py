@@ -275,6 +275,34 @@ class MultimodalRecognitionService:
             
             db.commit()
             
+            # Generate comprehensive workflow summary with timing and key metrics
+            end_time = datetime.now()
+            total_duration = (end_time - recognition_process.start_time).total_seconds()
+            
+            # Extract key metrics from multimodal_result
+            total_faces = len(multimodal_result.get("faces", []))
+            total_events = len(multimodal_result.get("recognition_events", []))
+            identified_speakers = len([event for event in multimodal_result.get("recognition_events", []) if event.get("member_id") and event.get("name") != "Unknown"])
+            total_segments = len(multimodal_result.get("segments", []))
+            
+            # Log comprehensive workflow summary
+            logger.info("\n" + "="*80)
+            logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
+            logger.info("="*80)
+            logger.info(f"📹 Video ID: {video_id}")
+            logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
+            logger.info(f"🎯 Recognition Results:")
+            logger.info(f"   • Total Faces Detected: {total_faces}")
+            logger.info(f"   • Total Recognition Events: {total_events}")
+            logger.info(f"   • Identified Speakers: {identified_speakers}")
+            logger.info(f"   • Total Segments Processed: {total_segments}")
+            if total_events > 0:
+                identification_rate = (identified_speakers / total_events) * 100
+                logger.info(f"   • Speaker Identification Rate: {identification_rate:.1f}%")
+            logger.info(f"✅ Status: COMPLETED SUCCESSFULLY")
+            logger.info(f"📊 Results saved to recognition_process ID: {recognition_process.id}")
+            logger.info("="*80)
+            
             logger.info(f"Combined recognition completed for video {video_id}")
             return {"success": True, "recognition_id": recognition_process.id, "results": multimodal_result}
             
@@ -1567,9 +1595,23 @@ class MultimodalRecognitionService:
                 else:
                     logger.warning(f"Face embedding is not a list but {type(face_embedding).__name__}")
                 
-                # Set house to Commons (1) to filter for MPs
-                house = "1"  # House of Commons
-                logger.info(f"Using house: {house} for matching (filtering for MPs)")
+                # Determine house from video metadata for proper filtering
+                from backend.services.recognition.unidentified_speakers import determine_house_from_video
+                house_name = determine_house_from_video(db, video_id)
+                
+                # Map house name to ID for filtering
+                house_mapping = {
+                    "commons": "1",  # House of Commons
+                    "lords": "2",    # House of Lords
+                    "unknown": "1"   # Default to Commons if unknown
+                }
+                house = house_mapping.get(house_name.lower(), "1")
+                
+                logger.info(f"🏛️  Detected house: {house_name} (ID: {house}) for video {video_id}")
+                if house_name.lower() == "lords":
+                    logger.info("🔍 Filtering for House of Lords members")
+                else:
+                    logger.info("🔍 Filtering for House of Commons members (MPs)")
                 
                 if timestamp is not None and video_id is not None:
                     logger.info(f"Using temporal consistency with timestamp {timestamp:.2f}s for video {video_id}")

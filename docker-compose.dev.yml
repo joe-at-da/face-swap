@@ -11,7 +11,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G  # Increased memory allocation for large uploads
+          memory: 32G  # Increased memory allocation for large Whisper transcriptions
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/parliament_clips
       - TEST_DATABASE_URL=postgresql://postgres:postgres@db:5432/test_parliament_clips
@@ -28,6 +33,8 @@ services:
       - SUPABASE_EXPORT_BUCKET=parliament-tv-exports
       - SUPABASE_FULL_VIDEOS_BUCKET=full_videos
       - INTEGRATION_API_KEY=8448700525
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=all
     depends_on:
       - db
       - redis
