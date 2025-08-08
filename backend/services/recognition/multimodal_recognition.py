@@ -297,11 +297,26 @@ class MultimodalRecognitionService:
             end_time = datetime.now()
             total_duration = (end_time - recognition_process.start_time).total_seconds()
             
-            # Extract key metrics from multimodal_result
-            total_faces = len(multimodal_result.get("faces", []))
-            total_events = len(multimodal_result.get("recognition_events", []))
-            identified_speakers = len([event for event in multimodal_result.get("recognition_events", []) if event.get("member_id") and event.get("name") != "Unknown"])
-            total_segments = len(multimodal_result.get("segments", []))
+            # Extract key metrics from multimodal_result with type safety
+            recognition_events = multimodal_result.get("recognition_events", [])
+            if isinstance(recognition_events, int):
+                logger.warning(f"Recognition events is unexpectedly an int: {recognition_events}")
+                recognition_events = []
+            
+            faces = multimodal_result.get("faces", [])
+            if isinstance(faces, int):
+                logger.warning(f"Faces is unexpectedly an int: {faces}")
+                faces = []
+            
+            segments = multimodal_result.get("segments", [])
+            if isinstance(segments, int):
+                logger.warning(f"Segments is unexpectedly an int: {segments}")
+                segments = []
+            
+            total_faces = len(faces)
+            total_events = len(recognition_events)
+            identified_speakers = len([event for event in recognition_events if isinstance(event, dict) and event.get("member_id") and event.get("name") != "Unknown"])
+            total_segments = len(segments)
             
             # Log comprehensive workflow summary
             logger.info("\n" + "="*80)
@@ -1614,8 +1629,21 @@ class MultimodalRecognitionService:
                     logger.warning(f"Face embedding is not a list but {type(face_embedding).__name__}")
                 
                 # Determine house from video metadata for proper filtering
-                from backend.services.recognition.unidentified_speakers import determine_house_from_video
-                house_name = determine_house_from_video(db, video_id)
+                from backend.services.recognition.unidentified_speakers import determine_house_from_metadata
+                
+                # Get video metadata for house detection
+                video_metadata = {}
+                if hasattr(capture, 'metadata') and capture.metadata:
+                    if isinstance(capture.metadata, str):
+                        import json
+                        try:
+                            video_metadata = json.loads(capture.metadata)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse metadata JSON for video {video_id}")
+                    elif isinstance(capture.metadata, dict):
+                        video_metadata = capture.metadata
+                
+                house_name = determine_house_from_metadata(video_metadata)
                 
                 # Map house name to ID for filtering
                 house_mapping = {
