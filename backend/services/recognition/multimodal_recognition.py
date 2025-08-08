@@ -1668,7 +1668,7 @@ class MultimodalRecognitionService:
                     # Load members with house filtering
                     if not self.member_matcher.load_parliament_members():
                         logger.error("Failed to load parliament members with house filtering")
-                        return []
+                        return {"success": False, "error": "Failed to load parliament members with house filtering", "supabase_export": {"enabled": export_to_supabase}}
                 
                 if timestamp is not None and video_id is not None:
                     logger.info(f"Using temporal consistency with timestamp {timestamp:.2f}s for video {video_id}")
