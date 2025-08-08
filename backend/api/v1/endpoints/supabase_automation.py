@@ -311,98 +311,6 @@ async def process_parliament_tv_to_supabase(
                 
                 logger.info(f"Recognition completed for session {capture_id}")
                 
-                # Log comprehensive workflow summary (moved here for adjacency with completion)
-                try:
-                    # Calculate total processing time
-                    from datetime import datetime as dt, timezone
-                    end_time = dt.now(timezone.utc)
-                    if hasattr(capture, 'created_at') and capture.created_at:
-                        # Ensure both datetimes are timezone-aware for comparison
-                        if capture.created_at.tzinfo is None:
-                            # If created_at is naive, assume UTC
-                            start_time = capture.created_at.replace(tzinfo=timezone.utc)
-                        else:
-                            start_time = capture.created_at
-                        total_duration = (end_time - start_time).total_seconds()
-                    else:
-                        total_duration = 0
-                    
-                    # Get recognition results for metrics
-                    recognition_data = recognition_service.get_recognition_results(capture_id)
-                    
-                    # Extract metrics from recognition data if available
-                    total_faces = 0
-                    total_events = 0
-                    identified_speakers = 0
-                    total_segments = 0
-                    
-                    if recognition_data:
-                        # Extract metrics with type safety - use correct field names from actual data structure
-                        # From logs: Keys: ['success', 'video_id', 'segments_count', 'recognition_events', 'correlations', 'timeline', 'speaker_appearances']
-                        
-                        # Get segments count (this is the number of transcript segments processed)
-                        total_segments = recognition_data.get("segments_count", 0)
-                        if not isinstance(total_segments, int):
-                            total_segments = 0
-                        
-                        # Get recognition events (these are the face/speaker detection events)
-                        events = recognition_data.get("recognition_events", [])
-                        if isinstance(events, list):
-                            total_events = len(events)
-                            # Count identified speakers (events with valid member_id and name != "Unknown")
-                            identified_speakers = len([
-                                event for event in events 
-                                if isinstance(event, dict) 
-                                and event.get("member_id") 
-                                and event.get("name") 
-                                and event.get("name") != "Unknown"
-                            ])
-                        else:
-                            total_events = 0
-                            identified_speakers = 0
-                        
-                        # Get timeline data to count unique faces detected
-                        timeline = recognition_data.get("timeline", [])
-                        if isinstance(timeline, list):
-                            # Count unique face detections from timeline events
-                            face_events = [
-                                event for event in timeline 
-                                if isinstance(event, dict) 
-                                and event.get("type") == "face"
-                            ]
-                            total_faces = len(face_events)
-                        else:
-                            total_faces = 0
-                        
-                        # If timeline doesn't have face data, try speaker_appearances
-                        if total_faces == 0:
-                            speaker_appearances = recognition_data.get("speaker_appearances", [])
-                            if isinstance(speaker_appearances, list):
-                                total_faces = len(speaker_appearances)
-                        
-                        # Fallback: if we still don't have face count, use recognition events
-                        if total_faces == 0 and total_events > 0:
-                            total_faces = total_events
-                    
-                    # Log comprehensive workflow summary
-                    logger.info("\n" + "="*80)
-                    logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
-                    logger.info("="*80)
-                    logger.info(f"📹 Video ID: {capture_id}")
-                    logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
-                    logger.info(f"🎯 Recognition Results:")
-                    logger.info(f"   • Total Faces Detected: {total_faces}")
-                    logger.info(f"   • Total Recognition Events: {total_events}")
-                    logger.info(f"   • Identified Speakers: {identified_speakers}")
-                    logger.info(f"   • Total Segments Processed: {total_segments}")
-                    if total_events > 0:
-                        identification_rate = (identified_speakers / total_events) * 100
-                        logger.info(f"   • Speaker Identification Rate: {identification_rate:.1f}%")
-                    logger.info(f"✅ Status: COMPLETED SUCCESSFULLY")
-                    logger.info("="*80)
-                except Exception as summary_error:
-                    logger.warning(f"Could not generate workflow summary: {summary_error}")
-                
                 # Step 5: Export to Supabase
                 # Get recognition results
                 logger.info(f"Retrieving recognition results for session {capture_id} for Supabase export")
@@ -853,6 +761,98 @@ async def process_parliament_tv_to_supabase(
                 capture.external_id = f"parliament_tv_{capture_id}"
                 capture.external_status = "processed"
                 db.commit()
+                
+                # Log comprehensive workflow summary at the very end (after all processing is complete)
+                try:
+                    # Calculate total processing time
+                    from datetime import datetime as dt, timezone
+                    end_time = dt.now(timezone.utc)
+                    if hasattr(capture, 'created_at') and capture.created_at:
+                        # Ensure both datetimes are timezone-aware for comparison
+                        if capture.created_at.tzinfo is None:
+                            # If created_at is naive, assume UTC
+                            start_time = capture.created_at.replace(tzinfo=timezone.utc)
+                        else:
+                            start_time = capture.created_at
+                        total_duration = (end_time - start_time).total_seconds()
+                    else:
+                        total_duration = 0
+                    
+                    # Get recognition results for metrics
+                    recognition_data = recognition_service.get_recognition_results(capture_id)
+                    
+                    # Extract metrics from recognition data if available
+                    total_faces = 0
+                    total_events = 0
+                    identified_speakers = 0
+                    total_segments = 0
+                    
+                    if recognition_data:
+                        # Extract metrics with type safety - use correct field names from actual data structure
+                        # From logs: Keys: ['success', 'video_id', 'segments_count', 'recognition_events', 'correlations', 'timeline', 'speaker_appearances']
+                        
+                        # Get segments count (this is the number of transcript segments processed)
+                        total_segments = recognition_data.get("segments_count", 0)
+                        if not isinstance(total_segments, int):
+                            total_segments = 0
+                        
+                        # Get recognition events (these are the face/speaker detection events)
+                        events = recognition_data.get("recognition_events", [])
+                        if isinstance(events, list):
+                            total_events = len(events)
+                            # Count identified speakers (events with valid member_id and name != "Unknown")
+                            identified_speakers = len([
+                                event for event in events 
+                                if isinstance(event, dict) 
+                                and event.get("member_id") 
+                                and event.get("name") 
+                                and event.get("name") != "Unknown"
+                            ])
+                        else:
+                            total_events = 0
+                            identified_speakers = 0
+                        
+                        # Get timeline data to count unique faces detected
+                        timeline = recognition_data.get("timeline", [])
+                        if isinstance(timeline, list):
+                            # Count unique face detections from timeline events
+                            face_events = [
+                                event for event in timeline 
+                                if isinstance(event, dict) 
+                                and event.get("type") == "face"
+                            ]
+                            total_faces = len(face_events)
+                        else:
+                            total_faces = 0
+                        
+                        # If timeline doesn't have face data, try speaker_appearances
+                        if total_faces == 0:
+                            speaker_appearances = recognition_data.get("speaker_appearances", [])
+                            if isinstance(speaker_appearances, list):
+                                total_faces = len(speaker_appearances)
+                        
+                        # Fallback: if we still don't have face count, use recognition events
+                        if total_faces == 0 and total_events > 0:
+                            total_faces = total_events
+                    
+                    # Log comprehensive workflow summary
+                    logger.info("\n" + "="*80)
+                    logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
+                    logger.info("="*80)
+                    logger.info(f"📹 Video ID: {capture_id}")
+                    logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
+                    logger.info(f"🎯 Recognition Results:")
+                    logger.info(f"   • Total Faces Detected: {total_faces}")
+                    logger.info(f"   • Total Recognition Events: {total_events}")
+                    logger.info(f"   • Identified Speakers: {identified_speakers}")
+                    logger.info(f"   • Total Segments Processed: {total_segments}")
+                    if total_events > 0:
+                        identification_rate = (identified_speakers / total_events) * 100
+                        logger.info(f"   • Speaker Identification Rate: {identification_rate:.1f}%")
+                    logger.info(f"✅ Status: COMPLETED SUCCESSFULLY")
+                    logger.info("="*80)
+                except Exception as summary_error:
+                    logger.warning(f"Could not generate workflow summary: {summary_error}")
                 
                 logger.info(f"Completed full processing pipeline for Parliament TV URL: {url}")
                 
