@@ -143,28 +143,32 @@ class ParliamentMemberMatcher:
             # Extract embeddings from members
             self.member_embeddings = {}
             
-            # Load embeddings exclusively from numeric member ID files in /data/mp_embeddings
-            embeddings_dir = "/data/mp_embeddings"
+            # Load embeddings exclusively from numeric member ID files in /app/data/mp_embeddings
+            embeddings_dir = "/app/data/mp_embeddings"
             embeddings_loaded = 0
             embeddings_filtered = 0
             
-            logger.info(f"Loading embeddings from numeric member ID files in {embeddings_dir}")
+            logger.info(f"Loading embeddings using database member_id field to match numeric files in {embeddings_dir}")
             
             if os.path.exists(embeddings_dir):
                 # Iterate through all loaded members and try to find their embedding files
                 for member in self.members:
-                    member_id = member.get('id') or member.get('member_id')
-                    if not member_id:
+                    # Use the numeric member_id directly from the database
+                    member_uuid = member.get('id')  # UUID for house filtering
+                    numeric_member_id = member.get('member_id')  # Numeric ID for embedding files
+                    
+                    if not member_uuid or not numeric_member_id:
+                        logger.debug(f"Member missing required IDs: UUID={member_uuid}, numeric={numeric_member_id}")
                         continue
                     
-                    # Apply house filtering if enabled
-                    if self.house_id and (str(member_id) not in valid_member_ids and member_id not in valid_member_ids):
+                    # Apply house filtering if enabled (using UUID for valid_member_ids check)
+                    if self.house_id and (str(member_uuid) not in valid_member_ids and member_uuid not in valid_member_ids):
                         embeddings_filtered += 1
-                        logger.debug(f"Filtered out embedding for member ID {member_id} (wrong house)")
+                        logger.debug(f"Filtered out embedding for member UUID {member_uuid} (wrong house)")
                         continue
                     
-                    # Try to find the corresponding numeric JSON file
-                    embedding_file = os.path.join(embeddings_dir, f"{member_id}.json")
+                    # Try to find the corresponding numeric JSON file using member_id directly
+                    embedding_file = os.path.join(embeddings_dir, f"{numeric_member_id}.json")
                     if os.path.exists(embedding_file):
                         try:
                             with open(embedding_file, 'r') as f:
@@ -172,17 +176,19 @@ class ParliamentMemberMatcher:
                             
                             # JSON files contain embeddings directly as arrays
                             if isinstance(embedding_data, list) and embedding_data:
-                                # Store embedding with both string and original type keys for compatibility
-                                self.member_embeddings[str(member_id)] = embedding_data
-                                self.member_embeddings[member_id] = embedding_data
+                                # Store embedding with both UUID and numeric keys for compatibility
+                                self.member_embeddings[str(member_uuid)] = embedding_data
+                                self.member_embeddings[member_uuid] = embedding_data
+                                self.member_embeddings[str(numeric_member_id)] = embedding_data
+                                self.member_embeddings[numeric_member_id] = embedding_data
                                 embeddings_loaded += 1
-                                logger.debug(f"Loaded embedding for member ID {member_id}")
+                                logger.debug(f"✅ Loaded embedding for member UUID {member_uuid} with numeric ID {numeric_member_id}")
                             else:
                                 logger.warning(f"Invalid embedding format in {embedding_file}")
                         except Exception as e:
                             logger.error(f"Error loading embedding file {embedding_file}: {str(e)}")
                     else:
-                        logger.debug(f"No embedding file found for member ID {member_id} at {embedding_file}")
+                        logger.debug(f"No embedding file found for numeric ID {numeric_member_id} at {embedding_file}")
                 
                 # Log house filtering results
                 if self.house_id:
