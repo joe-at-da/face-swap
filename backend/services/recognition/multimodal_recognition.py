@@ -1631,17 +1631,23 @@ class MultimodalRecognitionService:
                 # Determine house from video metadata for proper filtering
                 from backend.services.recognition.unidentified_speakers import determine_house_from_metadata
                 
-                # Get video metadata for house detection
+                # Get video metadata for house detection from database
                 video_metadata = {}
-                if hasattr(capture, 'metadata') and capture.metadata:
-                    if isinstance(capture.metadata, str):
-                        import json
-                        try:
-                            video_metadata = json.loads(capture.metadata)
-                        except json.JSONDecodeError:
-                            logger.warning(f"Failed to parse metadata JSON for video {video_id}")
-                    elif isinstance(capture.metadata, dict):
-                        video_metadata = capture.metadata
+                if video_id:
+                    try:
+                        from backend.db.models import CaptureSession
+                        capture = db.query(CaptureSession).filter(CaptureSession.id == video_id).first()
+                        if capture and capture.metadata:
+                            if isinstance(capture.metadata, str):
+                                import json
+                                try:
+                                    video_metadata = json.loads(capture.metadata)
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Failed to parse metadata JSON for video {video_id}")
+                            elif isinstance(capture.metadata, dict):
+                                video_metadata = capture.metadata
+                    except Exception as e:
+                        logger.warning(f"Failed to retrieve video metadata for house detection: {e}")
                 
                 house_name = determine_house_from_metadata(video_metadata)
                 
