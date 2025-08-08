@@ -202,15 +202,23 @@ class ParliamentMemberMatcher:
                                     
                                     if self.house_id:
                                         # If house filtering is enabled, only load if this ID belongs to a valid member
-                                        if id_value in uuid_to_member_id:
+                                        # Check multiple ways the ID might match:
+                                        
+                                        # 1. Direct member ID match (most common case)
+                                        if str(id_value) in valid_member_ids or id_value in valid_member_ids:
+                                            should_load = True
+                                            logger.debug(f"Direct member ID match for {id_value}")
+                                        
+                                        # 2. UUID to member ID mapping match
+                                        elif id_value in uuid_to_member_id:
                                             member_id = uuid_to_member_id[id_value]
                                             if str(member_id) in valid_member_ids or member_id in valid_member_ids:
                                                 should_load = True
-                                        elif str(id_value) in valid_member_ids or id_value in valid_member_ids:
-                                            should_load = True
+                                                logger.debug(f"UUID mapping match: {id_value} -> {member_id}")
                                         
                                         if not should_load:
                                             embeddings_filtered += 1
+                                            logger.debug(f"Filtered out embedding for ID {id_value} (wrong house)")
                                             continue
                                     else:
                                         # No house filtering, load all
