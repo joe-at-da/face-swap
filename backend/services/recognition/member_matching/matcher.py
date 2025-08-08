@@ -146,12 +146,13 @@ class ParliamentMemberMatcher:
             invalid_embeddings = 0
             mp_encodings_loaded = 0
         
-            # Load all embeddings from mp_encodings.json - this is the primary source
-            mp_encodings_data = {}
-            mp_encodings_map = {}  # Map from UUID to embedding
-            uuid_to_member_id = {}  # Map from UUID to member ID for reverse lookup
+            # Load embeddings from UUID-based files in mp_photos directory (simple approach)
+            mp_encodings_map = {}  # Map from member_id to embedding
+            uuid_to_member_id = {}  # Map from UUID to member ID
+            embeddings_loaded = 0
+            embeddings_filtered = 0
             
-            # First, try to load the UUID to member ID mapping from the dedicated file
+            # Load UUID to member ID mapping
             try:
                 if os.path.exists(self.uuid_to_member_id_file):
                     logger.info(f"Loading UUID to member ID mapping from {self.uuid_to_member_id_file}")
@@ -168,86 +169,86 @@ class ParliamentMemberMatcher:
                                 no_dash_uuid = uuid.replace('-', '')
                                 uuid_to_member_id[no_dash_uuid] = member_id
                     
-                    logger.info(f"Loaded {len(uuid_to_member_id)} UUID to member ID mappings from {self.uuid_to_member_id_file}")
+                    logger.info(f"Loaded {len(uuid_to_member_id)} UUID to member ID mappings")
                 else:
                     logger.warning(f"UUID to member ID mapping file not found at {self.uuid_to_member_id_file}")
             except Exception as e:
                 logger.error(f"Error loading UUID to member ID mapping: {str(e)}")
             
-            # Now load embeddings from mp_encodings.json
-            try:
-                mp_encodings_data = {}
-                if os.path.exists(self.mp_encodings_file):
-                    logger.info(f"Loading embeddings from {self.mp_encodings_file}")
-                    with open(self.mp_encodings_file, 'r') as f:
-                        mp_encodings_data = json.load(f)
+            # Load embeddings from UUID-based JSON files in mp_photos
+            photos_dir = os.path.join(self.data_dir, 'mp_photos')
+            if os.path.exists(photos_dir):
+                logger.info(f"Loading embeddings from UUID files in {photos_dir}")
                 
-                    # Process the parallel arrays in mp_encodings.json
-                    if all(k in mp_encodings_data for k in ['ids', 'encodings']):
-                        ids = mp_encodings_data.get('ids', [])
-                        encodings = mp_encodings_data.get('encodings', [])
-                        names = mp_encodings_data.get('names', [])
+                for filename in os.listdir(photos_dir):
+                    if filename.endswith('.json'):
+                        uuid = filename[:-5]  # Remove .json extension
                         
-                        if len(ids) == len(encodings):
-                            logger.info(f"Found {len(ids)} total encodings in mp_encodings.json")
+                        # Check if this UUID maps to a member ID
+                        if uuid in uuid_to_member_id:
+                            member_id = uuid_to_member_id[uuid]
                             
-                            # Build a map from UUID/member_id to embedding with house filtering
-                            embeddings_loaded = 0
-                            embeddings_filtered = 0
+                            # Apply house filtering if enabled
+                            if self.house_id and (str(member_id) not in valid_member_ids and member_id not in valid_member_ids):
+                                embeddings_filtered += 1
+                                logger.debug(f"Filtered out embedding for UUID {uuid} -> member ID {member_id} (wrong house)")
+                                continue
                             
-                            for i, id_value in enumerate(ids):
-                                if i < len(encodings):
-                                    # Check if this embedding should be loaded based on house filtering
-                                    should_load = False
-                                    
-                                    if self.house_id:
-                                        # If house filtering is enabled, only load if this ID belongs to a valid member
-                                        # Check multiple ways the ID might match:
-                                        
-                                        # 1. Direct member ID match (most common case)
-                                        if str(id_value) in valid_member_ids or id_value in valid_member_ids:
-                                            should_load = True
-                                            logger.debug(f"Direct member ID match for {id_value}")
-                                        
-                                        # 2. UUID to member ID mapping match
-                                        elif id_value in uuid_to_member_id:
-                                            member_id = uuid_to_member_id[id_value]
-                                            if str(member_id) in valid_member_ids or member_id in valid_member_ids:
-                                                should_load = True
-                                                logger.debug(f"UUID mapping match: {id_value} -> {member_id}")
-                                        
-                                        if not should_load:
-                                            embeddings_filtered += 1
-                                            logger.debug(f"Filtered out embedding for ID {id_value} (wrong house)")
-                                            continue
-                                    else:
-                                        # No house filtering, load all
-                                        should_load = True
-                                    
-                                    if should_load:
+                            # Load the embedding
+                            try:
+                                embedding_file = os.path.join(photos_dir, filename)
+                                with open(embedding_file, 'r') as f:
+                                    embedding_data = json.load(f)
+                                
+                                # UUID files contain embeddings directly as arrays
+                                if isinstance(embedding_data, list) and embedding_data:
+                                    mp_encodings_map[str(member_id)] = embedding_data
+                                    mp_encodings_map[member_id] = embedding_data  # Also store original type
+                                    embeddings_loaded += 1
+                                    logger.debug(f"Loaded embedding for UUID {uuid} -> member ID {member_id}")
+                                else:
+                                    logger.warning(f"Invalid embedding format in {embedding_file}")
+                            except Exception as e:
+                                logger.error(f"Error loading embedding file {embedding_file}: {str(e)}")
+                        else:
+                            logger.debug(f"UUID {uuid} not found in mapping, skipping")
+                
+                mp_encodings_loaded = embeddings_loaded
+                if self.house_id:
+                    logger.info(f"🏛️ House filtering: Loaded {embeddings_loaded} embeddings for house {self.house_id}, filtered out {embeddings_filtered} from wrong house")
+                else:
+                    logger.info(f"🏛️ No house filtering: Loaded {embeddings_loaded} total embeddings")
+            else:
+                logger.error(f"Photos directory not found: {photos_dir}")
+                logger.warning("Falling back to mp_encodings.json if available")
+                
+                # Fallback to old method if photos directory doesn't exist
+                try:
+                    if os.path.exists(self.mp_encodings_file):
+                        logger.info(f"Loading embeddings from fallback file {self.mp_encodings_file}")
+                        with open(self.mp_encodings_file, 'r') as f:
+                            mp_encodings_data = json.load(f)
+                        
+                        if all(k in mp_encodings_data for k in ['ids', 'encodings']):
+                            ids = mp_encodings_data.get('ids', [])
+                            encodings = mp_encodings_data.get('encodings', [])
+                            
+                            if len(ids) == len(encodings):
+                                for i, id_value in enumerate(ids):
+                                    if i < len(encodings):
                                         mp_encodings_map[id_value] = encodings[i]
                                         embeddings_loaded += 1
-                                        
-                                        # If this ID is in our UUID to member ID mapping, also store with the member ID
-                                        if id_value in uuid_to_member_id:
-                                            member_id = uuid_to_member_id[id_value]
-                                            mp_encodings_map[member_id] = encodings[i]
-                                            logger.debug(f"Mapped UUID {id_value} to member ID {member_id} for embeddings")
-                            
-                            mp_encodings_loaded = embeddings_loaded
-                            if self.house_id:
-                                logger.info(f"🏛️ House filtering: Loaded {embeddings_loaded} embeddings, filtered out {embeddings_filtered} from wrong house")
+                                
+                                mp_encodings_loaded = embeddings_loaded
+                                logger.info(f"Loaded {embeddings_loaded} embeddings from fallback file")
                             else:
-                                logger.info(f"🏛️ No house filtering: Loaded {embeddings_loaded} embeddings")
+                                logger.error(f"Mismatch in fallback file: {len(ids)} ids vs {len(encodings)} encodings")
                         else:
-                            logger.error(f"Mismatch in mp_encodings.json: {len(ids)} ids vs {len(encodings)} encodings")
+                            logger.error(f"Missing required keys in fallback file")
                     else:
-                        logger.error(f"Missing required keys in mp_encodings.json. Found keys: {list(mp_encodings_data.keys())}")
-                else:
-                    logger.warning(f"mp_encodings.json not found at {self.mp_encodings_file}")
-                    logger.warning(f"Will attempt to load individual embedding files instead")
-            except Exception as e:
-                logger.error(f"Error loading mp_encodings.json: {str(e)}")
+                        logger.error(f"No embeddings available - neither UUID files nor fallback file found")
+                except Exception as e:
+                    logger.error(f"Error loading fallback embeddings: {str(e)}")
         
             # Build a map from UUID to member ID for reverse lookup
             # First use the mapping from the file, then supplement with in-memory data
