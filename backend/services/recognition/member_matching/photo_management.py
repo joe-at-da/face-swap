@@ -159,7 +159,7 @@ class PhotoManager:
                 except Exception as e:
                     logger.error(f"Error loading embedding for numeric member {numeric_member_id}: {str(e)}")
         
-        logger.warning(f"No embedding found for member {member_id}")
+        logger.debug(f"No embedding found for member {member_id}")
         return None
     
     def generate_embedding(self, member_id: str) -> Optional[np.ndarray]:

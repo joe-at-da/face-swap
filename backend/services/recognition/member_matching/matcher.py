@@ -315,9 +315,9 @@ class ParliamentMemberMatcher:
                                     valid_embeddings += 1
                                     logger.info(f"Loaded embedding for member {name} (ID: {member_id}) using photo_uuid {photo_uuid}")
                                 else:
-                                    logger.warning(f"No embedding found for member {name} (ID: {member_id})")
+                                    logger.debug(f"No embedding found for member {name} (ID: {member_id})")
                             else:
-                                logger.warning(f"No embedding found for member {name} (ID: {member_id})")
+                                logger.debug(f"No embedding found for member {name} (ID: {member_id})")
             
             # Log summary
             # We're storing numpy arrays directly in member_embeddings, not dictionaries with source info

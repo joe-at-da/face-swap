@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from backend.services.recognition.transcript_matcher import match_transcripts_to_diarization_segments
 
@@ -131,7 +132,7 @@ class MultimodalRecognitionService:
                 # First check if the transaction is still valid
                 try:
                     # Execute a simple query to test if transaction is valid
-                    db.execute("SELECT 1").scalar()
+                    db.execute(text("SELECT 1")).scalar()
                 except Exception as tx_error:
                     logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(tx_error)}")
                     db.rollback()
@@ -183,17 +184,34 @@ class MultimodalRecognitionService:
                     db.commit()
                     return {"success": False, "error": error_msg}
                 
-                # Log the transcription result structure
+                # Log the transcription result structure and handle different data types
                 transcript_data = transcription_result.get("transcript", {})
+                
+                # Handle different transcript data types properly
                 if isinstance(transcript_data, dict):
                     segments_count = len(transcript_data.get("segments", []))
                     logger.info(f"Received transcription with {segments_count} segments")
+                elif isinstance(transcript_data, str):
+                    # If transcript is a string, wrap it in the expected structure
+                    logger.info(f"Received transcription as string (length: {len(transcript_data)} chars)")
+                    transcript_data = {"text": transcript_data, "segments": []}
+                elif isinstance(transcript_data, list):
+                    # If transcript is a list of segments, wrap it properly
+                    logger.info(f"Received transcription as list with {len(transcript_data)} segments")
+                    transcript_data = {"segments": transcript_data}
                 else:
-                    logger.warning(f"Unexpected transcript data type: {type(transcript_data)}")
+                    logger.warning(f"Unexpected transcript data type: {type(transcript_data)}, converting to string")
+                    transcript_data = {"text": str(transcript_data), "segments": []}
                 
-                # Save transcription results
-                video.transcription_results = json.dumps(transcript_data)
-                db.commit()
+                # Save transcription results with proper serialization
+                try:
+                    video.transcription_results = json.dumps(transcript_data, ensure_ascii=False)
+                    db.commit()
+                    logger.info("Successfully saved transcription results to database")
+                except Exception as e:
+                    logger.error(f"Error saving transcription results: {str(e)}")
+                    # Continue processing even if save fails
+                    pass
                 
                 # Identify speakers in the audio
                 speaker_result = voice_service.identify_speakers_in_audio(audio_path)
@@ -952,7 +970,7 @@ class MultimodalRecognitionService:
                 # First check if the transaction is still valid
                 try:
                     # Execute a simple query to test if transaction is valid
-                    db.execute("SELECT 1").scalar()
+                    db.execute(text("SELECT 1")).scalar()
                 except Exception as tx_error:
                     logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(tx_error)}")
                     db.rollback()

@@ -27,15 +27,20 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
             logger.warning("Supabase service has no client attribute or client is None")
             # Try to reinitialize the client if possible
             if hasattr(supabase_service, 'get_supabase_client') and callable(supabase_service.get_supabase_client):
-                supabase_service.client = supabase_service.get_supabase_client(use_service_role=True)
+                try:
+                    supabase_service.client = supabase_service.get_supabase_client(use_service_role=True)
+                    logger.info("Successfully reinitialized Supabase client using service method")
+                except Exception as e:
+                    logger.error(f"Failed to reinitialize client using service method: {str(e)}")
             else:
                 # Import and create a new client as last resort
                 try:
                     from backend.services.integration.supabase_client import get_supabase_client
                     supabase_service.client = get_supabase_client(use_service_role=True)
+                    logger.info("Successfully created new Supabase client as fallback")
                 except Exception as e:
                     logger.error(f"Failed to create new Supabase client: {str(e)}")
-                    return None
+                    return []  # Return empty list instead of None for consistency
         
         client = supabase_service.client
         
@@ -44,19 +49,19 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
             response = client.table('parliament_members').select('*').execute()
         except Exception as e:
             logger.error(f"Error querying parliament_members table: {str(e)}")
-            return None
+            return []  # Return empty list instead of None for consistency
             
         # Log the available columns from the first record to help diagnose schema issues
         if response.data and len(response.data) > 0:
             logger.info(f"Available columns in parliament_members table: {list(response.data[0].keys())}")
         else:
             logger.warning("No data returned from parliament_members table")
-            return None
+            return []  # Return empty list instead of None for consistency
         members = response.data
         
         if not members:
             logger.warning("No parliament members found in Supabase")
-            return None
+            return []  # Return empty list instead of None for consistency
             
         # Log sample data structure to help diagnose embedding format issues
         if members and len(members) > 0:

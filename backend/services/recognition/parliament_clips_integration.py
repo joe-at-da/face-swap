@@ -16,6 +16,7 @@ import traceback
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 # Add the parent directory to sys.path to allow importing from scripts
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
@@ -1303,7 +1304,7 @@ class ParliamentClipsIntegrationService:
                 # First check if the transaction is still valid
                 try:
                     # Execute a simple query to test if transaction is valid
-                    db_session.execute("SELECT 1").scalar()
+                    db_session.execute(text("SELECT 1")).scalar()
                 except Exception as tx_error:
                     logger.warning(f"Transaction appears to be in a failed state, rolling back: {str(tx_error)}")
                     try:
