@@ -311,6 +311,58 @@ async def process_parliament_tv_to_supabase(
                 
                 logger.info(f"Recognition completed for session {capture_id}")
                 
+                # Log comprehensive workflow summary (moved here for adjacency with completion)
+                try:
+                    # Calculate total processing time
+                    end_time = datetime.now()
+                    if hasattr(capture, 'created_at') and capture.created_at:
+                        total_duration = (end_time - capture.created_at).total_seconds()
+                    else:
+                        total_duration = 0
+                    
+                    # Get recognition results for metrics
+                    recognition_data = recognition_service.get_recognition_results(capture_id)
+                    
+                    # Extract metrics from recognition data if available
+                    total_faces = 0
+                    total_events = 0
+                    identified_speakers = 0
+                    total_segments = 0
+                    
+                    if recognition_data:
+                        # Extract metrics with type safety
+                        faces = recognition_data.get("faces", [])
+                        if isinstance(faces, list):
+                            total_faces = len(faces)
+                        
+                        events = recognition_data.get("recognition_events", [])
+                        if isinstance(events, list):
+                            total_events = len(events)
+                            identified_speakers = len([event for event in events if isinstance(event, dict) and event.get("member_id") and event.get("name") != "Unknown"])
+                        
+                        segments = recognition_data.get("segments", [])
+                        if isinstance(segments, list):
+                            total_segments = len(segments)
+                    
+                    # Log comprehensive workflow summary
+                    logger.info("\n" + "="*80)
+                    logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
+                    logger.info("="*80)
+                    logger.info(f"📹 Video ID: {capture_id}")
+                    logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
+                    logger.info(f"🎯 Recognition Results:")
+                    logger.info(f"   • Total Faces Detected: {total_faces}")
+                    logger.info(f"   • Total Recognition Events: {total_events}")
+                    logger.info(f"   • Identified Speakers: {identified_speakers}")
+                    logger.info(f"   • Total Segments Processed: {total_segments}")
+                    if total_events > 0:
+                        identification_rate = (identified_speakers / total_events) * 100
+                        logger.info(f"   • Speaker Identification Rate: {identification_rate:.1f}%")
+                    logger.info(f"✅ Status: COMPLETED SUCCESSFULLY")
+                    logger.info("="*80)
+                except Exception as summary_error:
+                    logger.warning(f"Could not generate workflow summary: {summary_error}")
+                
                 # Step 5: Export to Supabase
                 # Get recognition results
                 logger.info(f"Retrieving recognition results for session {capture_id} for Supabase export")
@@ -761,55 +813,6 @@ async def process_parliament_tv_to_supabase(
                 capture.external_id = f"parliament_tv_{capture_id}"
                 capture.external_status = "processed"
                 db.commit()
-                
-                # Log comprehensive workflow summary (moved from multimodal service for adjacency)
-                try:
-                    # Calculate total processing time
-                    end_time = datetime.now()
-                    if hasattr(capture, 'created_at') and capture.created_at:
-                        total_duration = (end_time - capture.created_at).total_seconds()
-                    else:
-                        total_duration = 0
-                    
-                    # Extract metrics from recognition data if available
-                    total_faces = 0
-                    total_events = 0
-                    identified_speakers = 0
-                    total_segments = 0
-                    
-                    if 'recognition_data' in locals() and recognition_data:
-                        # Extract metrics with type safety
-                        faces = recognition_data.get("faces", [])
-                        if isinstance(faces, list):
-                            total_faces = len(faces)
-                        
-                        events = recognition_data.get("recognition_events", [])
-                        if isinstance(events, list):
-                            total_events = len(events)
-                            identified_speakers = len([event for event in events if isinstance(event, dict) and event.get("member_id") and event.get("name") != "Unknown"])
-                        
-                        segments = recognition_data.get("segments", [])
-                        if isinstance(segments, list):
-                            total_segments = len(segments)
-                    
-                    # Log comprehensive workflow summary
-                    logger.info("\n" + "="*80)
-                    logger.info("🏛️  MULTIMODAL RECOGNITION WORKFLOW SUMMARY")
-                    logger.info("="*80)
-                    logger.info(f"📹 Video ID: {capture_id}")
-                    logger.info(f"⏱️  Total Processing Time: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
-                    logger.info(f"🎯 Recognition Results:")
-                    logger.info(f"   • Total Faces Detected: {total_faces}")
-                    logger.info(f"   • Total Recognition Events: {total_events}")
-                    logger.info(f"   • Identified Speakers: {identified_speakers}")
-                    logger.info(f"   • Total Segments Processed: {total_segments}")
-                    if total_events > 0:
-                        identification_rate = (identified_speakers / total_events) * 100
-                        logger.info(f"   • Speaker Identification Rate: {identification_rate:.1f}%")
-                    logger.info(f"✅ Status: COMPLETED SUCCESSFULLY")
-                    logger.info("="*80)
-                except Exception as summary_error:
-                    logger.warning(f"Could not generate workflow summary: {summary_error}")
                 
                 logger.info(f"Completed full processing pipeline for Parliament TV URL: {url}")
                 
