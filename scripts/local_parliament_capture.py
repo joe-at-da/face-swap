@@ -178,11 +178,7 @@ def process_video_with_time_marker(input_file, time_marker_seconds=None, duratio
     
     # Add output options for good quality
     ffmpeg_cmd.extend([
-        '-c:v', 'libx264',  # Use H.264 codec for video
-        '-preset', 'medium',  # Balance between encoding speed and compression
-        '-crf', '23',  # Constant Rate Factor (0-51, lower means better quality)
-        '-c:a', 'aac',  # Use AAC codec for audio
-        '-b:a', '128k',  # Audio bitrate
+        '-c', 'copy',  # Copy all streams without re-encoding (much faster)
         '-movflags', '+faststart',  # Optimize for web streaming
         str(output_file)
     ])

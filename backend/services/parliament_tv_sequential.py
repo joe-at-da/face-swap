@@ -150,13 +150,16 @@ class ParliamentTVSequentialProcessor:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             video_filename = f"parliament_tv_{session_id}_{timestamp}.mp4"
             audio_filename = f"audio_{session_id}_{timestamp}.mp3"
+            wav_filename = f"audio_{session_id}_{timestamp}.wav"
             
             video_path = os.path.join(output_dir, video_filename)
             audio_path = os.path.join(output_dir, audio_filename)
+            wav_path = os.path.join(output_dir, wav_filename)
             
             # Create progress log files
             video_log = os.path.join(output_dir, f"{session_id}_video_progress.log")
             audio_log = os.path.join(output_dir, f"{session_id}_audio_progress.log")
+            wav_log = os.path.join(output_dir, f"{session_id}_wav_progress.log")
             
             logger.info(f"========== STARTING SIMULTANEOUS DOWNLOAD for session {session_id} ===========")
             logger.info(f"Downloading video from {video_url} to {video_path}")
@@ -195,16 +198,36 @@ class ParliamentTVSequentialProcessor:
                 audio_path
             ]
             
+            # WAV COMMAND - High-quality uncompressed audio for diarization and Whisper
+            wav_cmd = [
+                "ffmpeg", "-y",
+                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+                "-http_persistent", "1",
+                "-allowed_extensions", "ALL",
+                "-i", audio_url,
+                "-c:a", "pcm_s16le",    # Uncompressed 16-bit PCM WAV
+                "-ar", "16000",         # 16kHz sample rate (optimal for Whisper)
+                "-ac", "1",             # Mono channel (reduces file size, good for speech)
+                "-vn",
+                "-threads", "auto",     # Use all available CPU cores
+                "-hide_banner",
+                "-progress", wav_log,
+                wav_path
+            ]
+            
             # Log commands
             logger.info(f"Video download command: {' '.join(video_cmd)}")
             logger.info(f"Audio download command: {' '.join(audio_cmd)}")
+            logger.info(f"WAV download command: {' '.join(wav_cmd)}")
             
-            # Start both processes
+            # Start all three processes
             video_process = subprocess.Popen(video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             audio_process = subprocess.Popen(audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            wav_process = subprocess.Popen(wav_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             logger.info(f"Started video download process with PID {video_process.pid}")
             logger.info(f"Started audio download process with PID {audio_process.pid}")
+            logger.info(f"Started WAV download process with PID {wav_process.pid}")
             
             # Function to monitor progress
             def monitor_progress():
@@ -426,9 +449,7 @@ class ParliamentTVSequentialProcessor:
                 "-ss", str(start_time),  # Start time
                 "-i", video_path,  # Input file (local)
                 "-t", str(end_time - start_time),  # Duration
-                "-c:v", "libx264",  # Video codec
-                "-preset", "fast",
-                "-crf", "22",
+                "-c:v", "copy",  # Copy video stream (much faster)
                 "-an",  # No audio
                 "-ignore_unknown",  # Ignore unknown HLS tags
                 segment_video_path

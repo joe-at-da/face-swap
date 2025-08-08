@@ -613,8 +613,8 @@ class ParliamentTVCapture:
             cmd.extend(["-avoid_negative_ts", "make_zero"])
             cmd.extend(["-correct_ts_overflow", "1"])
             
-            # Video codec options
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
+            # Video codec options - use stream copy for speed
+            cmd.extend(["-c:v", "copy"])
             
             # Disable audio (we'll handle audio separately)
             cmd.extend(["-an"])
@@ -1597,10 +1597,12 @@ class ParliamentTVCapture:
             # Determine output paths
             video_file = os.path.join(str(self.media_dir), f"{capture_id}.mp4")
             audio_file = os.path.join(str(self.media_dir), f"{capture_id}.mp3")
+            wav_file = os.path.join(str(self.media_dir), f"{capture_id}.wav")
             
             # Create progress log files
             video_log = os.path.join(str(self.temp_dir), f"{capture_id}_video_progress.log")
             audio_log = os.path.join(str(self.temp_dir), f"{capture_id}_audio_progress.log")
+            wav_log = os.path.join(str(self.temp_dir), f"{capture_id}_wav_progress.log")
             
             # Ensure the output directory exists
             os.makedirs(os.path.dirname(video_file), exist_ok=True)
@@ -1662,9 +1664,7 @@ class ParliamentTVCapture:
             
             # Add video output options
             video_cmd.extend([
-                "-c:v", "libx264",  # Use H.264 codec
-                "-preset", "fast",  # Encoding preset
-                "-crf", "22",      # Quality setting
+                "-c:v", "copy",     # Copy video stream (much faster)
                 "-an",              # No audio
                 "-hide_banner",     # Hide banner information
                 "-progress", video_log,  # Log progress to file
@@ -1699,16 +1699,47 @@ class ParliamentTVCapture:
                 audio_file              # Output file
             ])
             
+            # WAV COMMAND - High-quality uncompressed audio for diarization and Whisper
+            wav_cmd = ["ffmpeg", "-y"]
+            wav_cmd.extend(["-protocol_whitelist", "file,http,https,tcp,tls,crypto"])
+            wav_cmd.extend(["-http_persistent", "1"])
+            wav_cmd.extend(["-allowed_extensions", "ALL"])
+            wav_cmd.extend(["-i", audio_url])
+            
+            # Add seek position AFTER input for HLS streams
+            if start_position and start_position > 0:
+                wav_cmd.extend(["-ss", str(start_position)])
+                logger.info(f"Added -ss {start_position} AFTER input for accurate WAV seeking")
+            
+            # Add duration AFTER seek position
+            if duration_to_use and duration_to_use > 0:
+                wav_cmd.extend(["-t", str(duration_to_use)])
+                logger.info(f"Added duration limit -t {duration_to_use} for WAV")
+            
+            # Add WAV output options - uncompressed for best quality
+            wav_cmd.extend([
+                "-c:a", "pcm_s16le",    # Uncompressed 16-bit PCM WAV
+                "-ar", "16000",         # 16kHz sample rate (optimal for Whisper)
+                "-ac", "1",             # Mono channel (reduces file size, good for speech)
+                "-vn",                  # No video
+                "-hide_banner",         # Hide banner information
+                "-progress", wav_log,   # Log progress to file
+                wav_file                # Output file
+            ])
+            
             # Log commands
             logger.info(f"Video extraction command: {' '.join(video_cmd)}")
             logger.info(f"Audio extraction command: {' '.join(audio_cmd)}")
+            logger.info(f"WAV extraction command: {' '.join(wav_cmd)}")
             
-            # Start both processes
+            # Start all three processes
             video_process = subprocess.Popen(video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             audio_process = subprocess.Popen(audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            wav_process = subprocess.Popen(wav_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             logger.info(f"Started video extraction process with PID {video_process.pid}")
             logger.info(f"Started audio extraction process with PID {audio_process.pid}")
+            logger.info(f"Started WAV extraction process with PID {wav_process.pid}")
             
             # Function to monitor progress
             def monitor_progress():
@@ -1717,14 +1748,16 @@ class ParliamentTVCapture:
                 
                 last_video_progress = 0
                 last_audio_progress = 0
+                last_wav_progress = 0
                 
                 # Pattern to extract progress information
                 progress_pattern = re.compile(r'out_time_ms=([0-9]+)')
                 
-                while video_process.poll() is None or audio_process.poll() is None:
+                while video_process.poll() is None or audio_process.poll() is None or wav_process.poll() is None:
                     # Read progress logs
                     video_progress = 0
                     audio_progress = 0
+                    wav_progress = 0
                     
                     try:
                         if os.path.exists(video_log):
@@ -1748,11 +1781,23 @@ class ParliamentTVCapture:
                     except Exception as e:
                         logger.error(f"Error reading audio progress: {str(e)}")
                     
+                    try:
+                        if os.path.exists(wav_log):
+                            with open(wav_log, 'r') as f:
+                                content = f.read()
+                                match = progress_pattern.search(content)
+                                if match:
+                                    # Convert microseconds to seconds
+                                    wav_progress = int(match.group(1)) / 1000000
+                    except Exception as e:
+                        logger.error(f"Error reading WAV progress: {str(e)}")
+                    
                     # Only log if progress has changed
-                    if video_progress != last_video_progress or audio_progress != last_audio_progress:
-                        logger.info(f"Progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s")
+                    if video_progress != last_video_progress or audio_progress != last_audio_progress or wav_progress != last_wav_progress:
+                        logger.info(f"Progress - Video: {video_progress:.2f}s, Audio: {audio_progress:.2f}s, WAV: {wav_progress:.2f}s")
                         last_video_progress = video_progress
                         last_audio_progress = audio_progress
+                        last_wav_progress = wav_progress
                         
                         # Update progress in database
                         try:
@@ -1761,6 +1806,7 @@ class ParliamentTVCapture:
                                 "extraction_progress": {
                                     "video": video_progress,
                                     "audio": audio_progress,
+                                    "wav": wav_progress,
                                     "timestamp": datetime.now().isoformat()
                                 }
                             }
@@ -1779,9 +1825,10 @@ class ParliamentTVCapture:
             monitor_thread.daemon = True
             monitor_thread.start()
             
-            # Wait for both processes to complete
+            # Wait for all three processes to complete
             video_stdout, video_stderr = video_process.communicate()
             audio_stdout, audio_stderr = audio_process.communicate()
+            wav_stdout, wav_stderr = wav_process.communicate()
             
             # Wait for monitor thread to finish
             monitor_thread.join(timeout=10)
@@ -1789,6 +1836,7 @@ class ParliamentTVCapture:
             # Check results
             video_success = video_process.returncode == 0
             audio_success = audio_process.returncode == 0
+            wav_success = wav_process.returncode == 0
             
             # Log results
             if video_success:
@@ -1803,6 +1851,12 @@ class ParliamentTVCapture:
                 logger.error(f"Audio extraction failed with code {audio_process.returncode}")
                 logger.error(f"Audio stderr: {audio_stderr.decode()}")
             
+            if wav_success:
+                logger.info(f"WAV extraction completed successfully: {wav_file}")
+            else:
+                logger.error(f"WAV extraction failed with code {wav_process.returncode}")
+                logger.error(f"WAV stderr: {wav_stderr.decode()}")
+            
             # Update capture record with results
             try:
                 if video_success:
@@ -1812,8 +1866,15 @@ class ParliamentTVCapture:
                     db_capture.audio_path = audio_file
                     db_capture.audio_file_path = audio_file
                 
-                # Update status based on results
-                if video_success and audio_success:
+                # Store WAV path in metadata for diarization/Whisper processing
+                if wav_success:
+                    db_capture.metadata = {
+                        **(db_capture.metadata or {}),
+                        "wav_path": wav_file
+                    }
+                
+                # Update status based on results (all three must succeed)
+                if video_success and audio_success and wav_success:
                     db_capture.status = "completed"
                     logger.info(f"Updated capture status to 'completed'")
                 else:
@@ -1823,6 +1884,8 @@ class ParliamentTVCapture:
                         error_message.append(f"Video extraction failed: {video_stderr.decode()[:200]}")
                     if not audio_success:
                         error_message.append(f"Audio extraction failed: {audio_stderr.decode()[:200]}")
+                    if not wav_success:
+                        error_message.append(f"WAV extraction failed: {wav_stderr.decode()[:200]}")
                     db_capture.error_message = " | ".join(error_message)
                     logger.info(f"Updated capture status to 'error' with message: {db_capture.error_message}")
                 
@@ -1832,8 +1895,10 @@ class ParliamentTVCapture:
                     "extraction_completed_at": datetime.now().isoformat(),
                     "video_success": video_success,
                     "audio_success": audio_success,
+                    "wav_success": wav_success,
                     "video_path": video_file if video_success else None,
-                    "audio_path": audio_file if audio_success else None
+                    "audio_path": audio_file if audio_success else None,
+                    "wav_path": wav_file if wav_success else None
                 }
                 
                 db.commit()
@@ -1846,16 +1911,20 @@ class ParliamentTVCapture:
                     os.remove(video_log)
                 if os.path.exists(audio_log):
                     os.remove(audio_log)
+                if os.path.exists(wav_log):
+                    os.remove(wav_log)
             except Exception as e:
                 logger.error(f"Error cleaning up progress logs: {str(e)}")
             
             # Return results
             result = {
-                "success": video_success and audio_success,
+                "success": video_success and audio_success and wav_success,
                 "video_success": video_success,
                 "audio_success": audio_success,
+                "wav_success": wav_success,
                 "video_path": video_file if video_success else None,
                 "audio_path": audio_file if audio_success else None,
+                "wav_path": wav_file if wav_success else None,
                 "start_position": start_position,
                 "duration": duration_to_use
             }

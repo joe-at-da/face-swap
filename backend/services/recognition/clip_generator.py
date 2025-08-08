@@ -56,10 +56,7 @@ class ClipGenerator:
                 "-ss", start_time_str,  # Start time
                 "-i", input_file,  # Input file
                 "-t", str(duration),  # Duration
-                "-c:v", "libx264",  # Video codec
-                "-c:a", "aac",  # Audio codec
-                "-strict", "experimental",
-                "-b:a", "128k",  # Audio bitrate
+                "-c", "copy",  # Copy all streams (much faster)
                 "-movflags", "+faststart",  # Optimize for web streaming
                 output_file  # Output file
             ]

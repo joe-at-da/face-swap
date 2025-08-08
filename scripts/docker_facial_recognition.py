@@ -186,8 +186,7 @@ def process_video_with_facial_recognition(input_file, time_marker_seconds=None, 
         
         # Add output options
         extract_cmd.extend([
-            '-c:v', 'libx264',
-            '-c:a', 'aac',
+            '-c', 'copy',  # Copy streams without re-encoding (much faster)
             '-y',
             str(temp_file)
         ])
