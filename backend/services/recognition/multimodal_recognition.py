@@ -1548,9 +1548,11 @@ class MultimodalRecognitionService:
             # First, ensure member matcher is initialized
             if not self.member_matcher:
                 logger.info("Initializing ParliamentMemberMatcher")
-                # Initialize a proper Supabase service to pass to the matcher
-                from backend.services.integration.supabase_client import SupabaseService
+                logger.info("Initializing ParliamentMemberMatcher")
+                from backend.services.integration.supabase_service import SupabaseService
                 supabase_service = SupabaseService()
+                
+                # Initialize matcher without house filtering first (will be updated per video)
                 self.member_matcher = ParliamentMemberMatcher(supabase_service)
             
             # Ensure member matcher has loaded parliament members
@@ -1647,6 +1649,18 @@ class MultimodalRecognitionService:
                     logger.info("🔍 Filtering for House of Lords members")
                 else:
                     logger.info("🔍 Filtering for House of Commons members (MPs)")
+                
+                # Create house-specific matcher if needed
+                if not hasattr(self.member_matcher, 'house_id') or self.member_matcher.house_id != house:
+                    logger.info(f"🏛️ Creating house-specific matcher for house {house}")
+                    from backend.services.integration.supabase_client import SupabaseService
+                    supabase_service = SupabaseService()
+                    self.member_matcher = ParliamentMemberMatcher(supabase_service, house_id=house)
+                    
+                    # Load members with house filtering
+                    if not self.member_matcher.load_parliament_members():
+                        logger.error("Failed to load parliament members with house filtering")
+                        return []
                 
                 if timestamp is not None and video_id is not None:
                     logger.info(f"Using temporal consistency with timestamp {timestamp:.2f}s for video {video_id}")

@@ -10,15 +10,16 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
+def load_members_from_supabase(supabase_service, house_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Load parliament members from Supabase
     
     Args:
         supabase_service: Supabase service instance
+        house_id: Optional house ID to filter by ("1" for Commons, "2" for Lords)
         
     Returns:
-        List of parliament members
+        List of parliament members filtered by house if specified
     """
     try:
         # Access the client directly from the SupabaseService instance
@@ -46,7 +47,16 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
         
         # Fetch all columns from parliament_members table to adapt to whatever schema is available
         try:
-            response = client.table('parliament_members').select('*').execute()
+            query = client.table('parliament_members').select('*')
+            
+            # Apply house filtering if specified
+            if house_id is not None:
+                query = query.eq('house_id', house_id)
+                logger.info(f"🏛️ Filtering parliament members by house_id: {house_id}")
+            else:
+                logger.info("🏛️ Loading ALL parliament members (no house filter)")
+            
+            response = query.execute()
         except Exception as e:
             logger.error(f"Error querying parliament_members table: {str(e)}")
             return []  # Return empty list instead of None for consistency
@@ -60,8 +70,17 @@ def load_members_from_supabase(supabase_service) -> List[Dict[str, Any]]:
         members = response.data
         
         if not members:
-            logger.warning("No parliament members found in Supabase")
+            if house_id is not None:
+                logger.warning(f"No parliament members found in Supabase for house_id: {house_id}")
+            else:
+                logger.warning("No parliament members found in Supabase")
             return []  # Return empty list instead of None for consistency
+        
+        # Log filtering results
+        if house_id is not None:
+            logger.info(f"🏛️ Loaded {len(members)} members from house {house_id} (filtered at source)")
+        else:
+            logger.info(f"🏛️ Loaded {len(members)} members from ALL houses (no filtering)")
             
         # Log sample data structure to help diagnose embedding format issues
         if members and len(members) > 0:

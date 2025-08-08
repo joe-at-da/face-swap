@@ -46,9 +46,15 @@ class ParliamentMemberMatcher:
     and enhanced diversity promotion without blacklisting.
     """
     
-    def __init__(self, supabase_service):
-        """Initialize the matcher."""
+    def __init__(self, supabase_service, house_id: Optional[str] = None):
+        """Initialize the matcher.
+        
+        Args:
+            supabase_service: Supabase service instance
+            house_id: Optional house ID to filter by ("1" for Commons, "2" for Lords)
+        """
         self.supabase_service = supabase_service
+        self.house_id = house_id
         self.members = []  # Initialize with empty list instead of None
         self.member_embeddings = {}
         
@@ -97,8 +103,8 @@ class ParliamentMemberMatcher:
     def load_parliament_members(self) -> bool:
         """Load parliament members and their embeddings."""
         try:
-            # Load members from database
-            loaded_members = load_members_from_supabase(self.supabase_service)
+            # Load members from database with house filtering
+            loaded_members = load_members_from_supabase(self.supabase_service, self.house_id)
             if not loaded_members:
                 logger.error("Failed to load parliament members from Supabase")
                 # Try to load from sample data or cache
@@ -173,19 +179,48 @@ class ParliamentMemberMatcher:
                         names = mp_encodings_data.get('names', [])
                         
                         if len(ids) == len(encodings):
-                            logger.info(f"Found {len(ids)} encodings in mp_encodings.json")
-                            mp_encodings_loaded = len(ids)
+                            logger.info(f"Found {len(ids)} total encodings in mp_encodings.json")
                             
-                            # Build a map from UUID/member_id to embedding
+                            # Build a map from UUID/member_id to embedding with house filtering
+                            embeddings_loaded = 0
+                            embeddings_filtered = 0
+                            
                             for i, id_value in enumerate(ids):
                                 if i < len(encodings):
-                                    mp_encodings_map[id_value] = encodings[i]
+                                    # Check if this embedding should be loaded based on house filtering
+                                    should_load = False
                                     
-                                    # If this ID is in our UUID to member ID mapping, also store with the member ID
-                                    if id_value in uuid_to_member_id:
-                                        member_id = uuid_to_member_id[id_value]
-                                        mp_encodings_map[member_id] = encodings[i]
-                                        logger.debug(f"Mapped UUID {id_value} to member ID {member_id} for embeddings")
+                                    if self.house_id:
+                                        # If house filtering is enabled, only load if this ID belongs to a valid member
+                                        if id_value in uuid_to_member_id:
+                                            member_id = uuid_to_member_id[id_value]
+                                            if str(member_id) in valid_member_ids or member_id in valid_member_ids:
+                                                should_load = True
+                                        elif str(id_value) in valid_member_ids or id_value in valid_member_ids:
+                                            should_load = True
+                                        
+                                        if not should_load:
+                                            embeddings_filtered += 1
+                                            continue
+                                    else:
+                                        # No house filtering, load all
+                                        should_load = True
+                                    
+                                    if should_load:
+                                        mp_encodings_map[id_value] = encodings[i]
+                                        embeddings_loaded += 1
+                                        
+                                        # If this ID is in our UUID to member ID mapping, also store with the member ID
+                                        if id_value in uuid_to_member_id:
+                                            member_id = uuid_to_member_id[id_value]
+                                            mp_encodings_map[member_id] = encodings[i]
+                                            logger.debug(f"Mapped UUID {id_value} to member ID {member_id} for embeddings")
+                            
+                            mp_encodings_loaded = embeddings_loaded
+                            if self.house_id:
+                                logger.info(f"🏛️ House filtering: Loaded {embeddings_loaded} embeddings, filtered out {embeddings_filtered} from wrong house")
+                            else:
+                                logger.info(f"🏛️ No house filtering: Loaded {embeddings_loaded} embeddings")
                         else:
                             logger.error(f"Mismatch in mp_encodings.json: {len(ids)} ids vs {len(encodings)} encodings")
                     else:
@@ -198,20 +233,40 @@ class ParliamentMemberMatcher:
         
             # Build a map from UUID to member ID for reverse lookup
             # First use the mapping from the file, then supplement with in-memory data
+            uuid_to_member_id = {}
+            
+            # Load UUID to member ID mapping from file if available
+            if os.path.exists(self.uuid_to_member_id_file):
+                try:
+                    with open(self.uuid_to_member_id_file, 'r') as f:
+                        uuid_to_member_id = json.load(f)
+                    logger.info(f"Loaded UUID to member ID mapping with {len(uuid_to_member_id)} entries")
+                except Exception as e:
+                    logger.error(f"Error loading UUID to member ID mapping: {str(e)}")
+            
+            # Supplement with in-memory data from loaded members
             for member in self.members:
-                member_id = member.get('id')
                 photo_uuid = member.get('photo_uuid')
-                if member_id and photo_uuid:
-                    # Only add if not already in the mapping from the file
-                    if photo_uuid not in uuid_to_member_id:
-                        uuid_to_member_id[photo_uuid] = member_id
-                        logger.debug(f"Added UUID {photo_uuid} to member ID {member_id} mapping from member data")
-                    
-                    # Also handle UUIDs without dashes
-                    if '-' in photo_uuid:
-                        no_dash_uuid = photo_uuid.replace('-', '')
-                        if no_dash_uuid not in uuid_to_member_id:
-                            uuid_to_member_id[no_dash_uuid] = member_id
+                member_id = member.get('id') or member.get('member_id')
+                if photo_uuid and member_id:
+                    uuid_to_member_id[photo_uuid] = member_id
+            
+            # Create a set of valid member IDs for house filtering
+            valid_member_ids = set()
+            for member in self.members:
+                member_id = member.get('id') or member.get('member_id')
+                if member_id:
+                    valid_member_ids.add(str(member_id))
+                    # Also add numeric version if it's a string
+                    if isinstance(member_id, str) and member_id.isdigit():
+                        valid_member_ids.add(int(member_id))
+                    elif isinstance(member_id, int):
+                        valid_member_ids.add(str(member_id))
+            
+            if self.house_id:
+                logger.info(f"🏛️ House filtering: Will only load embeddings for {len(valid_member_ids)} members from house {self.house_id}")
+            else:
+                logger.info(f"🏛️ No house filtering: Will load embeddings for all {len(valid_member_ids)} members")
                                 
             # Now process the member embeddings
             for member in self.members:
@@ -560,12 +615,15 @@ class ParliamentMemberMatcher:
         # Calculate similarity scores for all members
         similarities = []
         skipped_embeddings = 0
+        house_filtered_count = 0
         
         for member_id, embedding in self.member_embeddings.items():
             # Skip invalid embeddings
             if not self._is_valid_embedding(embedding):
                 skipped_embeddings += 1
                 continue
+            
+            # House filtering is now done at load time - no need for runtime filtering
                 
             # Calculate similarity
             try:
@@ -588,6 +646,9 @@ class ParliamentMemberMatcher:
         
         if skipped_embeddings > 0:
             logger.warning(f"Skipped {skipped_embeddings} invalid member embeddings")
+        
+        # House filtering is now done at load time, so all loaded members are from the correct house
+        logger.info(f"🔍 Matching against {len(similarities)} members (house-filtered at load time)")
         
         # Sort by similarity (highest first)
         similarities.sort(key=lambda x: x[1], reverse=True)
@@ -711,6 +772,37 @@ class ParliamentMemberMatcher:
             import traceback
             logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
+    
+    def _get_member_info_by_id(self, member_id: str) -> Optional[Dict[str, Any]]:
+        """Get member information by member ID.
+        
+        Args:
+            member_id: The member ID to look up
+            
+        Returns:
+            Dict with member information or None if not found
+        """
+        try:
+            # Convert member_id to appropriate type for comparison
+            if isinstance(member_id, str) and member_id.isdigit():
+                numeric_member_id = int(member_id)
+            else:
+                numeric_member_id = member_id
+            
+            # Search through loaded members
+            for member in self.members:
+                # Check both string and numeric member_id formats
+                if (member.get('member_id') == member_id or 
+                    member.get('member_id') == numeric_member_id or
+                    str(member.get('member_id')) == str(member_id)):
+                    return member
+            
+            logger.debug(f"Member info not found for ID: {member_id}")
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error getting member info for ID {member_id}: {str(e)}")
+            return None
     
     def _update_match_history(self, member_id: str, video_id: Optional[str] = None) -> None:
         """Update match history for a member.
