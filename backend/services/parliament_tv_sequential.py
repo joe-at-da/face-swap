@@ -32,6 +32,8 @@ class ParliamentTVSequentialProcessor:
         """Initialize the sequential processor."""
         self.parliament_tv_capture = ParliamentTVCapture()
         self.scraper = ParliamentTVScraper()
+        # Track current WAV file path for segment extraction
+        self.current_wav_path = None
         
     def get_latest_video_info(self) -> Dict[str, Any]:
         """
@@ -199,18 +201,19 @@ class ParliamentTVSequentialProcessor:
             ]
             
             # WAV COMMAND - High-quality uncompressed audio for diarization and Whisper
+            # Uses identical parameters to non-sequential pipeline for consistency
             wav_cmd = [
-                "ffmpeg", "-y",
+                "ffmpeg",
+                "-y",
                 "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
                 "-http_persistent", "1",
                 "-allowed_extensions", "ALL",
                 "-i", audio_url,
                 "-c:a", "pcm_s16le",    # Uncompressed 16-bit PCM WAV
-                "-ar", "16000",         # 16kHz sample rate (optimal for Whisper)
-                "-ac", "1",             # Mono channel (reduces file size, good for speech)
-                "-vn",
+                "-ar", "16000",         # 16kHz sample rate for speech recognition
+                "-ac", "1",             # Mono channel
+                "-vn",                  # No video
                 "-threads", "auto",     # Use all available CPU cores
-                "-hide_banner",
                 "-progress", wav_log,
                 wav_path
             ]
@@ -329,10 +332,14 @@ class ParliamentTVSequentialProcessor:
             else:
                 logger.error(f"WAV download failed with code {wav_process.returncode}")
                 logger.error(f"WAV stderr: {wav_stderr.decode()}")
+                # Log additional context for debugging WAV extraction failures
+                logger.error(f"WAV extraction failed for audio URL: {audio_url}")
+                logger.error(f"WAV command that failed: {' '.join(wav_cmd)}")
             
-            # Verify files exist and have content
+            # Verify files exist and have content - unified verification logic
             if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                 video_success = True
+                logger.info(f"Video file verified: {video_path} ({os.path.getsize(video_path)} bytes)")
             else:
                 video_success = False
                 logger.error(f"Video file does not exist or is empty: {video_path}")
@@ -347,9 +354,12 @@ class ParliamentTVSequentialProcessor:
             if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
                 wav_success = True
                 logger.info(f"WAV file verified: {wav_path} ({os.path.getsize(wav_path)} bytes)")
+                # Store WAV path in metadata for downstream processing (matches non-sequential pattern)
+                logger.info(f"WAV extraction successful - file ready for transcription/diarization")
             else:
                 wav_success = False
                 logger.error(f"WAV file does not exist or is empty: {wav_path}")
+                logger.error(f"WAV extraction failed - transcription/diarization may be affected")
             
             # Clean up progress log files
             try:
@@ -361,6 +371,14 @@ class ParliamentTVSequentialProcessor:
                     os.remove(wav_log)
             except Exception as e:
                 logger.error(f"Error cleaning up progress logs: {str(e)}")
+            
+            # Store WAV path for segment extraction (matches non-sequential pattern)
+            if wav_success:
+                self.current_wav_path = wav_path
+                logger.info(f"Stored WAV path for segment extraction: {wav_path}")
+            else:
+                self.current_wav_path = None
+                logger.warning("WAV extraction failed - segment WAV extraction will be skipped")
             
             return {
                 "video_path": video_path,
@@ -532,11 +550,11 @@ class ParliamentTVSequentialProcessor:
                     logger.error(f"Audio segment file missing or empty: {segment_audio_path}")
                     audio_process.returncode = 1  # Mark as failed
             
-            # If audio extraction failed but video succeeded, try a different approach for audio
+            # Unified error handling and fallback strategies (matches non-sequential robustness)
             if video_process.returncode == 0 and audio_process.returncode != 0:
-                logger.info("Attempting alternative audio extraction method...")
+                logger.info("Audio segment extraction failed - attempting alternative method with encoding...")
                 
-                # Fallback to encoding if stream copy failed
+                # Fallback to encoding if stream copy failed (unified with non-sequential approach)
                 alt_audio_cmd = [
                     "ffmpeg",
                     "-y",
@@ -544,9 +562,10 @@ class ParliamentTVSequentialProcessor:
                     "-i", audio_path,
                     "-t", str(end_time - start_time),
                     "-c:a", "libmp3lame",  # Fallback to encoding
-                    "-q:a", "3",  # Optimized quality for faster encoding
+                    "-q:a", "3",  # Optimized quality for faster encoding (matches non-sequential)
                     "-vn",
                     "-threads", "auto",  # Use all available CPU cores
+                    "-avoid_negative_ts", "1",  # Handle timestamp issues
                     segment_audio_path
                 ]
                 
@@ -558,14 +577,66 @@ class ParliamentTVSequentialProcessor:
                 if alt_audio_process.returncode == 0 and os.path.exists(segment_audio_path) and os.path.getsize(segment_audio_path) > 0:
                     logger.info(f"Alternative audio extraction succeeded: {segment_audio_path} ({os.path.getsize(segment_audio_path)} bytes)")
                     audio_process.returncode = 0  # Mark as successful
+                    logger.info("Audio fallback strategy successful - segment ready for processing")
                 else:
                     logger.error(f"Alternative audio extraction failed: {alt_audio_process.stderr.decode()}")
+                    logger.error(f"Both primary and fallback audio extraction methods failed for segment {start_time}-{end_time}s")
+                    # Log additional context for debugging (matches non-sequential pattern)
+                    logger.error(f"Failed audio source: {audio_path} (size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes)")
+            
+            # Add WAV segment extraction to match non-sequential pipeline capabilities
+            segment_wav_path = None
+            wav_success = False
+            
+            # Check if we have a WAV source file to segment from
+            wav_source_path = None
+            if hasattr(self, 'current_wav_path') and self.current_wav_path and os.path.exists(self.current_wav_path):
+                wav_source_path = self.current_wav_path
+                logger.info(f"Found WAV source file for segmentation: {wav_source_path}")
+                
+                # Generate WAV segment filename
+                segment_wav_path = os.path.join(output_dir, f"{segment_id}.wav")
+                
+                # Extract WAV segment using ffmpeg with seeking (matches non-sequential pattern)
+                logger.info(f"Extracting WAV segment {start_time}-{end_time}s from {wav_source_path} to {segment_wav_path}")
+                wav_segment_cmd = [
+                    "ffmpeg",
+                    "-y",  # Overwrite output files
+                    "-ss", str(start_time),  # Start time
+                    "-i", wav_source_path,  # Input WAV file (local)
+                    "-t", str(end_time - start_time),  # Duration
+                    "-c:a", "copy",  # Copy audio stream (much faster for WAV)
+                    "-vn",  # No video
+                    segment_wav_path
+                ]
+                
+                logger.info(f"Running WAV segment command: {' '.join(wav_segment_cmd)}")
+                wav_segment_process = subprocess.run(wav_segment_cmd, 
+                                                   stdout=subprocess.PIPE, 
+                                                   stderr=subprocess.PIPE)
+                
+                if wav_segment_process.returncode == 0 and os.path.exists(segment_wav_path) and os.path.getsize(segment_wav_path) > 0:
+                    wav_success = True
+                    logger.info(f"WAV segment extraction completed successfully: {segment_wav_path} ({os.path.getsize(segment_wav_path)} bytes)")
+                    logger.info("WAV segment ready for transcription/diarization processing")
+                else:
+                    logger.error(f"WAV segment extraction failed with code {wav_segment_process.returncode}")
+                    logger.error(f"WAV segment stderr: {wav_segment_process.stderr.decode()}")
+                    logger.error(f"WAV segmentation failed - transcription quality may be affected")
+                    # Log additional context for debugging (matches non-sequential pattern)
+                    logger.error(f"Failed WAV source: {wav_source_path} (size: {os.path.getsize(wav_source_path) if os.path.exists(wav_source_path) else 'N/A'} bytes)")
+                    logger.error(f"WAV segment command that failed: {' '.join(wav_segment_cmd)}")
+            else:
+                logger.info("No WAV source file available for segmentation - skipping WAV segment extraction")
+                logger.info("WAV segments will not be available for this processing run - may affect transcription accuracy")
             
             return {
                 "segment_video_path": segment_video_path if video_process.returncode == 0 else None,
                 "segment_audio_path": segment_audio_path if audio_process.returncode == 0 else None,
+                "segment_wav_path": segment_wav_path if wav_success else None,
                 "video_success": video_process.returncode == 0,
-                "audio_success": audio_process.returncode == 0
+                "audio_success": audio_process.returncode == 0,
+                "wav_success": wav_success
             }
             
         except Exception as e:

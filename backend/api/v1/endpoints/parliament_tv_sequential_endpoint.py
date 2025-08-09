@@ -7,17 +7,18 @@ in 30-minute segments to avoid memory issues with long-running videos.
 
 import logging
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, BackgroundTasks, Body, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
+from backend.db.session import get_db
+from backend.db.models.capture import CaptureSession
+from backend.services.parliament_tv_sequential import ParliamentTVSequentialProcessor
+from backend.services.parliament_tv import ParliamentTVCapture
+from backend.core.config import settings
+from backend.api.deps import get_api_key
+import logging
+import os
 from datetime import datetime
 
-from backend.db.session import get_db
-from backend.api.deps import get_api_key
-from backend.services.parliament_tv_sequential import ParliamentTVSequentialProcessor
-from backend.db.models.capture import CaptureSession
-from backend.core.config import settings
-
-# Configure logging
 logger = logging.getLogger(__name__)
 
 # Create router
@@ -204,66 +205,9 @@ async def process_parliament_tv_sequentially(
                                     processed_segments.append(process_result)
                                     logger.info(f"Successfully processed segment {i+1}")
                                     
-                                    # Run recognition on each individual segment (efficient approach)
-                                    try:
-                                        logger.info(f"Starting recognition for segment {i+1}: {segment['video_path']}")
-                                        
-                                        # Import recognition function
-                                        from backend.api.v1.endpoints.recognition_processor import process_recognition_background
-                                        from backend.db.session import get_db
-                                        from backend.db.models.capture import CaptureSession
-                                        import asyncio
-                                        import threading
-                                        
-                                        def trigger_segment_recognition(segment_video_path, segment_audio_path, segment_num):
-                                            """Trigger recognition for individual segment"""
-                                            try:
-                                                logger.info(f"Recognition thread started for segment {segment_num}")
-                                                
-                                                # Temporarily update capture to use this segment for recognition
-                                                db_temp = next(get_db())
-                                                capture_temp = db_temp.query(CaptureSession).filter(CaptureSession.id == capture_id).first()
-                                                if capture_temp:
-                                                    # Store original paths
-                                                    original_video_path = getattr(capture_temp, 'video_path', None)
-                                                    original_file_path = capture_temp.file_path
-                                                    
-                                                    # Temporarily set to segment files
-                                                    capture_temp.video_path = segment_video_path
-                                                    capture_temp.file_path = segment_video_path
-                                                    db_temp.commit()
-                                                    
-                                                    try:
-                                                        # Run recognition on this segment
-                                                        loop = asyncio.new_event_loop()
-                                                        asyncio.set_event_loop(loop)
-                                                        loop.run_until_complete(process_recognition_background(capture_id, None))
-                                                        loop.close()
-                                                        logger.info(f"Recognition completed for segment {segment_num}")
-                                                        
-                                                    finally:
-                                                        # Restore original paths
-                                                        capture_temp.video_path = original_video_path
-                                                        capture_temp.file_path = original_file_path
-                                                        db_temp.commit()
-                                                        db_temp.close()
-                                                        
-                                            except Exception as e:
-                                                logger.error(f"Error in segment {segment_num} recognition: {str(e)}")
-                                        
-                                        # Start recognition for this segment in background
-                                        recognition_thread = threading.Thread(
-                                            target=trigger_segment_recognition,
-                                            args=(segment["video_path"], segment["audio_path"], i+1),
-                                            name=f"recognition-segment-{capture_id}-{i+1}",
-                                            daemon=True
-                                        )
-                                        recognition_thread.start()
-                                        
-                                        logger.info(f"Recognition triggered for segment {i+1}")
-                                        
-                                    except Exception as e:
-                                        logger.error(f"Error triggering recognition for segment {i+1}: {str(e)}")
+                                    # Note: Recognition will be triggered once after all segments are processed
+                                    # This matches the non-sequential pipeline approach for consistency
+                                    logger.info(f"Segment {i+1} processed - recognition will be triggered after all segments complete")
                                         
                                 else:
                                     logger.error(f"Failed to process segment {i+1}: {process_result.get('error')}")
@@ -273,7 +217,7 @@ async def process_parliament_tv_sequentially(
                                 import traceback
                                 logger.error(f"Segment processing error traceback: {traceback.format_exc()}")
                     
-                    logger.info(f"Completed processing {len(processed_segments)}/{len(segment_results)} segments with individual recognition")
+                    logger.info(f"Completed processing {len(processed_segments)}/{len(segment_results)} segments")
                     capture.capture_metadata["processed_segments"] = len(processed_segments)
                     
                     # Set video_path for recognition pipeline
@@ -286,7 +230,7 @@ async def process_parliament_tv_sequentially(
                                 concat_video_path = sequential_processor.concatenate_segments(
                                     segment_paths=video_segment_paths,
                                     output_path=f"{media_dir}/{capture_id}_concatenated.mp4",
-                                    media_type="video"
+                                    is_audio=False
                                 )
                                 
                                 # Update capture with concatenated video path
@@ -306,16 +250,127 @@ async def process_parliament_tv_sequentially(
                             capture.video_path = video_segment_paths[0]
                             capture.file_path = video_segment_paths[0]
                             logger.info(f"Single segment processing - using: {video_segment_paths[0]}")
+                        
+                        # Now trigger unified recognition on the complete/concatenated video
+                        # This matches the non-sequential pipeline approach
+                        logger.info(f"Starting unified recognition for session {capture_id}")
+                        try:
+                            from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
+                            
+                            # Mark capture as completed before recognition
+                            capture.status = "completed"
+                            db.commit()
+                            
+                            # Start recognition using the same approach as non-sequential pipeline
+                            recognition_service = MultimodalRecognitionService()
+                            recognition_result = recognition_service.start_combined_recognition(capture_id)
+                            
+                            if recognition_result.get("success", False):
+                                logger.info(f"Recognition started successfully for session {capture_id}")
+                                capture.capture_metadata["recognition_triggered"] = True
+                                capture.capture_metadata["recognition_started_at"] = datetime.now().isoformat()
+                                
+                                # Wait for recognition to complete and then export to Supabase
+                                # This matches the non-sequential pipeline approach
+                                logger.info(f"Waiting for recognition to complete for session {capture_id}")
+                                
+                                # Wait for recognition completion (similar to non-sequential pipeline)
+                                import time
+                                max_wait_time = 3600  # 1 hour max for recognition
+                                start_time = time.time()
+                                recognition_completed = False
+                                
+                                while time.time() - start_time < max_wait_time:
+                                    try:
+                                        # Refresh capture from database
+                                        db.refresh(capture)
+                                        status_value = capture.recognition_status
+                                        
+                                        logger.info(f"Recognition status: {status_value}")
+                                        
+                                        if status_value == "completed":
+                                            recognition_completed = True
+                                            break
+                                        elif status_value == "failed":
+                                            error_message = capture.error_message if hasattr(capture, 'error_message') else "Unknown error"
+                                            logger.error(f"Recognition failed: {error_message}")
+                                            break
+                                    except Exception as e:
+                                        logger.error(f"Error checking recognition status: {str(e)}")
+                                    
+                                    # Wait before checking again
+                                    time.sleep(60)
+                                
+                                if recognition_completed:
+                                    logger.info(f"Recognition completed for session {capture_id}. Starting export to Supabase...")
+                                    
+                                    # Export to Supabase using the same approach as non-sequential pipeline
+                                    try:
+                                        # Get recognition results
+                                        recognition_data = recognition_service.get_recognition_results(capture_id)
+                                        
+                                        if recognition_data:
+                                            logger.info(f"Recognition data retrieved for session {capture_id}. Starting Supabase export...")
+                                            
+                                            # Import required modules for export
+                                            from backend.services.recognition.simplified_export import normalize_and_export_clips
+                                            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                                            
+                                            # Create clips service to get SQLite session
+                                            clips_service = ParliamentClipsIntegrationService()
+                                            
+                                            # Use the SQLite session for export (matching non-sequential approach)
+                                            with clips_service.get_sqlite_session() as sqlite_db:
+                                                logger.info(f"Running normalization and export for session {capture_id}")
+                                                export_result = normalize_and_export_clips(
+                                                    db=sqlite_db,
+                                                    video_id=capture_id,
+                                                    supabase_service=None  # Will create a new instance internally
+                                                )
+                                                logger.info(f"Export result: {export_result}")
+                                                
+                                                if export_result.get("success", False):
+                                                    logger.info(f"Successfully exported recognition results to Supabase for session {capture_id}")
+                                                    capture.capture_metadata["supabase_export_completed"] = True
+                                                    capture.capture_metadata["supabase_export_completed_at"] = datetime.now().isoformat()
+                                                else:
+                                                    logger.error(f"Failed to export to Supabase: {export_result.get('error', 'Unknown error')}")
+                                                    capture.capture_metadata["supabase_export_error"] = export_result.get('error', 'Unknown error')
+                                        else:
+                                            logger.error(f"No recognition data found for session {capture_id}")
+                                            capture.capture_metadata["export_error"] = "No recognition data found"
+                                            
+                                    except Exception as export_error:
+                                        logger.error(f"Error in Supabase export for session {capture_id}: {str(export_error)}")
+                                        import traceback
+                                        logger.error(f"Export traceback: {traceback.format_exc()}")
+                                        capture.capture_metadata["supabase_export_error"] = str(export_error)
+                                        
+                                else:
+                                    logger.error(f"Recognition timed out or failed for session {capture_id}")
+                                    capture.capture_metadata["recognition_timeout"] = True
+                                    
+                            else:
+                                logger.error(f"Failed to start recognition: {recognition_result.get('error', 'Unknown error')}")
+                                capture.capture_metadata["recognition_error"] = recognition_result.get('error', 'Unknown error')
+                                
+                        except Exception as e:
+                            logger.error(f"Error starting unified recognition: {str(e)}")
+                            import traceback
+                            logger.error(f"Recognition error traceback: {traceback.format_exc()}")
+                            capture.capture_metadata["recognition_error"] = str(e)
                     else:
                         logger.error("No video segments found - recognition will not be possible")
+                        capture.status = "failed"
+                        capture.error_message = "No video segments found for recognition"
                         
-                        # Concatenate audio segments if there are multiple
+                        # Concatenate audio segments if there are multiple (for completeness)
                         if len(audio_segment_paths) > 1:
                             try:
                                 concat_audio_path = sequential_processor.concatenate_segments(
                                     segment_paths=audio_segment_paths,
                                     output_path=f"{media_dir}/{capture_id}_concatenated.mp3",
-                                    media_type="audio"
+                                    is_audio=True
                                 )
                                 
                                 # Update capture with concatenated audio path
@@ -325,21 +380,8 @@ async def process_parliament_tv_sequentially(
                                 logger.error(f"Error concatenating audio segments: {str(e)}")
                                 capture.capture_metadata["audio_concatenation_error"] = str(e)
                     
-                    # Mark capture as completed
-                    capture.status = "completed"
                     logger.info(f"Completed sequential processing for session {capture_id}")
-                    logger.info(f"Recognition has been triggered individually for each of the {len(processed_segments)} segments")
-                    
-                    # Note: Recognition is now triggered individually for each segment above (much more efficient)
-                    # No need for a single recognition trigger on concatenated files
-                    
-                    # Update capture metadata to track that recognition was triggered for segments
-                    if not hasattr(capture, 'capture_metadata') or capture.capture_metadata is None:
-                        capture.capture_metadata = {}
-                    
-                    capture.capture_metadata["segment_recognition_triggered"] = True
-                    capture.capture_metadata["segment_recognition_started_at"] = datetime.now().isoformat()
-                    capture.capture_metadata["segments_with_recognition"] = len(processed_segments)
+                    logger.info(f"Unified recognition has been triggered on the complete video (matching non-sequential approach)")
                 else:
                     # Mark capture as failed
                     capture.status = "failed"
