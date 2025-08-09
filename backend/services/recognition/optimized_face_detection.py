@@ -768,9 +768,14 @@ class OptimizedFaceDetector:
                                 unique_face_ids.append(face_id)
                                 logger.debug(f"Found first face ID: {face_id}")
                             
-                            # Save face image
-                            face_filename = f"face_{face_id}_{timestamp:.2f}.jpg"
+                            # Save face image with timestamp-based naming (one face per second max)
+                            # This is much more efficient than face_id-based naming
+                            face_filename = f"face_{int(timestamp)}.jpg"
                             face_path = os.path.join(output_dir, face_filename)
+                            
+                            # Skip if we already have a face for this second (avoid redundant saves)
+                            if os.path.exists(face_path):
+                                continue
                             
                             try:
                                 # Ensure the directory exists before writing
@@ -966,9 +971,13 @@ class OptimizedFaceDetector:
                                             # Extract and save face image for tracked faces too
                                             top, right, bottom, left = face_loc
                                             
-                                            # Save face image for tracked face
-                                            face_filename = f"face_{face_id}_{timestamp:.2f}.jpg"
+                                            # Save face image for tracked face with timestamp-based naming
+                                            face_filename = f"face_{int(timestamp)}.jpg"
                                             face_path = os.path.join(output_dir, face_filename)
+                                            
+                                            # Skip if we already have a face for this second (avoid redundant saves)
+                                            if os.path.exists(face_path):
+                                                continue
                                             
                                             try:
                                                 # Ensure the directory exists before writing
