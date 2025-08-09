@@ -298,9 +298,10 @@ class ParliamentTVSequentialProcessor:
             monitor_thread.daemon = True
             monitor_thread.start()
             
-            # Wait for both processes to complete
+            # Wait for all three processes to complete
             video_stdout, video_stderr = video_process.communicate()
             audio_stdout, audio_stderr = audio_process.communicate()
+            wav_stdout, wav_stderr = wav_process.communicate()
             
             # Wait for monitor thread to finish
             monitor_thread.join(timeout=10)
@@ -308,6 +309,7 @@ class ParliamentTVSequentialProcessor:
             # Check results
             video_success = video_process.returncode == 0
             audio_success = audio_process.returncode == 0
+            wav_success = wav_process.returncode == 0
             
             # Log results
             if video_success:
@@ -321,6 +323,12 @@ class ParliamentTVSequentialProcessor:
             else:
                 logger.error(f"Audio download failed with code {audio_process.returncode}")
                 logger.error(f"Audio stderr: {audio_stderr.decode()}")
+            
+            if wav_success:
+                logger.info(f"WAV download completed successfully: {wav_path} ({os.path.getsize(wav_path) if os.path.exists(wav_path) else 0} bytes)")
+            else:
+                logger.error(f"WAV download failed with code {wav_process.returncode}")
+                logger.error(f"WAV stderr: {wav_stderr.decode()}")
             
             # Verify files exist and have content
             if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
@@ -336,20 +344,31 @@ class ParliamentTVSequentialProcessor:
                 audio_success = False
                 logger.error(f"Audio file does not exist or is empty: {audio_path}")
             
+            if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
+                wav_success = True
+                logger.info(f"WAV file verified: {wav_path} ({os.path.getsize(wav_path)} bytes)")
+            else:
+                wav_success = False
+                logger.error(f"WAV file does not exist or is empty: {wav_path}")
+            
             # Clean up progress log files
             try:
                 if os.path.exists(video_log):
                     os.remove(video_log)
                 if os.path.exists(audio_log):
                     os.remove(audio_log)
+                if os.path.exists(wav_log):
+                    os.remove(wav_log)
             except Exception as e:
                 logger.error(f"Error cleaning up progress logs: {str(e)}")
             
             return {
                 "video_path": video_path,
                 "audio_path": audio_path,
+                "wav_path": wav_path,
                 "video_success": video_success,
-                "audio_success": audio_success
+                "audio_success": audio_success,
+                "wav_success": wav_success
             }
             
         except Exception as e:
@@ -466,19 +485,18 @@ class ParliamentTVSequentialProcessor:
             # Extract audio segment using ffmpeg with seeking
             logger.info(f"Extracting audio segment {start_time}-{end_time}s from {audio_path} to {segment_audio_path}")
             
-            # Optimized command structure for faster audio segment extraction
+            # Optimized command structure for faster audio segment extraction from local files
+            # Note: Removed network-specific options (-protocol_whitelist, -allowed_extensions) 
+            # as they are only valid for network streams, not local files
             audio_cmd = [
                 "ffmpeg",
                 "-y",  # Overwrite output files
-                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-                "-allowed_extensions", "ALL",
                 "-ss", str(start_time),  # Start time (before input for faster seeking)
                 "-i", audio_path,  # Input file (local)
                 "-t", str(end_time - start_time),  # Duration
                 "-c:a", "copy",  # Try stream copying first (much faster)
                 "-avoid_negative_ts", "1",
                 "-vn",  # No video
-                "-ignore_unknown",  # Ignore unknown HLS tags
                 "-threads", "auto",  # Use all available CPU cores
                 segment_audio_path
             ]
