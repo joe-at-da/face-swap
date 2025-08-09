@@ -89,6 +89,9 @@ async def process_parliament_tv_sequentially(
     
     # Create a background task for the sequential processing
     def process_parliament_tv_sequential_task():
+        # Import CaptureSession within the function scope to avoid UnboundLocalError
+        from backend.db.models.capture import CaptureSession
+        
         try:
             # Step 1: Extract stream URLs
             logger.info(f"Extracting stream URLs from {url}")

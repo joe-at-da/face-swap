@@ -12,11 +12,11 @@ services:
       resources:
         limits:
           memory: 32G  # Increased memory allocation for large Whisper transcriptions
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+        # reservations:
+        #   devices:
+            # - driver: nvidia
+            #   count: all
+            #   capabilities: [gpu]
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/parliament_clips
       - TEST_DATABASE_URL=postgresql://postgres:postgres@db:5432/test_parliament_clips
