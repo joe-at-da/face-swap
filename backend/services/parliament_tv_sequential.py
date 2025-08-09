@@ -913,30 +913,8 @@ class ParliamentTVSequentialProcessor:
                 # Wait a bit before starting the next segment
                 time.sleep(5)
             
-            # After all segments are processed, trigger export to Supabase
-            logger.info(f"All {len(segment_results)} segments processed. Triggering final export to Supabase for session {session_id}")
-            try:
-                # Import the required functions for final export
-                from backend.services.recognition.simplified_export import normalize_and_export_clips
-                from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-                
-                # Create clips service to get SQLite session
-                clips_service = ParliamentClipsIntegrationService()
-                
-                # Use the SQLite session for final export
-                with clips_service.get_sqlite_session() as sqlite_db:
-                    logger.info(f"Running final normalization and export for session {session_id}")
-                    final_export_result = normalize_and_export_clips(
-                        db=sqlite_db,
-                        video_id=session_id,
-                        supabase_service=None  # Will create a new instance internally
-                    )
-                    logger.info(f"Final export result: {final_export_result}")
-                    
-            except Exception as export_error:
-                logger.error(f"Error in final export for session {session_id}: {str(export_error)}")
-                import traceback
-                logger.error(f"Export traceback: {traceback.format_exc()}")
+            # All segments processed - export will be handled by the endpoint after recognition completes
+            logger.info(f"All {len(segment_results)} segments processed for session {session_id}. Export will be triggered after unified recognition completes.")
             
             # Return the results of all segments
             return {

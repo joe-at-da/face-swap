@@ -6,18 +6,19 @@ in 30-minute segments to avoid memory issues with long-running videos.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Body
+import asyncio
+import uuid
+import os
+from datetime import datetime
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
 from backend.db.session import get_db
 from backend.db.models.capture import CaptureSession
 from backend.services.parliament_tv_sequential import ParliamentTVSequentialProcessor
-from backend.services.parliament_tv import ParliamentTVCapture
-from backend.core.config import settings
-from backend.api.deps import get_api_key
-import logging
-import os
-from datetime import datetime
+from backend.core.security import get_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -312,22 +313,73 @@ async def process_parliament_tv_sequentially(
                                         if recognition_data:
                                             logger.info(f"Recognition data retrieved for session {capture_id}. Starting Supabase export...")
                                             
-                                            # Import required modules for export
-                                            from backend.services.recognition.simplified_export import normalize_and_export_clips
-                                            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
+                                            # Use the same export approach as non-sequential pipeline
+                                            # Process recognition results directly instead of reading from SQLite
+                                            from backend.services.integration.supabase_integration import SupabaseIntegration
+                                            from backend.services.utils.serialization import make_json_serializable
+                                            import json
                                             
-                                            # Create clips service to get SQLite session
-                                            clips_service = ParliamentClipsIntegrationService()
+                                            # Get video metadata
+                                            db.refresh(capture)
                                             
-                                            # Use the SQLite session for export (matching non-sequential approach)
-                                            with clips_service.get_sqlite_session() as sqlite_db:
-                                                logger.info(f"Running normalization and export for session {capture_id}")
-                                                export_result = normalize_and_export_clips(
-                                                    db=sqlite_db,
+                                            # Handle capture_metadata properly
+                                            capture_metadata = {}
+                                            if capture.capture_metadata:
+                                                if isinstance(capture.capture_metadata, dict):
+                                                    capture_metadata = capture.capture_metadata
+                                                elif isinstance(capture.capture_metadata, str):
+                                                    try:
+                                                        capture_metadata = json.loads(capture.capture_metadata)
+                                                    except json.JSONDecodeError:
+                                                        logger.error(f"Error parsing capture metadata JSON for capture {capture_id}")
+                                                else:
+                                                    logger.error(f"Unexpected metadata type: {type(capture.capture_metadata)}")
+                                            
+                                            # Use the concatenated video path
+                                            video_file_path = capture.video_path or capture.file_path
+                                            if not video_file_path:
+                                                video_file_path = f"/app/data/media/parliament_tv_{capture_id}.mp4"
+                                            
+                                            audio_file_path = os.path.join(os.path.dirname(video_file_path), f"audio_{capture_id}.mp3")
+                                            
+                                            video_metadata = {
+                                                "video_id": capture_id,
+                                                "title": capture.title,
+                                                "description": capture.description,
+                                                "duration": capture.duration,
+                                                "file_path": video_file_path,
+                                                "audio_path": audio_file_path,
+                                                "video_url": capture_metadata.get("video_url"),
+                                                "audio_url": capture_metadata.get("audio_url"),
+                                                "original_url": capture_metadata.get("original_url")
+                                            }
+                                            
+                                            # Export to Supabase using the same approach as non-sequential pipeline
+                                            logger.info(f"Initializing SupabaseIntegration for export of session {capture_id}")
+                                            supabase = SupabaseIntegration()
+                                            
+                                            # Serialize data
+                                            try:
+                                                serializable_recognition_data = make_json_serializable(recognition_data)
+                                                serializable_video_metadata = make_json_serializable(video_metadata)
+                                                logger.info(f"Successfully serialized data for session {capture_id}")
+                                            except Exception as e:
+                                                logger.error(f"Error serializing data: {str(e)}")
+                                                serializable_recognition_data = {"error": "Serialization failed"}
+                                                serializable_video_metadata = {"video_id": capture_id, "error": "Serialization failed"}
+                                            
+                                            # Export recognition results to Supabase
+                                            try:
+                                                logger.info(f"Calling export_and_upload_recognition for session {capture_id}")
+                                                export_result = supabase.export_and_upload_recognition(
+                                                    video_path=video_file_path,
+                                                    recognition_results=serializable_recognition_data,
+                                                    video_metadata=serializable_video_metadata,
+                                                    db_session=db,
                                                     video_id=capture_id,
-                                                    supabase_service=None  # Will create a new instance internally
+                                                    upload_media=True
                                                 )
-                                                logger.info(f"Export result: {export_result}")
+                                                logger.info(f"Export result for session {capture_id}: {export_result}")
                                                 
                                                 if export_result.get("success", False):
                                                     logger.info(f"Successfully exported recognition results to Supabase for session {capture_id}")
@@ -336,6 +388,13 @@ async def process_parliament_tv_sequentially(
                                                 else:
                                                     logger.error(f"Failed to export to Supabase: {export_result.get('error', 'Unknown error')}")
                                                     capture.capture_metadata["supabase_export_error"] = export_result.get('error', 'Unknown error')
+                                                    
+                                            except Exception as e:
+                                                logger.error(f"Error in export_and_upload_recognition: {str(e)}")
+                                                import traceback
+                                                logger.error(f"Export traceback: {traceback.format_exc()}")
+                                                capture.capture_metadata["supabase_export_error"] = str(e)
+                                                
                                         else:
                                             logger.error(f"No recognition data found for session {capture_id}")
                                             capture.capture_metadata["export_error"] = "No recognition data found"
