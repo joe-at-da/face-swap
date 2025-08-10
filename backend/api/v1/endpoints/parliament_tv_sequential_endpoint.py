@@ -238,8 +238,8 @@ async def process_parliament_tv_sequentially(
                                 )
                                 
                                 # Update capture with concatenated video path
-                                capture.file_path = concat_video_path
-                                capture.video_path = concat_video_path  # For recognition pipeline
+                                capture.video_path = concat_video_path  # Model field (primary)
+                                capture.capture_metadata["video_url"] = stream_info.get("video_url", "")  # Stream URL (original)
                                 capture.capture_metadata["concatenated_video_path"] = concat_video_path
                                 
                                 # Also concatenate audio segments for recognition
@@ -250,14 +250,22 @@ async def process_parliament_tv_sequentially(
                                             output_path=f"{media_dir}/{capture_id}_concatenated.mp3",
                                             is_audio=True
                                         )
-                                        capture.capture_metadata["concatenated_audio_path"] = concat_audio_path
-                                        capture.capture_metadata["audio_url"] = concat_audio_path  # Match non-sequential: use audio_url not audio_path
+                                        # Store audio and video paths exactly like non-sequential pipeline
+                                        capture.audio_path = concat_audio_path  # Model field (primary)
+                                        capture.capture_metadata["audio_file_path"] = concat_audio_path  # Metadata field (secondary)
+                                        capture.capture_metadata["audio_url"] = stream_info.get("audio_url", "")  # Stream URL (original)
                                         logger.info(f"Successfully concatenated {len(audio_segment_paths)} audio segments")
                                     except Exception as audio_e:
                                         logger.warning(f"Audio concatenation failed: {str(audio_e)}, using first audio segment")
-                                        capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None
+                                        # Fallback: use first audio segment, matching non-sequential pattern
+                                        first_audio = audio_segment_paths[0] if audio_segment_paths else None
+                                        if first_audio:
+                                            capture.audio_path = first_audio  # Model field (primary)
+                                            capture.capture_metadata["audio_file_path"] = first_audio  # Metadata field (secondary)
                                 else:
-                                    capture.capture_metadata["audio_url"] = None
+                                    # No audio segments available
+                                    capture.audio_path = None  # Model field (primary)
+                                    capture.capture_metadata["audio_file_path"] = None  # Metadata field (secondary)
                                 
                                 logger.info(f"Successfully concatenated {len(video_segment_paths)} video segments")
                             except Exception as e:
@@ -266,13 +274,17 @@ async def process_parliament_tv_sequentially(
                                 # Fallback to first segment if concatenation fails
                                 capture.video_path = video_segment_paths[0]
                                 capture.file_path = video_segment_paths[0]
-                                capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # Match non-sequential: use audio_url
+                                capture.capture_metadata["audio_path"] = audio_segment_paths[0] if audio_segment_paths else None  # For recognition service
+                                capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # For metadata compatibility
+                                capture.audio_path = audio_segment_paths[0] if audio_segment_paths else None  # Set model field directly
                                 logger.info(f"Using first segment as fallback: {video_segment_paths[0]}")
                         else:
                             # Single segment - use it directly
                             capture.video_path = video_segment_paths[0]
                             capture.file_path = video_segment_paths[0]
-                            capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # Match non-sequential: use audio_url
+                            capture.capture_metadata["audio_path"] = audio_segment_paths[0] if audio_segment_paths else None  # For recognition service
+                            capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # For metadata compatibility
+                            capture.audio_path = audio_segment_paths[0] if audio_segment_paths else None  # Set model field directly
                             logger.info(f"Single segment processing - using: {video_segment_paths[0]}")
                         
                         # Now trigger unified recognition on the complete/concatenated video
@@ -283,7 +295,21 @@ async def process_parliament_tv_sequentially(
                             
                             # Mark capture as completed before recognition
                             capture.status = "completed"
+                            
+                            # DEBUG: Log the exact metadata being stored
+                            logger.info(f"DEBUG: About to commit capture {capture_id} with metadata:")
+                            logger.info(f"DEBUG: capture.capture_metadata = {capture.capture_metadata}")
+                            logger.info(f"DEBUG: capture.audio_path = {capture.audio_path}")
+                            logger.info(f"DEBUG: capture.video_path = {capture.video_path}")
+                            
                             db.commit()
+                            
+                            # DEBUG: Verify what was actually stored by re-reading from DB
+                            db.refresh(capture)
+                            logger.info(f"DEBUG: After commit and refresh:")
+                            logger.info(f"DEBUG: capture.capture_metadata = {capture.capture_metadata}")
+                            logger.info(f"DEBUG: capture.audio_path = {capture.audio_path}")
+                            logger.info(f"DEBUG: capture.video_path = {capture.video_path}")
                             
                             # Start recognition using the same approach as non-sequential pipeline
                             recognition_service = MultimodalRecognitionService()

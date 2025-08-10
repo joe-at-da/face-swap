@@ -631,9 +631,9 @@ class ParliamentTVSequentialProcessor:
                 logger.info("WAV segments will not be available for this processing run - may affect transcription accuracy")
             
             return {
-                "segment_video_path": segment_video_path if video_process.returncode == 0 else None,
-                "segment_audio_path": segment_audio_path if audio_process.returncode == 0 else None,
-                "segment_wav_path": segment_wav_path if wav_success else None,
+                "video_path": segment_video_path if video_process.returncode == 0 else None,
+                "audio_path": segment_audio_path if audio_process.returncode == 0 else None,
+                "wav_path": segment_wav_path if wav_success else None,
                 "video_success": video_process.returncode == 0,
                 "audio_success": audio_process.returncode == 0,
                 "wav_success": wav_success
@@ -890,8 +890,8 @@ class ParliamentTVSequentialProcessor:
                     title=segment_title,
                     description=description,
                     session_id=session_id,
-                    video_path=segment_extraction["segment_video_path"],
-                    audio_path=segment_extraction["segment_audio_path"]
+                    video_path=segment_extraction["video_path"],
+                    audio_path=segment_extraction["audio_path"]
                 )
                 
                 segment_results.append({
@@ -899,8 +899,8 @@ class ParliamentTVSequentialProcessor:
                     "start_time": start_time,
                     "end_time": end_time,
                     "result": segment_result,
-                    "video_path": segment_extraction["segment_video_path"],
-                    "audio_path": segment_extraction["segment_audio_path"]
+                    "video_path": segment_extraction["video_path"],
+                    "audio_path": segment_extraction["audio_path"]
                 })
                 
                 # Check if the segment processing was successful

@@ -89,6 +89,13 @@ class MultimodalRecognitionService:
                 logger.error(f"Video not found: {video_id}")
                 return {"success": False, "error": f"Video not found: {video_id}"}
             
+            # DEBUG: Log what the recognition service actually receives
+            logger.info(f"DEBUG: Recognition service received video {video_id}:")
+            logger.info(f"DEBUG: video.metadata = {video.metadata}")
+            logger.info(f"DEBUG: video.audio_path = {video.audio_path}")
+            logger.info(f"DEBUG: video.video_path = {video.video_path}")
+            logger.info(f"DEBUG: type(video.metadata) = {type(video.metadata)}")
+            
             # Check if the video has metadata with separate audio and video URLs
             metadata = {}
             if video.metadata:
@@ -96,6 +103,8 @@ class MultimodalRecognitionService:
                     # Use the make_json_serializable function to handle all metadata types
                     # including SQLAlchemy MetaData objects
                     metadata = make_json_serializable(video.metadata)
+                    logger.info(f"DEBUG: After make_json_serializable: metadata = {metadata}")
+                    logger.info(f"DEBUG: type(metadata) = {type(metadata)}")
                     
                     # If metadata is still a string after serialization, parse it as JSON
                     if isinstance(metadata, str):
@@ -118,6 +127,13 @@ class MultimodalRecognitionService:
             # Check if we have both audio and video files
             video_path = video.video_path
             audio_path = metadata.get("audio_path") or video.audio_path
+            
+            # DEBUG: Log the final paths being used
+            logger.info(f"DEBUG: Final paths determined:")
+            logger.info(f"DEBUG: video_path = {video_path}")
+            logger.info(f"DEBUG: audio_path from metadata = {metadata.get('audio_path')}")
+            logger.info(f"DEBUG: audio_path from video.audio_path = {video.audio_path}")
+            logger.info(f"DEBUG: final audio_path = {audio_path}")
             
             if not video_path or not os.path.exists(video_path):
                 logger.error(f"Video file not found: {video_path}")
