@@ -365,7 +365,7 @@ async def process_parliament_tv_sequentially(
                                             # Use the same export approach as non-sequential pipeline
                                             # Process recognition results directly instead of reading from SQLite
                                             from backend.services.integration.supabase_integration import SupabaseIntegration
-                                            from backend.services.utils.serialization import make_json_serializable
+                                            from backend.services.utils import make_json_serializable
                                             import json
                                             
                                             # Get video metadata
