@@ -134,7 +134,7 @@ async def process_parliament_tv_sequentially(
                 title=title,
                 description=description,
                 status="draft",
-                capture_metadata=capture_metadata,
+                capture_metadata=capture_metadata,  # This maps to 'metadata' column in DB
                 duration=duration if duration else (7200 if not is_live else 86400)  # Default to 2 hours for archived, 24 hours for live
             )
             db.add(capture)
@@ -223,6 +223,9 @@ async def process_parliament_tv_sequentially(
                     
                     # Set video_path for recognition pipeline
                     if video_segment_paths:
+                        # Define media directory path
+                        media_dir = "/app/data/media"
+                        
                         if len(video_segment_paths) > 1:
                             logger.info(f"Processing completed with {len(segment_results)} segments. Starting concatenation...")
                             
@@ -238,6 +241,24 @@ async def process_parliament_tv_sequentially(
                                 capture.file_path = concat_video_path
                                 capture.video_path = concat_video_path  # For recognition pipeline
                                 capture.capture_metadata["concatenated_video_path"] = concat_video_path
+                                
+                                # Also concatenate audio segments for recognition
+                                if audio_segment_paths:
+                                    try:
+                                        concat_audio_path = sequential_processor.concatenate_segments(
+                                            segment_paths=audio_segment_paths,
+                                            output_path=f"{media_dir}/{capture_id}_concatenated.mp3",
+                                            is_audio=True
+                                        )
+                                        capture.capture_metadata["concatenated_audio_path"] = concat_audio_path
+                                        capture.capture_metadata["audio_url"] = concat_audio_path  # Match non-sequential: use audio_url not audio_path
+                                        logger.info(f"Successfully concatenated {len(audio_segment_paths)} audio segments")
+                                    except Exception as audio_e:
+                                        logger.warning(f"Audio concatenation failed: {str(audio_e)}, using first audio segment")
+                                        capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None
+                                else:
+                                    capture.capture_metadata["audio_url"] = None
+                                
                                 logger.info(f"Successfully concatenated {len(video_segment_paths)} video segments")
                             except Exception as e:
                                 logger.error(f"Error concatenating video segments: {str(e)}")
@@ -245,11 +266,13 @@ async def process_parliament_tv_sequentially(
                                 # Fallback to first segment if concatenation fails
                                 capture.video_path = video_segment_paths[0]
                                 capture.file_path = video_segment_paths[0]
+                                capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # Match non-sequential: use audio_url
                                 logger.info(f"Using first segment as fallback: {video_segment_paths[0]}")
                         else:
                             # Single segment - use it directly
                             capture.video_path = video_segment_paths[0]
                             capture.file_path = video_segment_paths[0]
+                            capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # Match non-sequential: use audio_url
                             logger.info(f"Single segment processing - using: {video_segment_paths[0]}")
                         
                         # Now trigger unified recognition on the complete/concatenated video
