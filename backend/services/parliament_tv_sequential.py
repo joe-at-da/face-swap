@@ -695,15 +695,15 @@ class ParliamentTVSequentialProcessor:
                 db = next(get_db())
                 session = db.query(CaptureSession).filter(CaptureSession.id == session_id).first()
                 if session:
-                    # Add segment info to metadata
-                    if not session.metadata:
-                        session.metadata = {}
+                    # Add segment info to capture_metadata (the correct field name)
+                    if not session.capture_metadata:
+                        session.capture_metadata = {}
                     
-                    if "segments" not in session.metadata:
-                        session.metadata["segments"] = []
+                    if "segments" not in session.capture_metadata:
+                        session.capture_metadata["segments"] = []
                     
                     segment_info = {
-                        "segment_number": len(session.metadata["segments"]) + 1,
+                        "segment_number": len(session.capture_metadata["segments"]) + 1,
                         "start_time": start_time,
                         "end_time": end_time,
                         "duration": end_time - start_time,
@@ -713,7 +713,7 @@ class ParliamentTVSequentialProcessor:
                         "description": description
                     }
                     
-                    session.metadata["segments"].append(segment_info)
+                    session.capture_metadata["segments"].append(segment_info)
                     db.commit()
                     logger.info(f"Added segment metadata to session {session_id}")
                     
