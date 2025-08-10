@@ -166,7 +166,7 @@ async def process_parliament_tv_sequentially(
                 # Check if processing was successful
                 if processing_result.get("success", False):
                     # Get segment results for concatenation
-                    segment_results = processing_result.get("segment_results", [])
+                    segment_results = processing_result.get("segments", [])
                     
                     # Get segment results and set up video path for recognition
                     video_segment_paths = []
