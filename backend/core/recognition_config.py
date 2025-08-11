@@ -58,6 +58,47 @@ class AudioConfig:
     # Maximum silence duration between segments from the same speaker (in seconds)
     MAX_SILENCE_DURATION = 2.0
 
+# Face detection configuration
+class FaceDetectionConfig:
+    """Face detection optimization parameters."""
+    
+    # Frame processing intervals (optimized for Parliament TV)
+    # - Production: Process every 3 seconds (1 FPS for 30fps video = every 90 frames)
+    # - Debug: Process every 2 seconds for faster testing
+    # - Test: Process every 1 second for rapid testing
+    FRAME_INTERVAL_SECONDS = 1.0 if TEST_MODE else (2.0 if DEBUG_MODE else 3.0)
+    
+    # Detection intervals for tracking mode
+    # - Production: Force detection every 150 frames (5 seconds at 30fps)
+    # - Debug: Force detection every 90 frames (3 seconds at 30fps)
+    # - Test: Force detection every 30 frames (1 second at 30fps)
+    DETECTION_INTERVAL_FRAMES = 30 if TEST_MODE else (90 if DEBUG_MODE else 150)
+    
+    # Segment duration for timeline-based face selection (in seconds)
+    SEGMENT_DURATION = 5
+    
+    # Maximum time gap for face tracking continuity (in seconds)
+    MAX_TIME_GAP = 1.5
+    
+    # Face quality thresholds
+    MIN_FACE_SIZE = 200  # Minimum width/height in pixels
+    MIN_FACE_AREA = 40000  # Minimum area in square pixels
+    MIN_CONFIDENCE = 0.6  # Minimum YuNet detection confidence
+    MAX_HORIZONTAL_OFFSET = 0.4  # Maximum distance from center (40%)
+    
+    # Face selection optimization
+    PRIORITIZE_CENTER = True  # Prioritize faces near frame center
+    SELECT_BEST_FRAMES = True  # Select highest quality faces per segment
+    ROI_SCALE = 0.6  # Region of interest scale factor (0-1)
+    
+    # Timeline-based face selection
+    FACES_PER_SEGMENT = 3  # Maximum faces to select per timeline segment
+    MIN_SEGMENT_FACES = 1  # Minimum faces required per segment
+    
+    # Face tracking optimization
+    ENABLE_FACE_TRACKING = True  # Use tracking between detections
+    TRACKING_CONFIDENCE_THRESHOLD = 0.7  # Minimum tracking confidence
+
 # Diarization configuration
 class DiarizationConfig:
     """Speaker diarization configuration parameters."""
@@ -78,6 +119,11 @@ class DiarizationConfig:
     
     # Maximum time gap for proximity matching in seconds
     PROXIMITY_MATCHING_TIME_GAP = 1.0
+    
+    # Speech group validation parameters
+    MIN_SPEECH_GROUP_DURATION = 2.0  # Minimum duration for a valid speech group (seconds)
+    MAX_SPEECH_GROUP_GAP = 3.0  # Maximum gap within a speech group (seconds)
+    SPEAKER_CHANGE_CONFIDENCE = 0.8  # Confidence threshold for speaker changes
 
 # Member matcher configuration
 class MemberMatcherConfig:

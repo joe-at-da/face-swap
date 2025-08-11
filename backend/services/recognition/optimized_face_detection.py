@@ -86,6 +86,29 @@ class OptimizedFaceDetector:
         self.previous_frame = None
         self.current_segment_faces = []
         self.segment_duration = FaceDetectionConfig.SEGMENT_DURATION  # seconds
+        
+        # Load optimized configuration parameters
+        self.frame_interval_seconds = FaceDetectionConfig.FRAME_INTERVAL_SECONDS
+        self.detection_interval_frames = FaceDetectionConfig.DETECTION_INTERVAL_FRAMES
+        self.max_time_gap = FaceDetectionConfig.MAX_TIME_GAP
+        self.min_face_size = FaceDetectionConfig.MIN_FACE_SIZE
+        self.min_face_area = FaceDetectionConfig.MIN_FACE_AREA
+        self.min_confidence = FaceDetectionConfig.MIN_CONFIDENCE
+        self.max_horizontal_offset = FaceDetectionConfig.MAX_HORIZONTAL_OFFSET
+        self.prioritize_center = FaceDetectionConfig.PRIORITIZE_CENTER
+        self.select_best_frames = FaceDetectionConfig.SELECT_BEST_FRAMES
+        self.roi_scale = FaceDetectionConfig.ROI_SCALE
+        self.faces_per_segment = FaceDetectionConfig.FACES_PER_SEGMENT
+        self.min_segment_faces = FaceDetectionConfig.MIN_SEGMENT_FACES
+        self.enable_face_tracking = FaceDetectionConfig.ENABLE_FACE_TRACKING
+        self.tracking_confidence_threshold = FaceDetectionConfig.TRACKING_CONFIDENCE_THRESHOLD
+        
+        logger.info(f"🎯 Optimized face detection initialized:")
+        logger.info(f"   📊 Frame interval: {self.frame_interval_seconds}s")
+        logger.info(f"   🔍 Detection interval: {self.detection_interval_frames} frames")
+        logger.info(f"   📏 Min face size: {self.min_face_size}px")
+        logger.info(f"   🎯 Center priority: {self.prioritize_center}")
+        logger.info(f"   🔄 Face tracking: {self.enable_face_tracking}")
     
     def initialize_yunet_detector(self):
         """Initialize the YuNet face detector from OpenCV"""
@@ -437,6 +460,63 @@ class OptimizedFaceDetector:
         
         return validated_locations, face_encodings        
     
+    def select_best_faces_per_segment(self, segment_faces: Dict[int, Dict[int, Dict]]) -> List[Dict]:
+        """
+        Enhanced timeline-based face selection that selects the best faces from each segment.
+        
+        Args:
+            segment_faces: Dictionary mapping segment_key -> face_id -> face_data
+            
+        Returns:
+            List of selected face data dictionaries
+        """
+        selected_faces = []
+        
+        logger.info(f"🎯 Selecting best faces from {len(segment_faces)} timeline segments")
+        
+        for segment_key, faces_in_segment in segment_faces.items():
+            segment_start_time = segment_key * self.segment_duration
+            segment_end_time = (segment_key + 1) * self.segment_duration
+            
+            logger.debug(f"📊 Processing segment {segment_key} ({segment_start_time:.1f}s-{segment_end_time:.1f}s) with {len(faces_in_segment)} faces")
+            
+            if not faces_in_segment:
+                continue
+                
+            # Sort faces by quality score (descending)
+            sorted_faces = sorted(
+                faces_in_segment.values(), 
+                key=lambda x: x.get("quality_score", 0), 
+                reverse=True
+            )
+            
+            # Select up to faces_per_segment best faces from this segment
+            faces_to_select = min(len(sorted_faces), self.faces_per_segment)
+            
+            for i in range(faces_to_select):
+                face_data = sorted_faces[i].copy()
+                
+                # Add segment metadata for timeline alignment
+                face_data.update({
+                    "segment_key": segment_key,
+                    "segment_start_time": segment_start_time,
+                    "segment_end_time": segment_end_time,
+                    "segment_rank": i + 1,  # Rank within segment (1 = best)
+                    "total_segment_faces": len(faces_in_segment)
+                })
+                
+                selected_faces.append(face_data)
+                
+                logger.debug(f"✅ Selected face {face_data.get('face_id')} from segment {segment_key} "
+                           f"(quality: {face_data.get('quality_score', 0):.3f}, rank: {i+1})")
+        
+        # Sort final selection by timestamp for chronological order
+        selected_faces.sort(key=lambda x: x.get("timestamp", 0))
+        
+        logger.info(f"🎯 Timeline-based selection complete: {len(selected_faces)} faces selected from {len(segment_faces)} segments")
+        
+        return selected_faces
+    
     def calculate_face_quality(self, frame, face_location, frame_center_x, frame_center_y, frame_width, frame_height):
         """
         Calculate quality metrics for a face to determine the best face to use.
@@ -474,9 +554,9 @@ class OptimizedFaceDetector:
         )
         
         # STRICT HORIZONTAL CENTERING CHECK
-        # Reject faces that are too far from center horizontally (more than 40% from center)
-        if horizontal_distance > 0.4:
-            logger.debug(f"Rejecting face at position {horizontal_distance:.2f} from center (threshold: 0.4)")
+        # Reject faces that are too far from center horizontally (configurable threshold)
+        if horizontal_distance > self.max_horizontal_offset:
+            logger.debug(f"Rejecting face at position {horizontal_distance:.2f} from center (threshold: {self.max_horizontal_offset})")
             # Return very low quality score to ensure this face is not selected
             return {
                 "face_width": face_width,
@@ -578,30 +658,46 @@ class OptimizedFaceDetector:
         }
     
     def extract_faces_from_video(self, video_path: str, output_dir: Optional[str] = None, 
-                               interval: float = 3.0, min_confidence: float = 0.6,
-                               prioritize_center: bool = True, select_best_frames: bool = True,
-                               min_face_size: int = 200, min_face_area: int = 40000,
-                               roi_scale: float = 0.6, detection_interval: int = 30) -> Dict[str, Any]:
+                               interval: float = None, min_confidence: float = None,
+                               prioritize_center: bool = None, select_best_frames: bool = None,
+                               min_face_size: int = None, min_face_area: int = None,
+                               roi_scale: float = None, detection_interval: int = None) -> Dict[str, Any]:
         """
         Extract faces from a video file with optimized performance for parliamentary videos
         
         Args:
             video_path: Path to the video file
             output_dir: Directory to save extracted face images
-            interval: Interval in seconds between frame processing (increased from default 1.0)
-            min_confidence: Minimum confidence score for face detection
-            prioritize_center: Whether to prioritize faces in the center of the frame
-            select_best_frames: Whether to select the best quality frames
-            min_face_size: Minimum width and height for detected faces (in pixels)
-            min_face_area: Minimum area for detected faces (in square pixels)
-            roi_scale: Scale factor for region of interest (0-1)
-            detection_interval: Frame interval for forced detection when using tracking
+            interval: Interval in seconds between frame processing (uses config if None)
+            min_confidence: Minimum confidence score for face detection (uses config if None)
+            prioritize_center: Whether to prioritize faces in the center of the frame (uses config if None)
+            select_best_frames: Whether to select the best quality frames (uses config if None)
+            min_face_size: Minimum width and height for detected faces (uses config if None)
+            min_face_area: Minimum area for detected faces (uses config if None)
+            roi_scale: Scale factor for region of interest (uses config if None)
+            detection_interval: Frame interval for forced detection when using tracking (uses config if None)
             
         Returns:
             Dictionary with extraction results
         """
         try:
-            logger.info(f"Extracting faces from video with optimized detection: {video_path}")
+            # Use configuration parameters if not provided
+            interval = interval if interval is not None else self.frame_interval_seconds
+            min_confidence = min_confidence if min_confidence is not None else self.min_confidence
+            prioritize_center = prioritize_center if prioritize_center is not None else self.prioritize_center
+            select_best_frames = select_best_frames if select_best_frames is not None else self.select_best_frames
+            min_face_size = min_face_size if min_face_size is not None else self.min_face_size
+            min_face_area = min_face_area if min_face_area is not None else self.min_face_area
+            roi_scale = roi_scale if roi_scale is not None else self.roi_scale
+            detection_interval = detection_interval if detection_interval is not None else self.detection_interval_frames
+            
+            logger.info(f"🎬 Extracting faces from video with optimized detection: {video_path}")
+            logger.info(f"📊 Using optimized parameters:")
+            logger.info(f"   ⏱️  Frame interval: {interval}s")
+            logger.info(f"   🔍 Detection interval: {detection_interval} frames")
+            logger.info(f"   📏 Min face size: {min_face_size}px")
+            logger.info(f"   🎯 Prioritize center: {prioritize_center}")
+            logger.info(f"   ✨ Select best frames: {select_best_frames}")
             
             # Create output directory if not provided
             if not output_dir:
@@ -609,7 +705,7 @@ class OptimizedFaceDetector:
             
             # Ensure output directory exists
             os.makedirs(output_dir, exist_ok=True)
-            logger.info(f"Using output directory: {output_dir}")
+            logger.info(f"📁 Using output directory: {output_dir}")
             
             # Open the video file
             video = cv2.VideoCapture(video_path)

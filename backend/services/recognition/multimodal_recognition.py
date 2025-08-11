@@ -23,6 +23,14 @@ from backend.services.recognition.transcript_matcher import match_transcripts_to
 
 from backend.db import models
 from backend.core.recognition_config import AudioConfig, DiarizationConfig
+try:
+    from backend.core.recognition_config import FaceDetectionConfig
+except ImportError:
+    # Fallback values if config module is not available
+    class FaceDetectionConfig:
+        SEGMENT_DURATION = 5
+        MAX_TIME_GAP = 1.5
+
 from backend.services.recognition.voice_recognition import VoiceRecognitionService
 from backend.services.recognition.facial_recognition import FacialRecognitionService
 from backend.services.recognition.face_profile_service import FaceProfileService
@@ -39,25 +47,152 @@ from backend.services.utils import make_json_serializable
 logger = logging.getLogger(__name__)
 
 class MultimodalRecognitionService:
-    """Service for combining voice and face recognition for improved speaker identification."""
+    """
+    Service for performing multimodal recognition combining facial recognition,
+    voice recognition, and transcription analysis.
+    """
     
     def __init__(self):
-        """
-        Initialize the multimodal recognition service
-        """
-        from backend.db.session import get_db
-        
-        self.facial_recognition = FacialRecognitionService()
+        self.face_service = FacialRecognitionService()
+        self.facial_recognition = self.face_service  # Alias for backward compatibility
+        self.voice_service = VoiceRecognitionService()
         self.face_profile_service = FaceProfileService()
         self.timeline_service = TimelineService()
-        self.parliament_clips_service = ParliamentClipsIntegrationService()
         self.timeline_face_selector = TimelineFaceSelector()
-        self.member_matcher = None  # Will be initialized when needed with DB session
         
-        # Set up directories using Docker container paths as per user preference
-        self.output_dir = "/app/data/temp/recognition"
+        # Initialize parliament clips service
+        self.parliament_clips_service = ParliamentClipsIntegrationService()
+        
+        # Initialize output directory for temporary files
+        self.output_dir = "/tmp/multimodal_recognition"
         os.makedirs(self.output_dir, exist_ok=True)
         
+        # Initialize member matcher with supabase service
+        from backend.services.integration.supabase_client import SupabaseService
+        supabase_service = SupabaseService()
+        self.member_matcher = ParliamentMemberMatcher(supabase_service)
+        
+        logger.info("🎯 MultimodalRecognitionService initialized with enhanced recognition quality features")
+    
+    def validate_and_refine_speech_groups(self, segments: List[Dict], diarization_data: List[Dict] = None) -> List[Dict]:
+        """
+        Enhanced speech group validation and refinement for better speaker turn detection.
+        
+        Args:
+            segments: List of transcription segments with speaker information
+            diarization_data: Optional diarization data for validation
+            
+        Returns:
+            List of refined segments with improved speech group assignments
+        """
+        if not segments:
+            return segments
+            
+        logger.info(f" Validating and refining speech groups for {len(segments)} segments")
+        
+        refined_segments = []
+        current_speech_group = None
+        current_speaker = None
+        group_start_time = None
+        group_segments = []
+        
+        for i, segment in enumerate(segments):
+            segment_start = segment.get("start", 0)
+            segment_end = segment.get("end", 0)
+            segment_speaker = segment.get("speaker", "Unknown")
+            segment_duration = segment_end - segment_start
+            
+            # Skip segments that are too short to be meaningful
+            if segment_duration < DiarizationConfig.MIN_SPEECH_GROUP_DURATION / 4:
+                logger.debug(f"  Skipping very short segment ({segment_duration:.2f}s): {segment.get('text', '')[:50]}")
+                continue
+            
+            # Check if this is a speaker change
+            speaker_changed = (current_speaker != segment_speaker)
+            
+            # Check if there's a significant time gap
+            time_gap = 0
+            if group_segments:
+                last_segment = group_segments[-1]
+                time_gap = segment_start - last_segment.get("end", 0)
+            
+            significant_gap = time_gap > DiarizationConfig.MAX_SPEECH_GROUP_GAP
+            
+            # Determine if we should start a new speech group
+            should_start_new_group = (
+                current_speech_group is None or  # First group
+                speaker_changed or  # Speaker changed
+                significant_gap  # Significant time gap
+            )
+            
+            if should_start_new_group:
+                # Finalize the previous group if it exists
+                if group_segments:
+                    self._finalize_speech_group(refined_segments, current_speech_group, group_segments)
+                
+                # Start new group
+                current_speech_group = len(refined_segments) + 1
+                current_speaker = segment_speaker
+                group_start_time = segment_start
+                group_segments = []
+                
+                logger.debug(f" Starting new speech group {current_speech_group} for speaker '{current_speaker}' at {segment_start:.2f}s")
+            
+            # Add segment to current group
+            segment_copy = segment.copy()
+            segment_copy["speech_group_id"] = current_speech_group
+            segment_copy["group_speaker"] = current_speaker
+            group_segments.append(segment_copy)
+            
+            logger.debug(f" Added segment to group {current_speech_group}: {segment.get('text', '')[:50]}...")
+        
+        # Finalize the last group
+        if group_segments:
+            self._finalize_speech_group(refined_segments, current_speech_group, group_segments)
+        
+        logger.info(f" Speech group validation complete: {len(refined_segments)} refined segments in {current_speech_group or 0} groups")
+        
+        return refined_segments
+    
+    def _finalize_speech_group(self, refined_segments: List[Dict], group_id: int, group_segments: List[Dict]):
+        """
+        Finalize a speech group by validating duration and applying group-level metadata.
+        
+        Args:
+            refined_segments: List to append finalized segments to
+            group_id: ID of the speech group
+            group_segments: List of segments in this group
+        """
+        if not group_segments:
+            return
+        
+        # Calculate group duration
+        group_start = min(seg.get("start", 0) for seg in group_segments)
+        group_end = max(seg.get("end", 0) for seg in group_segments)
+        group_duration = group_end - group_start
+        
+        # Get group speaker (should be consistent)
+        group_speaker = group_segments[0].get("group_speaker", "Unknown")
+        
+        # Validate minimum group duration
+        if group_duration < DiarizationConfig.MIN_SPEECH_GROUP_DURATION:
+            logger.debug(f"  Short speech group {group_id} ({group_duration:.2f}s) for speaker '{group_speaker}'")
+        
+        # Add group metadata to all segments
+        for segment in group_segments:
+            segment.update({
+                "group_duration": group_duration,
+                "group_start_time": group_start,
+                "group_end_time": group_end,
+                "group_segment_count": len(group_segments),
+                "is_validated_group": True
+            })
+            
+            refined_segments.append(segment)
+        
+        logger.debug(f" Finalized speech group {group_id}: {len(group_segments)} segments, "
+                   f"{group_duration:.2f}s duration, speaker '{group_speaker}'")
+    
         # Set up MP photos directory
         self.mp_photos_dir = "/app/data/mp_photos"
         os.makedirs(self.mp_photos_dir, exist_ok=True)
@@ -1560,6 +1695,7 @@ class MultimodalRecognitionService:
             text = segment.get("text", "")[:30] + "..." if len(segment.get("text", "")) > 30 else segment.get("text", "")
             logger.info(f"Segment {i}: ID={segment_id}, Speaker={speaker}, Time=[{start:.2f}-{end:.2f}], Text={text}")
             original_speakers[str(segment_id)] = speaker
+        
         try:
             logger.info("Starting timeline-based speaker analysis")
             

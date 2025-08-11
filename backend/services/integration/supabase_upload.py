@@ -920,7 +920,12 @@ class SupabaseUploader:
                                         logger.error(f"Cannot convert member_id {member_id} to integer")
                                         continue  # Skip this clip
                                 
-                                # Accept all integer member IDs without validation
+                                # Filter out placeholder/unknown member IDs - don't export to Supabase
+                                if clip['member_id'] == 999999:
+                                    logger.info(f"Skipping clip with placeholder member_id {clip['member_id']} - not exporting to Supabase")
+                                    continue  # Skip this clip
+                                
+                                # Accept all other valid integer member IDs without validation
                                 logger.info(f"Accepting member_id {clip['member_id']} without validation")
                                 # No need to check against speakers table
                             except Exception as e:
