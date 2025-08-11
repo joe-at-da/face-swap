@@ -22,6 +22,7 @@ from backend.core.security import get_api_key
 from backend.db import models
 from backend.schemas import recognition as schemas
 from backend.services.recognition import FacialRecognitionService, VoiceRecognitionService
+from backend.services.recognition.multimodal_recognition import MultimodalRecognitionService
 from backend.services.utils import make_json_serializable
 from backend.core.security import has_permission
 
@@ -277,325 +278,145 @@ def run_recognition_process(video_id: int, save_output: bool = True, user_id: in
             logger.warning(f"No valid audio file found for ID {video_id}. Recognition will proceed with video only.")
             
         # Update progress to indicate file checks complete
-        update_recognition_progress(db, video, "processing", 10, "Files verified, starting recognition", step_name="file_check")
+        update_recognition_progress(db, video, "processing", 10, "Files verified, starting multimodal recognition", step_name="file_check")
         
-        # Initialize variables for recognition
-        can_do_facial_recognition = bool(video_path and os.path.exists(video_path))
-        can_do_transcription = bool(audio_path and os.path.exists(audio_path))
+        # CRITICAL ALIGNMENT FIX: Use the same multimodal recognition service as the sequential pipeline
+        # This ensures both pipelines produce identical recognition events and clips
+        logger.info(f"Starting multimodal recognition using the same service as sequential pipeline")
         
-        # Process results
-        speaker_result = None
-        transcript_result = None
-        
-        # Step 1: Process facial recognition if video is available
-        if can_do_facial_recognition:
-            try:
-                # Update progress for facial recognition start
-                update_recognition_progress(db, video, "processing", 25, "Starting facial recognition", step_name="facial_recognition")
+        try:
+            # Initialize the multimodal recognition service (same as sequential pipeline)
+            multimodal_service = MultimodalRecognitionService()
+            
+            # Update progress for multimodal recognition start
+            update_recognition_progress(db, video, "processing", 25, "Starting multimodal recognition", step_name="multimodal_recognition")
+            
+            # Call the same multimodal recognition method used by sequential pipeline
+            logger.info(f"Calling start_combined_recognition for video {video_id} (aligning with sequential pipeline)")
+            multimodal_result = multimodal_service.start_combined_recognition(video_id)
+            
+            if multimodal_result.get("success", False):
+                logger.info(f"Multimodal recognition completed successfully for video {video_id}")
                 
-                # Define output file paths
-                speaker_output_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_speakers.json"
-                speaker_output_dir = os.path.dirname(video_path)
-                speaker_output_file = os.path.join(speaker_output_dir, speaker_output_filename) if save_output else None
+                # Update progress after successful multimodal recognition
+                update_recognition_progress(db, video, "processing", 90, "Multimodal recognition completed successfully", step_name="multimodal_recognition")
                 
-                # Call the facial recognition service with the video file
-                logger.info(f"Starting facial recognition using video file: {video_path}")
-                speaker_result = facial_recognition_service.identify_speakers(
-                    video_path, 
-                    speaker_output_file
-                )
-                logger.info(f"Facial recognition completed with result: {speaker_result['success']}")
+                # Extract results from multimodal service (same format as sequential pipeline)
+                recognition_results = multimodal_result.get("results", {})
+                recognition_events = recognition_results.get("recognition_events", [])
+                segments = recognition_results.get("segments", [])
+                faces = recognition_results.get("faces", [])
                 
-                # Update progress after facial recognition
-                if speaker_result.get("success"):
-                    update_recognition_progress(db, video, "processing", 50, "Facial recognition completed successfully", step_name="facial_recognition")
-                else:
-                    update_recognition_progress(db, video, "processing", 40, f"Facial recognition completed with errors: {speaker_result.get('error')}", step_name="facial_recognition")
-                    
-                    # Continue with transcription even if facial recognition fails
-                    speaker_result = {
-                        "success": False,
-                        "error": f"Speaker identification failed: {speaker_result.get('error')}",
-                        "message": "Speaker identification failed but continuing with transcription",
-                        "results": {"speakers": [], "total_speakers": 0},
-                        "output_file": None
-                    }
-            except Exception as e:
-                logger.exception(f"Error in facial recognition: {str(e)}")
-                update_recognition_progress(db, video, "processing", 40, f"Error in facial recognition: {str(e)}", step_name="facial_recognition")
-                speaker_result = {
+                logger.info(f"Multimodal recognition produced {len(recognition_events)} recognition events, {len(segments)} segments, {len(faces)} faces")
+                
+                # Create combined result in the same format as sequential pipeline
+                combined_result = {
+                    "success": True,
+                    "video_id": video_id,
+                    "recognition_events": recognition_events,
+                    "segments": segments,
+                    "faces": faces,
+                    "multimodal_results": recognition_results,
+                    "processing_details": {
+                        "video_available": bool(video_path and os.path.exists(video_path)),
+                        "audio_available": bool(audio_path and os.path.exists(audio_path)),
+                        "video_path": video_path,
+                        "audio_path": audio_path,
+                        "timestamp": datetime.now().isoformat(),
+                        "pipeline_type": "non_sequential_aligned"
+                    },
+                    "message": "Multimodal recognition completed successfully (aligned with sequential pipeline)"
+                }
+                
+            else:
+                error_msg = multimodal_result.get("error", "Unknown multimodal recognition error")
+                logger.error(f"Multimodal recognition failed for video {video_id}: {error_msg}")
+                
+                # Update progress to indicate failure
+                update_recognition_progress(db, video, "failed", 50, f"Multimodal recognition failed: {error_msg}", step_name="multimodal_recognition")
+                
+                # Create error result
+                combined_result = {
                     "success": False,
-                    "error": f"Exception in facial recognition: {str(e)}",
-                    "message": "Speaker identification failed due to exception",
-                    "results": {"speakers": [], "total_speakers": 0},
-                    "output_file": None
+                    "video_id": video_id,
+                    "error": error_msg,
+                    "recognition_events": [],
+                    "segments": [],
+                    "faces": [],
+                    "processing_details": {
+                        "video_available": bool(video_path and os.path.exists(video_path)),
+                        "audio_available": bool(audio_path and os.path.exists(audio_path)),
+                        "video_path": video_path,
+                        "audio_path": audio_path,
+                        "timestamp": datetime.now().isoformat(),
+                        "pipeline_type": "non_sequential_aligned"
+                    },
+                    "message": f"Multimodal recognition failed: {error_msg}"
                 }
-        else:
-            logger.info(f"Skipping facial recognition as no video file is available")
-            speaker_result = {
-                "success": False,
-                "message": "Facial recognition skipped as no video file is available",
-                "results": {"speakers": [], "total_speakers": 0},
-                "output_file": None
-            }
+                
+        except Exception as e:
+            error_msg = f"Exception in multimodal recognition: {str(e)}"
+            logger.exception(error_msg)
             
-        # Step 2: Process transcription (only if audio is available)
-        if can_do_transcription:
+            # Update progress to indicate failure
+            update_recognition_progress(db, video, "failed", 25, error_msg, step_name="multimodal_recognition")
+            
+            # Create error result
+            combined_result = {
+                "success": False,
+                "video_id": video_id,
+                "error": error_msg,
+                "recognition_events": [],
+                "segments": [],
+                "faces": [],
+                "processing_details": {
+                    "video_available": bool(video_path and os.path.exists(video_path)),
+                    "audio_available": bool(audio_path and os.path.exists(audio_path)),
+                    "video_path": video_path,
+                    "audio_path": audio_path,
+                    "timestamp": datetime.now().isoformat(),
+                    "pipeline_type": "non_sequential_aligned"
+                },
+                "message": error_msg
+            }
+        
+        # Save combined output file if requested (same as sequential pipeline)
+        if save_output and combined_result.get("success"):
             try:
-                # Update progress for transcription start
-                update_recognition_progress(db, video, "processing", 60, "Starting audio transcription", step_name="transcription")
+                # Create combined output file
+                combined_output_filename = f"{os.path.splitext(os.path.basename(video_path if video_path else 'unknown'))[0]}_multimodal_recognition.json"
+                output_dir = os.path.dirname(video_path if video_path else "/app/data/temp")
+                combined_output_file = os.path.join(output_dir, combined_output_filename)
                 
-                # Create output file path for transcription
-                transcript_output_filename = f"{os.path.splitext(os.path.basename(audio_path))[0]}_transcript.txt"
-                output_dir = os.path.dirname(audio_path)
-                transcript_output_file = os.path.join(output_dir, transcript_output_filename) if save_output else None
-                
-                # Process transcription with proper error handling using the audio file
-                logger.info(f"Starting audio transcription using audio file: {audio_path}")
-                transcript_result = voice_recognition_service.transcribe_audio(audio_path, transcript_output_file)
-                logger.info(f"Audio transcription completed with result: {transcript_result['success']}")
-                
-                # Update progress after transcription
-                if transcript_result.get("success"):
-                    update_recognition_progress(db, video, "processing", 75, "Audio transcription completed successfully", step_name="transcription")
-                    
-                    # Check if the transcript file exists in the audio_extracts directory
-                    audio_filename = os.path.basename(audio_path)
-                    audio_basename = os.path.splitext(audio_filename)[0]
-                    audio_dir = os.path.dirname(audio_path)
-                    
-                    # Try different possible transcript file patterns
-                    possible_transcript_files = [
-                        os.path.join(audio_dir, f"{audio_basename}_transcript.txt"),
-                        os.path.join(audio_dir, f"{audio_basename}.audio_transcript.txt"),
-                        os.path.join(audio_dir, f"{audio_basename}_transcription.txt"),
-                        os.path.join(audio_dir, f"{audio_basename}.txt")
-                    ]
-                    
-                    transcript_file = None
-                    transcript_content = ""
-                    
-                    # Check if any of the possible transcript files exist
-                    for file_path in possible_transcript_files:
-                        if os.path.exists(file_path):
-                            transcript_file = file_path
-                            try:
-                                with open(file_path, 'r') as f:
-                                    transcript_content = f.read()
-                                logger.info(f"Found transcript file: {file_path}")
-                                break
-                            except Exception as e:
-                                logger.error(f"Error reading transcript file {file_path}: {str(e)}")
-                    
-                    # Update the transcript_result with the actual transcript content if found
-                    if transcript_file and transcript_content:
-                        transcript_result["output_file"] = transcript_file
-                        transcript_result["transcript"] = transcript_content
-                        logger.info(f"Updated transcript_result with content from {transcript_file}")
-                    else:
-                        logger.warning(f"No transcript file found in {audio_dir} for {audio_basename}")
-                else:
-                    update_recognition_progress(db, video, "processing", 65, f"Audio transcription completed with errors: {transcript_result.get('error')}", step_name="transcription")
-                    
-                    # If transcription failed but facial recognition succeeded, return a partial success
-                    if speaker_result and speaker_result.get("success"):
-                        transcript_result = {
-                            "success": False,  # Mark as failed with error message
-                            "error": f"Transcription failed: {transcript_result.get('error')}",
-                            "message": "Transcription failed but speaker identification succeeded",
-                            "output_file": None,
-                            "transcript": "No transcript available due to processing error."
-                        }
-                    else:
-                        transcript_result = {
-                            "success": False,  # Mark as failed with error message
-                            "error": f"Transcription failed: {transcript_result.get('error')}",
-                            "message": "Transcription failed but processing continues",
-                            "output_file": None,
-                            "transcript": "No transcript available due to processing error."
-                        }
-            except Exception as e:
-                logger.exception(f"Exception in transcription service: {str(e)}")
-                update_recognition_progress(db, video, "processing", 65, f"Error in transcription: {str(e)}", step_name="transcription")
-                transcript_result = {
-                    "success": True,  # Mark as success but with empty transcript
-                    "error": f"Exception in transcription service: {str(e)}",
-                    "message": "Transcription failed due to exception but processing continues",
-                    "output_file": None,
-                    "transcript": "No transcript available due to processing error."
-                }
-        else:
-            logger.info(f"Skipping transcription as no audio file is available")
-            transcript_result = {
-                "success": True,
-                "message": "Transcription skipped as no audio file is available",
-                "output_file": None,
-                "transcript": "No audio file available for transcription."
-            }
-            
-        # Step 3: Combine the results
-        # Create a results summary with detailed information about what was processed
-        has_speaker_identification = speaker_result and speaker_result.get("success", False)
-        
-        # Check if we have a valid transcript file and content
-        has_transcript_file = transcript_result and transcript_result.get("output_file") is not None
-        has_transcript_content = transcript_result and transcript_result.get("transcript") and len(transcript_result.get("transcript", "")) > 0
-        
-        # Consider transcription successful if we have either a valid transcript file or content
-        has_transcription = has_transcript_file or has_transcript_content
-        
-        # Force success flag to true if we have transcript content
-        if has_transcript_content and transcript_result:
-            transcript_result["success"] = True
-            if "error" in transcript_result:
-                transcript_result.pop("error", None)
-            transcript_result["message"] = "Transcription completed successfully"
-            logger.info(f"Forcing transcription success flag to True because we have valid transcript content")
-        
-        total_speakers = len(speaker_result.get("results", {}).get("speakers", [])) if has_speaker_identification else 0
-        transcript_length = len(transcript_result.get("transcript", "")) if transcript_result else 0
-        
-        # Create the results summary
-        results_summary = {
-            "has_speaker_identification": has_speaker_identification,
-            "has_transcription": has_transcription,
-            "total_speakers": total_speakers,
-            "transcript_length": transcript_length,
-            "transcript_text": transcript_result.get("transcript", "No transcript available.") if transcript_result else "No transcript available.",
-            "speaker_identification_message": speaker_result.get("message", "") if speaker_result else "",
-            "transcription_message": transcript_result.get("message", "") if transcript_result else "",
-            "transcript_file": transcript_result.get("output_file") if transcript_result else None
-        }
-        
-        # Log detailed information about the transcript
-        if transcript_result:
-            logger.info(f"Transcript details: output_file={transcript_result.get('output_file')}, length={transcript_length}, success={transcript_result.get('success')}")
-        else:
-            logger.warning("No transcript_result available")
-        
-        logger.info(f"Results summary for video ID {video_id}: {results_summary}")
-        
-        combined_result = {
-            "success": True,
-            "video_id": video_id,
-            "speaker_identification": speaker_result or {
-                "success": False,
-                "message": "Speaker identification not performed",
-                "results": {"speakers": [], "total_speakers": 0}
-            },
-            "transcription": transcript_result or {
-                "success": False,
-                "message": "Transcription not performed",
-                "transcript": ""
-            },
-            "results_summary": results_summary,
-            "processing_details": {
-                "video_available": can_do_facial_recognition,
-                "audio_available": can_do_transcription,
-                "video_path": video_path,
-                "audio_path": audio_path,
-                "timestamp": datetime.now().isoformat()
-            }
-        }
-        
-        # Add combined output file if saving output
-        if save_output:
-            # Create combined output file
-            combined_output_filename = f"{os.path.splitext(os.path.basename(video_path if video_path else audio_path))[0]}_combined_recognition.json"
-            output_dir = os.path.dirname(video_path if video_path else audio_path)
-            combined_output_file = os.path.join(output_dir, combined_output_filename)
-            
-            try:
                 with open(combined_output_file, 'w') as f:
                     json.dump(combined_result, f, indent=2, default=str)
-                logger.info(f"Combined recognition results saved to: {combined_output_file}")
+                logger.info(f"Multimodal recognition results saved to: {combined_output_file}")
                 combined_result["combined_output_file"] = combined_output_file
             except Exception as e:
-                logger.warning(f"Failed to save combined results to file: {str(e)}")
+                logger.warning(f"Failed to save multimodal results to file: {str(e)}")
         
-        # Update the database with the results and final progress
+        # Update the database with the results and final progress (same as sequential pipeline)
         try:
-            # Update progress with completion status
-            update_recognition_progress(db, video, "completed", 100, "Recognition process completed successfully", step_name="completion")
-            
-            # Update video record with recognition results
-            video.recognition_results = json.dumps(combined_result)
-            video.recognition_status = "completed"
-            video.recognition_completed_at = datetime.now()
-            
-            # Create a ParliamentTranscription record if transcription was successful
-            if has_transcription and transcript_result:
-                # Check if a transcription record already exists for this video
-                existing_transcription = db.query(models.ParliamentTranscription).filter(
-                    models.ParliamentTranscription.capture_session_id == video_id
-                ).first()
+            if combined_result.get("success"):
+                # Update progress with completion status
+                update_recognition_progress(db, video, "completed", 100, "Multimodal recognition process completed successfully", step_name="completion")
                 
-                # Create a proper JSON file with the transcription data
-                from backend.core.config import settings
-                media_storage_path = settings.MEDIA_STORAGE_PATH
-                transcription_dir = os.path.join(media_storage_path, "transcriptions")
-                os.makedirs(transcription_dir, exist_ok=True)
+                # Update video record with recognition results
+                video.recognition_results = json.dumps(combined_result)
+                video.recognition_status = "completed"
+                video.recognition_completed_at = datetime.now()
+            else:
+                # Update progress with failure status
+                update_recognition_progress(db, video, "failed", 100, f"Multimodal recognition failed: {combined_result.get('error', 'Unknown error')}", step_name="completion")
                 
-                # Create a structured transcription data object
-                transcription_json = {
-                    "video_id": video_id,
-                    "language": "en",
-                    "transcript": transcript_result.get("transcript", ""),
-                    "segments": [],  # We'll populate this with time-aligned segments if available
-                    "created_at": datetime.now().isoformat(),
-                    "model": "medium"
-                }
-                
-                # Try to parse segments from the transcript if available
-                if transcript_result.get("transcript"):
-                    # Create a simple segment with the full transcript
-                    transcription_json["segments"] = [
-                        {
-                            "start": 0,
-                            "end": video.duration if video.duration else 60,
-                            "text": transcript_result.get("transcript", "")
-                        }
-                    ]
-                
-                # Save the transcription data to a JSON file
-                json_output_file = os.path.join(transcription_dir, f"transcription_{video_id}.json")
-                try:
-                    with open(json_output_file, 'w') as f:
-                        json.dump(transcription_json, f, indent=2, default=str)
-                    logger.info(f"Saved transcription data to {json_output_file}")
-                except Exception as e:
-                    logger.error(f"Error saving transcription JSON file: {str(e)}")
-                    json_output_file = None
-                
-                if not existing_transcription:
-                    # Create a new transcription record
-                    logger.info(f"Creating new ParliamentTranscription record for video ID: {video_id}")
-                    transcription = models.ParliamentTranscription(
-                        capture_session_id=video_id,
-                        speaker_identification_id=None,  # Will be updated if speaker identification is linked
-                        language="en",
-                        format="json",
-                        model="medium",
-                        status="completed",
-                        output_file=json_output_file,
-                        created_by_id=user_id if user_id else None
-                    )
-                    db.add(transcription)
-                    logger.info(f"Added new ParliamentTranscription record for video ID: {video_id}")
-                else:
-                    # Update existing transcription record
-                    logger.info(f"Updating existing ParliamentTranscription record for video ID: {video_id}")
-                    existing_transcription.status = "completed"
-                    existing_transcription.output_file = json_output_file
-                    existing_transcription.updated_at = datetime.now()
+                # Update video record with error status
+                video.recognition_status = "failed"
+                video.error_message = combined_result.get("error", "Unknown multimodal recognition error")
             
             db.commit()
-            logger.info(f"Database updated with recognition results for video ID: {video_id}")
+            logger.info(f"Database updated with multimodal recognition results for video ID: {video_id}")
         except Exception as e:
-            logger.error(f"Failed to update database with recognition results: {str(e)}")
-        
-        # Add a message to the combined result
-        combined_result["message"] = "Recognition completed with available data"
+            logger.error(f"Failed to update database with multimodal recognition results: {str(e)}")
         
         return combined_result
     except Exception as e:

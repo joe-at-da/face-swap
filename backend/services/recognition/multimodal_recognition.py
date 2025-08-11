@@ -865,6 +865,172 @@ class MultimodalRecognitionService:
                 faces_by_time, faces_by_speaker, recognition_events
             )
             
+            # CRITICAL: Handle sequential segment time offset calculation
+            # In sequential processing, segment times are relative to each segment, not the full video
+            # We need to calculate the absolute time offset for this segment
+            sequential_time_offset = 0
+            is_sequential_segment = False
+            
+            # Check if this is a sequential segment by examining metadata
+            # Use the same metadata access pattern as the working non-sequential code
+            metadata = {}
+            if video.metadata:
+                try:
+                    # Use the same make_json_serializable function as the working non-sequential code
+                    from backend.services.utils import make_json_serializable
+                    metadata = make_json_serializable(video.metadata)
+                    logger.debug(f"After make_json_serializable: metadata = {metadata}, type = {type(metadata)}")
+                    
+                    # If metadata is still a string after serialization, parse it as JSON
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                            logger.debug(f"Parsed metadata string to dict: {type(metadata)}")
+                        except json.JSONDecodeError as json_error:
+                            logger.error(f"Error parsing metadata JSON string: {str(json_error)}")
+                            metadata = {"value": metadata}
+                    
+                    # Ensure metadata is a dictionary (same as working non-sequential code)
+                    if not isinstance(metadata, dict):
+                        metadata = {"value": str(metadata)}
+                        
+                except Exception as e:
+                    logger.error(f"Error processing video metadata: {str(e)}")
+                    metadata = {}
+            
+            is_sequential = metadata.get("is_sequential", False)
+            logger.info(f"Sequential metadata analysis: is_sequential={is_sequential}, metadata_keys={list(metadata.keys()) if metadata else []}")
+            
+            if is_sequential:
+                    is_sequential_segment = True
+                    
+                    # Calculate time offset based on segment index
+                    # Sequential segments are 30 minutes (1800 seconds) each
+                    # Extract segment index from video path or metadata
+                    segment_index = 1  # Default to first segment
+                    
+                    # Try to extract segment index from video path (e.g., "1293_4.mp4" -> segment 4)
+                    if video_path:
+                        import re
+                        video_filename = os.path.basename(video_path)
+                        logger.debug(f"Analyzing video filename for segment index: {video_filename}")
+                        
+                        # Try multiple patterns to extract segment index
+                        patterns = [
+                            r'_(\d+)\.(mp4|avi|mov|mkv)$',  # Standard pattern: sessionid_segment.ext
+                            r'segment_?(\d+)\.(mp4|avi|mov|mkv)$',  # segment_N.ext or segmentN.ext
+                            r'(\d+)_segment\.(mp4|avi|mov|mkv)$',  # N_segment.ext
+                        ]
+                        
+                        for pattern in patterns:
+                            match = re.search(pattern, video_filename, re.IGNORECASE)
+                            if match:
+                                extracted_index = int(match.group(1))
+                                logger.info(f"Extracted segment index {extracted_index} from filename using pattern: {pattern}")
+                                segment_index = extracted_index
+                                break
+                        else:
+                            logger.warning(f"Could not extract segment index from filename: {video_filename}, using default: {segment_index}")
+                    else:
+                        logger.warning(f"No video_path provided, using default segment index: {segment_index}")
+                    
+                    # Calculate time offset: (segment_index - 1) * 1800 seconds
+                    sequential_time_offset = (segment_index - 1) * 1800
+                    
+                    logger.info(f"🕐 Sequential segment detected: segment {segment_index}, time offset: {sequential_time_offset}s ({sequential_time_offset/60:.1f} minutes)")
+                    logger.info(f"🕐 Video path analyzed: {video_path}")
+            
+            # CRITICAL FIX: Create placeholder recognition events for segments without face matches
+            # This ensures all transcribed segments are represented in the output, matching non-sequential pipeline behavior
+            logger.info("Creating placeholder recognition events for segments without face matches")
+            existing_segment_ids = set()
+            for event in recognition_events:
+                segment_id = event.get("segment_id")
+                if segment_id:
+                    existing_segment_ids.add(str(segment_id))
+            
+            placeholder_events_created = 0
+            for segment in segments:
+                segment_start = float(segment.get('start', 0))
+                segment_end = float(segment.get('end', 0))
+                
+                # CRITICAL: Apply sequential time offset to segment times
+                if is_sequential_segment:
+                    absolute_start = segment_start + sequential_time_offset
+                    absolute_end = segment_end + sequential_time_offset
+                    logger.debug(f"Sequential time adjustment: segment {segment_start}-{segment_end}s -> absolute {absolute_start}-{absolute_end}s")
+                else:
+                    absolute_start = segment_start
+                    absolute_end = segment_end
+                
+                segment_id = f"{segment_start}-{segment_end}"  # Keep original segment ID for consistency
+                
+                # If this segment doesn't have a recognition event yet, create a placeholder
+                if str(segment_id) not in existing_segment_ids:
+                    speaker = segment.get("speaker", "Unknown")
+                    text = segment.get("text", "").strip()
+                    
+                    # Only create placeholder if segment has meaningful text
+                    if text and len(text) > 5:  # Skip very short or empty segments
+                        placeholder_event = {
+                            "type": "speaker",
+                            "start_time": absolute_start,  # Use absolute time for recognition events
+                            "end_time": absolute_end,      # Use absolute time for recognition events
+                            "timestamp": absolute_start,   # Use absolute time for recognition events
+                            "speaker": speaker,
+                            "text": text,
+                            "member_id": None,  # Will be normalized later if possible
+                            "name": "Unknown",
+                            "confidence": 0.0,
+                            "quality_score": 0.0,
+                            "segment_id": segment_id,
+                            "diarization_segment": segment.get("diarization_segment", False),
+                            "speech_group_id": segment.get("speech_group_id", ""),
+                            "placeholder_event": True,  # Mark as placeholder for debugging
+                            "sequential_segment": is_sequential_segment,
+                            "sequential_time_offset": sequential_time_offset,
+                            "original_start_time": segment_start,  # Keep original for reference
+                            "original_end_time": segment_end       # Keep original for reference
+                        }
+                        recognition_events.append(placeholder_event)
+                        placeholder_events_created += 1
+                        
+                        if is_sequential_segment:
+                            logger.info(f"Created sequential placeholder event for segment {segment_id}: "
+                                      f"original {segment_start}-{segment_end}s -> absolute {absolute_start}-{absolute_end}s, "
+                                      f"speaker={speaker}, text={text[:50]}...")
+                        else:
+                            logger.info(f"Created placeholder event for segment {segment_id}: speaker={speaker}, text={text[:50]}...")
+            
+            logger.info(f"Created {placeholder_events_created} placeholder recognition events for segments without face matches")
+            logger.info(f"Total recognition events: {len(recognition_events)} (including {placeholder_events_created} placeholders)")
+            
+            # CRITICAL: Apply sequential time offset to existing recognition events from face detection
+            if is_sequential_segment and sequential_time_offset > 0:
+                events_adjusted = 0
+                for event in recognition_events:
+                    if not event.get("placeholder_event", False):  # Only adjust non-placeholder events
+                        # Apply time offset to existing face-based recognition events
+                        original_start = event.get("start_time", 0)
+                        original_end = event.get("end_time", 0)
+                        original_timestamp = event.get("timestamp", 0)
+                        
+                        event["start_time"] = original_start + sequential_time_offset
+                        event["end_time"] = original_end + sequential_time_offset
+                        event["timestamp"] = original_timestamp + sequential_time_offset
+                        
+                        # Add sequential metadata to existing events
+                        event["sequential_segment"] = True
+                        event["sequential_time_offset"] = sequential_time_offset
+                        event["original_start_time"] = original_start
+                        event["original_end_time"] = original_end
+                        event["original_timestamp"] = original_timestamp
+                        
+                        events_adjusted += 1
+                        logger.debug(f"Adjusted face-based event: {original_start}-{original_end}s -> {event['start_time']}-{event['end_time']}s")
+                
+                logger.info(f"🕐 Sequential time offset applied: {sequential_time_offset}s ({sequential_time_offset/60:.1f} minutes) to {events_adjusted} existing recognition events and {placeholder_events_created} placeholder events")
+            
             # Create correlations between speakers and face profiles
             for speaker, faces in faces_by_speaker.items():
                 if not faces:
