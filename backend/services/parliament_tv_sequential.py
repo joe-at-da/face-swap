@@ -337,29 +337,29 @@ class ParliamentTVSequentialProcessor:
                 logger.error(f"WAV command that failed: {' '.join(wav_cmd)}")
             
             # Verify files exist and have content - unified verification logic
-            if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+            if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                 video_success = True
                 logger.info(f"Video file verified: {video_path} ({os.path.getsize(video_path)} bytes)")
             else:
                 video_success = False
                 logger.error(f"Video file does not exist or is empty: {video_path}")
             
-            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            if audio_path and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 audio_success = True
                 logger.info(f"Audio file verified: {audio_path} ({os.path.getsize(audio_path)} bytes)")
             else:
                 audio_success = False
                 logger.error(f"Audio file does not exist or is empty: {audio_path}")
             
-            if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
+            if wav_path and os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
                 wav_success = True
                 logger.info(f"WAV file verified: {wav_path} ({os.path.getsize(wav_path)} bytes)")
                 # Store WAV path in metadata for downstream processing (matches non-sequential pattern)
                 logger.info(f"WAV extraction successful - file ready for transcription/diarization")
             else:
                 wav_success = False
-                logger.error(f"WAV file does not exist or is empty: {wav_path}")
-                logger.error(f"WAV extraction failed - transcription/diarization may be affected")
+                logger.warning(f"WAV file does not exist or is empty: {wav_path}")
+                logger.warning(f"WAV extraction failed - transcription/diarization may use MP3 fallback")
             
             # Clean up progress log files
             try:
@@ -422,7 +422,7 @@ class ParliamentTVSequentialProcessor:
             import shutil
             
             # Verify input files exist and are accessible
-            if not os.path.exists(video_path):
+            if not video_path or not os.path.exists(video_path):
                 logger.error(f"Video file does not exist: {video_path}")
                 return {
                     "segment_video_path": None,
@@ -432,7 +432,7 @@ class ParliamentTVSequentialProcessor:
                     "error": f"Video file does not exist: {video_path}"
                 }
             
-            if not os.path.exists(audio_path):
+            if not audio_path or not os.path.exists(audio_path):
                 logger.error(f"Audio file does not exist: {audio_path}")
                 return {
                     "segment_video_path": None,
@@ -620,14 +620,13 @@ class ParliamentTVSequentialProcessor:
                     logger.info(f"WAV segment extraction completed successfully: {segment_wav_path} ({os.path.getsize(segment_wav_path)} bytes)")
                     logger.info("WAV segment ready for transcription/diarization processing")
                 else:
-                    logger.error(f"WAV segment extraction failed with code {wav_segment_process.returncode}")
-                    logger.error(f"WAV segment stderr: {wav_segment_process.stderr.decode()}")
-                    logger.error(f"WAV segmentation failed - transcription quality may be affected")
+                    logger.warning(f"WAV segment extraction failed with code {wav_segment_process.returncode}")
+                    logger.warning(f"WAV segment stderr: {wav_segment_process.stderr.decode()}")
+                    logger.warning(f"WAV segmentation failed - transcription will use MP3 fallback")
                     # Log additional context for debugging (matches non-sequential pattern)
-                    logger.error(f"Failed WAV source: {wav_source_path} (size: {os.path.getsize(wav_source_path) if os.path.exists(wav_source_path) else 'N/A'} bytes)")
-                    logger.error(f"WAV segment command that failed: {' '.join(wav_segment_cmd)}")
+                    logger.warning(f"Failed WAV source: {wav_source_path} (size: {os.path.getsize(wav_source_path) if os.path.exists(wav_source_path) else 'N/A'} bytes)")
             else:
-                logger.info("No WAV source file available for segmentation - skipping WAV segment extraction")
+                logger.info("No WAV source file available for segmentation - transcription will use MP3")
                 logger.info("WAV segments will not be available for this processing run - may affect transcription accuracy")
             
             return {
@@ -798,6 +797,7 @@ class ParliamentTVSequentialProcessor:
             download_result = self.download_full_video(video_url, audio_url, output_dir, session_id)
             video_path = download_result["video_path"]
             audio_path = download_result["audio_path"]
+            wav_path = download_result.get("wav_path")
             video_success = download_result["video_success"]
             audio_success = download_result["audio_success"]
             
@@ -811,11 +811,11 @@ class ParliamentTVSequentialProcessor:
                 return {"success": False, "error": "Audio download failed"}
             
             # Double-check files exist and have content
-            if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+            if not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
                 logger.error(f"Video file does not exist or is empty: {video_path}")
                 return {"success": False, "error": f"Video file does not exist or is empty: {video_path}"}
             
-            if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+            if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
                 logger.error(f"Audio file does not exist or is empty: {audio_path}")
                 return {"success": False, "error": f"Audio file does not exist or is empty: {audio_path}"}
             
@@ -922,7 +922,14 @@ class ParliamentTVSequentialProcessor:
                 "segments": segment_results,
                 "total_segments": len(segment_results),
                 "total_duration": total_duration if not is_live else start_time,
-                "is_live": is_live
+                "is_live": is_live,
+                "download_result": {
+                    "video_path": video_path,
+                    "audio_path": audio_path,
+                    "wav_path": wav_path,
+                    "video_success": video_success,
+                    "audio_success": audio_success
+                }
             }
             
         except Exception as e:

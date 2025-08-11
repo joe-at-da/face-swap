@@ -255,8 +255,9 @@ async def process_parliament_tv_sequentially(
                     logger.info(f"  Audio: {full_audio_path}")
                     logger.info(f"  WAV: {full_wav_path}")
                     
-                    # Verify the full files exist
-                    if os.path.exists(full_video_path) and os.path.exists(full_audio_path):
+                    # Verify the full files exist and paths are not None
+                    if (full_video_path and os.path.exists(full_video_path) and 
+                        full_audio_path and os.path.exists(full_audio_path)):
                         # Use the original full files directly
                         video_file_path = full_video_path
                         audio_file_path = full_audio_path
@@ -442,9 +443,16 @@ async def process_parliament_tv_sequentially(
                             logger.error(f"Recognition error traceback: {traceback.format_exc()}")
                             capture.capture_metadata["recognition_error"] = str(e)
                     else:
-                        logger.error("No video segments found - recognition will not be possible")
+                        # File paths are None or files don't exist
+                        logger.error(f"Cannot proceed with recognition - file paths missing or files don't exist:")
+                        logger.error(f"  Video path: {full_video_path} (exists: {full_video_path and os.path.exists(full_video_path) if full_video_path else False})")
+                        logger.error(f"  Audio path: {full_audio_path} (exists: {full_audio_path and os.path.exists(full_audio_path) if full_audio_path else False})")
+                        logger.error(f"  Processing result download_result: {processing_result.get('download_result') if processing_result else 'No processing result'}")
+                        logger.error(f"  Database video_path: {capture.video_path}")
+                        logger.error(f"  Database audio_path: {capture.audio_path}")
+                        
                         capture.status = "failed"
-                        capture.error_message = "No video segments found for recognition"
+                        capture.error_message = f"Required video/audio files not found - Video: {full_video_path}, Audio: {full_audio_path}"
                         
 
                     
