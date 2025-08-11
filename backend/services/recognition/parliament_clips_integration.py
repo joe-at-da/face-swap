@@ -380,12 +380,13 @@ class ParliamentClipsIntegrationService:
                     errors.append(f"Event at {start_time}-{end_time} has invalid member_id format")
                     continue
             
-            # Skip events without a member_id
+            # Handle events without a member_id by assigning a default placeholder
             if not member_id:
-                logger.warning(f"Skipping event without member_id at {start_time}-{end_time}")
+                # Use a default placeholder member_id for unidentified speakers
+                # This allows clips to be saved and later normalized/updated
+                member_id = 999999  # Placeholder ID for unidentified speakers
+                logger.info(f"Assigning placeholder member_id {member_id} for unidentified speaker at {start_time}-{end_time}")
                 logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
-                errors.append(f"Event at {start_time}-{end_time} has no member_id")
-                continue
             
             logger.info(f"Processing event for member_id: {member_id} at {start_time}-{end_time}")
             

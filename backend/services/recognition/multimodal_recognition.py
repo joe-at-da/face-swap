@@ -1051,11 +1051,12 @@ class MultimodalRecognitionService:
             return {
                 "success": True,
                 "video_id": video_id,
-                "segments_count": len(segments),
-                "recognition_events": len(recognition_events),
+                "segments": segments,
+                "recognition_events": recognition_events,
                 "correlations": correlations,
                 "timeline": timeline,
-                "speaker_appearances": speaker_appearances
+                "speaker_appearances": speaker_appearances,
+                "faces": all_faces
             }
             
         except Exception as e:
