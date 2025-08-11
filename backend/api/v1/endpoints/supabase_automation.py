@@ -535,63 +535,11 @@ async def process_parliament_tv_to_supabase(
                         logger.error(f"Synchronization traceback: {traceback.format_exc()}")
                         # Continue with the export, but log the error
                     
-                    # Process and save member clips using the parliament_clips_service for proper normalization and grouping
-                    logger.warning(f"🚀 Starting member ID normalization and export process for video_id={capture_id}")
-                    
-                    # Create an instance of MultimodalRecognitionService to access parliament_clips_service
-                    multimodal_service = MultimodalRecognitionService()
-                    parliament_clips_service = multimodal_service.parliament_clips_service
-                    
-                    # First, ensure member IDs are normalized within speech groups
-                    logger.info(f"Normalizing member IDs within speech groups for video_id={capture_id}")
-                    try:
-                        # Normalize member IDs within speech groups
-                        parliament_clips_service._normalize_speech_group_member_ids_in_sqlite(video_id=capture_id)
-                        logger.info(f"Successfully normalized member IDs for video_id={capture_id}")
-                        
-                        # Check if this is a segment processing call (from sequential processor)
-                        # Segments have duration and segment_info, complete sessions do not
-                        is_segment_processing = duration is not None and segment_info is not None
-                        
-                        if is_segment_processing:
-                            logger.info(f"Segment processing detected for video_id={capture_id} - skipping export to Supabase (will export after all segments complete)")
-                            save_result = {"success": True, "skipped": True, "reason": "segment_processing", "normalized": 0, "inserted": 0}
-                        else:
-                            # This is a complete session (non-sequential or final export) - proceed with export
-                            logger.info(f"Complete session processing detected for video_id={capture_id} - proceeding with export to Supabase")
-                            
-                            # Use the full_video_url if available, otherwise use the video file path
-                            export_video_path = full_video_url if full_video_url else video_file_path
-                            logger.info(f"Using video path for export: {export_video_path}")
-                            
-                            # Export clips to Supabase with proper grouping by speech_group_id using the standardized export function
-                            logger.info(f"Using normalize_and_export_clips for Supabase export with video_id={capture_id}")
-                            
-                            # Import the ParliamentClipsIntegrationService to get a proper SQLite connection
-                            from backend.services.recognition.parliament_clips_integration import ParliamentClipsIntegrationService
-                            
-                            # Create a new instance of the service to get access to the SQLite session
-                            clips_service = ParliamentClipsIntegrationService()
-                            
-                            # Use the SQLite session from the clips service
-                            with clips_service.get_sqlite_session() as sqlite_db:
-                                logger.info("Using SQLite session from ParliamentClipsIntegrationService for export")
-                                save_result = normalize_and_export_clips(
-                                    db=sqlite_db,
-                                    video_id=capture_id,
-                                    supabase_service=None  # Will create a new instance internally
-                                )
-                            
-                            logger.info(f"Export result: {save_result}")
-                    except Exception as e:
-                        logger.error(f"Error in parliament clips export process: {str(e)}")
-                        import traceback
-                        logger.error(f"Traceback: {traceback.format_exc()}")
-                        save_result = {"error": str(e), "success": False}
-                    
-                    logger.info(f"Normalized {save_result.get('normalized', 0)} clips and exported {save_result.get('inserted', 0)} clips to Supabase for session {capture_id}")
-                    if save_result.get('skipped', 0) > 0:
-                        logger.warning(f"Skipped {save_result.get('skipped', 0)} clips during export")
+                    # Note: Export to Supabase is already handled by export_and_upload_recognition above
+                    # The export_and_upload_recognition method internally calls normalize_and_export_clips
+                    # No additional export is needed here to prevent duplicate exports
+                    logger.info(f"Export to Supabase completed via export_and_upload_recognition for video_id={capture_id}")
+                    save_result = {"success": True, "note": "Export handled by export_and_upload_recognition"}
                 except Exception as e:
                     logger.error(f"Error saving member clips to Supabase: {str(e)}")
                     # traceback already imported at function start
