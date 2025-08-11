@@ -222,70 +222,33 @@ async def process_parliament_tv_sequentially(
                     capture.capture_metadata["processed_segments"] = len(processed_segments)
                     
                     # Set video_path for recognition pipeline
-                    if video_segment_paths:
-                        # Define media directory path
-                        media_dir = "/app/data/media"
-                        
-                        if len(video_segment_paths) > 1:
-                            logger.info(f"Processing completed with {len(segment_results)} segments. Starting concatenation...")
-                            
-                            # Concatenate video segments if there are multiple
-                            try:
-                                concat_video_path = sequential_processor.concatenate_segments(
-                                    segment_paths=video_segment_paths,
-                                    output_path=f"{media_dir}/{capture_id}_concatenated.mp4",
-                                    is_audio=False
-                                )
-                                
-                                # Update capture with concatenated video path
-                                capture.video_path = concat_video_path  # Model field (primary)
-                                capture.capture_metadata["video_url"] = stream_info.get("video_url", "")  # Stream URL (original)
-                                capture.capture_metadata["concatenated_video_path"] = concat_video_path
-                                
-                                # Also concatenate audio segments for recognition
-                                if audio_segment_paths:
-                                    try:
-                                        concat_audio_path = sequential_processor.concatenate_segments(
-                                            segment_paths=audio_segment_paths,
-                                            output_path=f"{media_dir}/{capture_id}_concatenated.mp3",
-                                            is_audio=True
-                                        )
-                                        # Store audio and video paths exactly like non-sequential pipeline
-                                        capture.audio_path = concat_audio_path  # Model field (primary)
-                                        capture.capture_metadata["audio_file_path"] = concat_audio_path  # Metadata field (secondary)
-                                        capture.capture_metadata["audio_url"] = stream_info.get("audio_url", "")  # Stream URL (original)
-                                        logger.info(f"Successfully concatenated {len(audio_segment_paths)} audio segments")
-                                    except Exception as audio_e:
-                                        logger.warning(f"Audio concatenation failed: {str(audio_e)}, using first audio segment")
-                                        # Fallback: use first audio segment, matching non-sequential pattern
-                                        first_audio = audio_segment_paths[0] if audio_segment_paths else None
-                                        if first_audio:
-                                            capture.audio_path = first_audio  # Model field (primary)
-                                            capture.capture_metadata["audio_file_path"] = first_audio  # Metadata field (secondary)
-                                else:
-                                    # No audio segments available
-                                    capture.audio_path = None  # Model field (primary)
-                                    capture.capture_metadata["audio_file_path"] = None  # Metadata field (secondary)
-                                
-                                logger.info(f"Successfully concatenated {len(video_segment_paths)} video segments")
-                            except Exception as e:
-                                logger.error(f"Error concatenating video segments: {str(e)}")
-                                capture.capture_metadata["video_concatenation_error"] = str(e)
-                                # Fallback to first segment if concatenation fails
-                                capture.video_path = video_segment_paths[0]
-                                capture.file_path = video_segment_paths[0]
-                                capture.capture_metadata["audio_path"] = audio_segment_paths[0] if audio_segment_paths else None  # For recognition service
-                                capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # For metadata compatibility
-                                capture.audio_path = audio_segment_paths[0] if audio_segment_paths else None  # Set model field directly
-                                logger.info(f"Using first segment as fallback: {video_segment_paths[0]}")
-                        else:
-                            # Single segment - use it directly
-                            capture.video_path = video_segment_paths[0]
-                            capture.file_path = video_segment_paths[0]
-                            capture.capture_metadata["audio_path"] = audio_segment_paths[0] if audio_segment_paths else None  # For recognition service
-                            capture.capture_metadata["audio_url"] = audio_segment_paths[0] if audio_segment_paths else None  # For metadata compatibility
-                            capture.audio_path = audio_segment_paths[0] if audio_segment_paths else None  # Set model field directly
-                            logger.info(f"Single segment processing - using: {video_segment_paths[0]}")
+                    # Use the original full video and audio files directly (no concatenation)
+                    # This matches the optimized approach where we use the originally downloaded files
+                    if processing_result and 'download_result' in processing_result:
+                        download_result = processing_result['download_result']
+                        full_video_path = download_result.get('video_path')
+                        full_audio_path = download_result.get('audio_path')
+                        full_wav_path = download_result.get('wav_path')
+                    
+                    # Get paths from database if not available from processing result
+                    if not full_video_path:
+                        full_video_path = capture.video_path or capture.file_path
+                    if not full_audio_path:
+                        full_audio_path = capture.audio_path
+                    if not full_wav_path:
+                        # WAV path is optional, may not exist
+                        full_wav_path = None
+                    
+                    logger.info(f"Using original full files directly (no segmentation/concatenation needed):")
+                    logger.info(f"  Video: {full_video_path}")
+                    logger.info(f"  Audio: {full_audio_path}")
+                    logger.info(f"  WAV: {full_wav_path}")
+                    
+                    # Verify the full files exist
+                    if os.path.exists(full_video_path) and os.path.exists(full_audio_path):
+                        # Use the original full files directly
+                        video_file_path = full_video_path
+                        audio_file_path = full_audio_path
                         
                         # Now trigger unified recognition on the complete/concatenated video
                         # This matches the non-sequential pipeline approach
@@ -472,21 +435,7 @@ async def process_parliament_tv_sequentially(
                         capture.status = "failed"
                         capture.error_message = "No video segments found for recognition"
                         
-                        # Concatenate audio segments if there are multiple (for completeness)
-                        if len(audio_segment_paths) > 1:
-                            try:
-                                concat_audio_path = sequential_processor.concatenate_segments(
-                                    segment_paths=audio_segment_paths,
-                                    output_path=f"{media_dir}/{capture_id}_concatenated.mp3",
-                                    is_audio=True
-                                )
-                                
-                                # Update capture with concatenated audio path
-                                capture.capture_metadata["concatenated_audio_path"] = concat_audio_path
-                                logger.info(f"Successfully concatenated {len(audio_segment_paths)} audio segments")
-                            except Exception as e:
-                                logger.error(f"Error concatenating audio segments: {str(e)}")
-                                capture.capture_metadata["audio_concatenation_error"] = str(e)
+
                     
                     logger.info(f"Completed sequential processing for session {capture_id}")
                     logger.info(f"Unified recognition has been triggered on the complete video (matching non-sequential approach)")

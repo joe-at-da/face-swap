@@ -111,56 +111,32 @@ async def process_specific_segment(
             temp_dir = os.path.join(media_dir, f"debug_segments_{session_id}")
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Check if we already have segment files for this time range (much more efficient!)
-            segment_duration = 1800  # 30 minutes = 1800 seconds
-            segment_number = (start_time // segment_duration) + 1
+            # Always extract from original full files (consistent with sequential pipeline optimization)
+            # This ensures we use the originally downloaded files, not pre-segmented or concatenated files
+            logger.info(f"Extracting segment {start_time}-{end_time}s from original full files")
+            logger.info(f"  Original video: {video_path} ({os.path.getsize(video_path)/1024/1024:.1f} MB)")
+            logger.info(f"  Original audio: {audio_path} ({os.path.getsize(audio_path)/1024/1024:.1f} MB)")
             
-            existing_video_file = os.path.join(media_dir, f"{session_id}_{segment_number}.mp4")
-            existing_audio_file = os.path.join(media_dir, f"{session_id}_{segment_number}.mp3")
+            # Extract the segment from the original full files
+            segment_result = sequential_processor.extract_segment(
+                video_path=video_path,
+                audio_path=audio_path,
+                start_time=start_time,
+                end_time=end_time,
+                output_dir=temp_dir,
+                segment_id=segment_id
+            )
             
-            if os.path.exists(existing_video_file) and os.path.exists(existing_audio_file):
-                # Use existing segment files (much faster and more efficient!)
-                logger.info(f"Using existing segment files for {start_time}-{end_time}s (segment {segment_number})")
-                logger.info(f"  Video: {existing_video_file} ({os.path.getsize(existing_video_file)/1024/1024:.1f} MB)")
-                logger.info(f"  Audio: {existing_audio_file} ({os.path.getsize(existing_audio_file)/1024/1024:.1f} MB)")
-                
-                segment_video_path = existing_video_file
-                segment_audio_path = existing_audio_file
-                
-                # Create a success result matching the extract_segment format
-                segment_result = {
-                    "video_success": True,
-                    "audio_success": True,
-                    "segment_video_path": segment_video_path,
-                    "segment_audio_path": segment_audio_path,
-                    "message": f"Using existing segment files for segment {segment_number}"
+            if not segment_result.get("video_success") or not segment_result.get("audio_success"):
+                logger.error(f"Failed to extract segment {start_time}-{end_time}s")
+                return {
+                    "success": False,
+                    "error": "Segment extraction failed"
                 }
-                
-            else:
-                # Fall back to extracting from full files (less efficient)
-                logger.info(f"Existing segment files not found, extracting from full files for {start_time}-{end_time}s")
-                logger.info(f"  Looking for: {existing_video_file}, {existing_audio_file}")
-                
-                # Extract the segment from the local files
-                segment_result = sequential_processor.extract_segment(
-                    video_path=video_path,
-                    audio_path=audio_path,
-                    start_time=start_time,
-                    end_time=end_time,
-                    output_dir=temp_dir,
-                    segment_id=segment_id
-                )
-                
-                if not segment_result.get("video_success") or not segment_result.get("audio_success"):
-                    logger.error(f"Failed to extract segment {start_time}-{end_time}s")
-                    return {
-                        "success": False,
-                        "error": "Segment extraction failed"
-                    }
-                
-                # Get the segment file paths
-                segment_video_path = segment_result.get("segment_video_path")
-                segment_audio_path = segment_result.get("segment_audio_path")
+            
+            # Get the segment file paths (using correct keys from extract_segment method)
+            segment_video_path = segment_result.get("video_path")
+            segment_audio_path = segment_result.get("audio_path")
             
             # Create a title for the segment
             segment_title = segment_label if segment_label else f"{capture.title} (Segment {start_time}-{end_time}s)"
