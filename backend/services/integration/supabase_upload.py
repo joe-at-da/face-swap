@@ -939,7 +939,8 @@ class SupabaseUploader:
                     # We're not including transcript in signature to allow updated transcripts
                     signature = f"{clip.get('full_video_path', '')}-{clip.get('start_timestamp', '')}-{clip.get('end_timestamp', '')}" 
                     if signature in existing_signatures:
-                        logger.debug(f"Updating existing clip: {signature}")
+                        logger.debug(f"Skipping duplicate clip: {signature}")
+                        continue  # Skip this duplicate clip
                     
                     # Add to our list of clips to insert
                     new_clips.append(clip)
