@@ -67,20 +67,107 @@ async def process_specific_segment(
             detail=f"Capture session with ID {session_id} not found"
         )
     
-    # Check if files exist
-    video_path = capture.file_path
-    audio_path = capture.capture_metadata.get("audio_path")
+    # Check if files exist, and if not, try to find them using naming convention
+    video_path = capture.file_path or capture.video_path
+    audio_path = capture.audio_path or capture.capture_metadata.get("audio_path")
     
-    # If audio_path is not in metadata, try to find it using naming convention
+    media_dir = settings.MEDIA_STORAGE_PATH
+    
+    # If video_path is not set, try to find it using naming convention
+    if not video_path:
+        # Look for video file with pattern parliament_tv_{session_id}_*.mp4
+        possible_video_files = [f for f in os.listdir(media_dir) if f.startswith(f"parliament_tv_{session_id}_") and f.endswith(".mp4")]
+        
+        if possible_video_files:
+            # Sort by file size (largest first) to prefer complete downloads
+            video_files_with_size = [(f, os.path.getsize(os.path.join(media_dir, f))) for f in possible_video_files]
+            video_files_with_size.sort(key=lambda x: x[1], reverse=True)
+            
+            selected_video_file = video_files_with_size[0][0]
+            video_path = os.path.join(media_dir, selected_video_file)
+            logger.info(f"Found video file using naming convention: {video_path} ({video_files_with_size[0][1]/1024/1024:.1f} MB)")
+            
+            if len(video_files_with_size) > 1:
+                logger.info(f"Multiple video files found, selected largest: {selected_video_file}")
+    
+    # If audio_path is not set, try to find it using naming convention
     if not audio_path:
         # Look for audio file with pattern audio_{session_id}_*.mp3
-        media_dir = settings.MEDIA_STORAGE_PATH
         possible_audio_files = [f for f in os.listdir(media_dir) if f.startswith(f"audio_{session_id}_") and f.endswith(".mp3")]
         
         if possible_audio_files:
-            audio_path = os.path.join(media_dir, possible_audio_files[0])
-            logger.info(f"Found audio file using naming convention: {audio_path}")
+            # Sort by file size (largest first) to prefer complete downloads
+            audio_files_with_size = [(f, os.path.getsize(os.path.join(media_dir, f))) for f in possible_audio_files]
+            audio_files_with_size.sort(key=lambda x: x[1], reverse=True)
+            
+            selected_audio_file = audio_files_with_size[0][0]
+            audio_path = os.path.join(media_dir, selected_audio_file)
+            logger.info(f"Found audio file using naming convention: {audio_path} ({audio_files_with_size[0][1]/1024/1024:.1f} MB)")
+            
+            if len(audio_files_with_size) > 1:
+                logger.info(f"Multiple audio files found, selected largest: {selected_audio_file}")
     
+    # If files don't exist but we have stream URLs in metadata, download them
+    files_missing = (not video_path or not os.path.exists(video_path)) or (not audio_path or not os.path.exists(audio_path))
+    
+    if files_missing:
+        # Check if we have stream URLs in metadata to download
+        video_url = capture.capture_metadata.get("video_url")
+        audio_url = capture.capture_metadata.get("audio_url")
+        
+        if not video_url or not audio_url:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session {session_id} has no existing files and no stream URLs in metadata for download"
+            )
+        
+        logger.info(f"Files missing for session {session_id}, but stream URLs available. Downloading...")
+        
+        # Download the files using the sequential processor
+        try:
+            # Set up expected file paths
+            media_dir = settings.MEDIA_STORAGE_PATH
+            video_path = os.path.join(media_dir, f"parliament_tv_{session_id}.mp4")
+            audio_path = os.path.join(media_dir, f"parliament_tv_{session_id}.mp3")
+            wav_path = os.path.join(media_dir, f"parliament_tv_{session_id}.wav")
+            
+            # Download the files using the sequential processor
+            download_result = sequential_processor.download_full_video(
+                video_url, audio_url, media_dir, session_id
+            )
+            
+            # The download_full_video method returns paths, update our variables
+            if download_result and download_result.get("success"):
+                video_path = download_result.get("video_path")
+                audio_path = download_result.get("audio_path")
+                wav_path = download_result.get("wav_path")
+            
+            # Update the database with the file paths
+            capture.video_path = video_path
+            capture.audio_path = audio_path
+            capture.file_path = video_path  # Legacy field
+            
+            # Update metadata with local file paths
+            if capture.capture_metadata:
+                capture.capture_metadata["video_path"] = video_path
+                capture.capture_metadata["audio_path"] = audio_path
+                capture.capture_metadata["wav_path"] = wav_path
+            
+            db.commit()
+            db.refresh(capture)
+            
+            logger.info(f"Successfully downloaded files for session {session_id}")
+            logger.info(f"  Video: {video_path}")
+            logger.info(f"  Audio: {audio_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to download files for session {session_id}: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to download files for session {session_id}: {str(e)}"
+            )
+    
+    # Final check that files exist
     if not video_path or not os.path.exists(video_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -90,7 +177,7 @@ async def process_specific_segment(
     if not audio_path or not os.path.exists(audio_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Audio file not found for session {session_id}. Checked metadata and naming convention."
+            detail=f"Audio file not found for session {session_id}"
         )
     
     # Create a background task for segment processing

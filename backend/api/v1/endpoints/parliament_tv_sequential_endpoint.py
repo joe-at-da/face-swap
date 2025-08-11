@@ -11,7 +11,7 @@ import uuid
 import os
 from datetime import datetime
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Body
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Body, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -93,6 +93,11 @@ async def process_parliament_tv_sequentially(
     def process_parliament_tv_sequential_task():
         # Import CaptureSession within the function scope to avoid UnboundLocalError
         from backend.db.models.capture import CaptureSession
+        from backend.db.session import SessionLocal
+        
+        # Create a new database session for the background task
+        # The original db session is scoped to the HTTP request and will be closed
+        task_db = SessionLocal()
         
         try:
             # Step 1: Extract stream URLs
@@ -137,9 +142,9 @@ async def process_parliament_tv_sequentially(
                 capture_metadata=capture_metadata,  # This maps to 'metadata' column in DB
                 duration=duration if duration else (7200 if not is_live else 86400)  # Default to 2 hours for archived, 24 hours for live
             )
-            db.add(capture)
-            db.commit()
-            db.refresh(capture)
+            task_db.add(capture)
+            task_db.commit()
+            task_db.refresh(capture)
             
             capture_id = capture.id
             logger.info(f"Created capture session with ID: {capture_id}")
@@ -165,7 +170,7 @@ async def process_parliament_tv_sequentially(
                 
                 # Check if processing was successful
                 if processing_result.get("success", False):
-                    # Get segment results for concatenation
+                    # Get segment results for processing
                     segment_results = processing_result.get("segments", [])
                     
                     # Get segment results and set up video path for recognition
@@ -224,6 +229,12 @@ async def process_parliament_tv_sequentially(
                     # Set video_path for recognition pipeline
                     # Use the original full video and audio files directly (no concatenation)
                     # This matches the optimized approach where we use the originally downloaded files
+                    
+                    # Initialize variables
+                    full_video_path = None
+                    full_audio_path = None
+                    full_wav_path = None
+                    
                     if processing_result and 'download_result' in processing_result:
                         download_result = processing_result['download_result']
                         full_video_path = download_result.get('video_path')
@@ -250,7 +261,7 @@ async def process_parliament_tv_sequentially(
                         video_file_path = full_video_path
                         audio_file_path = full_audio_path
                         
-                        # Now trigger unified recognition on the complete/concatenated video
+                        # Now trigger unified recognition on the complete video
                         # This matches the non-sequential pipeline approach
                         logger.info(f"Starting unified recognition for session {capture_id}")
                         try:
@@ -265,10 +276,10 @@ async def process_parliament_tv_sequentially(
                             logger.info(f"DEBUG: capture.audio_path = {capture.audio_path}")
                             logger.info(f"DEBUG: capture.video_path = {capture.video_path}")
                             
-                            db.commit()
+                            task_db.commit()
                             
                             # DEBUG: Verify what was actually stored by re-reading from DB
-                            db.refresh(capture)
+                            task_db.refresh(capture)
                             logger.info(f"DEBUG: After commit and refresh:")
                             logger.info(f"DEBUG: capture.capture_metadata = {capture.capture_metadata}")
                             logger.info(f"DEBUG: capture.audio_path = {capture.audio_path}")
@@ -296,7 +307,7 @@ async def process_parliament_tv_sequentially(
                                 while time.time() - start_time < max_wait_time:
                                     try:
                                         # Refresh capture from database
-                                        db.refresh(capture)
+                                        task_db.refresh(capture)
                                         status_value = capture.recognition_status
                                         
                                         logger.info(f"Recognition status: {status_value}")
@@ -332,7 +343,7 @@ async def process_parliament_tv_sequentially(
                                             import json
                                             
                                             # Get video metadata
-                                            db.refresh(capture)
+                                            task_db.refresh(capture)
                                             
                                             # Handle capture_metadata properly
                                             capture_metadata = {}
@@ -347,7 +358,7 @@ async def process_parliament_tv_sequentially(
                                                 else:
                                                     logger.error(f"Unexpected metadata type: {type(capture.capture_metadata)}")
                                             
-                                            # Use the concatenated video path
+                                            # Use the original video path
                                             video_file_path = capture.video_path or capture.file_path
                                             if not video_file_path:
                                                 video_file_path = f"/app/data/media/parliament_tv_{capture_id}.mp4"
@@ -446,13 +457,13 @@ async def process_parliament_tv_sequentially(
                     logger.error(f"Sequential processing failed for session {capture_id}: {capture.error_message}")
                 
                 # Commit changes to database
-                db.commit()
+                task_db.commit()
                 
             except Exception as e:
                 logger.error(f"Error in sequential processing: {str(e)}")
                 capture.status = "failed"
                 capture.error_message = str(e)
-                db.commit()
+                task_db.commit()
                 return
                 
         except Exception as e:
@@ -462,9 +473,15 @@ async def process_parliament_tv_sequentially(
             
             # Ensure any failed transaction is rolled back
             try:
-                db.rollback()
+                task_db.rollback()
             except Exception as rollback_error:
                 logger.error(f"Error during rollback in outer exception handler: {str(rollback_error)}")
+        finally:
+            # Always close the database session
+            try:
+                task_db.close()
+            except Exception as close_error:
+                logger.error(f"Error closing database session: {str(close_error)}")
     
     # Start the background task
     background_tasks.add_task(process_parliament_tv_sequential_task)
