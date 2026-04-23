@@ -193,7 +193,8 @@ async def start_capture(
             if source_url and ('parliamentlive.tv' in source_url or 'parliament.tv' in source_url):
                 try:
                     # Import the Parliament TV service
-                    from backend.services.parliament_tv import parliament_tv_service
+                    from backend.services.parliament_tv import ParliamentTVCapture
+                    parliament_tv_service = ParliamentTVCapture()
                     
                     # Extract the direct stream URL
                     print(f"DEBUG - Extracting direct stream URL from: {source_url}")
