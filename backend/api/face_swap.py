@@ -13,14 +13,16 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.services.face_swap import FaceSwapService
+from backend.services.intelligent_face_swap import IntelligentFaceSwapService
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(tags=["face-swap"])
 
-# Initialize face swap service
+# Initialize face swap services
 face_swap_service = FaceSwapService()
+intelligent_face_swap_service = IntelligentFaceSwapService()
 
 class FaceSwapRequest(BaseModel):
     """Request model for face swapping."""
@@ -179,6 +181,120 @@ async def cleanup_face_swap_result(output_path: str):
     except Exception as e:
         logger.error(f"Error cleaning up file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to clean up file: {str(e)}")
+
+@router.post("/intelligent-swap")
+async def intelligent_face_swap(
+    image: UploadFile = File(...),
+    target_member_id: str = Form(...),
+    enhancement_type: str = Form(default="smooth"),
+    target_specific: bool = Form(default=True)
+):
+    """
+    Intelligent face swapping that targets specific faces and enhances them.
+    
+    Args:
+        image: Upload file containing the source image
+        target_member_id: Target MP member ID to enhance
+        enhancement_type: Type of enhancement (smooth, sharpen, cartoon, age, beautify)
+        target_specific: If True, only enhance the target MP's face
+        
+    Returns:
+        Face enhancement results
+    """
+    try:
+        # Validate enhancement type
+        valid_enhancements = ["smooth", "sharpen", "cartoon", "age", "beautify"]
+        if enhancement_type not in valid_enhancements:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid enhancement type. Must be one of: {valid_enhancements}"
+            )
+        
+        # Create temporary file for uploaded image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+            temp_file.write(await image.read())
+            temp_file_path = temp_file.name
+        
+        # Create output file path
+        output_path = tempfile.mktemp(suffix="_enhanced.jpg")
+        
+        try:
+            # Perform intelligent face swapping
+            result = intelligent_face_swap_service.swap_target_face_intelligently(
+                image_path=temp_file_path,
+                target_member_id=target_member_id,
+                output_path=output_path,
+                enhancement_type=enhancement_type,
+                target_specific=target_specific
+            )
+            
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Face enhancement failed"))
+            
+            return {
+                "success": True,
+                "message": f"Face enhancement completed successfully",
+                "faces_detected": result.get("faces_detected", 0),
+                "target_faces_found": result.get("target_faces_found", 0),
+                "faces_processed": result.get("faces_processed", 0),
+                "enhancement_type": enhancement_type,
+                "target_specific": target_specific,
+                "target_member_id": target_member_id,
+                "output_path": output_path,
+                "face_details": result.get("face_details", [])
+            }
+            
+        finally:
+            # Clean up temporary input file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in intelligent face swap: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Intelligent face swap failed: {str(e)}")
+
+@router.post("/analyze-faces")
+async def analyze_faces(image: UploadFile = File(...)):
+    """
+    Analyze faces in an image and provide detailed identification information.
+    
+    Args:
+        image: Upload file containing the source image
+        
+    Returns:
+        Detailed face analysis results
+    """
+    try:
+        # Create temporary file for uploaded image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+            temp_file.write(await image.read())
+            temp_file_path = temp_file.name
+        
+        try:
+            # Perform face analysis
+            analysis = intelligent_face_swap_service.create_face_analysis_report(temp_file_path)
+            
+            if not analysis.get("success"):
+                raise HTTPException(status_code=400, detail=analysis.get("error", "Face analysis failed"))
+            
+            return analysis
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in face analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Face analysis failed: {str(e)}")
 
 @router.get("/health")
 async def health_check():
