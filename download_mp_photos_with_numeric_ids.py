@@ -94,9 +94,9 @@ def download_mp_photos(db):
     
     # Query the database for parliament members
     result = db.execute(text("""
-        SELECT id, member_id, name as display_name, photo_url
+        SELECT id, parliament_id, name, photo_url
         FROM speakers
-        WHERE member_id IS NOT NULL
+        WHERE parliament_id IS NOT NULL
         ORDER BY name
     """))
     members = result.fetchall()
@@ -109,31 +109,31 @@ def download_mp_photos(db):
     
     # Process each member
     for member in members:
-        uuid = member[0]
-        member_id = member[1]
+        id = member[0]
+        parliament_id = member[1]
         name = member[2]
         photo_url = member[3]
         
-        if not member_id:
-            logger.warning(f"Member {name} has no member_id, skipping")
+        if not parliament_id:
+            logger.warning(f"Member {name} has no parliament_id, skipping")
             continue
         
-        logger.info(f"Processing member {name} (ID: {member_id}, UUID: {uuid})")
+        logger.info(f"Processing member {name} (ID: {id}, Parliament ID: {parliament_id})")
         
         # Download photo if needed
         if not photo_url or not photo_url.startswith("http"):
             # Try to find a photo on the Parliament website
             try:
                 # Construct the URL for the member's photo
-                member_photo_url = f"https://members-api.parliament.uk/api/Members/{member_id}/Portrait?cropType=ThreeFour"
+                member_photo_url = f"https://members-api.parliament.uk/api/Members/{parliament_id}/Portrait?cropType=ThreeFour"
                 logger.info(f"Attempting to download photo from {member_photo_url}")
                 
                 # Download the photo
                 response = requests.get(member_photo_url, stream=True)
                 
                 if response.status_code == 200:
-                    # Save the photo to the local directory using member_id as filename
-                    photo_path = os.path.join(mp_photos_dir, f"{member_id}.jpg")
+                    # Save the photo to the local directory using parliament_id as filename
+                    photo_path = os.path.join(mp_photos_dir, f"{parliament_id}.jpg")
                     
                     with open(photo_path, 'wb') as f:
                         for chunk in response.iter_content(chunk_size=1024):
@@ -147,10 +147,10 @@ def download_mp_photos(db):
                         db.execute(text("""
                             UPDATE speakers 
                             SET photo_url = :photo_url 
-                            WHERE member_id = :member_id
-                        """), {"photo_url": photo_path, "member_id": member_id})
+                            WHERE parliament_id = :parliament_id
+                        """), {"photo_url": photo_path, "parliament_id": parliament_id})
                         db.commit()
-                        logger.info(f"Updated photo_url for member {name} (ID: {member_id})")
+                        logger.info(f"Updated photo_url for member {name} (Parliament ID: {parliament_id})")
                     except Exception as e:
                         logger.warning(f"Failed to update photo_url in database: {str(e)}")
                 else:
@@ -178,14 +178,14 @@ def download_mp_photos(db):
                 face_locations = face_recognition.face_locations(image)
                 
                 if not face_locations:
-                    logger.warning(f"No faces detected in photo for {name} (ID: {member_id})")
+                    logger.warning(f"No faces detected in photo for {name} (Parliament ID: {parliament_id})")
                     continue
                     
                 # Generate face encodings (embeddings)
                 face_encodings = face_recognition.face_encodings(image, face_locations)
                 
                 if not face_encodings or len(face_encodings) == 0:
-                    logger.warning(f"Could not generate embedding for {name} (ID: {member_id})")
+                    logger.warning(f"Could not generate embedding for {name} (Parliament ID: {parliament_id})")
                     continue
                     
                 # Use the first face encoding if multiple faces are detected
@@ -201,7 +201,7 @@ def download_mp_photos(db):
         
         if embedding is not None:
             # Save face embedding to JSON file in the embeddings directory
-            json_file = os.path.join(mp_embeddings_dir, f"{member_id}.json")
+            json_file = os.path.join(mp_embeddings_dir, f"{parliament_id}.json")
             try:
                 with open(json_file, "w") as f:
                     # Handle both numpy arrays and lists
@@ -210,21 +210,21 @@ def download_mp_photos(db):
                     else:
                         # It's already a list
                         json.dump({"embedding": embedding}, f)
-                logger.info(f"Saved face embedding for {name} (ID: {member_id}) to {json_file}")
+                logger.info(f"Saved face embedding for {name} (Parliament ID: {parliament_id}) to {json_file}")
             except Exception as e:
                 logger.error(f"Error generating face embedding for {name}: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
     
-    # Create a mapping file from UUID to member_id for reference
+    # Create a mapping file from UUID to parliament_id for reference
     mapping = {}
     for member in members:
-        uuid = member[0]
-        member_id = member[1]
+        id = member[0]
+        parliament_id = member[1]
         name = member[2]
-        if uuid and member_id:
-            mapping[str(uuid)] = {
-                "member_id": str(member_id),
+        if id and parliament_id:
+            mapping[str(id)] = {
+                "parliament_id": str(parliament_id),
                 "name": name
             }
     
@@ -237,17 +237,17 @@ def download_mp_photos(db):
         
         # Collect all embeddings from the individual files
         for member in members:
-            member_id = member[1]
+            parliament_id = member[1]
             name = member[2]
-            if member_id:
-                embedding_file = os.path.join(mp_embeddings_dir, f"{member_id}.json")
+            if parliament_id:
+                embedding_file = os.path.join(mp_embeddings_dir, f"{parliament_id}.json")
                 if os.path.exists(embedding_file):
                     try:
                         with open(embedding_file, 'r') as f:
                             data = json.load(f)
                         
                         if 'embedding' in data:
-                            ids.append(str(member_id))
+                            ids.append(str(parliament_id))
                             encodings.append(data['embedding'])
                             names.append(name)
                     except Exception as e:

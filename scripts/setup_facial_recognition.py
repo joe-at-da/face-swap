@@ -102,8 +102,11 @@ def download_photo(mp):
         # Destination path
         dest_path = MP_PHOTOS_DIR / filename
         
-        # Download the photo
-        response = requests.get(mp["photo_url"], stream=True)
+        # Download the photo with proper headers to avoid 403/400 errors
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(mp["photo_url"], stream=True, headers=headers)
         if response.status_code != 200:
             logger.error(f"Failed to download photo for {mp['name']}: HTTP {response.status_code}")
             return None

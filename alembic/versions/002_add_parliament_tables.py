@@ -1,7 +1,7 @@
 """add parliament tables
 
-Revision ID: 002
-Revises: 001
+Revision ID: 002_add_parliament_tables
+Revises: ba11c0baf518
 Create Date: 2025-05-01 17:15:00.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = '002'
-down_revision = '001'
+revision = '002_add_parliament_tables'
+down_revision = 'ba11c0baf518'
 branch_labels = None
 depends_on = None
 
