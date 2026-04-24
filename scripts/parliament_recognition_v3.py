@@ -63,6 +63,9 @@ def process_video(video_path, mp_data, output_dir):
     frame_interval = int(3 * fps)
     detected_faces = []
     
+    # Track unique MP matches to avoid duplicates
+    seen_mp_ids = set()
+    
     frame_number = 0
     face_count = 0
     filtered_count = 0
@@ -113,6 +116,13 @@ def process_video(video_path, mp_data, output_dir):
                         match_index = matches.index(True)
                         mp_id = mp_data[match_index]['id']
                         mp_name = mp_data[match_index]['name']
+                        
+                        # Skip if this MP has already been matched (avoid duplicates)
+                        if mp_id in seen_mp_ids:
+                            logger.info(f"Skipping duplicate MP match: {mp_name}")
+                            continue
+                        
+                        seen_mp_ids.add(mp_id)
                         logger.info(f"Face {filtered_count} matched: {mp_name} (offset: {horizontal_offset:.3f})")
                         
                         # Save cropped face from video
@@ -206,12 +216,26 @@ def process_video(video_path, mp_data, output_dir):
                                     bottom_row = np.hstack([mp_crop_resized, mp_crop_original])
                                     comparison = np.vstack([top_row, bottom_row])
                                     
-                                    # Add labels
+                                    # Add labels with larger, more visible text
                                     cv2.putText(comparison, "VIDEO (dots)", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                                     cv2.putText(comparison, "VIDEO (orig)", (face_crop_resized.shape[1] + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                                     cv2.putText(comparison, "MP (dots)", (5, face_crop_resized.shape[0] + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                                     cv2.putText(comparison, "MP (orig)", (face_crop_resized.shape[1] + 5, face_crop_resized.shape[0] + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                                    cv2.putText(comparison, f"{mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                                    
+                                    # Add MP name prominently at bottom
+                                    cv2.putText(comparison, f"MP: {mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 4)
+                                    cv2.putText(comparison, f"MP: {mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 1)
+                                    
+                                    # Create face swap result (simple blend)
+                                    # Blend video face with MP photo
+                                    face_swap = cv2.addWeighted(face_crop_resized, 0.5, mp_crop_resized, 0.5, 0)
+                                    
+                                    # Add face swap row to comparison
+                                    face_swap_row = np.hstack([face_swap, np.zeros_like(face_swap)])
+                                    comparison = np.vstack([comparison, face_swap_row])
+                                    
+                                    # Add face swap label
+                                    cv2.putText(comparison, "FACE SWAP", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
                                     
                                     comparison_path = comparisons_dir / f"comparison_{filtered_count:03d}.jpg"
                                     cv2.imwrite(str(comparison_path), comparison)
@@ -325,7 +349,7 @@ def generate_html_report(detected_faces, total_faces, output_dir, mp_count):
 if __name__ == "__main__":
     import face_recognition
     
-    video_path = "/tmp/parliament_last_30s.mp4"
+    video_path = "/tmp/parliament_last_5min.mp4"
     output_dir = Path("/tmp/parliament_face_demo")
     
     logger.info("Loading MP encodings...")
