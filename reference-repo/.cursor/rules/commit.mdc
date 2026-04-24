@@ -1,0 +1,35 @@
+---
+alwaysApply: true
+---
+
+# Build and Start Verification Before Commits
+
+**CRITICAL RULE**: Before any commit, the Cursor agent or Cursor BugBot MUST:
+
+1. **Verify the app builds without errors**:
+
+   - Run `pnpm build` (or `npm run build` / `yarn build` depending on package manager)
+   - Ensure the build completes successfully with exit code 0
+   - Fix any build errors, TypeScript errors, or compilation issues before proceeding
+
+2. **Verify the app can start without errors**:
+
+   - After a successful build, run `pnpm start` (or `npm run start` / `yarn start`)
+   - Ensure the application starts successfully and is ready to accept requests
+   - Wait for the "Ready" message or similar startup confirmation
+   - Fix any runtime errors or startup issues before proceeding
+
+3. **Only commit after both verifications pass**:
+   - Do NOT commit code that fails to build
+   - Do NOT commit code that fails to start
+   - If build or start fails, fix the issues first, then re-verify before committing
+
+**Implementation Notes**:
+
+- Use the terminal to run build and start commands
+- Monitor for error messages, warnings that indicate failures, or non-zero exit codes
+- For Next.js projects: `next build` should complete without errors, and `next start` should show the server is ready
+- If using TypeScript, ensure there are no type errors
+- If using ESLint, address any blocking lint errors
+
+**Exception**: This rule may be bypassed ONLY if explicitly requested by the user for debugging purposes, but should be clearly communicated.

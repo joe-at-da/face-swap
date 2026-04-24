@@ -1,0 +1,20 @@
+[variables]
+NODE_ENV = "production"
+NODE_OPTIONS = "--disable-warning=DEP0169"
+
+[phases.setup]
+nixPkgs = ["nodejs_latest", "pnpm", "fontconfig", "freetype", "ffmpeg"]
+
+[phases.install]
+cmds = [
+  "bash scripts/install-playwright-deps.sh",
+  "pnpm install",
+  "pnpm exec playwright install-deps chromium || true",
+  "pnpm exec playwright install chromium"
+]
+
+[phases.build]
+cmds = ["pnpm run build"]
+
+[start]
+cmd = "pnpm start" 

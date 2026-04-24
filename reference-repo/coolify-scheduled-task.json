@@ -1,0 +1,39 @@
+{
+  "name": "Supabase Database Backup to Hetzner S3",
+  "description": "Daily backup of Supabase database with upload to Hetzner S3 storage",
+  "schedule": "0 2 * * *",
+  "command": "/backup-script/coolify-backup-config.sh",
+  "container": {
+    "image": "postgres:15-alpine",
+    "volumes": [
+      {
+        "source": "./coolify-backup-config.sh",
+        "target": "/backup-script/coolify-backup-config.sh",
+        "type": "bind"
+      },
+      {
+        "source": "/tmp/backups",
+        "target": "/tmp/backups",
+        "type": "bind"
+      }
+    ],
+    "environment": {
+      "DATABASE_URL": "postgresql://postgres:wsI7ppKHHBzEuf6ywbYw0O2XD1OaFLQo@176.9.78.50:5440/postgres",
+      "S3_ENDPOINT": "https://fsn1.your-objectstorage.com",
+      "S3_BUCKET": "veedoo-coolify",
+      "S3_ACCESS_KEY": "MP8VSZZ3VVCXYZIGXE1M",
+      "S3_SECRET_KEY": "zJ2Bw32vDvsjlpvYBdBnUkllFIlR8zRPfSheAWUm",
+      "S3_FOLDER": "mp-ai-supabase-backup",
+      "S3_REGION": "fsn1",
+      "BACKUP_DIR": "/tmp/backups"
+    },
+    "entrypoint": ["/bin/sh", "-c"],
+    "command": ["apk add --no-cache aws-cli bash gzip && chmod +x /backup-script/coolify-backup-config.sh && /backup-script/coolify-backup-config.sh"]
+  },
+  "timeout": 3600,
+  "retries": 3,
+  "notifications": {
+    "on_success": false,
+    "on_failure": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "setup": [
+    "cp \"$SUPERSET_ROOT_PATH/.env\" .env 2>/dev/null || true",
+    "./setup-worktree.sh"
+  ],
+  "teardown": [
+    "./cleanup-worktree.sh"
+  ]
+}

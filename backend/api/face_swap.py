@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from backend.services.face_swap import FaceSwapService
 from backend.services.intelligent_face_swap import IntelligentFaceSwapService
+from backend.services.improved_face_recognition import ImprovedFaceRecognitionService
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ router = APIRouter(tags=["face-swap"])
 # Initialize face swap services
 face_swap_service = FaceSwapService()
 intelligent_face_swap_service = IntelligentFaceSwapService()
+improved_face_recognition_service = ImprovedFaceRecognitionService()
 
 class FaceSwapRequest(BaseModel):
     """Request model for face swapping."""
@@ -295,6 +297,46 @@ async def analyze_faces(image: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error in face analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Face analysis failed: {str(e)}")
+
+@router.post("/analyze-faces-improved")
+async def analyze_faces_improved(image: UploadFile = File(...), focus_timestamp: Optional[int] = None):
+    """
+    Analyze faces in an image using improved face recognition with post-60s focus.
+    
+    Args:
+        image: Upload file containing the source image
+        focus_timestamp: Optional timestamp for post-60s filtering (Parliament content)
+        
+    Returns:
+        Detailed face analysis results with improved recognition
+    """
+    try:
+        # Create temporary file for uploaded image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+            temp_file.write(await image.read())
+            temp_file_path = temp_file.name
+        
+        try:
+            # Perform improved face analysis with post-60s focus
+            analysis = improved_face_recognition_service.analyze_faces(temp_file_path, focus_timestamp)
+            
+            if not analysis.get("success"):
+                raise HTTPException(status_code=400, detail=analysis.get("error", "Face analysis failed"))
+            
+            return analysis
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in improved face analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Improved face analysis failed: {str(e)}")
 
 @router.get("/health")
 async def health_check():

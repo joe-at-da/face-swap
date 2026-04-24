@@ -1,0 +1,286 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+      - 'emails/**'
+
+concurrency:
+  group: e2e-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read        # For reading artifact URLs
+
+jobs:
+  e2e-tests:
+    name: Run E2E Tests
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    timeout-minutes: 60
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: useblacksmith/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: useblacksmith/cache@v5
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # Pre-seed .env with secrets before setup-worktree.sh generates the rest.
+      # setup-worktree.sh uses update_env_var (upsert) and generate_if_missing (skip if exists),
+      # so pre-seeded values are preserved and auto-generated values are added alongside them.
+      - name: Inject secrets into .env
+        run: |
+          cat >> .env << 'STATIC'
+          NEXT_PUBLIC_ALLOWED_MP_DOMAINS=parliament.uk,veedoo.io
+          DISABLE_MAILJET_EMAILS=true
+          FIBERY_TERMS_PUBLIC_ID=146
+          FIBERY_PRIVACY_PUBLIC_ID=117
+          STATIC
+
+          # API keys from GitHub Secrets (empty string if secret not configured yet).
+          # Mailjet secrets are intentionally omitted because PR E2E must not send email.
+          declare -A SECRETS
+          SECRETS=(
+            [FIBERY_API_KEY]="${{ secrets.FIBERY_API_KEY }}"
+            [FIBERY_TERMS_DOCUMENT_SECRET]="${{ secrets.FIBERY_TERMS_DOCUMENT_SECRET }}"
+            [FIBERY_PRIVACY_DOCUMENT_SECRET]="${{ secrets.FIBERY_PRIVACY_DOCUMENT_SECRET }}"
+            [FIBERY_PRIVACY_SHARING_KEY]="${{ secrets.FIBERY_PRIVACY_SHARING_KEY }}"
+            [OPENAI_API_KEY]="${{ secrets.OPENAI_API_KEY }}"
+            [COHERE_API_KEY]="${{ secrets.COHERE_API_KEY }}"
+            [GOOGLE_GENERATIVE_AI_API_KEY]="${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}"
+            [STRIPE_SECRET_KEY]="${{ secrets.STRIPE_SECRET_KEY }}"
+            [NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY]="${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}"
+            [STRIPE_WEBHOOK_SECRET]="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+            [STRIPE_CONNECT_WEBHOOK_SECRET]="${{ secrets.STRIPE_CONNECT_WEBHOOK_SECRET }}"
+            [RUNPOD_API_KEY]="${{ secrets.RUNPOD_API_KEY }}"
+            [RUNPOD_CLIP_CREATOR_ENDPOINT]="${{ secrets.RUNPOD_CLIP_CREATOR_ENDPOINT }}"
+            [RUNPOD_FACE_ENCODER_ENDPOINT]="${{ secrets.RUNPOD_FACE_ENCODER_ENDPOINT }}"
+            [RUNPOD_VIDEO_PROCESSOR_ENDPOINT]="${{ secrets.RUNPOD_VIDEO_PROCESSOR_ENDPOINT }}"
+            [DO_SPACES_KEY]="${{ secrets.DO_SPACES_KEY }}"
+            [DO_SPACES_SECRET]="${{ secrets.DO_SPACES_SECRET }}"
+            [DO_SPACES_BUCKET]="${{ secrets.DO_SPACES_BUCKET }}"
+            [DO_SPACES_ENDPOINT]="${{ secrets.DO_SPACES_ENDPOINT }}"
+            [DO_SPACES_REGION]="${{ secrets.DO_SPACES_REGION }}"
+            [POSTIZ_API_KEY]="${{ secrets.POSTIZ_API_KEY }}"
+            [POSTIZ_API_URL]="${{ secrets.POSTIZ_API_URL }}"
+            [POSTIZ_DB_URL]="${{ secrets.POSTIZ_DB_URL }}"
+            [CRON_SECRET]="${{ secrets.CRON_SECRET }}"
+          )
+
+          for key in "${!SECRETS[@]}"; do
+            echo "${key}=${SECRETS[$key]}" >> .env
+          done
+
+          if [ -z "${SECRETS[FIBERY_API_KEY]}" ]; then
+            echo "::warning::FIBERY_API_KEY is not configured in GitHub Actions secrets. Fibery-backed legal pages will render the unavailable state in CI."
+          fi
+
+      # Install host deps BEFORE Docker so the container finds node_modules pre-populated
+      # via the mounted volume (.:/app). Container pnpm install becomes near-instant.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start Docker Compose stack
+        run: ./setup-worktree.sh --force
+
+      # Wait for Next.js beyond setup-worktree.sh timeout — in CI, the container's
+      # pnpm dev startup can take longer due to cold compilation.
+      - name: Wait for Next.js
+        run: |
+          source .env
+          echo "Waiting for Next.js at http://localhost:${NEXTJS_PORT}..."
+          for i in $(seq 1 120); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${NEXTJS_PORT}" 2>/dev/null || echo "000")
+            if echo "$HTTP_CODE" | grep -qE "^[23]"; then
+              echo "Next.js is ready! (HTTP $HTTP_CODE after ${i}s)"
+              exit 0
+            fi
+            echo "  Waiting... ($i/120) HTTP=$HTTP_CODE"
+            sleep 1
+          done
+          echo "Next.js did not start in time. Container logs:"
+          docker compose -f docker-compose.development.yml logs --tail=50 nextjs-app
+          exit 1
+
+      - name: Install Playwright Browsers
+        run: pnpm exec playwright install --with-deps
+
+      - name: Run E2E Tests
+        id: e2e-tests
+        run: pnpm exec playwright test --workers=8
+        env:
+          CI: true
+
+      - name: Parse Test Results
+        id: test-stats
+        if: always()
+        run: |
+          if [ -f playwright-results.json ]; then
+            node -e "
+              const r = require('./playwright-results.json');
+              const suites = r.suites || [];
+              let passed=0, failed=0, flaky=0, skipped=0, total=0;
+              function walk(s) {
+                for (const spec of (s.specs || [])) {
+                  for (const test of (spec.tests || [])) {
+                    total++;
+                    if (test.status === 'expected') passed++;
+                    else if (test.status === 'unexpected') failed++;
+                    else if (test.status === 'flaky') flaky++;
+                    else if (test.status === 'skipped') skipped++;
+                  }
+                }
+                for (const child of (s.suites || [])) walk(child);
+              }
+              for (const s of suites) walk(s);
+              const duration = Math.round((r.stats?.duration || 0) / 1000);
+              const mins = Math.floor(duration / 60);
+              const secs = duration % 60;
+              const time = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+              console.log('total=' + total);
+              console.log('passed=' + passed);
+              console.log('failed=' + failed);
+              console.log('flaky=' + flaky);
+              console.log('skipped=' + skipped);
+              console.log('duration=' + time);
+            " >> "$GITHUB_OUTPUT"
+          else
+            echo "total=?" >> "$GITHUB_OUTPUT"
+            echo "passed=?" >> "$GITHUB_OUTPUT"
+            echo "failed=?" >> "$GITHUB_OUTPUT"
+            echo "flaky=?" >> "$GITHUB_OUTPUT"
+            echo "skipped=?" >> "$GITHUB_OUTPUT"
+            echo "duration=?" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy Report to Surge
+        id: surge-deploy
+        if: always()
+        env:
+          SURGE_LOGIN: ${{ secrets.SURGE_LOGIN }}
+          SURGE_TOKEN: ${{ secrets.SURGE_TOKEN }}
+        run: |
+          DOMAIN="mpai-e2e-pr-${{ github.event.pull_request.number }}-run-${{ github.run_number }}.surge.sh"
+          if [ -d playwright-report ] && [ -n "$SURGE_LOGIN" ] && [ -n "$SURGE_TOKEN" ]; then
+            # Surge SPA fallback: copy index.html → 200.html so client-side routing works
+            cp playwright-report/index.html playwright-report/200.html 2>/dev/null || true
+            if npx surge ./playwright-report "$DOMAIN" --token "$SURGE_TOKEN"; then
+              echo "url=https://$DOMAIN" >> "$GITHUB_OUTPUT"
+              echo "deployed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::Surge deploy failed — report available as artifact"
+              echo "url=" >> "$GITHUB_OUTPUT"
+              echo "deployed=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "url=" >> "$GITHUB_OUTPUT"
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Test Report (artifact backup)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-pr-${{ github.event.pull_request.number }}
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Upload Test Results (traces, screenshots, videos)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-pr-${{ github.event.pull_request.number }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Comment PR with Report Link
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          TEST_OUTCOME: ${{ steps.e2e-tests.outcome }}
+          REPORT_URL: ${{ steps.surge-deploy.outputs.url }}
+          SURGE_DEPLOYED: ${{ steps.surge-deploy.outputs.deployed }}
+          TOTAL: ${{ steps.test-stats.outputs.total }}
+          PASSED: ${{ steps.test-stats.outputs.passed }}
+          FAILED: ${{ steps.test-stats.outputs.failed }}
+          FLAKY: ${{ steps.test-stats.outputs.flaky }}
+          SKIPPED: ${{ steps.test-stats.outputs.skipped }}
+          DURATION: ${{ steps.test-stats.outputs.duration }}
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const runId = context.runId;
+            const repo = context.repo.repo;
+            const owner = context.repo.owner;
+            const testOutcome = process.env.TEST_OUTCOME;
+            const reportUrl = process.env.REPORT_URL;
+            const surgeDeployed = process.env.SURGE_DEPLOYED === 'true';
+            const { TOTAL, PASSED, FAILED, FLAKY, SKIPPED, DURATION } = process.env;
+
+            const allPassed = testOutcome === 'success';
+            const statusEmoji = allPassed ? '✅' : '❌';
+            const statusText = allPassed ? 'Passed' : 'Failed';
+
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+
+            const statsLine = `✅ ${PASSED} passed · ❌ ${FAILED} failed · ⚠️ ${FLAKY} flaky · ⏭️ ${SKIPPED} skipped`;
+
+            const reportSection = surgeDeployed
+              ? `**[View Full Report](${reportUrl})**`
+              : `Report artifact available on the [workflow run](${runUrl})`;
+
+            const body = [
+              `## ${statusEmoji} E2E Test Results — ${statusText}`,
+              '',
+              `${statsLine} · **${TOTAL} total** · ⏱️ ${DURATION}`,
+              '',
+              `| | |`,
+              `|---|---|`,
+              `| **Run** | [#${runId}](${runUrl}) |`,
+              `| **Browsers** | Chromium, Firefox, WebKit, Mobile Chrome, Mobile Safari |`,
+              '',
+              reportSection,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: prNumber,
+              body
+            });
+
+            core.summary.addHeading(`E2E Test Report — ${statusText}`);
+            core.summary.addRaw(`${statsLine} · ${TOTAL} total · ${DURATION}`, true);
+            if (surgeDeployed) core.summary.addLink('View Report', reportUrl);
+            core.summary.addLink('Workflow Run', runUrl);
+            await core.summary.write();
+
+      - name: Cleanup Docker
+        if: always()
+        run: ./cleanup-worktree.sh --force
