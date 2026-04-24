@@ -187,14 +187,30 @@ def process_video(video_path, mp_data, output_dir):
                                             if 0 <= x_scaled < mp_crop_resized.shape[1] and 0 <= y_scaled < mp_crop_resized.shape[0]:
                                                 cv2.circle(mp_crop_resized, (x_scaled, y_scaled), 6, (0, 255, 255), -1)
                                     
-                                    # Create 4-image layout
-                                    comparison = np.hstack([face_crop_resized, face_crop_original, mp_crop_resized, mp_crop_original])
+                                    # Create 2x2 grid layout - make both rows same width
+                                    max_width = max(face_crop_resized.shape[1], mp_crop_resized.shape[1])
+                                    
+                                    # Pad face_crop_resized if needed
+                                    if face_crop_resized.shape[1] < max_width:
+                                        face_crop_resized = np.pad(face_crop_resized, ((0, 0), (0, max_width - face_crop_resized.shape[1]), (0, 0)), mode='constant')
+                                    if face_crop_original.shape[1] < max_width:
+                                        face_crop_original = np.pad(face_crop_original, ((0, 0), (0, max_width - face_crop_original.shape[1]), (0, 0)), mode='constant')
+                                    
+                                    # Pad mp_crop_resized if needed
+                                    if mp_crop_resized.shape[1] < max_width:
+                                        mp_crop_resized = np.pad(mp_crop_resized, ((0, 0), (0, max_width - mp_crop_resized.shape[1]), (0, 0)), mode='constant')
+                                    if mp_crop_original.shape[1] < max_width:
+                                        mp_crop_original = np.pad(mp_crop_original, ((0, 0), (0, max_width - mp_crop_original.shape[1]), (0, 0)), mode='constant')
+                                    
+                                    top_row = np.hstack([face_crop_resized, face_crop_original])
+                                    bottom_row = np.hstack([mp_crop_resized, mp_crop_original])
+                                    comparison = np.vstack([top_row, bottom_row])
                                     
                                     # Add labels
                                     cv2.putText(comparison, "VIDEO (dots)", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                                     cv2.putText(comparison, "VIDEO (orig)", (face_crop_resized.shape[1] + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                                    cv2.putText(comparison, "MP (dots)", (face_crop_resized.shape[1] * 2 + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                                    cv2.putText(comparison, "MP (orig)", (face_crop_resized.shape[1] * 3 + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                    cv2.putText(comparison, "MP (dots)", (5, face_crop_resized.shape[0] + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                    cv2.putText(comparison, "MP (orig)", (face_crop_resized.shape[1] + 5, face_crop_resized.shape[0] + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                                     cv2.putText(comparison, f"{mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                                     
                                     comparison_path = comparisons_dir / f"comparison_{filtered_count:03d}.jpg"
@@ -254,7 +270,7 @@ def generate_html_report(detected_faces, total_faces, output_dir, mp_count):
 
     <div class="legend" style="background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
         <h3>📍 Comparison Layout Legend</h3>
-        <p><strong>Left to Right:</strong> Video face (with green dots) | Video face (original) | MP photo (with yellow dots) | MP photo (original)</p>
+        <p><strong>2x2 Grid:</strong> Top row = Video face (with green dots) | Video face (original) | Bottom row = MP photo (with yellow dots) | MP photo (original)</p>
         <p><span style="color: green;">● Green dots</span> = Facial landmarks from video face (68 feature points)</p>
         <p><span style="color: #FFD700;">● Yellow dots</span> = Facial landmarks from MP reference photo (68 feature points)</p>
         <p>MP name is displayed at the bottom of each comparison.</p>
