@@ -1,0 +1,21 @@
+2026-04-24 12:46:29,159 - parliament_capture_direct - INFO - Created/verified temp directory: /tmp
+2026-04-24 12:46:29,160 - parliament_capture_direct - INFO - Created/verified media directory: /tmp
+2026-04-24 12:46:29,160 - parliament_capture_direct - INFO - Final directories - temp: /tmp, media: /tmp
+2026-04-24 12:46:29,185 - parliament_capture_direct - INFO - Received single stream URL: https://2f0f8fc-az-westeurope-fsly.cdn.redbee.live/ukparliament/parliamentlive/assets/0c796d74-6cea-4b8a-8013-808ad39d6503_0D62A9b/materials/PssZMbcuOD_0D62A9b/vod-idx-2.ism/vod-idx-2-video=3000000.m3u8
+2026-04-24 12:46:29,185 - parliament_capture_direct - INFO - Downloading stream: https://2f0f8fc-az-westeurope-fsly.cdn.redbee.live/ukparliament/parliamentlive/assets/0c796d74-6cea-4b8a-8013-808ad39d6503_0D62A9b/materials/PssZMbcuOD_0D62A9b/vod-idx-2.ism/vod-idx-2-video=3000000.m3u8
+2026-04-24 12:46:29,186 - parliament_capture_direct - INFO - Output file: /tmp/parliament_capture_9999_20260424_124629.mp4
+2026-04-24 12:46:29,186 - parliament_capture_direct - INFO - Duration: 120 seconds
+2026-04-24 12:46:29,187 - parliament_capture_direct - INFO - Using single URL: https://2f0f8fc-az-westeurope-fsly.cdn.redbee.live/ukparliament/parliamentlive/assets/0c796d74-6cea-4b8a-8013-808ad39d6503_0D62A9b/materials/PssZMbcuOD_0D62A9b/vod-idx-2.ism/vod-idx-2-video=3000000.m3u8
+2026-04-24 12:46:29,187 - parliament_capture_direct - INFO - Checking for potential audio URL: https://2f0f8fc-az-westeurope-fsly.cdn.redbee.live/ukparliament/parliamentlive/assets/0c796d74-6cea-4b8a-8013-808ad39d6503_0D62A9b/materials/PssZMbcuOD_0D62A9b/vod-idx-2.ism/vod-idx-2-audio=3000000_eng=64000.m3u8
+2026-04-24 12:46:30,297 - parliament_capture_direct - WARNING - Audio URL test failed, using single URL
+2026-04-24 12:46:31,133 - parliament_capture_direct - INFO - Stream has audio: False
+2026-04-24 12:46:31,134 - parliament_capture_direct - WARNING - Stream appears to be video-only, will add silent audio track
+2026-04-24 12:46:31,134 - parliament_capture_direct - INFO - Running command: ffmpeg -y -i https://2f0f8fc-az-westeurope-fsly.cdn.redbee.live/ukparliament/parliamentlive/assets/0c796d74-6cea-4b8a-8013-808ad39d6503_0D62A9b/materials/PssZMbcuOD_0D62A9b/vod-idx-2.ism/vod-idx-2-video=3000000.m3u8 -c:v copy -t 120 /tmp/parliament_capture_9999_20260424_124629.mp4.temp.mp4
+2026-04-24 12:46:33,444 - parliament_capture_direct - INFO - Adding silent audio track to video-only file
+2026-04-24 12:46:33,447 - parliament_capture_direct - INFO - Running silent audio command: ffmpeg -y -i /tmp/parliament_capture_9999_20260424_124629.mp4.temp.mp4 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -shortest /tmp/parliament_capture_9999_20260424_124629.mp4
+2026-04-24 12:46:34,608 - parliament_capture_direct - INFO - Silent audio added successfully
+2026-04-24 12:46:34,648 - parliament_capture_direct - INFO - Removed temporary file: /tmp/parliament_capture_9999_20260424_124629.mp4.temp.mp4
+2026-04-24 12:46:34,862 - parliament_capture_direct - INFO - Final output file has audio: True
+2026-04-24 12:46:34,863 - parliament_capture_direct - INFO - Download completed successfully: /tmp/parliament_capture_9999_20260424_124629.mp4
+2026-04-24 12:46:34,863 - parliament_capture_direct - INFO - Creating output directory if needed: /tmp
+2026-04-24 12:46:34,864 - parliament_capture_direct - INFO - Parliament TV capture completed successfully

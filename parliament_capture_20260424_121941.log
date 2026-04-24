@@ -1,0 +1,8 @@
+2026-04-24 12:19:41,814 - parliament_capture_direct - INFO - Created/verified temp directory: /tmp
+2026-04-24 12:19:41,816 - parliament_capture_direct - INFO - Created/verified media directory: /tmp
+2026-04-24 12:19:41,816 - parliament_capture_direct - INFO - Final directories - temp: /tmp, media: /tmp
+2026-04-24 12:19:41,842 - parliament_capture_direct - INFO - Extracting direct stream URL from: https://parliamentlive.tv/Event/Index/0c796d74-6cea-4b8a-8013-808ad39d6503
+2026-04-24 12:19:41,843 - parliament_capture_direct - INFO - Extracting stream URL from: https://parliamentlive.tv/Event/Index/0c796d74-6cea-4b8a-8013-808ad39d6503
+2026-04-24 12:19:50,370 - parliament_capture_direct - ERROR - Error parsing JSON: Expecting ',' delimiter: line 9 column 4 (char 568)
+2026-04-24 12:19:50,375 - parliament_capture_direct - ERROR - Failed to extract direct stream URL
+2026-04-24 12:19:50,376 - parliament_capture_direct - ERROR - Failed to extract direct stream URL
