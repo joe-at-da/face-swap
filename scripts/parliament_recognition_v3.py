@@ -349,7 +349,7 @@ def generate_html_report(detected_faces, total_faces, output_dir, mp_count):
 if __name__ == "__main__":
     import face_recognition
     
-    video_path = "/tmp/parliament_last_5min.mp4"
+    video_path = "/tmp/parliament_last_30s.mp4"
     output_dir = Path("/tmp/parliament_face_demo")
     
     logger.info("Loading MP encodings...")
