@@ -434,9 +434,7 @@ class Comprehensive90sTest:
                 print(f"   {i+1}. {mp_info['name']} (ID: {member_id})")
                 print(f"      → Appearances: {len(mp_info['appearances'])}")
                 print(f"      → Max confidence: {mp_info['max_confidence']:.3f}")
-                frames_str = ', '.join([f"#{a['frame_index']}" for a in mp_info['appearances'][:3]])
-                frames_str += '...' if len(mp_info['appearances']) > 3 else ''
-                print(f"      → Frames: {frames_str}")
+                print(f"      → Frames: {', '.join([f"#{a['frame_index']}" for a in mp_info['appearances'][:3]])}{'...' if len(mp_info['appearances']) > 3 else ''}")
         else:
             print("   ❌ No MPs identified in the video")
         

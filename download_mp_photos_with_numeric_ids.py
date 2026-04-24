@@ -247,7 +247,7 @@ def download_mp_photos(db):
                             data = json.load(f)
                         
                         if 'embedding' in data:
-                            ids.append(str(parliament_id))
+                            ids.append(str(member_id))
                             encodings.append(data['embedding'])
                             names.append(name)
                     except Exception as e:
