@@ -165,6 +165,10 @@ def process_video(video_path, mp_data, output_dir):
                                     else:
                                         mp_crop_resized = mp_crop.copy()
                                     
+                                    # Save originals before drawing landmarks
+                                    face_crop_original = face_crop_resized.copy()
+                                    mp_crop_original = mp_crop_resized.copy()
+                                    
                                     # Draw landmarks on face_crop (green) - scale coordinates
                                     for landmark_name, landmark_points in face_landmarks.items():
                                         for point in landmark_points:
@@ -183,14 +187,16 @@ def process_video(video_path, mp_data, output_dir):
                                             if 0 <= x_scaled < mp_crop_resized.shape[1] and 0 <= y_scaled < mp_crop_resized.shape[0]:
                                                 cv2.circle(mp_crop_resized, (x_scaled, y_scaled), 6, (0, 255, 255), -1)
                                     
-                                    # Add labels with larger, more visible text
-                                    cv2.putText(face_crop_resized, "VIDEO", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
-                                    cv2.putText(face_crop_resized, "VIDEO", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 1)
-                                    cv2.putText(mp_crop_resized, f"MP: {mp_name[:10]}", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
-                                    cv2.putText(mp_crop_resized, f"MP: {mp_name[:10]}", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 1)
+                                    # Create 4-image layout
+                                    comparison = np.hstack([face_crop_resized, face_crop_original, mp_crop_resized, mp_crop_original])
                                     
-                                    # Create side-by-side comparison
-                                    comparison = np.hstack([face_crop_resized, mp_crop_resized])
+                                    # Add labels
+                                    cv2.putText(comparison, "VIDEO (dots)", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                    cv2.putText(comparison, "VIDEO (orig)", (face_crop_resized.shape[1] + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                    cv2.putText(comparison, "MP (dots)", (face_crop_resized.shape[1] * 2 + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                    cv2.putText(comparison, "MP (orig)", (face_crop_resized.shape[1] * 3 + 5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                    cv2.putText(comparison, f"{mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                                    
                                     comparison_path = comparisons_dir / f"comparison_{filtered_count:03d}.jpg"
                                     cv2.imwrite(str(comparison_path), comparison)
                         
@@ -247,10 +253,11 @@ def generate_html_report(detected_faces, total_faces, output_dir, mp_count):
     </div>
 
     <div class="legend" style="background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <h3>📍 Landmark Visualization Legend</h3>
+        <h3>📍 Comparison Layout Legend</h3>
+        <p><strong>Left to Right:</strong> Video face (with green dots) | Video face (original) | MP photo (with yellow dots) | MP photo (original)</p>
         <p><span style="color: green;">● Green dots</span> = Facial landmarks from video face (68 feature points)</p>
         <p><span style="color: #FFD700;">● Yellow dots</span> = Facial landmarks from MP reference photo (68 feature points)</p>
-        <p>Landmarks help verify that face encodings align with actual facial features for accurate matching.</p>
+        <p>MP name is displayed at the bottom of each comparison.</p>
     </div>
     
     <div class="stats">
