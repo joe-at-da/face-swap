@@ -106,8 +106,8 @@ def process_video(video_path, mp_data, output_dir):
                 if passes_filter:
                     filtered_count += 1
                     
-                    # Match against MPs
-                    matches = face_recognition.compare_faces([mp['encoding'] for mp in mp_data], encoding, tolerance=0.6)
+                    # Match against MPs with tighter tolerance
+                    matches = face_recognition.compare_faces([mp['encoding'] for mp in mp_data], encoding, tolerance=0.5)
                     
                     if True in matches:
                         match_index = matches.index(True)
@@ -134,16 +134,63 @@ def process_video(video_path, mp_data, output_dir):
                                     mp_crop_path = comparisons_dir / f"face_{filtered_count:03d}_mp.jpg"
                                     cv2.imwrite(str(mp_crop_path), mp_crop)
                                     
-                                    # Resize to match height for side-by-side comparison
+                                    # Get landmarks on original-sized crops
+                                    face_landmarks = face_recognition.face_landmarks(rgb_frame, face_locations)[i]
+                                    mp_landmarks = face_recognition.face_landmarks(mp_rgb, mp_locations)[0]
+                                    
+                                    # Store original dimensions
+                                    h1_orig, w1_orig = face_crop.shape[:2]
+                                    h2_orig, w2_orig = mp_crop.shape[:2]
+                                    
+                                    # Use letterboxing to match height without stretching
                                     h1, w1 = face_crop.shape[:2]
                                     h2, w2 = mp_crop.shape[:2]
-                                    if h1 != h2:
-                                        # Resize mp_crop to match face_crop height
-                                        new_w2 = int(w2 * h1 / h2)
-                                        mp_crop = cv2.resize(mp_crop, (new_w2, h1))
+                                    target_height = max(h1, h2)
+                                    
+                                    # Calculate scale factors
+                                    scale1 = target_height / h1 if h1 != target_height else 1
+                                    scale2 = target_height / h2 if h2 != target_height else 1
+                                    
+                                    # Resize face_crop to target height
+                                    if h1 != target_height:
+                                        new_w1 = int(w1 * target_height / h1)
+                                        face_crop_resized = cv2.resize(face_crop, (new_w1, target_height))
+                                    else:
+                                        face_crop_resized = face_crop.copy()
+                                    
+                                    # Resize mp_crop to target height
+                                    if h2 != target_height:
+                                        new_w2 = int(w2 * target_height / h2)
+                                        mp_crop_resized = cv2.resize(mp_crop, (new_w2, target_height))
+                                    else:
+                                        mp_crop_resized = mp_crop.copy()
+                                    
+                                    # Draw landmarks on face_crop (green) - scale coordinates
+                                    for landmark_name, landmark_points in face_landmarks.items():
+                                        for point in landmark_points:
+                                            # Adjust for crop offset and scale
+                                            x_scaled = int((point[0] - left) * scale1)
+                                            y_scaled = int((point[1] - top) * scale1)
+                                            if 0 <= x_scaled < face_crop_resized.shape[1] and 0 <= y_scaled < face_crop_resized.shape[0]:
+                                                cv2.circle(face_crop_resized, (x_scaled, y_scaled), 6, (0, 255, 0), -1)
+                                    
+                                    # Draw landmarks on mp_crop (yellow) - scale coordinates
+                                    for landmark_name, landmark_points in mp_landmarks.items():
+                                        for point in landmark_points:
+                                            # Adjust for crop offset and scale
+                                            x_scaled = int((point[0] - mp_left) * scale2)
+                                            y_scaled = int((point[1] - mp_top) * scale2)
+                                            if 0 <= x_scaled < mp_crop_resized.shape[1] and 0 <= y_scaled < mp_crop_resized.shape[0]:
+                                                cv2.circle(mp_crop_resized, (x_scaled, y_scaled), 6, (0, 255, 255), -1)
+                                    
+                                    # Add labels with larger, more visible text
+                                    cv2.putText(face_crop_resized, "VIDEO", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+                                    cv2.putText(face_crop_resized, "VIDEO", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 1)
+                                    cv2.putText(mp_crop_resized, f"MP: {mp_name[:10]}", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+                                    cv2.putText(mp_crop_resized, f"MP: {mp_name[:10]}", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 1)
                                     
                                     # Create side-by-side comparison
-                                    comparison = np.hstack([face_crop, mp_crop])
+                                    comparison = np.hstack([face_crop_resized, mp_crop_resized])
                                     comparison_path = comparisons_dir / f"comparison_{filtered_count:03d}.jpg"
                                     cv2.imwrite(str(comparison_path), comparison)
                         
@@ -165,7 +212,91 @@ def process_video(video_path, mp_data, output_dir):
     cap.release()
     logger.info(f"Processed: {face_count} total faces, {filtered_count} passed filter, {len(detected_faces)} matched")
     
-    return detected_faces
+    return detected_faces, face_count
+
+# Generate HTML report
+def generate_html_report(detected_faces, total_faces, output_dir, mp_count):
+    """Generate HTML report with comparison images."""
+    report_path = output_dir / "report.html"
+    
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Parliament Face Recognition Demo Results</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
+        .header {{ text-align: center; background: white; padding: 20px; margin-bottom: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }}
+        .stat-card {{ background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }}
+        .stat-number {{ font-size: 2em; font-weight: bold; color: #0076C0; }}
+        .comparison {{ background: white; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }}
+        .comparison.found {{ border-left: 4px solid #4CAF50; }}
+        .comparison.not-found {{ border-left: 4px solid #f44336; }}
+        .comparison img {{ max-width: 100%; height: auto; display: block; margin: 0 auto; }}
+        .comparison-info {{ padding: 15px; }}
+        .timestamp {{ color: #666; font-size: 0.9em; }}
+        .mp-name {{ font-weight: bold; color: #0076C0; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎯 Parliament Face Recognition Demo</h1>
+        <p>Processed Parliament TV video with face recognition and MP matching</p>
+        <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p>Configuration: Using regenerated MP encodings (mp_encodings_new.json), Tighter tolerance (0.5)</p>
+    </div>
+
+    <div class="legend" style="background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3>📍 Landmark Visualization Legend</h3>
+        <p><span style="color: green;">● Green dots</span> = Facial landmarks from video face (68 feature points)</p>
+        <p><span style="color: #FFD700;">● Yellow dots</span> = Facial landmarks from MP reference photo (68 feature points)</p>
+        <p>Landmarks help verify that face encodings align with actual facial features for accurate matching.</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-number">{total_faces}</div>
+            <div>Faces Detected</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{len(detected_faces)}</div>
+            <div>MPs Identified</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{total_faces - len(detected_faces)}</div>
+            <div>Unknown Faces</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{mp_count}</div>
+            <div>MPs in Database</div>
+        </div>
+    </div>
+    
+    <h2>🔍 Face Recognition Results - Side-by-Side Comparisons</h2>
+    <p style="margin-left: 20px; color: #666;">Left side: Video face from Parliament TV | Right side: MP reference photo</p>
+"""
+    
+    for i, face in enumerate(detected_faces, 1):
+        html_content += f"""
+    <div class="comparison found">
+        <div class="comparison-info">
+            <h3>Face {i} - <span class="timestamp">{face['timestamp']:.1f}s</span> - MP ID: {face['mp_id']}</h3>
+            <p><span class='mp-name'>MP Match Found</span> - Offset: {face['horizontal_offset']:.3f}</p>
+        </div>
+        <img src="comparisons/comparison_{face['face_id']:03d}.jpg" alt="Comparison {i}" loading="lazy" style="max-width: 100%; height: auto;">
+    </div>
+"""
+    
+    html_content += """
+</body>
+</html>
+"""
+    
+    with open(report_path, 'w') as f:
+        f.write(html_content)
+    
+    logger.info(f"✅ HTML report generated: {report_path}")
+    return report_path
 
 # Main
 if __name__ == "__main__":
@@ -176,17 +307,31 @@ if __name__ == "__main__":
     
     logger.info("Loading MP encodings...")
     mp_data = load_mp_encodings()
+    mp_count = len(mp_data)
     
     logger.info("Processing video...")
-    detected_faces = process_video(video_path, mp_data, output_dir)
+    detected_faces, total_faces = process_video(video_path, mp_data, output_dir)
     
     logger.info(f"✅ Found {len(detected_faces)} MP matches")
     
-    # Print matches
+    # Generate HTML report
+    report_path = generate_html_report(detected_faces, total_faces, output_dir, mp_count)
+    
+    # Print matches and report path prominently
     if detected_faces:
-        print("\n=== MP IDENTIFICATIONS ===")
+        print("\n" + "="*60)
+        print("🎯 PARLIAMENT FACE RECOGNITION RESULTS")
+        print("="*60)
+        print(f"\n✅ {len(detected_faces)} MP matches found out of {total_faces} total faces")
+        print(f"\n📊 MP IDENTIFICATIONS:")
         for face in detected_faces:
-            print(f"  - {face['mp_name']} at {face['timestamp']:.2f}s (center offset: {face['horizontal_offset']:.3f})")
-        print(f"\n📁 Comparisons saved to: {output_dir}/comparisons/")
+            print(f"  - {face['mp_name']} at {face['timestamp']:.2f}s (offset: {face['horizontal_offset']:.3f})")
+        print("\n" + "="*60)
+        print(f"📁 HTML REPORT: {report_path}")
+        print(f"📁 COMPARISON IMAGES: {output_dir}/comparisons/")
+        print("="*60 + "\n")
     else:
-        print("\n❌ No MP matches found")
+        print("\n" + "="*60)
+        print("❌ No MP matches found")
+        print(f"📁 HTML REPORT: {report_path}")
+        print("="*60 + "\n")
