@@ -16,8 +16,8 @@ import numpy as np
 import argparse
 import logging
 import json
-import subprocess
 import tempfile
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
@@ -188,7 +188,7 @@ class SimpleParliamentFaceRecognitionDemo:
             return None
     
     def process_video_faces(self, video_path):
-        """Process video for face detection and recognition."""
+        """Process video for face detection and recognition with advanced filtering."""
         logger.info(f"Processing video for face recognition: {video_path}")
         
         if not os.path.exists(video_path):
@@ -205,8 +205,16 @@ class SimpleParliamentFaceRecognitionDemo:
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps if fps > 0 else 0
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
-        logger.info(f"Video info: {frame_count} frames, {fps:.2f} FPS, {duration:.2f} seconds")
+        logger.info(f"Video info: {frame_count} frames, {fps:.2f} FPS, {duration:.2f} seconds, {frame_width}x{frame_height}")
+        
+        # Parliament face filtering criteria
+        MIN_FACE_SIZE = 200  # Minimum width/height in pixels
+        MIN_FACE_AREA = 40000  # Minimum area in square pixels
+        MIN_CONFIDENCE = 0.6  # Minimum YuNet detection confidence
+        MAX_HORIZONTAL_OFFSET = 0.4  # Maximum distance from center (40%)
         
         # Process every 3 seconds (consistent with Parliament system)
         frame_interval = int(3 * fps)
@@ -214,6 +222,7 @@ class SimpleParliamentFaceRecognitionDemo:
         
         frame_number = 0
         face_count = 0
+        filtered_count = 0
         
         while frame_number < frame_count:
             ret, frame = cap.read()
@@ -231,28 +240,74 @@ class SimpleParliamentFaceRecognitionDemo:
                 
                 for i, face_result in enumerate(face_results):
                     face_count += 1
-                    face_data = {
-                        'frame_number': frame_number,
-                        'timestamp': timestamp,
-                        'face_id': face_count,
-                        'box': face_result['box'],
-                        'confidence': face_result['confidence'],
-                        'embedding': face_result.get('embedding', []),
-                        'landmarks': face_result.get('landmarks', [])
-                    }
+                    box = face_result['box']
+                    confidence = face_result['confidence']
                     
-                    # Save face image
-                    face_image_path = self.save_face_image(frame, face_result, face_count, timestamp)
-                    face_data['image_path'] = str(face_image_path)
+                    # Apply Parliament face filtering criteria
+                    x, y, w, h = box
+                    face_area = w * h
+                    face_center_x = x + w / 2
+                    face_center_y = y + h / 2
                     
-                    detected_faces.append(face_data)
+                    # Calculate distance from frame center
+                    frame_center_x = frame_width / 2
+                    frame_center_y = frame_height / 2
+                    horizontal_offset = abs(face_center_x - frame_center_x) / (frame_width / 2)
+                    
+                    # Apply filtering
+                    passes_filter = True
+                    filter_reasons = []
+                    
+                    # Check face size
+                    if w < MIN_FACE_SIZE or h < MIN_FACE_SIZE:
+                        passes_filter = False
+                        filter_reasons.append(f"Too small ({w}x{h})")
+                    
+                    # Check face area
+                    if face_area < MIN_FACE_AREA:
+                        passes_filter = False
+                        filter_reasons.append(f"Too small area ({face_area})")
+                    
+                    # Check confidence
+                    if confidence < MIN_CONFIDENCE:
+                        passes_filter = False
+                        filter_reasons.append(f"Low confidence ({confidence:.3f})")
+                    
+                    # Check horizontal offset (center positioning)
+                    if horizontal_offset > MAX_HORIZONTAL_OFFSET:
+                        passes_filter = False
+                        filter_reasons.append(f"Too far from center ({horizontal_offset:.3f})")
+                    
+                    if passes_filter:
+                        filtered_count += 1
+                        face_data = {
+                            'frame_number': frame_number,
+                            'timestamp': timestamp,
+                            'face_id': filtered_count,
+                            'box': box,
+                            'confidence': confidence,
+                            'embedding': face_result.get('embedding', []),
+                            'landmarks': face_result.get('landmarks', []),
+                            'center_offset': horizontal_offset,
+                            'face_area': face_area,
+                            'filter_reasons': []
+                        }
+                        
+                        # Save face image
+                        face_image_path = self.save_face_image(frame, face_result, filtered_count, timestamp)
+                        face_data['image_path'] = str(face_image_path)
+                        
+                        detected_faces.append(face_data)
+                        logger.info(f"Face {filtered_count} PASSED filter - center offset: {horizontal_offset:.3f}, area: {face_area}")
+                    else:
+                        logger.debug(f"Face {face_count} FILTERED: {', '.join(filter_reasons)}")
             
             # Skip to next frame (3 seconds later)
             frame_number += frame_interval
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
         
         cap.release()
-        logger.info(f"Processed video: {len(detected_faces)} faces detected")
+        logger.info(f"Processed video: {face_count} total faces detected, {filtered_count} passed advanced filtering")
         
         # Save detected faces data
         faces_data_path = self.data_dir / "detected_faces.json"
@@ -313,7 +368,7 @@ class SimpleParliamentFaceRecognitionDemo:
                     np.linalg.norm(detected_embedding) * np.linalg.norm(mp_embedding)
                 )
                 
-                if similarity > best_similarity and similarity > 0.5:  # Threshold
+                if similarity > best_similarity and similarity > 0.3:  # Lowered threshold for testing
                     best_similarity = similarity
                     best_match = mp_face
             

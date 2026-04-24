@@ -1,0 +1,10 @@
+2026-04-24 12:01:16,772 - parliament_capture_direct - WARNING - MEDIA_STORAGE_PATH not set, using default: /app/data/media
+2026-04-24 12:01:16,772 - parliament_capture_direct - INFO - Created/verified temp directory: /tmp
+2026-04-24 12:01:16,772 - parliament_capture_direct - ERROR - Failed to create media directory /app/data/media: [Errno 30] Read-only file system: '/app'
+2026-04-24 12:01:16,772 - parliament_capture_direct - WARNING - Using fallback media directory: /tmp
+2026-04-24 12:01:16,772 - parliament_capture_direct - INFO - Final directories - temp: /tmp, media: /tmp
+2026-04-24 12:01:16,791 - parliament_capture_direct - INFO - Extracting direct stream URL from: https://parliamentlive.tv/event/index/263b4186-393c-49ce-aa55-68b9accd7a4e?in=13:25:38
+2026-04-24 12:01:16,791 - parliament_capture_direct - INFO - Extracting stream URL from: https://parliamentlive.tv/event/index/263b4186-393c-49ce-aa55-68b9accd7a4e?in=13:25:38
+2026-04-24 12:01:24,058 - parliament_capture_direct - ERROR - Error parsing JSON: Expecting ',' delimiter: line 9 column 4 (char 564)
+2026-04-24 12:01:24,059 - parliament_capture_direct - ERROR - Failed to extract direct stream URL
+2026-04-24 12:01:24,059 - parliament_capture_direct - ERROR - Failed to extract direct stream URL
