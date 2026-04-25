@@ -226,15 +226,24 @@ def process_video(video_path, mp_data, output_dir):
                                     cv2.putText(comparison, f"MP: {mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 4)
                                     cv2.putText(comparison, f"MP: {mp_name}", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 1)
                                     
-                                    # Create face swap result (simple blend)
-                                    # Blend video face with MP photo
-                                    face_swap = cv2.addWeighted(face_crop_resized, 0.5, mp_crop_resized, 0.5, 0)
+                                    # Create face swap result (apply MP face to video face)
+                                    # Use the MP photo to replace the video face region
+                                    face_swap = face_crop_resized.copy()
+                                    
+                                    # Simple face swap: replace video face with MP face
+                                    # This is a basic implementation - can be improved with proper face swapping libraries
+                                    h, w = face_swap.shape[:2]
+                                    if mp_crop_resized.shape[0] == h and mp_crop_resized.shape[1] == w:
+                                        face_swap = mp_crop_resized.copy()
+                                    else:
+                                        # Resize MP face to match video face dimensions
+                                        face_swap = cv2.resize(mp_crop_resized, (w, h))
                                     
                                     # Add face swap row to comparison
-                                    face_swap_row = np.hstack([face_swap, np.zeros_like(face_swap)])
+                                    face_swap_row = np.hstack([face_swap, face_crop_original])
                                     comparison = np.vstack([comparison, face_swap_row])
                                     
-                                    # Add face swap label
+                                    # Add face swap labels
                                     cv2.putText(comparison, "FACE SWAP", (5, comparison.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
                                     
                                     comparison_path = comparisons_dir / f"comparison_{filtered_count:03d}.jpg"
