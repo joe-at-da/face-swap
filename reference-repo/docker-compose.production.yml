@@ -110,7 +110,7 @@ services:
   # Config is created at runtime via entrypoint to avoid Coolify bind mount issues
   # ===========================================================================
   supabase-kong:
-    image: kong:2.8.1
+    image: kong:2.8.5
     container_name: supabase-kong
     hostname: supabase-kong
     entrypoint:
@@ -420,7 +420,7 @@ services:
   # Init scripts are created at runtime via entrypoint to avoid Coolify bind mount issues
   # ===========================================================================
   supabase-db:
-    image: supabase/postgres:15.14.1.071
+    image: supabase/postgres:15.19.0.007
     container_name: supabase-db
     hostname: supabase-db
     ports:
@@ -717,7 +717,7 @@ services:
   # Analytics (Logflare)
   # ===========================================================================
   supabase-analytics:
-    image: supabase/logflare:1.27.3
+    image: supabase/logflare:1.54.0
     container_name: supabase-analytics
     hostname: supabase-analytics
     healthcheck:
@@ -752,7 +752,7 @@ services:
   # Config is created at runtime via entrypoint to avoid Coolify bind mount issues
   # ===========================================================================
   supabase-vector:
-    image: timberio/vector:0.28.1-alpine
+    image: timberio/vector:0.60.0-alpine
     # Exclude from Coolify's healthcheck monitoring - Coolify's auto-generated healthcheck can't resolve
     # DNS in PR previews (containers renamed to supabase-vector-xxx-pr-12). Vector itself is healthy.
     # See: https://coolify.io/docs/knowledge-base/health-checks
@@ -993,7 +993,7 @@ services:
   # PostgREST (REST API)
   # ===========================================================================
   supabase-rest:
-    image: postgrest/postgrest:v14.3
+    image: postgrest/postgrest:v14.18
     container_name: supabase-rest
     hostname: supabase-rest
     depends_on:
@@ -1015,7 +1015,7 @@ services:
   # GoTrue (Authentication)
   # ===========================================================================
   supabase-auth:
-    image: supabase/gotrue:v2.184.0
+    image: supabase/gotrue:v2.197.0
     container_name: supabase-auth
     hostname: supabase-auth
     depends_on:
@@ -1074,7 +1074,7 @@ services:
   # Realtime (WebSockets)
   # ===========================================================================
   realtime-dev:
-    image: supabase/realtime:v2.69.2
+    image: supabase/realtime:v2.148.2
     container_name: realtime-dev
     hostname: realtime-dev
     depends_on:
@@ -1154,7 +1154,7 @@ services:
   # Storage API
   # ===========================================================================
   supabase-storage:
-    image: supabase/storage-api:v1.33.4
+    image: supabase/storage-api:v1.84.25
     container_name: supabase-storage
     hostname: supabase-storage
     depends_on:
@@ -1214,7 +1214,7 @@ services:
   # Image Proxy
   # ===========================================================================
   imgproxy:
-    image: darthsim/imgproxy:v3.30.1
+    image: darthsim/imgproxy:v3.31.4
     container_name: imgproxy
     hostname: imgproxy
     healthcheck:
@@ -1234,7 +1234,7 @@ services:
   # Postgres Meta (Database Management API)
   # ===========================================================================
   supabase-meta:
-    image: supabase/postgres-meta:v0.95.1
+    image: supabase/postgres-meta:v0.100.0
     container_name: supabase-meta
     hostname: supabase-meta
     depends_on:
@@ -1256,7 +1256,7 @@ services:
   # Config is created at runtime via entrypoint to avoid Coolify bind mount issues
   # ===========================================================================
   supabase-supavisor:
-    image: supabase/supavisor:2.7.4
+    image: supabase/supavisor:2.9.13
     container_name: supabase-supavisor
     hostname: supabase-supavisor
     ulimits:

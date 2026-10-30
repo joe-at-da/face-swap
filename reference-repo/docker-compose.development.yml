@@ -117,7 +117,7 @@ services:
   # Supabase Kong (API Gateway)
   # ===========================================================================
   supabase-kong:
-    image: kong:2.8.1
+    image: kong:2.8.5
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-kong
     entrypoint:
       - bash
@@ -431,7 +431,7 @@ services:
   # PostgreSQL Database
   # ===========================================================================
   supabase-db:
-    image: supabase/postgres:15.14.1.071
+    image: supabase/postgres:15.19.0.007
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-db
     shm_size: 1g
     healthcheck:
@@ -727,7 +727,7 @@ services:
   # Analytics (Logflare)
   # ===========================================================================
   supabase-analytics:
-    image: supabase/logflare:1.27.3
+    image: supabase/logflare:1.54.0
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-analytics
     healthcheck:
       test: ["CMD", "curl", "http://127.0.0.1:4000/health"]
@@ -760,7 +760,7 @@ services:
   # Vector (Log Collection)
   # ===========================================================================
   supabase-vector:
-    image: timberio/vector:0.28.1-alpine
+    image: timberio/vector:0.60.0-alpine
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-vector
     healthcheck:
       test:
@@ -1000,7 +1000,7 @@ services:
   # PostgREST (REST API)
   # ===========================================================================
   supabase-rest:
-    image: postgrest/postgrest:v14.3
+    image: postgrest/postgrest:v14.18
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-rest
     depends_on:
       supabase-db:
@@ -1021,7 +1021,7 @@ services:
   # GoTrue (Authentication)
   # ===========================================================================
   supabase-auth:
-    image: supabase/gotrue:v2.184.0
+    image: supabase/gotrue:v2.197.0
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-auth
     depends_on:
       supabase-db:
@@ -1096,7 +1096,7 @@ services:
   # Realtime (WebSockets)
   # ===========================================================================
   realtime-dev:
-    image: supabase/realtime:v2.69.2
+    image: supabase/realtime:v2.148.2
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-realtime-dev
     depends_on:
       supabase-db:
@@ -1189,7 +1189,7 @@ services:
   # Storage API
   # ===========================================================================
   supabase-storage:
-    image: supabase/storage-api:v1.33.4
+    image: supabase/storage-api:v1.84.25
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-storage
     depends_on:
       supabase-db:
@@ -1256,7 +1256,7 @@ services:
   # Image Proxy
   # ===========================================================================
   imgproxy:
-    image: darthsim/imgproxy:v3.30.1
+    image: darthsim/imgproxy:v3.31.4
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-imgproxy
     healthcheck:
       test: ["CMD", "imgproxy", "health"]
@@ -1275,7 +1275,7 @@ services:
   # Postgres Meta (Database Management API)
   # ===========================================================================
   supabase-meta:
-    image: supabase/postgres-meta:v0.95.1
+    image: supabase/postgres-meta:v0.100.0
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-meta
     depends_on:
       supabase-db:
@@ -1295,7 +1295,7 @@ services:
   # Supavisor (Connection Pooler)
   # ===========================================================================
   supabase-supavisor:
-    image: supabase/supavisor:2.7.4
+    image: supabase/supavisor:2.9.13
     container_name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required - run ./setup-worktree.sh first}-supabase-supavisor
     ports:
       - "${POOLER_PORT:-6543}:5432"
